@@ -19,9 +19,10 @@ create table if not exists invoice_line_items (
   zoho_invoice_id   text not null,          -- Zoho's internal UUID/ID
 
   -- Line item
-  item_name         text not null,
-  item_quantity     numeric(10,3) not null,
-  item_price        numeric(12,2) not null, -- per-unit price
+  item_name           text not null,
+  requested_quantity  numeric(10,3) not null, -- what the customer ordered
+  final_quantity      numeric(10,3) not null, -- what was actually delivered (billed on this)
+  item_price          numeric(12,2) not null, -- per-unit price
 
   -- Invoice footer (repeated per line for query convenience)
   invoice_total     numeric(12,2) not null,
@@ -99,20 +100,21 @@ on conflict do nothing;
 
 insert into invoice_line_items
   (customer_name, phone_number, invoice_date, invoice_number, zoho_invoice_id,
-   item_name, item_quantity, item_price, invoice_total, payment_status)
+   item_name, requested_quantity, final_quantity, item_price, invoice_total, payment_status)
 values
-  -- Invoice INV-001  total ₹1,500
-  ('Villa 83','+919999000001','2026-04-01','INV-001','zoho-inv-001','Alphonso Mangoes',  2,  350.00, 1500.00, 'paid'),
-  ('Villa 83','+919999000001','2026-04-01','INV-001','zoho-inv-001','Dragon Fruit',      1,  600.00, 1500.00, 'paid'),
-  ('Villa 83','+919999000001','2026-04-01','INV-001','zoho-inv-001','Papaya (1 kg)',     2,  250.00, 1500.00, 'paid'),
+  --                                                                   req   final  rate
+  -- Invoice INV-001  total ₹1,500  (all delivered as ordered)
+  ('Villa 83','+919999000001','2026-04-01','INV-001','zoho-inv-001','Alphonso Mangoes',  2,   2,   350.00, 1500.00, 'paid'),
+  ('Villa 83','+919999000001','2026-04-01','INV-001','zoho-inv-001','Dragon Fruit',      1,   1,   600.00, 1500.00, 'paid'),
+  ('Villa 83','+919999000001','2026-04-01','INV-001','zoho-inv-001','Papaya (1 kg)',     2,   2,   250.00, 1500.00, 'paid'),
 
-  -- Invoice INV-002  total ₹920
-  ('Villa 83','+919999000001','2026-04-03','INV-002','zoho-inv-002','Strawberries',      2,  280.00,  920.00, 'pending'),
-  ('Villa 83','+919999000001','2026-04-03','INV-002','zoho-inv-002','Kiwi (pack)',       2,  180.00,  920.00, 'pending'),
-  ('Villa 83','+919999000001','2026-04-03','INV-002','zoho-inv-002','Lychee (500 g)',    2,  180.00,  920.00, 'pending'),
+  -- Invoice INV-002  total ₹920  (Strawberries short by 0.5 kg)
+  ('Villa 83','+919999000001','2026-04-03','INV-002','zoho-inv-002','Strawberries',      2, 1.5,   280.00,  920.00, 'pending'),
+  ('Villa 83','+919999000001','2026-04-03','INV-002','zoho-inv-002','Kiwi (pack)',       2,   2,   180.00,  920.00, 'pending'),
+  ('Villa 83','+919999000001','2026-04-03','INV-002','zoho-inv-002','Lychee (500 g)',    2,   2,   180.00,  920.00, 'pending'),
 
-  -- Invoice INV-003  total ₹1,150
-  ('Villa 83','+919999000001','2026-04-06','INV-003','zoho-inv-003','Watermelon (whole)',1,  400.00, 1150.00, 'pending'),
-  ('Villa 83','+919999000001','2026-04-06','INV-003','zoho-inv-003','Muskmelon',         1,  350.00, 1150.00, 'pending'),
-  ('Villa 83','+919999000001','2026-04-06','INV-003','zoho-inv-003','Chikoo (1 kg)',     2,  200.00, 1150.00, 'pending')
+  -- Invoice INV-003  total ₹1,150  (Watermelon weight variance)
+  ('Villa 83','+919999000001','2026-04-06','INV-003','zoho-inv-003','Watermelon (whole)',1, 0.9,   400.00, 1150.00, 'pending'),
+  ('Villa 83','+919999000001','2026-04-06','INV-003','zoho-inv-003','Muskmelon',         1,   1,   350.00, 1150.00, 'pending'),
+  ('Villa 83','+919999000001','2026-04-06','INV-003','zoho-inv-003','Chikoo (1 kg)',     2,   2,   200.00, 1150.00, 'pending')
 on conflict do nothing;

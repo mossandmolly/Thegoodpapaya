@@ -193,6 +193,15 @@ body {
   font-weight: 700; font-size: .95rem;
 }
 
+/* ── Quantity columns ───────────────────────────────────────── */
+.th-hint { font-weight: 400; opacity: .65; font-size: .7rem; }
+
+.qty-cell        { white-space: nowrap; }
+.qty-requested   { text-decoration: line-through; color: var(--muted); margin-right: .2rem; font-size: .85em; }
+.qty-arrow       { color: var(--muted); margin: 0 .2rem; font-size: .8em; }
+.qty-final       { font-weight: 600; }
+tr.qty-adjusted  { background: #fffbeb; }   /* subtle yellow tint on rows with a change */
+
 /* ── Pagination ─────────────────────────────────────────────── */
 .pagination-inner {
   display: flex; align-items: center; justify-content: space-between;

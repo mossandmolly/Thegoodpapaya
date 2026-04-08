@@ -228,10 +228,21 @@
       : '';
 
     const itemRows = inv.items.map(it => {
-      const lineTotal = (it.item_quantity * it.item_price).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-      return `<tr>
+      const req       = Number(it.requested_quantity);
+      const fin       = Number(it.final_quantity);
+      const lineTotal = (fin * it.item_price).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+      const qtyChanged = req !== fin;
+
+      // Show "2 → 1.5" with the requested qty struck-through when quantities differ
+      const qtyHtml = qtyChanged
+        ? `<span class="qty-requested">${req.toLocaleString('en-IN')}</span>`
+          + `<span class="qty-arrow">→</span>`
+          + `<span class="qty-final">${fin.toLocaleString('en-IN')}</span>`
+        : `<span>${fin.toLocaleString('en-IN')}</span>`;
+
+      return `<tr${qtyChanged ? ' class="qty-adjusted"' : ''}>
         <td>${esc(it.item_name)}</td>
-        <td class="text-right num">${Number(it.item_quantity).toLocaleString('en-IN')}</td>
+        <td class="text-right num qty-cell">${qtyHtml}</td>
         <td class="text-right num">₹${Number(it.item_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
         <td class="text-right num">₹${lineTotal}</td>
       </tr>`;
@@ -256,7 +267,7 @@
             <thead>
               <tr>
                 <th>Item</th>
-                <th class="text-right">Qty</th>
+                <th class="text-right">Qty <span class="th-hint">(req → del)</span></th>
                 <th class="text-right">Rate</th>
                 <th class="text-right">Amount</th>
               </tr>

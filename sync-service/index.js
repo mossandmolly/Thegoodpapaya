@@ -123,21 +123,32 @@ async function processInvoice(summary) {
   }
 
   // ── 2. Upsert one row per line item ──────────────────────────
-  const rows = (detail.line_items || []).map(li => ({
-    customer_name:   customerName,
-    phone_number:    phone,
-    invoice_date:    invoiceDate,
-    invoice_number:  invoiceNumber,
-    zoho_invoice_id: zohoInvoiceId,
-    item_name:       li.name || li.item_name,
-    item_quantity:   parseFloat(li.quantity),
-    item_price:      parseFloat(li.rate),
-    invoice_total:   invoiceTotal,
-    payment_link:    paymentLink,
-    payment_link_id: paymentLinkId,
-    payment_status:  detail.status === 'paid' ? 'paid' : 'pending',
-    pdf_url:         pdfUrl,
-  }));
+  const rows = (detail.line_items || []).map(li => {
+    // final_quantity = the billed quantity in the Zoho invoice (li.quantity)
+    // requested_quantity = stored in Zoho as a custom field "cf_requested_quantity";
+    //   falls back to final_quantity if your Zoho template doesn't have that field yet.
+    const finalQty     = parseFloat(li.quantity);
+    const requestedQty = li.custom_fields?.find(
+      cf => cf.api_name === 'cf_requested_quantity'
+    )?.value ?? finalQty;
+
+    return {
+      customer_name:      customerName,
+      phone_number:       phone,
+      invoice_date:       invoiceDate,
+      invoice_number:     invoiceNumber,
+      zoho_invoice_id:    zohoInvoiceId,
+      item_name:          li.name || li.item_name,
+      requested_quantity: parseFloat(requestedQty),
+      final_quantity:     finalQty,
+      item_price:         parseFloat(li.rate),
+      invoice_total:      invoiceTotal,
+      payment_link:       paymentLink,
+      payment_link_id:    paymentLinkId,
+      payment_status:     detail.status === 'paid' ? 'paid' : 'pending',
+      pdf_url:            pdfUrl,
+    };
+  });
 
   if (rows.length === 0) {
     console.warn(`[sync] Invoice ${invoiceNumber} has no line items`);
