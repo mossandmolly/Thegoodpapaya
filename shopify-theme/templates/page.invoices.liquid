@@ -8,61 +8,43 @@
 
 <div id="app">
 
-  {% comment %} ── Initial skeleton (hidden once JS runs) ─────── {% endcomment %}
+  {% comment %} ── Initial skeleton ──────────────────────────────── {% endcomment %}
   <div id="loading-section" style="padding:3rem 0">
     <div class="skeleton" style="width:50%;margin:0 auto 1rem"></div>
     <div class="skeleton" style="width:35%;margin:0 auto"></div>
   </div>
 
-  {% comment %} ── Auth wall ──────────────────────────────────── {% endcomment %}
+  {% comment %} ── Phone entry ───────────────────────────────────── {% endcomment %}
   <div id="auth-section" class="auth-wrap" style="display:none">
     <div class="auth-card card">
-
-      <div id="step-phone">
-        <div class="auth-icon">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-          </svg>
-        </div>
-        <h2>View your invoices</h2>
-        <p>Enter your mobile number to continue</p>
-        <div class="form-group">
-          <label for="phone-input">Mobile number</label>
-          <div class="phone-input-wrap">
-            <span class="phone-prefix">+91</span>
-            <input id="phone-input" type="tel" placeholder="98765 43210" autocomplete="tel" inputmode="numeric">
-          </div>
-        </div>
-        <button class="btn btn-primary" id="send-otp-btn">Send OTP</button>
-        <p class="error-msg" id="phone-error"></p>
+      <div class="auth-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
       </div>
-
-      <div id="step-otp" style="display:none">
-        <h2>Enter OTP</h2>
-        <p id="otp-hint" class="info-msg"></p>
-        <div class="form-group">
-          <label for="otp-input">6-digit code</label>
-          <input id="otp-input" type="text" inputmode="numeric" maxlength="6"
-                 placeholder="• • • • • •" autocomplete="one-time-code" class="otp-input">
+      <h2>View your invoices</h2>
+      <p>Enter your mobile number to see your orders and pay</p>
+      <div class="form-group">
+        <label for="phone-input">Mobile number</label>
+        <div class="phone-input-wrap">
+          <span class="phone-prefix">+91</span>
+          <input id="phone-input" type="tel" placeholder="98765 43210"
+                 autocomplete="tel" inputmode="numeric">
         </div>
-        <button class="btn btn-primary" id="verify-otp-btn">Verify & view invoices</button>
-        <button class="btn btn-ghost btn-sm" id="back-btn" style="margin-top:.75rem;width:100%">
-          ← Change number
-        </button>
-        <p class="error-msg" id="otp-error"></p>
       </div>
-
+      <button class="btn btn-primary" id="view-btn">View my invoices</button>
+      <p class="error-msg" id="phone-error"></p>
     </div>
   </div>
 
-  {% comment %} ── Logged-in invoices view ─────────────────────── {% endcomment %}
+  {% comment %} ── Invoices view ─────────────────────────────────── {% endcomment %}
   <div id="invoices-section" style="display:none">
     <div class="invoices-header">
       <div>
         <h1>Invoices</h1>
         <p class="invoices-sub">Hello, <strong id="welcome-name"></strong></p>
       </div>
-      <button class="btn btn-ghost btn-sm" id="logout-btn">Sign out</button>
+      <button class="btn btn-ghost btn-sm" id="logout-btn">Change number</button>
     </div>
     <div id="invoices-list"></div>
     <div id="pagination"></div>

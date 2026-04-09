@@ -1,11 +1,11 @@
 /**
  * The Good Papaya — Invoices page JS
  *
- * Features:
- *  - Phone + OTP login (Supabase Auth)
- *  - Shows 5 invoices at a time, grouped by invoice number
- *  - "Load more" / "Show previous" navigation
- *  - Razorpay Pay Now + PDF link per invoice
+ * Auth mode: PHONE-ONLY (no OTP) — user enters mobile number, invoices load.
+ * OTP mode:  Commented out below. Re-enable once Twilio DLT is approved:
+ *            1. Uncomment the OTP section in this file
+ *            2. Swap fetchInvoices() to use sb.auth session instead of raw phone
+ *            3. Update the template to show the OTP step div
  */
 
 (function () {
@@ -13,48 +13,44 @@
 
   const PAGE_SIZE = 5;
 
-  // ── Supabase client ──────────────────────────────────────────
+  // ── Supabase client (anon key — safe, RPCs are security definer) ─
   const { createClient } = supabase;
   const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
-  // ── DOM refs ─────────────────────────────────────────────────
+  // ── DOM refs ─────────────────────────────────────────────────────
   const $ = id => document.getElementById(id);
   const authSection     = $('auth-section');
   const invoicesSection = $('invoices-section');
   const loadingSection  = $('loading-section');
-  const stepPhone       = $('step-phone');
-  const stepOtp         = $('step-otp');
   const phoneInput      = $('phone-input');
-  const otpInput        = $('otp-input');
-  const sendOtpBtn      = $('send-otp-btn');
-  const verifyBtn       = $('verify-otp-btn');
-  const backBtn         = $('back-btn');
+  const viewBtn         = $('view-btn');
   const phoneError      = $('phone-error');
-  const otpError        = $('otp-error');
-  const otpHint         = $('otp-hint');
   const invoiceList     = $('invoices-list');
   const logoutBtn       = $('logout-btn');
   const welcomeName     = $('welcome-name');
   const paginationWrap  = $('pagination');
   const toast           = $('toast');
 
-  let pendingPhone    = '';
-  let allInvoices     = [];   // array of grouped invoice objects
-  let currentPage     = 0;   // 0-based page index
+  let allInvoices = [];
+  let currentPage = 0;
+  let activePhone = '';
 
-  // ── Toast ────────────────────────────────────────────────────
+  // ── Toast ─────────────────────────────────────────────────────────
   function showToast(msg, ms = 3500) {
     toast.textContent = msg;
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), ms);
   }
 
-  // ── Init ────────────────────────────────────────────────────
-  async function init() {
-    const { data: { session } } = await sb.auth.getSession();
+  // ── Init ──────────────────────────────────────────────────────────
+  function init() {
     loadingSection.style.display = 'none';
-    if (session) {
-      await showInvoices(session);
+
+    // Restore session from localStorage (so user doesn't re-enter on refresh)
+    const saved = localStorage.getItem('tgp_phone');
+    if (saved) {
+      activePhone = saved;
+      loadInvoices(saved);
     } else {
       authSection.style.display = 'flex';
     }
@@ -65,79 +61,45 @@
     }
   }
 
-  // ── OTP flow ─────────────────────────────────────────────────
-  sendOtpBtn.addEventListener('click', async () => {
+  // ── Phone entry ───────────────────────────────────────────────────
+  viewBtn.addEventListener('click', handlePhoneSubmit);
+  phoneInput.addEventListener('keydown', e => { if (e.key === 'Enter') handlePhoneSubmit(); });
+
+  function handlePhoneSubmit() {
     phoneError.textContent = '';
     const raw   = phoneInput.value.trim();
-    const phone = raw.startsWith('+') ? raw : '+91' + raw.replace(/\D/g, '');
-    if (phone.replace(/\D/g, '').length < 10) {
-      phoneError.textContent = 'Please enter a valid mobile number.';
+    const phone = normalisePhone(raw);
+    if (!phone) {
+      phoneError.textContent = 'Please enter a valid 10-digit mobile number.';
       return;
     }
-    sendOtpBtn.disabled = true;
-    sendOtpBtn.textContent = 'Sending…';
-    const { error } = await sb.auth.signInWithOtp({ phone });
-    sendOtpBtn.disabled = false;
-    sendOtpBtn.textContent = 'Send OTP';
-    if (error) { phoneError.textContent = error.message; return; }
-    pendingPhone = phone;
-    otpHint.textContent = `OTP sent to ${phone}`;
-    stepPhone.style.display = 'none';
-    stepOtp.style.display   = 'block';
-    otpInput.focus();
-  });
-
-  phoneInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendOtpBtn.click(); });
-  otpInput.addEventListener('keydown',   e => { if (e.key === 'Enter') verifyBtn.click();  });
-
-  verifyBtn.addEventListener('click', async () => {
-    otpError.textContent = '';
-    const token = otpInput.value.trim();
-    if (token.length < 6) { otpError.textContent = 'Enter the 6-digit OTP.'; return; }
-    verifyBtn.disabled = true;
-    verifyBtn.textContent = 'Verifying…';
-    const { data, error } = await sb.auth.verifyOtp({ phone: pendingPhone, token, type: 'sms' });
-    verifyBtn.disabled = false;
-    verifyBtn.textContent = 'Verify & Continue';
-    if (error) { otpError.textContent = error.message; return; }
+    activePhone = phone;
+    localStorage.setItem('tgp_phone', phone);
     authSection.style.display = 'none';
-    await showInvoices(data.session);
-  });
+    loadInvoices(phone);
+  }
 
-  backBtn.addEventListener('click', () => {
-    stepOtp.style.display   = 'none';
-    stepPhone.style.display = 'block';
-    otpInput.value = '';
-  });
-
-  logoutBtn.addEventListener('click', async () => {
-    await sb.auth.signOut();
+  // ── Sign out ──────────────────────────────────────────────────────
+  logoutBtn.addEventListener('click', () => {
+    localStorage.removeItem('tgp_phone');
+    activePhone = '';
     allInvoices = [];
     currentPage = 0;
     invoicesSection.style.display = 'none';
-    stepOtp.style.display   = 'none';
-    stepPhone.style.display = 'block';
     phoneInput.value = '';
     authSection.style.display = 'flex';
   });
 
-  // ── Load all rows, group by invoice ──────────────────────────
-  async function showInvoices(session) {
+  // ── Fetch & render ────────────────────────────────────────────────
+  async function loadInvoices(phone) {
     invoicesSection.style.display = 'block';
     invoiceList.innerHTML = skeletonHtml();
     paginationWrap.innerHTML = '';
 
-    const phone = session.user.phone;
-
-    const { data: rows, error } = await sb
-      .from('invoice_line_items')
-      .select('*')
-      .eq('phone_number', phone)
-      .order('invoice_date', { ascending: false })
-      .order('invoice_number', { ascending: false });
+    const { data: rows, error } = await sb.rpc('get_invoices_by_phone', { p_phone: phone });
 
     if (error) {
-      invoiceList.innerHTML = `<p class="error-msg">Failed to load invoices: ${esc(error.message)}</p>`;
+      invoiceList.innerHTML = `<p class="error-msg">Could not load invoices: ${esc(error.message)}</p>`;
       return;
     }
 
@@ -146,17 +108,14 @@
       return;
     }
 
-    // Resolve customer name for greeting
-    if (welcomeName && rows[0].customer_name) {
-      welcomeName.textContent = rows[0].customer_name;
-    }
+    if (welcomeName) welcomeName.textContent = rows[0].customer_name;
 
     allInvoices = groupByInvoice(rows);
     currentPage = 0;
     renderPage();
   }
 
-  // ── Group flat rows → array of invoice objects ───────────────
+  // ── Group flat rows → invoice objects ─────────────────────────────
   function groupByInvoice(rows) {
     const map = new Map();
     for (const row of rows) {
@@ -176,7 +135,7 @@
     return Array.from(map.values());
   }
 
-  // ── Render current page ───────────────────────────────────────
+  // ── Pagination ────────────────────────────────────────────────────
   function renderPage() {
     const start   = currentPage * PAGE_SIZE;
     const end     = start + PAGE_SIZE;
@@ -185,13 +144,10 @@
     const hasPrev = currentPage > 0;
     const hasNext = end < total;
 
-    // Cards
     invoiceList.innerHTML = page.map(renderInvoiceCard).join('');
 
-    // Pagination
     const from = start + 1;
     const to   = Math.min(end, total);
-
     paginationWrap.innerHTML = `
       <div class="pagination-inner">
         <span class="pagination-count">${from}–${to} of ${total} invoice${total !== 1 ? 's' : ''}</span>
@@ -201,15 +157,11 @@
         </div>
       </div>`;
 
-    if (hasPrev) {
-      $('prev-page').addEventListener('click', () => { currentPage--; renderPage(); window.scrollTo(0, 0); });
-    }
-    if (hasNext) {
-      $('next-page').addEventListener('click', () => { currentPage++; renderPage(); window.scrollTo(0, 0); });
-    }
+    if (hasPrev) $('prev-page').addEventListener('click', () => { currentPage--; renderPage(); window.scrollTo(0,0); });
+    if (hasNext) $('next-page').addEventListener('click', () => { currentPage++; renderPage(); window.scrollTo(0,0); });
   }
 
-  // ── Render one invoice card ───────────────────────────────────
+  // ── Invoice card ──────────────────────────────────────────────────
   function renderInvoiceCard(inv) {
     const dateStr  = new Date(inv.invoice_date + 'T00:00:00')
       .toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -228,17 +180,13 @@
       : '';
 
     const itemRows = inv.items.map(it => {
-      const req       = Number(it.requested_quantity);
-      const fin       = Number(it.final_quantity);
-      const lineTotal = (fin * it.item_price).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+      const req        = Number(it.requested_quantity);
+      const fin        = Number(it.final_quantity);
+      const lineTotal  = (fin * it.item_price).toLocaleString('en-IN', { minimumFractionDigits: 2 });
       const qtyChanged = req !== fin;
-
-      // Show "2 → 1.5" with the requested qty struck-through when quantities differ
-      const qtyHtml = qtyChanged
-        ? `<span class="qty-requested">${req.toLocaleString('en-IN')}</span>`
-          + `<span class="qty-arrow">→</span>`
-          + `<span class="qty-final">${fin.toLocaleString('en-IN')}</span>`
-        : `<span>${fin.toLocaleString('en-IN')}</span>`;
+      const qtyHtml    = qtyChanged
+        ? `<span class="qty-requested">${req.toLocaleString('en-IN')}</span><span class="qty-arrow">→</span><span class="qty-final">${fin.toLocaleString('en-IN')}</span>`
+        : fin.toLocaleString('en-IN');
 
       return `<tr${qtyChanged ? ' class="qty-adjusted"' : ''}>
         <td>${esc(it.item_name)}</td>
@@ -282,7 +230,16 @@
       </div>`;
   }
 
-  // ── Helpers ──────────────────────────────────────────────────
+  // ── Utilities ─────────────────────────────────────────────────────
+  function normalisePhone(raw) {
+    // Accept: 9876543210 / +919876543210 / 919876543210
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length === 10) return '+91' + digits;
+    if (digits.length === 12 && digits.startsWith('91')) return '+' + digits;
+    if (digits.length === 13 && raw.startsWith('+91')) return raw.trim();
+    return null; // invalid
+  }
+
   function esc(str) {
     return String(str ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -304,10 +261,34 @@
         <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
           <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
         </svg>
-        <p>No invoices found for your number.</p>
+        <p>No invoices found for this number.</p>
         <p style="font-size:.8rem;margin-top:.25rem">Orders placed on WhatsApp will appear here once invoiced.</p>
+        <button class="btn btn-outline btn-sm" style="margin-top:1rem" onclick="localStorage.removeItem('tgp_phone');location.reload()">Try a different number</button>
       </div>`;
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // OTP flow — DISABLED until DLT approved
+  // To re-enable:
+  //   1. Uncomment this entire block
+  //   2. In handlePhoneSubmit(), replace localStorage save + loadInvoices()
+  //      with: sendOtp(phone)
+  //   3. In loadInvoices(), replace rpc call with session-based query
+  //   4. Add OTP step HTML back to page.invoices.liquid
+  // -----------------------------------------------------------------
+  /*
+  async function sendOtp(phone) {
+    const { error } = await sb.auth.signInWithOtp({ phone });
+    if (error) { phoneError.textContent = error.message; return; }
+    // show OTP input step ...
+  }
+
+  async function verifyOtp(phone, token) {
+    const { data, error } = await sb.auth.verifyOtp({ phone, token, type: 'sms' });
+    if (error) { otpError.textContent = error.message; return; }
+    loadInvoices(phone);
+  }
+  */
 
   init();
 })();
