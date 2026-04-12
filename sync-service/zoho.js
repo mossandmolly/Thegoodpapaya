@@ -106,4 +106,43 @@ async function fetchInvoicePdfUrl(zohoInvoiceId) {
   }
 }
 
-module.exports = { fetchModifiedInvoices, fetchInvoiceDetail, fetchInvoicePdfUrl };
+/**
+ * Fetch a contact's phone number from Zoho Books.
+ * Returns E.164 string (+91XXXXXXXXXX) or null.
+ */
+async function fetchContactPhone(zohoContactId) {
+  if (!zohoContactId) return null;
+  const token = await getAccessToken();
+  try {
+    const res = await axios.get(
+      `${process.env.ZOHO_BASE_URL}/contacts/${zohoContactId}`,
+      { headers: authHeaders(token) }
+    );
+    const c = res.data.contact;
+
+    // Prefer mobile over landline; check contact_persons array too
+    const raw =
+      c?.mobile ||
+      c?.phone  ||
+      c?.contact_persons?.[0]?.mobile ||
+      c?.contact_persons?.[0]?.phone  ||
+      null;
+
+    return raw ? normalisePhone(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Normalise any Indian phone number to E.164 (+91XXXXXXXXXX).
+ */
+function normalisePhone(raw) {
+  const digits = String(raw).replace(/\D/g, '');
+  if (digits.length === 10)                          return '+91' + digits;
+  if (digits.length === 12 && digits.startsWith('91')) return '+' + digits;
+  if (digits.length === 11 && digits.startsWith('0')) return '+91' + digits.slice(1);
+  return null; // unrecognised format — caller handles null
+}
+
+module.exports = { fetchModifiedInvoices, fetchInvoiceDetail, fetchInvoicePdfUrl, fetchContactPhone };

@@ -27,16 +27,36 @@ function sinceTimestamp() {
 }
 
 /**
- * Look up customer phone from our customers table.
- * Falls back to a default if not found (you'd fix the data in that case).
+ * Resolve customer phone number:
+ *   1. Try Zoho contact record (most up-to-date)
+ *   2. Fall back to Supabase customers table (manually seeded)
+ * Also upserts the customers table so it stays in sync automatically.
  */
-async function resolvePhone(customerName) {
-  const { data } = await db
+async function resolveAndSyncCustomer(customerName, zohoContactId) {
+  // 1. Try Zoho first
+  let phone = await zoho.fetchContactPhone(zohoContactId);
+
+  // 2. Fall back to Supabase if Zoho had no phone
+  if (!phone) {
+    const { data } = await db
+      .from('customers')
+      .select('phone_number')
+      .eq('customer_name', customerName)
+      .single();
+    phone = data?.phone_number ?? null;
+  }
+
+  if (!phone) return null;
+
+  // 3. Keep customers table in sync (upsert by customer_name)
+  await db
     .from('customers')
-    .select('phone_number')
-    .eq('customer_name', customerName)
-    .single();
-  return data?.phone_number ?? null;
+    .upsert(
+      { customer_name: customerName, phone_number: phone },
+      { onConflict: 'customer_name' }
+    );
+
+  return phone;
 }
 
 /**
@@ -86,7 +106,8 @@ async function processInvoice(summary) {
   const detail = await zoho.fetchInvoiceDetail(summary.invoice_id);
 
   const customerName  = detail.customer_name;
-  const phone         = await resolvePhone(customerName);
+  const zohoContactId = detail.customer_id;   // Zoho's internal contact/customer ID
+  const phone         = await resolveAndSyncCustomer(customerName, zohoContactId);
   const invoiceDate   = detail.date;          // "YYYY-MM-DD"
   const invoiceNumber = detail.invoice_number;
   const zohoInvoiceId = detail.invoice_id;
