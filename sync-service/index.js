@@ -27,36 +27,44 @@ function sinceTimestamp() {
 }
 
 /**
- * Resolve customer phone number:
- *   1. Try Zoho contact record (most up-to-date)
- *   2. Fall back to Supabase customers table (manually seeded)
- * Also upserts the customers table so it stays in sync automatically.
+ * Resolve and sync customer phones:
+ *   1. Upsert the customer into the customers table
+ *   2. Fetch all phones from Zoho (mobile + landline + contact persons)
+ *   3. Upsert every phone into customer_phones table
+ *   4. Return the primary phone (mobile first) for use on the invoice row
+ *   5. Fall back to existing customer_phones if Zoho has none
  */
 async function resolveAndSyncCustomer(customerName, zohoContactId) {
-  // 1. Try Zoho first
-  let phone = await zoho.fetchContactPhone(zohoContactId);
-
-  // 2. Fall back to Supabase if Zoho had no phone
-  if (!phone) {
-    const { data } = await db
-      .from('customers')
-      .select('phone_number')
-      .eq('customer_name', customerName)
-      .single();
-    phone = data?.phone_number ?? null;
-  }
-
-  if (!phone) return null;
-
-  // 3. Keep customers table in sync (upsert by customer_name)
+  // 1. Ensure customer exists
   await db
     .from('customers')
-    .upsert(
-      { customer_name: customerName, phone_number: phone },
-      { onConflict: 'customer_name' }
-    );
+    .upsert({ customer_name: customerName }, { onConflict: 'customer_name' });
 
-  return phone;
+  // 2. Get all phones from Zoho
+  const zohoPhones = await zoho.fetchContactPhones(zohoContactId);
+
+  // 3. Upsert all into customer_phones
+  if (zohoPhones.length > 0) {
+    await db
+      .from('customer_phones')
+      .upsert(
+        zohoPhones.map(p => ({ customer_name: customerName, phone_number: p.phone, label: p.label })),
+        { onConflict: 'customer_name,phone_number' }
+      );
+  }
+
+  // 4. Primary phone = first Zoho phone, else first in DB
+  if (zohoPhones.length > 0) return zohoPhones[0].phone;
+
+  // 5. Fallback to whatever is already in customer_phones
+  const { data } = await db
+    .from('customer_phones')
+    .select('phone_number')
+    .eq('customer_name', customerName)
+    .limit(1)
+    .single();
+
+  return data?.phone_number ?? null;
 }
 
 /**

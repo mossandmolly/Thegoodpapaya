@@ -107,11 +107,12 @@ async function fetchInvoicePdfUrl(zohoInvoiceId) {
 }
 
 /**
- * Fetch a contact's phone number from Zoho Books.
- * Returns E.164 string (+91XXXXXXXXXX) or null.
+ * Fetch ALL phone numbers for a Zoho contact.
+ * Returns array of { phone, label } objects in E.164 format.
+ * Pulls: contact.mobile, contact.phone, and each contact_person's mobile/phone.
  */
-async function fetchContactPhone(zohoContactId) {
-  if (!zohoContactId) return null;
+async function fetchContactPhones(zohoContactId) {
+  if (!zohoContactId) return [];
   const token = await getAccessToken();
   try {
     const res = await axios.get(
@@ -119,18 +120,35 @@ async function fetchContactPhone(zohoContactId) {
       { headers: authHeaders(token) }
     );
     const c = res.data.contact;
+    const results = [];
 
-    // Prefer mobile over landline; check contact_persons array too
-    const raw =
-      c?.mobile ||
-      c?.phone  ||
-      c?.contact_persons?.[0]?.mobile ||
-      c?.contact_persons?.[0]?.phone  ||
-      null;
+    const add = (raw, label) => {
+      const normalised = normalisePhone(raw);
+      if (normalised) results.push({ phone: normalised, label });
+    };
 
-    return raw ? normalisePhone(raw) : null;
+    // Primary contact fields
+    add(c?.mobile, 'mobile');
+    add(c?.phone,  'landline');
+
+    // Contact persons (spouse, etc.)
+    for (const person of c?.contact_persons || []) {
+      const personLabel = person.first_name || person.last_name
+        ? `${person.first_name || ''} ${person.last_name || ''}`.trim()
+        : 'contact';
+      add(person.mobile, personLabel);
+      add(person.phone,  personLabel);
+    }
+
+    // Deduplicate by phone number
+    const seen = new Set();
+    return results.filter(r => {
+      if (seen.has(r.phone)) return false;
+      seen.add(r.phone);
+      return true;
+    });
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -138,11 +156,12 @@ async function fetchContactPhone(zohoContactId) {
  * Normalise any Indian phone number to E.164 (+91XXXXXXXXXX).
  */
 function normalisePhone(raw) {
+  if (!raw) return null;
   const digits = String(raw).replace(/\D/g, '');
-  if (digits.length === 10)                          return '+91' + digits;
+  if (digits.length === 10)                            return '+91' + digits;
   if (digits.length === 12 && digits.startsWith('91')) return '+' + digits;
-  if (digits.length === 11 && digits.startsWith('0')) return '+91' + digits.slice(1);
-  return null; // unrecognised format — caller handles null
+  if (digits.length === 11 && digits.startsWith('0'))  return '+91' + digits.slice(1);
+  return null;
 }
 
-module.exports = { fetchModifiedInvoices, fetchInvoiceDetail, fetchInvoicePdfUrl, fetchContactPhone };
+module.exports = { fetchModifiedInvoices, fetchInvoiceDetail, fetchInvoicePdfUrl, fetchContactPhones };
