@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page_title }} — {{ shop.name }}</title>
+  <meta name="description" content="{{ page_description | escape }}">
+  <link rel="canonical" href="{{ canonical_url }}">
+
+  {{ content_for_header }}
+
+  <!-- Supabase JS (loaded from CDN; swap to self-hosted if preferred) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  {{ 'base.css' | asset_url | stylesheet_tag }}
+</head>
+<body>
+
+  <header class="site-header">
+    <a href="/" class="site-logo">{{ shop.name }}</a>
+    <nav class="site-nav">
+      <a href="/pages/invoices">My Invoices</a>
+    </nav>
+  </header>
+
+  <main class="site-main">
+    {{ content_for_layout }}
+  </main>
+
+  <footer class="site-footer">
+    <p>&copy; {{ 'now' | date: '%Y' }} {{ shop.name }}</p>
+  </footer>
+
+</body>
+</html>
