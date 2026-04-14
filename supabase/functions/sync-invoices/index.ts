@@ -1,7 +1,15 @@
 // Supabase Edge Function — Zoho Inventory → Supabase invoice sync
 // Modes:
-//   POST /sync-invoices          → 5-min sync (recent modifications + today's deletions)
-//   POST /sync-invoices?mode=reconcile → daily noon run (D-1 and earlier)
+//   POST /sync-invoices                    → 5-min sync (today's invoices + deletion check)
+//   POST /sync-invoices?mode=reconcile     → daily noon run (D-1 to D-7)
+//
+// Changelog:
+//   2026-04-14  Use invoice_date_start/end filter (last_modified_time not supported by Zoho Inventory)
+//   2026-04-14  Daily reconciliation checks last 7 days (not 60)
+//   2026-04-14  Razorpay link uses outstanding balance, recreated when balance changes
+//   2026-04-14  Void invoices removed from Supabase + Razorpay link cancelled
+//   2026-04-14  Tracks balance and amount_paid per invoice
+//   2026-04-14  Zero external imports — uses Supabase REST API directly via fetch
 
 // ── Supabase REST helpers ─────────────────────────────────────
 function env(key: string, fallback = '') {
@@ -93,7 +101,8 @@ async function fetchModifiedInvoices(since: string): Promise<any[]> {
   let page = 1;
   const invoices: any[] = [];
   while (true) {
-    const url = withOrg(`${zohoBase()}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`);
+    const today = new Date().toISOString().substring(0, 10);
+  const url = withOrg(`${zohoBase()}/invoices?invoice_date_start=${today}&invoice_date_end=${today}&page=${page}&per_page=200`);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const raw  = await res.text();
     console.log('[debug] invoices response:', raw.substring(0, 500));
@@ -120,7 +129,7 @@ async function fetchZohoInvoiceIds(dateStart: string, dateEnd: string): Promise<
   let page = 1;
   const ids = new Set<string>();
   while (true) {
-    const url = withOrg(`${zohoBase()}/invoices?date_start=${dateStart}&date_end=${dateEnd}&page=${page}&per_page=200`);
+    const url = withOrg(`${zohoBase()}/invoices?invoice_date_start=${dateStart}&invoice_date_end=${dateEnd}&page=${page}&per_page=200`);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const data = await res.json();
     if (!data.invoices?.length) break;
