@@ -317,6 +317,9 @@ async function processInvoice(summary: any) {
 
   if (rows.length === 0) { console.warn(`[sync] No line items for ${invoiceNumber}`); return; }
 
+  // Delete existing line items for this invoice then insert fresh set
+  // (handles removed line items — upsert alone won't delete orphaned rows)
+  await sbDeleteWhere('invoice_line_items', `zoho_invoice_id=eq.${encodeURIComponent(zohoInvoiceId)}`);
   await sbUpsert('invoice_line_items', rows, 'zoho_invoice_id,item_name');
   console.log(`[sync] Upserted ${rows.length} row(s) for ${invoiceNumber} (${paymentStatus}, balance ₹${invoiceBalance})`);
 }
