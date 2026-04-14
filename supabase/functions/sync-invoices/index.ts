@@ -98,14 +98,14 @@ function zohoBase() {
 // ── Zoho API ──────────────────────────────────────────────────
 async function fetchModifiedInvoices(since: string): Promise<any[]> {
   const token = await getZohoToken();
+  const istDate = new Date(Date.now() + 330 * 60 * 1000).toISOString().substring(0, 10);
   let page = 1;
   const invoices: any[] = [];
   while (true) {
-    const istDate = new Date(Date.now() + 330 * 60 * 1000).toISOString().substring(0, 10); // today in IST
-  const url = withOrg(`${zohoBase()}/invoices?invoice_date_start=${istDate}&invoice_date_end=${istDate}&page=${page}&per_page=200`);
+    const url = withOrg(`${zohoBase()}/invoices?date_start=${istDate}&date_end=${istDate}&page=${page}&per_page=200`);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const raw  = await res.text();
-    console.log('[debug] invoices response:', raw.substring(0, 500));
+    console.log('[debug] invoices response:', raw.substring(0, 300));
     let data: any;
     try { data = JSON.parse(raw); } catch { throw new Error(`Zoho invoices non-JSON (${res.status}): ${raw.substring(0, 200)}`); }
     if (!data.invoices?.length) break;
