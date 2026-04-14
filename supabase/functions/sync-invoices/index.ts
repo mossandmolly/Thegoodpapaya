@@ -93,7 +93,8 @@ async function fetchModifiedInvoices(since: string): Promise<any[]> {
   let page = 1;
   const invoices: any[] = [];
   while (true) {
-    const url = withOrg(`${zohoBase()}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`);
+    const url = withOrg(`${zohoBase()}/invoices?last_modified_time=${since}&page=${page}&per_page=200`);
+    console.log('[debug] since:', since);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const raw  = await res.text();
     console.log('[debug] invoices response:', raw.substring(0, 500));
@@ -334,7 +335,7 @@ async function reconcileTodayDeletions() {
 // ── 5-minute sync job ─────────────────────────────────────────
 async function syncInvoices() {
   const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
-  const since = new Date(Date.now() - lookback * 60 * 1000).toISOString().substring(0, 10);
+  const since = new Date(Date.now() - lookback * 60 * 1000).toISOString().substring(0, 19);
 
   console.log(`[sync] Fetching invoices modified since ${since}`);
   const summaries = await fetchModifiedInvoices(since);
