@@ -101,8 +101,8 @@ async function fetchModifiedInvoices(since: string): Promise<any[]> {
   let page = 1;
   const invoices: any[] = [];
   while (true) {
-    const today = new Date().toISOString().substring(0, 10);
-  const url = withOrg(`${zohoBase()}/invoices?invoice_date_start=${today}&invoice_date_end=${today}&page=${page}&per_page=200`);
+    const istDate = new Date(Date.now() + 330 * 60 * 1000).toISOString().substring(0, 10); // today in IST
+  const url = withOrg(`${zohoBase()}/invoices?invoice_date_start=${istDate}&invoice_date_end=${istDate}&page=${page}&per_page=200`);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const raw  = await res.text();
     console.log('[debug] invoices response:', raw.substring(0, 500));
