@@ -93,7 +93,7 @@ async function fetchModifiedInvoices(since: string): Promise<any[]> {
   let page = 1;
   const invoices: any[] = [];
   while (true) {
-    const url = withOrg(`${zohoBase()}/invoices?last_modified_time=${since}&page=${page}&per_page=200`);
+    const url = withOrg(`${zohoBase()}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const raw  = await res.text();
     console.log('[debug] invoices response:', raw.substring(0, 500));
@@ -334,9 +334,8 @@ async function reconcileTodayDeletions() {
 // ── 5-minute sync job ─────────────────────────────────────────
 async function syncInvoices() {
   const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
-  // Use today's date — Zoho Inventory's last_modified_time with time component
-  // is unreliable; fetching today's invoices every 5 min is safe (upsert handles duplicates)
-  const since = new Date().toISOString().substring(0, 10); // YYYY-MM-DD
+  const since = new Date(Date.now() - lookback * 60 * 1000)
+    .toISOString().replace('T', ' ').substring(0, 19); // YYYY-MM-DD HH:MM:SS
 
   console.log(`[sync] Fetching invoices modified since ${since}`);
   const summaries = await fetchModifiedInvoices(since);
