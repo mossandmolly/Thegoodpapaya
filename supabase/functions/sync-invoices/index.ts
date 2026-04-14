@@ -1,20 +1,43 @@
 // Supabase Edge Function — Zoho → Supabase invoice sync
-// Deployed via: Supabase Dashboard → Edge Functions → New Function
-// Scheduled via: Supabase Dashboard → Database → Extensions → pg_cron (see bottom of this file)
+// No external imports — uses Supabase REST API directly via fetch
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
-
-// ── Config from environment ───────────────────────────────────
-function env(key: string, fallback?: string): string {
-  return Deno.env.get(key) ?? fallback ?? '';
+function env(key: string, fallback = '') {
+  return Deno.env.get(key) ?? fallback;
 }
 
-function getDb() {
-  return createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+// ── Supabase REST helpers ─────────────────────────────────────
+function sbHeaders() {
+  const key = env('SUPABASE_SERVICE_ROLE_KEY');
+  return {
+    'Authorization': `Bearer ${key}`,
+    'apikey': key,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function sbUpsert(table: string, rows: any[], onConflict: string) {
+  const url = `${env('SUPABASE_URL')}/rest/v1/${table}?on_conflict=${encodeURIComponent(onConflict)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { ...sbHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(Array.isArray(rows) ? rows : [rows]),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Supabase upsert ${table} failed: ${text}`);
+  }
+}
+
+async function sbSelectOne(table: string, filter: string): Promise<any> {
+  const url = `${env('SUPABASE_URL')}/rest/v1/${table}?${filter}&limit=1`;
+  const res = await fetch(url, { headers: { ...sbHeaders(), 'Prefer': 'return=representation' } });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return Array.isArray(data) ? (data[0] ?? null) : null;
 }
 
 // ── Zoho OAuth ────────────────────────────────────────────────
-let cachedToken: string | null = null;
+let cachedToken = '';
 let tokenExpiry = 0;
 
 async function getZohoToken(): Promise<string> {
@@ -64,8 +87,8 @@ async function fetchModifiedInvoices(since: string) {
 async function fetchInvoiceDetail(invoiceId: string) {
   const token = await getZohoToken();
   const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/books/v3');
-  const res   = await fetch(`${base}/invoices/${invoiceId}`, { headers: zohoHeaders(token) });
-  const data  = await res.json();
+  const res = await fetch(`${base}/invoices/${invoiceId}`, { headers: zohoHeaders(token) });
+  const data = await res.json();
   return data.invoice;
 }
 
@@ -78,21 +101,17 @@ async function fetchContactPhones(contactId: string): Promise<{ phone: string; l
     const data = await res.json();
     const c    = data.contact;
     const results: { phone: string; label: string }[] = [];
-
     const add = (raw: string, label: string) => {
       const n = normalisePhone(raw);
       if (n) results.push({ phone: n, label });
     };
-
     add(c?.mobile, 'mobile');
-    add(c?.phone,  'landline');
+    add(c?.phone, 'landline');
     for (const p of c?.contact_persons ?? []) {
       const label = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'contact';
       add(p.mobile, label);
-      add(p.phone,  label);
+      add(p.phone, label);
     }
-
-    // deduplicate
     const seen = new Set<string>();
     return results.filter(r => { if (seen.has(r.phone)) return false; seen.add(r.phone); return true; });
   } catch { return []; }
@@ -101,27 +120,26 @@ async function fetchContactPhones(contactId: string): Promise<{ phone: string; l
 function normalisePhone(raw: string): string | null {
   if (!raw) return null;
   const d = raw.replace(/\D/g, '');
-  if (d.length === 10)                        return '+91' + d;
-  if (d.length === 12 && d.startsWith('91'))  return '+' + d;
-  if (d.length === 11 && d.startsWith('0'))   return '+91' + d.slice(1);
+  if (d.length === 10)                         return '+91' + d;
+  if (d.length === 12 && d.startsWith('91'))   return '+' + d;
+  if (d.length === 11 && d.startsWith('0'))    return '+91' + d.slice(1);
   return null;
 }
 
 // ── Razorpay ──────────────────────────────────────────────────
 async function createPaymentLink(invoiceNumber: string, customerName: string, phone: string, amountInPaise: number) {
   const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
-  const res  = await fetch('https://api.razorpay.com/v1/payment_links', {
-    method:  'POST',
+  const res = await fetch('https://api.razorpay.com/v1/payment_links', {
+    method: 'POST',
     headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      amount:          amountInPaise,
-      currency:        'INR',
-      description:     `Payment for ${invoiceNumber} — The Good Papaya`,
-      customer:        { name: customerName, contact: phone.replace('+', '') },
-      notify:          { sms: true, email: false },
+      amount: amountInPaise, currency: 'INR',
+      description: `Payment for ${invoiceNumber} - The Good Papaya`,
+      customer: { name: customerName, contact: phone.replace('+', '') },
+      notify: { sms: true, email: false },
       reminder_enable: true,
-      notes:           { invoice_number: invoiceNumber },
-      callback_url:    'https://thegoodpapaya.com/pages/invoices?payment=success',
+      notes: { invoice_number: invoiceNumber },
+      callback_url: 'https://thegoodpapaya.com/pages/invoices?payment=success',
       callback_method: 'get',
     }),
   });
@@ -129,29 +147,10 @@ async function createPaymentLink(invoiceNumber: string, customerName: string, ph
   return { id: data.id, short_url: data.short_url };
 }
 
-// ── Customer sync ─────────────────────────────────────────────
-async function resolveAndSyncCustomer(customerName: string, zohoContactId: string): Promise<string | null> {
-  const db = getDb();
-  await db.from('customers').upsert({ customer_name: customerName }, { onConflict: 'customer_name' });
-
-  const phones = await fetchContactPhones(zohoContactId);
-  if (phones.length > 0) {
-    await db.from('customer_phones').upsert(
-      phones.map(p => ({ customer_name: customerName, phone_number: p.phone, label: p.label })),
-      { onConflict: 'customer_name,phone_number' }
-    );
-    return phones[0].phone;
-  }
-
-  const { data } = await db.from('customer_phones').select('phone_number').eq('customer_name', customerName).limit(1).single();
-  return data?.phone_number ?? null;
-}
-
 // ── Main sync logic ───────────────────────────────────────────
 async function syncInvoices() {
-  const db = getDb();
-  const LOOKBACK_MINUTES = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
-  const since = new Date(Date.now() - LOOKBACK_MINUTES * 60 * 1000)
+  const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
+  const since = new Date(Date.now() - lookback * 60 * 1000)
     .toISOString().replace('T', ' ').substring(0, 19);
 
   console.log(`[sync] Fetching invoices modified since ${since}`);
@@ -160,28 +159,40 @@ async function syncInvoices() {
 
   for (const summary of summaries) {
     try {
-      const detail         = await fetchInvoiceDetail(summary.invoice_id);
-      const customerName   = detail.customer_name;
-      const zohoContactId  = detail.customer_id;
-      const phone          = await resolveAndSyncCustomer(customerName, zohoContactId);
+      const detail        = await fetchInvoiceDetail(summary.invoice_id);
+      const customerName  = detail.customer_name;
+      const zohoContactId = detail.customer_id;
+
+      // Sync customer
+      await sbUpsert('customers', [{ customer_name: customerName }], 'customer_name');
+
+      // Sync phones
+      const phones = await fetchContactPhones(zohoContactId);
+      let phone: string | null = null;
+      if (phones.length > 0) {
+        await sbUpsert('customer_phones',
+          phones.map(p => ({ customer_name: customerName, phone_number: p.phone, label: p.label })),
+          'customer_name,phone_number'
+        );
+        phone = phones[0].phone;
+      } else {
+        const row = await sbSelectOne('customer_phones', `customer_name=eq.${encodeURIComponent(customerName)}&select=phone_number`);
+        phone = row?.phone_number ?? null;
+      }
 
       if (!phone) { console.warn(`[sync] No phone for "${customerName}" — skipping`); continue; }
 
-      const invoiceDate    = detail.date;
-      const invoiceNumber  = detail.invoice_number;
-      const zohoInvoiceId  = detail.invoice_id;
-      const invoiceTotal   = parseFloat(detail.total);
+      const invoiceDate   = detail.date;
+      const invoiceNumber = detail.invoice_number;
+      const zohoInvoiceId = detail.invoice_id;
+      const invoiceTotal  = parseFloat(detail.total);
 
       // Get or create Razorpay link
-      let paymentLink: string | null   = null;
+      let paymentLink: string | null = null;
       let paymentLinkId: string | null = null;
-
-      const { data: existing } = await db
-        .from('invoice_line_items')
-        .select('payment_link, payment_link_id')
-        .eq('zoho_invoice_id', zohoInvoiceId)
-        .not('payment_link', 'is', null)
-        .limit(1).single();
+      const existing = await sbSelectOne('invoice_line_items',
+        `zoho_invoice_id=eq.${zohoInvoiceId}&payment_link=not.is.null&select=payment_link,payment_link_id`
+      );
 
       if (existing) {
         paymentLink   = existing.payment_link;
@@ -219,8 +230,7 @@ async function syncInvoices() {
 
       if (rows.length === 0) { console.warn(`[sync] No line items for ${invoiceNumber}`); continue; }
 
-      const { error } = await db.from('invoice_line_items').upsert(rows, { onConflict: 'zoho_invoice_id,item_name' });
-      if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
+      await sbUpsert('invoice_line_items', rows, 'zoho_invoice_id,item_name');
       console.log(`[sync] Upserted ${rows.length} row(s) for ${invoiceNumber}`);
 
     } catch (e: any) {
@@ -238,20 +248,6 @@ Deno.serve(async () => {
     return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
   } catch (e: any) {
     console.error('[sync] Fatal:', e.message);
-    return new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500 });
+    return new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 });
-
-// ── Schedule with pg_cron ─────────────────────────────────────
-// Run this ONCE in Supabase SQL Editor after deploying the function:
-//
-// select cron.schedule(
-//   'sync-invoices-every-5-min',
-//   '*/5 * * * *',
-//   $$
-//     select net.http_post(
-//       url := 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/sync-invoices',
-//       headers := '{"Authorization": "Bearer YOUR_ANON_KEY"}'::jsonb
-//     );
-//   $$
-// );
