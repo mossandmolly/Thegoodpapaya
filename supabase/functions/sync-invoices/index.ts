@@ -52,7 +52,11 @@ async function getZohoToken(): Promise<string> {
       grant_type:    'refresh_token',
     }),
   });
-  const data = await res.json();
+  const rawText = await res.text();
+  console.log('[debug] Zoho token status:', res.status);
+  console.log('[debug] Zoho token response:', rawText.substring(0, 300));
+  let data: any;
+  try { data = JSON.parse(rawText); } catch { throw new Error(`Zoho returned non-JSON: ${rawText.substring(0, 200)}`); }
   if (!data.access_token) throw new Error(`Zoho token failed: ${JSON.stringify(data)}`);
   cachedToken = data.access_token;
   tokenExpiry = Date.now() + data.expires_in * 1000;
