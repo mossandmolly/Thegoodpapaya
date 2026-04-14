@@ -354,19 +354,19 @@ async function syncInvoices() {
 // ── Daily reconciliation (D-1 and earlier, runs at noon) ──────
 async function reconcileOldInvoices() {
   const today     = new Date().toISOString().substring(0, 10);
-  const since60   = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+  const since7   = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
   // yesterday (D-1)
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
 
-  console.log(`[reconcile] Checking D-1 and earlier (${since60} to ${yesterday})`);
+  console.log(`[reconcile] Checking D-1 and earlier (${since7} to ${yesterday})`);
 
-  // 1. Fetch all Zoho invoice IDs from last 60 days (excluding today)
-  const zohoIds = await fetchZohoInvoiceIds(since60, yesterday);
+  // 1. Fetch all Zoho invoice IDs from last 7 days (excluding today)
+  const zohoIds = await fetchZohoInvoiceIds(since7, yesterday);
   console.log(`[reconcile] ${zohoIds.size} active Zoho invoice(s) found`);
 
   // 2. Fetch all Supabase invoice IDs for same period (excluding today)
   const sbRows = await sbSelectMany('invoice_line_items',
-    `invoice_date=lt.${today}&invoice_date=gte.${since60}&select=zoho_invoice_id,invoice_number`
+    `invoice_date=lt.${today}&invoice_date=gte.${since7}&select=zoho_invoice_id,invoice_number`
   );
   const sbInvoices = new Map<string, string>();
   for (const r of sbRows) sbInvoices.set(r.zoho_invoice_id, r.invoice_number);
