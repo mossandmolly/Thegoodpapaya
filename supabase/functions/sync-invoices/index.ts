@@ -161,6 +161,14 @@ async function createPaymentLink(invoiceNumber: string, customerName: string, ph
   return { id: data.id, short_url: data.short_url };
 }
 
+async function cancelPaymentLink(linkId: string) {
+  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
+  await fetch(`https://api.razorpay.com/v1/payment_links/${linkId}/cancel`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}` },
+  });
+}
+
 // ── Main sync logic ───────────────────────────────────────────
 async function syncInvoices() {
   const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
@@ -201,23 +209,36 @@ async function syncInvoices() {
       const zohoInvoiceId = detail.invoice_id;
       const invoiceTotal  = parseFloat(detail.total);
 
-      // Get or create Razorpay link
+      // Get or create Razorpay link — recreate if invoice total changed
       let paymentLink: string | null = null;
       let paymentLinkId: string | null = null;
       const existing = await sbSelectOne('invoice_line_items',
-        `zoho_invoice_id=eq.${zohoInvoiceId}&payment_link=not.is.null&select=payment_link,payment_link_id`
+        `zoho_invoice_id=eq.${zohoInvoiceId}&payment_link=not.is.null&select=payment_link,payment_link_id,invoice_total`
       );
 
-      if (existing) {
+      const totalChanged = existing && parseFloat(existing.invoice_total) !== invoiceTotal;
+
+      if (existing && !totalChanged) {
+        // Reuse existing link — amount unchanged
         paymentLink   = existing.payment_link;
         paymentLinkId = existing.payment_link_id;
-      } else if (detail.status !== 'paid' && invoiceTotal > 0) {
-        try {
-          const rpl = await createPaymentLink(invoiceNumber, customerName, phone, Math.round(invoiceTotal * 100));
-          paymentLink   = rpl.short_url;
-          paymentLinkId = rpl.id;
-          console.log(`[sync] Razorpay link created for ${invoiceNumber}: ${paymentLink}`);
-        } catch (e: any) { console.error(`[sync] Razorpay failed for ${invoiceNumber}:`, e.message); }
+      } else {
+        // Cancel old link if amount changed
+        if (existing?.payment_link_id && totalChanged) {
+          try {
+            await cancelPaymentLink(existing.payment_link_id);
+            console.log(`[sync] Cancelled old Razorpay link for ${invoiceNumber} (amount changed)`);
+          } catch (e: any) { console.error(`[sync] Cancel failed for ${invoiceNumber}:`, e.message); }
+        }
+        // Create new link if unpaid and amount > 0
+        if (detail.status !== 'paid' && invoiceTotal > 0) {
+          try {
+            const rpl = await createPaymentLink(invoiceNumber, customerName, phone, Math.round(invoiceTotal * 100));
+            paymentLink   = rpl.short_url;
+            paymentLinkId = rpl.id;
+            console.log(`[sync] Razorpay link ${totalChanged ? 'recreated' : 'created'} for ${invoiceNumber}: ${paymentLink}`);
+          } catch (e: any) { console.error(`[sync] Razorpay failed for ${invoiceNumber}:`, e.message); }
+        }
       }
 
       // Upsert line items
