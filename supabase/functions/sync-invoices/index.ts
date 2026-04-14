@@ -333,7 +333,7 @@ async function reconcileTodayDeletions() {
 // ── 5-minute sync job ─────────────────────────────────────────
 async function syncInvoices() {
   const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
-  const since = new Date(Date.now() - lookback * 60 * 1000).toISOString().substring(0, 19);
+  const since = new Date(Date.now() - lookback * 60 * 1000).toISOString().replace('Z', '+05:30');
 
   console.log(`[sync] Fetching invoices modified since ${since}`);
   const summaries = await fetchModifiedInvoices(since);
