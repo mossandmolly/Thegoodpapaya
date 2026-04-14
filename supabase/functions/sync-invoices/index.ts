@@ -66,8 +66,12 @@ async function getZohoToken(): Promise<string> {
 function zohoHeaders(token: string) {
   return {
     Authorization: `Zoho-oauthtoken ${token}`,
-    'X-com-zoho-books-organizationid': env('ZOHO_ORGANIZATION_ID'),
   };
+}
+
+function withOrg(url: string): string {
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}organization_id=${env('ZOHO_ORGANIZATION_ID')}`;
 }
 
 // ── Zoho API calls ────────────────────────────────────────────
@@ -79,7 +83,7 @@ async function fetchModifiedInvoices(since: string) {
   let page = 1;
   const invoices: any[] = [];
   while (true) {
-    const url = `${base}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`;
+    const url = withOrg(`${base}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`);
     console.log('[debug] Fetching:', url);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const rawText = await res.text();
@@ -97,7 +101,7 @@ async function fetchModifiedInvoices(since: string) {
 async function fetchInvoiceDetail(invoiceId: string) {
   const token = await getZohoToken();
   const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/inventory/v1');
-  const res = await fetch(`${base}/invoices/${invoiceId}`, { headers: zohoHeaders(token) });
+  const res = await fetch(withOrg(`${base}/invoices/${invoiceId}`), { headers: zohoHeaders(token) });
   const data = await res.json();
   return data.invoice;
 }
@@ -107,7 +111,7 @@ async function fetchContactPhones(contactId: string): Promise<{ phone: string; l
   const token = await getZohoToken();
   const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/inventory/v1');
   try {
-    const res  = await fetch(`${base}/contacts/${contactId}`, { headers: zohoHeaders(token) });
+    const res  = await fetch(withOrg(`${base}/contacts/${contactId}`), { headers: zohoHeaders(token) });
     const data = await res.json();
     const c    = data.contact;
     const results: { phone: string; label: string }[] = [];
