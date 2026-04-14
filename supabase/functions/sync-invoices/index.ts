@@ -96,6 +96,7 @@ async function fetchModifiedInvoices(since: string): Promise<any[]> {
     const url = withOrg(`${zohoBase()}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const raw  = await res.text();
+    console.log('[debug] invoices response:', raw.substring(0, 500));
     let data: any;
     try { data = JSON.parse(raw); } catch { throw new Error(`Zoho invoices non-JSON (${res.status}): ${raw.substring(0, 200)}`); }
     if (!data.invoices?.length) break;
