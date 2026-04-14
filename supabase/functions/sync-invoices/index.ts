@@ -165,7 +165,7 @@ async function createPaymentLink(invoiceNumber: string, customerName: string, ph
 async function syncInvoices() {
   const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
   const since = new Date(Date.now() - lookback * 60 * 1000)
-    .toISOString().replace('T', ' ').substring(0, 19);
+    .toISOString().substring(0, 19);
 
   console.log(`[sync] Fetching invoices modified since ${since}`);
   const summaries = await fetchModifiedInvoices(since);
