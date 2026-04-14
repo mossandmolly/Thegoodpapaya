@@ -334,8 +334,7 @@ async function reconcileTodayDeletions() {
 // ── 5-minute sync job ─────────────────────────────────────────
 async function syncInvoices() {
   const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
-  const since = new Date(Date.now() - lookback * 60 * 1000)
-    .toISOString().replace('T', ' ').substring(0, 19); // YYYY-MM-DD HH:MM:SS
+  const since = new Date().toISOString().substring(0, 10); // YYYY-MM-DD (only format Zoho Inventory accepts)
 
   console.log(`[sync] Fetching invoices modified since ${since}`);
   const summaries = await fetchModifiedInvoices(since);
