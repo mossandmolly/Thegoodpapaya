@@ -73,7 +73,7 @@ function zohoHeaders(token: string) {
 // ── Zoho API calls ────────────────────────────────────────────
 async function fetchModifiedInvoices(since: string) {
   const token = await getZohoToken();
-  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/books/v3');
+  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/inventory/v1');
   const orgId = env('ZOHO_ORGANIZATION_ID');
   console.log('[debug] Zoho org ID:', orgId);
   let page = 1;
@@ -96,7 +96,7 @@ async function fetchModifiedInvoices(since: string) {
 
 async function fetchInvoiceDetail(invoiceId: string) {
   const token = await getZohoToken();
-  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/books/v3');
+  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/inventory/v1');
   const res = await fetch(`${base}/invoices/${invoiceId}`, { headers: zohoHeaders(token) });
   const data = await res.json();
   return data.invoice;
@@ -105,7 +105,7 @@ async function fetchInvoiceDetail(invoiceId: string) {
 async function fetchContactPhones(contactId: string): Promise<{ phone: string; label: string }[]> {
   if (!contactId) return [];
   const token = await getZohoToken();
-  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/books/v3');
+  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/inventory/v1');
   try {
     const res  = await fetch(`${base}/contacts/${contactId}`, { headers: zohoHeaders(token) });
     const data = await res.json();
