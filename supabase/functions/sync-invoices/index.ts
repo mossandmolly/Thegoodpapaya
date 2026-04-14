@@ -74,12 +74,18 @@ function zohoHeaders(token: string) {
 async function fetchModifiedInvoices(since: string) {
   const token = await getZohoToken();
   const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/books/v3');
+  const orgId = env('ZOHO_ORGANIZATION_ID');
+  console.log('[debug] Zoho org ID:', orgId);
   let page = 1;
   const invoices: any[] = [];
   while (true) {
     const url = `${base}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`;
+    console.log('[debug] Fetching:', url);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
-    const data = await res.json();
+    const rawText = await res.text();
+    console.log('[debug] Invoices status:', res.status, rawText.substring(0, 200));
+    let data: any;
+    try { data = JSON.parse(rawText); } catch { throw new Error(`Zoho invoices returned non-JSON (status ${res.status}): ${rawText.substring(0, 200)}`); }
     if (!data.invoices?.length) break;
     invoices.push(...data.invoices);
     if (!data.page_context?.has_more_page) break;
