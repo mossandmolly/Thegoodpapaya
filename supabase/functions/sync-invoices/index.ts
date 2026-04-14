@@ -2,22 +2,16 @@
 // Deployed via: Supabase Dashboard → Edge Functions → New Function
 // Scheduled via: Supabase Dashboard → Database → Extensions → pg_cron (see bottom of this file)
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 // ── Config from environment ───────────────────────────────────
-const ZOHO_CLIENT_ID     = Deno.env.get('ZOHO_CLIENT_ID')!;
-const ZOHO_CLIENT_SECRET = Deno.env.get('ZOHO_CLIENT_SECRET')!;
-const ZOHO_REFRESH_TOKEN = Deno.env.get('ZOHO_REFRESH_TOKEN')!;
-const ZOHO_ORG_ID        = Deno.env.get('ZOHO_ORGANIZATION_ID')!;
-const ZOHO_BASE          = Deno.env.get('ZOHO_BASE_URL') ?? 'https://www.zohoapis.in/books/v3';
-const RAZORPAY_KEY_ID    = Deno.env.get('RAZORPAY_KEY_ID')!;
-const RAZORPAY_KEY_SECRET= Deno.env.get('RAZORPAY_KEY_SECRET')!;
-const LOOKBACK_MINUTES   = parseInt(Deno.env.get('SYNC_LOOKBACK_MINUTES') ?? '10');
+function env(key: string, fallback?: string): string {
+  return Deno.env.get(key) ?? fallback ?? '';
+}
 
-const db = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-);
+function getDb() {
+  return createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+}
 
 // ── Zoho OAuth ────────────────────────────────────────────────
 let cachedToken: string | null = null;
@@ -29,9 +23,9 @@ async function getZohoToken(): Promise<string> {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      refresh_token: ZOHO_REFRESH_TOKEN,
-      client_id:     ZOHO_CLIENT_ID,
-      client_secret: ZOHO_CLIENT_SECRET,
+      refresh_token: env('ZOHO_REFRESH_TOKEN'),
+      client_id:     env('ZOHO_CLIENT_ID'),
+      client_secret: env('ZOHO_CLIENT_SECRET'),
       grant_type:    'refresh_token',
     }),
   });
@@ -45,17 +39,18 @@ async function getZohoToken(): Promise<string> {
 function zohoHeaders(token: string) {
   return {
     Authorization: `Zoho-oauthtoken ${token}`,
-    'X-com-zoho-books-organizationid': ZOHO_ORG_ID,
+    'X-com-zoho-books-organizationid': env('ZOHO_ORGANIZATION_ID'),
   };
 }
 
 // ── Zoho API calls ────────────────────────────────────────────
 async function fetchModifiedInvoices(since: string) {
   const token = await getZohoToken();
+  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/books/v3');
   let page = 1;
   const invoices: any[] = [];
   while (true) {
-    const url = `${ZOHO_BASE}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`;
+    const url = `${base}/invoices?last_modified_time=${encodeURIComponent(since)}&page=${page}&per_page=200`;
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const data = await res.json();
     if (!data.invoices?.length) break;
@@ -68,7 +63,8 @@ async function fetchModifiedInvoices(since: string) {
 
 async function fetchInvoiceDetail(invoiceId: string) {
   const token = await getZohoToken();
-  const res   = await fetch(`${ZOHO_BASE}/invoices/${invoiceId}`, { headers: zohoHeaders(token) });
+  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/books/v3');
+  const res   = await fetch(`${base}/invoices/${invoiceId}`, { headers: zohoHeaders(token) });
   const data  = await res.json();
   return data.invoice;
 }
@@ -76,8 +72,9 @@ async function fetchInvoiceDetail(invoiceId: string) {
 async function fetchContactPhones(contactId: string): Promise<{ phone: string; label: string }[]> {
   if (!contactId) return [];
   const token = await getZohoToken();
+  const base = env('ZOHO_BASE_URL', 'https://www.zohoapis.in/books/v3');
   try {
-    const res  = await fetch(`${ZOHO_BASE}/contacts/${contactId}`, { headers: zohoHeaders(token) });
+    const res  = await fetch(`${base}/contacts/${contactId}`, { headers: zohoHeaders(token) });
     const data = await res.json();
     const c    = data.contact;
     const results: { phone: string; label: string }[] = [];
@@ -112,7 +109,7 @@ function normalisePhone(raw: string): string | null {
 
 // ── Razorpay ──────────────────────────────────────────────────
 async function createPaymentLink(invoiceNumber: string, customerName: string, phone: string, amountInPaise: number) {
-  const auth = btoa(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`);
+  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
   const res  = await fetch('https://api.razorpay.com/v1/payment_links', {
     method:  'POST',
     headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
@@ -134,6 +131,7 @@ async function createPaymentLink(invoiceNumber: string, customerName: string, ph
 
 // ── Customer sync ─────────────────────────────────────────────
 async function resolveAndSyncCustomer(customerName: string, zohoContactId: string): Promise<string | null> {
+  const db = getDb();
   await db.from('customers').upsert({ customer_name: customerName }, { onConflict: 'customer_name' });
 
   const phones = await fetchContactPhones(zohoContactId);
@@ -151,6 +149,8 @@ async function resolveAndSyncCustomer(customerName: string, zohoContactId: strin
 
 // ── Main sync logic ───────────────────────────────────────────
 async function syncInvoices() {
+  const db = getDb();
+  const LOOKBACK_MINUTES = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
   const since = new Date(Date.now() - LOOKBACK_MINUTES * 60 * 1000)
     .toISOString().replace('T', ' ').substring(0, 19);
 
