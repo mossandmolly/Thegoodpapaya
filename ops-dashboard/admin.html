@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Admin — Good Papaya Ops</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header>
+  <div class="header-content">
+    <h1>Good Papaya Ops</h1>
+    <nav>
+      <a href="index.html">Packer</a>
+      <a href="checker.html">Checker</a>
+      <a href="admin.html" class="active">Admin</a>
+    </nav>
+  </div>
+</header>
+
+<!-- Password gate -->
+<div class="password-screen" id="password-screen">
+  <div style="font-size:2.5rem;margin-bottom:12px">🔒</div>
+  <h2>Admin Access</h2>
+  <input type="password" id="admin-password" placeholder="••••" maxlength="10"
+    onkeydown="if(event.key==='Enter') checkPassword()">
+  <button class="btn btn-primary" onclick="checkPassword()">Enter</button>
+  <p id="pw-error" style="color:var(--red);font-size:0.85rem;margin-top:10px;display:none">Wrong password</p>
+</div>
+
+<!-- Admin content (hidden until password) -->
+<div id="admin-content" class="hidden">
+
+  <!-- Packers section -->
+  <div class="admin-section" style="margin-top:16px">
+    <h2>Packers</h2>
+    <div class="form-row">
+      <input type="text" id="new-packer-name" placeholder="Packer name" maxlength="60">
+      <button class="btn btn-primary" onclick="addPacker()">Add</button>
+    </div>
+    <div id="packers-list"><div class="skeleton" style="height:40px"></div></div>
+  </div>
+
+  <!-- Packer assignments section -->
+  <div class="admin-section">
+    <h2>Fruit Assignments</h2>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+      Assign which fruits each packer handles
+    </p>
+    <div class="form-row">
+      <select id="assign-packer" style="flex:1"></select>
+      <input type="text" id="assign-fruit" placeholder="Fruit / item name" style="flex:2">
+      <button class="btn btn-primary" onclick="addAssignment()">Add</button>
+    </div>
+    <div id="assignments-list"><div class="skeleton" style="height:40px"></div></div>
+  </div>
+
+  <!-- Customer notes section -->
+  <div class="admin-section">
+    <h2>Customer Notes</h2>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+      Notes shown on packer cards (allergies, preferences, etc.)
+    </p>
+    <div class="form-row">
+      <input type="text" id="note-customer" placeholder="Customer name (exact)" style="flex:2">
+      <input type="text" id="note-text" placeholder="Note" style="flex:3">
+      <button class="btn btn-primary" onclick="saveNote()">Save</button>
+    </div>
+    <div id="notes-list"><div class="skeleton" style="height:40px"></div></div>
+  </div>
+
+  <!-- Danger zone -->
+  <div class="admin-section" style="border:1.5px solid #fecaca">
+    <h2 style="color:var(--red)">Danger Zone</h2>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px">
+      Reset today's operations status — sets all items back to draft.
+    </p>
+    <button class="btn btn-danger" onclick="resetTodayStatus()">Reset Today's Status</button>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>

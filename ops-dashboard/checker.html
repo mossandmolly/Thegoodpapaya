@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Checker View — Good Papaya Ops</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header>
+  <div class="header-content">
+    <h1>Good Papaya Ops</h1>
+    <nav>
+      <a href="index.html">Packer</a>
+      <a href="checker.html" class="active">Checker</a>
+      <a href="admin.html">Admin</a>
+    </nav>
+  </div>
+</header>
+
+<!-- Filter bar -->
+<div class="filter-bar" id="filter-bar">
+  <select id="filter-community">
+    <option value="">All Communities</option>
+  </select>
+  <select id="filter-status">
+    <option value="">All Status</option>
+    <option value="draft">Draft</option>
+    <option value="final">Final</option>
+  </select>
+  <input type="text" id="filter-search" placeholder="Search customer…" style="flex:1;min-width:120px">
+</div>
+
+<!-- Summary bar -->
+<div class="summary-bar hidden" id="summary-bar">
+  <span>Total: <strong id="sum-total">0</strong></span>
+  <span>Done: <strong id="sum-done">0</strong></span>
+  <span>Pending: <strong id="sum-pending">0</strong></span>
+  <span style="margin-left:auto">
+    <button class="btn btn-sm btn-secondary" id="btn-select-all" onclick="toggleSelectAll()">Select All</button>
+  </span>
+</div>
+
+<!-- Bulk action bar -->
+<div class="bulk-bar hidden" id="bulk-bar">
+  <span id="bulk-count">0 selected</span>
+  <div style="display:flex;gap:8px;margin-left:auto">
+    <button class="btn btn-sm btn-success" onclick="bulkFinalize()">Mark Final</button>
+    <button class="btn btn-sm btn-secondary" onclick="clearSelection()">Clear</button>
+  </div>
+</div>
+
+<!-- Section header -->
+<div class="section-header hidden" id="section-header">
+  <h2 id="section-date"></h2>
+  <p class="count" id="section-count"></p>
+</div>
+
+<main>
+  <div class="empty-state" id="empty-state">
+    <div style="font-size:2.5rem">📋</div>
+    <p>Loading today's items…</p>
+  </div>
+
+  <!-- Orders accordion -->
+  <div id="orders-container"></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/checker.js"></script>
+</body>
+</html>
