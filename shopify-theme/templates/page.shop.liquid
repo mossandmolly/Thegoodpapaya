@@ -1,0 +1,29 @@
+{% comment %} Product catalog page {% endcomment %}
+<div id="shop-root">
+  <div class="shop-header">
+    <h1>Fresh Fruits</h1>
+    <p class="shop-sub">Delivered fresh to your door · Order by midnight for next-day delivery</p>
+  </div>
+  <div id="product-grid" class="product-grid">
+    <div class="product-skeleton"></div>
+    <div class="product-skeleton"></div>
+    <div class="product-skeleton"></div>
+    <div class="product-skeleton"></div>
+    <div class="product-skeleton"></div>
+    <div class="product-skeleton"></div>
+  </div>
+  <div id="shop-empty" class="empty-state" style="display:none">
+    <p>No products available right now.</p>
+  </div>
+</div>
+
+<!-- Sticky cart bar -->
+<div id="cart-bar" class="cart-bar hidden">
+  <div class="cart-bar-inner">
+    <span id="cart-bar-count"></span>
+    <span id="cart-bar-total"></span>
+    <a href="/pages/checkout" class="btn btn-primary" style="width:auto;padding:.55rem 1.25rem">Checkout →</a>
+  </div>
+</div>
+
+<script src="{{ 'shop.js' | asset_url }}" defer></script>

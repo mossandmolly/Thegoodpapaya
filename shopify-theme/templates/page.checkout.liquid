@@ -1,0 +1,50 @@
+{% comment %} Checkout page {% endcomment %}
+<div class="checkout-wrap">
+  <h1 class="checkout-title">Your Order</h1>
+
+  <!-- Cart summary -->
+  <div class="card checkout-section" id="cart-summary">
+    <div class="checkout-section-title">Items</div>
+    <div id="checkout-items"></div>
+    <div class="checkout-total-row">
+      <span>Total</span>
+      <strong id="checkout-total">₹0</strong>
+    </div>
+  </div>
+
+  <!-- Customer details -->
+  <div class="card checkout-section">
+    <div class="checkout-section-title">Delivery details</div>
+    <div class="form-group">
+      <label>Your name</label>
+      <input type="text" id="co-name" placeholder="Full name" autocomplete="name">
+    </div>
+    <div class="form-group">
+      <label>Mobile number</label>
+      <div class="phone-input-wrap">
+        <span class="phone-prefix">+91</span>
+        <input type="tel" id="co-phone" placeholder="9876543210" maxlength="10" inputmode="numeric" autocomplete="tel">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Delivery address</label>
+      <textarea id="co-address" rows="3" placeholder="Flat / building, street, area, city"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+      <input type="text" id="co-notes" placeholder="Allergies, preferences, gate code…">
+    </div>
+  </div>
+
+  <div id="co-error" class="error-msg" style="margin-bottom:.75rem"></div>
+
+  <button class="btn btn-primary" id="pay-btn" onclick="submitOrder()">
+    Pay with Razorpay
+  </button>
+
+  <p style="text-align:center;font-size:.78rem;color:var(--muted);margin-top:.75rem">
+    You'll be redirected to Razorpay's secure payment page
+  </p>
+</div>
+
+<script src="{{ 'checkout.js' | asset_url }}" defer></script>
