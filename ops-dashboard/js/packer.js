@@ -10,6 +10,7 @@ let allItems = [];
   if (selectedPackerId) await loadItems();
 })();
 
+
 // ── Load packers ──────────────────────────────────────────────
 async function loadPackers() {
   const { data, error } = await sb
@@ -21,8 +22,15 @@ async function loadPackers() {
   const container = document.getElementById('packer-chips');
   container.innerHTML = '';
 
+  // Always show "All" chip first
+  const allChip = document.createElement('button');
+  allChip.className = 'chip' + (selectedPackerId === 'all' ? ' selected' : '');
+  allChip.textContent = 'All';
+  allChip.onclick = () => selectPacker('all', 'All');
+  container.appendChild(allChip);
+
   if (error || !data?.length) {
-    container.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted)">No packers set up yet — go to Admin</p>';
+    container.insertAdjacentHTML('beforeend', '<p style="font-size:0.85rem;color:var(--text-muted);margin-left:8px">No packers set up yet — go to Admin</p>');
     return;
   }
 
@@ -57,29 +65,31 @@ async function loadItems() {
   container.classList.remove('hidden');
   empty.classList.add('hidden');
 
-  // Get fruits assigned to this packer
-  const { data: assignments } = await sb
-    .from('packer_assignments')
-    .select('item_name')
-    .eq('packer_id', selectedPackerId);
-
-  if (!assignments?.length) {
-    container.innerHTML = '';
-    empty.classList.remove('hidden');
-    empty.querySelector('p').textContent = `No fruits assigned to ${selectedPackerName} yet — go to Admin`;
-    return;
-  }
-
-  const fruits = assignments.map(a => a.item_name);
-
-  // Get today's operations for those fruits
-  const { data: items, error } = await sb
+  // Get today's operations — all items or packer-specific
+  let query = sb
     .from('operations')
     .select('*')
     .eq('invoice_date', todayIST())
-    .in('item_name', fruits)
     .order('community')
     .order('customer_name');
+
+  if (selectedPackerId !== 'all') {
+    const { data: assignments } = await sb
+      .from('packer_assignments')
+      .select('item_name')
+      .eq('packer_id', selectedPackerId);
+
+    if (!assignments?.length) {
+      container.innerHTML = '';
+      empty.classList.remove('hidden');
+      empty.querySelector('p').textContent = `No fruits assigned to ${selectedPackerName} yet — go to Admin`;
+      return;
+    }
+
+    query = query.in('item_name', assignments.map(a => a.item_name));
+  }
+
+  const { data: items, error } = await query;
 
   if (error || !items?.length) {
     container.innerHTML = '';
@@ -117,7 +127,9 @@ function renderCards(items, noteMap) {
   document.getElementById('sum-pending').textContent = pending;
   document.getElementById('summary-bar').classList.remove('hidden');
   document.getElementById('section-header').classList.remove('hidden');
-  document.getElementById('section-count').textContent = `${total} item${total !== 1 ? 's' : ''} assigned to you`;
+  document.getElementById('section-count').textContent = selectedPackerId === 'all'
+    ? `${total} item${total !== 1 ? 's' : ''} today (all packers)`
+    : `${total} item${total !== 1 ? 's' : ''} assigned to you`;
 
   items.forEach(item => {
     const note = noteMap[item.customer_name];
