@@ -139,9 +139,13 @@ async function askSomya() {
   </div>`;
 
   try {
-    const res = await fetch('/api/chat', {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/somya-chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON}`,
+        'apikey': SUPABASE_ANON,
+      },
       body: JSON.stringify({
         situation,
         customerData: currentCustomerData || null,
