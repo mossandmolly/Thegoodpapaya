@@ -23,6 +23,62 @@ async function loadAll() {
   await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadComplaints()]);
 }
 
+// ── Daily orders CSV upload ────────────────────────────────────
+async function uploadOrders() {
+  const fileInput = document.getElementById('orders-csv');
+  const statusEl  = document.getElementById('orders-upload-status');
+
+  if (!fileInput.files.length) {
+    showToast('Select a CSV file first', 'error');
+    return;
+  }
+
+  const text = await fileInput.files[0].text();
+  const rows  = parseCSV(text);
+
+  if (!rows.length) {
+    showToast('CSV appears empty', 'error');
+    return;
+  }
+
+  const headers = Object.keys(rows[0]).map(h => h.trim().toLowerCase());
+  const missing = ['customer_name', 'item_name', 'requested_quantity'].filter(c => !headers.includes(c));
+  if (missing.length) {
+    showToast(`Missing columns: ${missing.join(', ')}`, 'error');
+    return;
+  }
+
+  const today = todayIST();
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Uploading ${rows.length} rows…</p>`;
+
+  const records = rows.map(r => {
+    const customerName = (r['customer_name'] || '').trim();
+    const itemName     = (r['item_name']     || '').trim();
+    return {
+      sales_order_id:     `${today}-${customerName}`,
+      invoice_date:       today,
+      customer_name:      customerName,
+      item_name:          itemName,
+      requested_quantity: parseFloat(r['requested_quantity']) || 0,
+      description:        (r['description'] || '').trim() || null,
+      status:             'draft',
+    };
+  }).filter(r => r.customer_name && r.item_name);
+
+  const { error } = await sb
+    .from('operations')
+    .upsert(records, { onConflict: 'sales_order_id,item_name' });
+
+  if (error) {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${error.message}</p>`;
+    return;
+  }
+
+  fileInput.value = '';
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${records.length} orders uploaded for ${formatDate(today)}</p>`;
+  showToast(`${records.length} orders loaded ✓`);
+}
+
 // ── Packers ────────────────────────────────────────────────────
 async function loadPackers() {
   const { data, error } = await sb
