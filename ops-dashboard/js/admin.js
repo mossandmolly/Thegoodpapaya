@@ -20,7 +20,7 @@ document.getElementById('admin-password').addEventListener('keydown', e => {
 
 // ── Load everything ────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadPackers(), loadAssignments(), loadNotes()]);
+  await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadComplaints()]);
 }
 
 // ── Packers ────────────────────────────────────────────────────
@@ -205,6 +205,111 @@ async function deleteNote(id, customerName) {
   if (error) { showToast('Delete failed', 'error'); return; }
   showToast(`Note for ${customerName} removed`);
   await loadNotes();
+}
+
+// ── Complaint history ──────────────────────────────────────────
+async function loadComplaints() {
+  const { data, error } = await sb
+    .from('complaint_history')
+    .select('id, customer_name, invoice_number, complaint_date, complaint_type, description')
+    .order('complaint_date', { ascending: false })
+    .limit(50);
+
+  const list = document.getElementById('complaints-list');
+
+  if (error || !data?.length) {
+    list.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted)">No complaints logged yet</p>';
+    return;
+  }
+
+  list.innerHTML = '';
+  data.forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'list-item';
+    row.style.flexDirection = 'column';
+    row.style.alignItems = 'flex-start';
+    row.style.gap = '4px';
+    row.innerHTML = `
+      <div style="display:flex;justify-content:space-between;width:100%;align-items:center">
+        <span style="font-weight:500">${c.customer_name}</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:0.75rem;background:var(--bg);padding:2px 8px;border-radius:8px;color:var(--text-muted)">${c.complaint_type}</span>
+          <span style="font-size:0.75rem;color:var(--text-muted)">${c.complaint_date}</span>
+          <button class="btn btn-sm btn-danger" onclick="deleteComplaint('${c.id}')">×</button>
+        </div>
+      </div>
+      ${c.description ? `<div style="font-size:0.82rem;color:var(--text-muted)">${c.description}</div>` : ''}
+      ${c.invoice_number ? `<div style="font-size:0.75rem;color:var(--text-muted)">Invoice: ${c.invoice_number}</div>` : ''}
+    `;
+    list.appendChild(row);
+  });
+}
+
+async function uploadComplaints() {
+  const fileInput = document.getElementById('complaint-csv');
+  const statusEl  = document.getElementById('upload-status');
+
+  if (!fileInput.files.length) {
+    showToast('Select a CSV file first', 'error');
+    return;
+  }
+
+  const text = await fileInput.files[0].text();
+  const rows  = parseCSV(text);
+
+  if (!rows.length) {
+    showToast('CSV appears empty', 'error');
+    return;
+  }
+
+  const required = ['customer_name', 'complaint_date', 'complaint_type'];
+  const headers  = Object.keys(rows[0]).map(h => h.trim().toLowerCase());
+  const missing  = required.filter(r => !headers.includes(r));
+  if (missing.length) {
+    showToast(`Missing columns: ${missing.join(', ')}`, 'error');
+    return;
+  }
+
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Uploading ${rows.length} rows…</p>`;
+
+  const records = rows.map(r => ({
+    customer_name:  (r['customer_name'] || '').trim(),
+    invoice_number: (r['invoice_number'] || '').trim() || null,
+    complaint_date: (r['complaint_date'] || '').trim(),
+    complaint_type: (r['complaint_type'] || 'other').trim().toLowerCase(),
+    description:    (r['description'] || '').trim() || null,
+  })).filter(r => r.customer_name && r.complaint_date);
+
+  const { error } = await sb.from('complaint_history').insert(records);
+
+  if (error) {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${error.message}</p>`;
+    return;
+  }
+
+  fileInput.value = '';
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${records.length} complaints uploaded</p>`;
+  showToast(`${records.length} complaints added ✓`);
+  await loadComplaints();
+}
+
+async function deleteComplaint(id) {
+  const { error } = await sb.from('complaint_history').delete().eq('id', id);
+  if (error) { showToast('Delete failed', 'error'); return; }
+  showToast('Complaint removed');
+  await loadComplaints();
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+  return lines.slice(1).map(line => {
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] ?? ''; });
+    return obj;
+  });
 }
 
 // ── Danger zone ────────────────────────────────────────────────

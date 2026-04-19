@@ -17,6 +17,7 @@
       <a href="index.html">Packer</a>
       <a href="checker.html">Checker</a>
       <a href="admin.html" class="active">Admin</a>
+      <a href="somya.html">Somya AI</a>
     </nav>
   </div>
 </header>
@@ -70,6 +71,23 @@
       <button class="btn btn-primary" onclick="saveNote()">Save</button>
     </div>
     <div id="notes-list"><div class="skeleton" style="height:40px"></div></div>
+  </div>
+
+  <!-- Complaint history upload -->
+  <div class="admin-section">
+    <h2>Complaint History</h2>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+      Upload a CSV to log customer complaints. Used by Somya AI to adjust tone.<br>
+      <strong>Required columns:</strong> customer_name, complaint_date (YYYY-MM-DD), complaint_type, description<br>
+      <strong>Optional:</strong> invoice_number<br>
+      <strong>Types:</strong> quantity · quality · delivery · payment · integrity · other
+    </p>
+    <div class="form-row">
+      <input type="file" id="complaint-csv" accept=".csv" style="flex:1;padding:8px">
+      <button class="btn btn-primary" onclick="uploadComplaints()">Upload CSV</button>
+    </div>
+    <div id="upload-status"></div>
+    <div id="complaints-list" style="margin-top:12px"><div class="skeleton" style="height:40px"></div></div>
   </div>
 
   <!-- Danger zone -->
