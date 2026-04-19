@@ -42,28 +42,23 @@ async function uploadOrders() {
   }
 
   const headers = Object.keys(rows[0]).map(h => h.trim().toLowerCase());
-  const missing = ['customer_name', 'item_name', 'requested_quantity'].filter(c => !headers.includes(c));
+  const missing = ['sales_order', 'order_date', 'customer_name', 'item_name', 'quantity'].filter(c => !headers.includes(c));
   if (missing.length) {
     showToast(`Missing columns: ${missing.join(', ')}`, 'error');
     return;
   }
 
-  const today = todayIST();
   statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Uploading ${rows.length} rows…</p>`;
 
-  const records = rows.map(r => {
-    const customerName = (r['customer_name'] || '').trim();
-    const itemName     = (r['item_name']     || '').trim();
-    return {
-      sales_order_id:     `${today}-${customerName}`,
-      invoice_date:       today,
-      customer_name:      customerName,
-      item_name:          itemName,
-      requested_quantity: parseFloat(r['requested_quantity']) || 0,
-      description:        (r['description'] || '').trim() || null,
-      status:             'draft',
-    };
-  }).filter(r => r.customer_name && r.item_name);
+  const records = rows.map(r => ({
+    sales_order_id:     (r['sales_order']   || '').trim(),
+    invoice_date:       (r['order_date']     || '').trim(),
+    customer_name:      (r['customer_name']  || '').trim(),
+    item_name:          (r['item_name']      || '').trim(),
+    description:        (r['description']    || '').trim() || null,
+    requested_quantity: parseFloat(r['quantity']) || 0,
+    status:             'draft',
+  })).filter(r => r.sales_order_id && r.customer_name && r.item_name);
 
   const { error } = await sb
     .from('operations')
@@ -75,7 +70,8 @@ async function uploadOrders() {
   }
 
   fileInput.value = '';
-  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${records.length} orders uploaded for ${formatDate(today)}</p>`;
+  const uploadedDate = records[0]?.invoice_date || '';
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${records.length} orders uploaded${uploadedDate ? ' for ' + formatDate(uploadedDate) : ''}</p>`;
   showToast(`${records.length} orders loaded ✓`);
 }
 
