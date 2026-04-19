@@ -239,6 +239,39 @@
     /* ── Loading skeleton for response ── */
     .response-skeleton .skeleton { height: 16px; margin-bottom: 10px; }
     .response-skeleton .skeleton:last-child { width: 60%; }
+
+    /* ── Mic button ── */
+    .textarea-wrap { position: relative; }
+    .mic-btn {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: none;
+      background: var(--bg);
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }
+    .mic-btn:hover { background: var(--border); color: var(--text); }
+    .mic-btn.recording {
+      background: #fee2e2;
+      color: var(--red);
+      animation: mic-pulse 1.2s ease-in-out infinite;
+    }
+    .mic-btn.unsupported { opacity: 0.3; cursor: not-allowed; }
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.4); }
+      50%       { box-shadow: 0 0 0 8px rgba(220,38,38,0); }
+    }
+    textarea#situation { padding-bottom: 48px; }
   </style>
 </head>
 <body>
@@ -279,7 +312,10 @@
       <button class="scenario-chip" onclick="selectScenario(this, 'payment')">🧾 Payment query</button>
     </div>
 
-    <textarea id="situation" placeholder="Describe what the customer is saying or asking…"></textarea>
+    <div class="textarea-wrap">
+      <textarea id="situation" placeholder="Describe what the customer is saying or asking…"></textarea>
+      <button class="mic-btn" id="mic-btn" onclick="toggleMic()" title="Speak your situation">🎤</button>
+    </div>
 
     <button class="ask-btn" id="ask-btn" onclick="askSomya()">
       <span id="ask-btn-text">Ask Somya AI</span>

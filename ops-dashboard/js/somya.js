@@ -1,6 +1,66 @@
 let currentCustomerData = null;
 let lastSituation = '';
 
+// ── Microphone / Speech recognition ───────────────────────────
+let recognition = null;
+let isRecording  = false;
+
+function initMic() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const btn = document.getElementById('mic-btn');
+
+  if (!SpeechRecognition) {
+    btn.classList.add('unsupported');
+    btn.title = 'Voice input not supported in this browser';
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-IN';
+  recognition.continuous = false;
+  recognition.interimResults = true;
+
+  const ta = document.getElementById('situation');
+  let baseText = '';
+
+  recognition.onstart = () => {
+    isRecording = true;
+    baseText = ta.value;
+    btn.classList.add('recording');
+    btn.title = 'Tap to stop';
+  };
+
+  recognition.onresult = (e) => {
+    const transcript = Array.from(e.results)
+      .map(r => r[0].transcript)
+      .join('');
+    ta.value = baseText ? `${baseText} ${transcript}` : transcript;
+  };
+
+  recognition.onend = () => {
+    isRecording = false;
+    btn.classList.remove('recording');
+    btn.title = 'Speak your situation';
+  };
+
+  recognition.onerror = (e) => {
+    isRecording = false;
+    btn.classList.remove('recording');
+    if (e.error !== 'no-speech') showToast('Mic error: ' + e.error, 'error');
+  };
+}
+
+function toggleMic() {
+  if (!recognition) return;
+  if (isRecording) {
+    recognition.stop();
+  } else {
+    recognition.start();
+  }
+}
+
+initMic();
+
 const SCENARIO_HINTS = {
   quantity: 'The customer is saying their order had wrong quantities or wrong items. ',
   refund:   'The customer is requesting a refund. ',
