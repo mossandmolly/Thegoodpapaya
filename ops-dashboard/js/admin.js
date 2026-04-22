@@ -60,14 +60,20 @@ async function uploadOrders() {
     status:             'draft',
   })).filter(r => r.sales_order_id && r.customer_name && r.item_name);
 
-  // Deduplicate on sales_order_id + item_name — keep last occurrence
-  const seen = new Map();
-  records.forEach(r => seen.set(`${r.sales_order_id}|${r.item_name}`, r));
-  const deduped = Array.from(seen.values());
-
-  const { error } = await sb
+  // Delete existing records for this date then insert fresh
+  // This allows duplicate sales_order+item combos (e.g. one free + one charged)
+  const uploadDate = records[0]?.invoice_date;
+  const { error: delError } = await sb
     .from('operations')
-    .upsert(deduped, { onConflict: 'sales_order_id,item_name' });
+    .delete()
+    .eq('invoice_date', uploadDate);
+
+  if (delError) {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${delError.message}</p>`;
+    return;
+  }
+
+  const { error } = await sb.from('operations').insert(records);
 
   if (error) {
     statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${error.message}</p>`;
@@ -75,9 +81,7 @@ async function uploadOrders() {
   }
 
   fileInput.value = '';
-  const uploadedDate = deduped[0]?.invoice_date || '';
-  const dupCount = records.length - deduped.length;
-  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${deduped.length} orders uploaded${uploadedDate ? ' for ' + formatDate(uploadedDate) : ''}${dupCount ? ` (${dupCount} duplicate rows ignored)` : ''}</p>`;
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${records.length} orders uploaded${uploadDate ? ' for ' + formatDate(uploadDate) : ''}</p>`;
   showToast(`${records.length} orders loaded ✓`);
 }
 
