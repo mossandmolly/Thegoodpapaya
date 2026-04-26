@@ -296,15 +296,56 @@ function renderNotesTable(notes) {
   wrap.innerHTML = `
     <table class="notes-table">
       <thead><tr><th>Customer</th><th>Note</th><th>Last complaint</th><th></th></tr></thead>
-      <tbody>${notes.map(n => `
-        <tr>
-          <td style="font-weight:500;white-space:nowrap">${escapeHtml(n.customer_name)}</td>
-          <td style="max-width:240px;word-break:break-word">${escapeHtml(n.note)}</td>
-          <td style="color:var(--text-muted);white-space:nowrap;font-size:0.8rem">${n.last_complaint_date || '—'}</td>
-          <td><button class="btn btn-sm btn-danger" onclick="deleteNote('${n.id}')">×</button></td>
-        </tr>`).join('')}
-      </tbody>
+      <tbody>${notes.map(n => noteRow(n)).join('')}</tbody>
     </table>`;
+}
+
+function noteRow(n) {
+  return `
+    <tr id="note-row-${n.id}">
+      <td style="font-weight:500;white-space:nowrap">${escapeHtml(n.customer_name)}</td>
+      <td style="max-width:240px;word-break:break-word">${escapeHtml(n.note)}</td>
+      <td style="color:var(--text-muted);white-space:nowrap;font-size:0.8rem">${n.last_complaint_date || '—'}</td>
+      <td style="white-space:nowrap;display:flex;gap:4px">
+        <button class="btn btn-sm btn-secondary" onclick="startEditNote('${n.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteNote('${n.id}')">×</button>
+      </td>
+    </tr>`;
+}
+
+function startEditNote(id) {
+  const n = _allNotes.find(n => n.id === id);
+  if (!n) return;
+  const row = document.getElementById(`note-row-${id}`);
+  row.innerHTML = `
+    <td style="font-weight:500;white-space:nowrap">${escapeHtml(n.customer_name)}</td>
+    <td><input type="text" value="${escapeHtml(n.note)}" id="edit-note-${id}"
+      style="width:100%;padding:5px 8px;border:1.5px solid var(--brand);border-radius:6px;font-size:0.85rem;font-family:'DM Sans',sans-serif"></td>
+    <td><input type="date" value="${n.last_complaint_date || ''}" id="edit-date-${id}"
+      style="padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:0.82rem;font-family:'DM Sans',sans-serif"></td>
+    <td style="white-space:nowrap;display:flex;gap:4px">
+      <button class="btn btn-sm btn-primary" onclick="commitEditNote('${id}')">Save</button>
+      <button class="btn btn-sm btn-secondary" onclick="renderNotesTable(_allNotes)">Cancel</button>
+    </td>`;
+  document.getElementById(`edit-note-${id}`).focus();
+}
+
+async function commitEditNote(id) {
+  const note = document.getElementById(`edit-note-${id}`)?.value.trim();
+  const date = document.getElementById(`edit-date-${id}`)?.value || null;
+  if (!note) { showToast('Note cannot be empty', 'error'); return; }
+
+  const { error } = await sb.from('customer_notes')
+    .update({ note, last_complaint_date: date })
+    .eq('id', id);
+
+  if (error) { showToast(error.message, 'error'); return; }
+
+  const idx = _allNotes.findIndex(n => n.id === id);
+  if (idx !== -1) { _allNotes[idx].note = note; _allNotes[idx].last_complaint_date = date; }
+  renderNotesPreview(_allNotes.slice(0, 10));
+  renderNotesTable(_allNotes);
+  showToast('Note updated ✓');
 }
 
 async function saveNote() {
