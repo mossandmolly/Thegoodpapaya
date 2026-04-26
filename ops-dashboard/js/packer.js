@@ -100,16 +100,11 @@ async function loadItems() {
   const customerNames = [...new Set(items.map(i => i.customer_name))];
   const { data: notes } = await sb
     .from('customer_notes')
-    .select('customer_name, item_name, note, note_type')
+    .select('customer_name, note')
     .in('customer_name', customerNames);
 
   noteMap = {};
-  (notes || []).forEach(n => {
-    if (!noteMap[n.customer_name]) noteMap[n.customer_name] = {};
-    const key      = n.item_name || '__all__';
-    const existing = noteMap[n.customer_name][key];
-    noteMap[n.customer_name][key] = existing ? existing + ' · ' + n.note : n.note;
-  });
+  (notes || []).forEach(n => { noteMap[n.customer_name] = n.note; });
 
   allItems = items;
   renderCards(items);
@@ -145,8 +140,7 @@ function fmtTime(iso) {
 }
 
 function noteFor(item) {
-  const cn = noteMap[item.customer_name] || {};
-  return cn[item.item_name] || cn['__all__'] || null;
+  return noteMap[item.customer_name] || null;
 }
 
 // ── Build a single card ───────────────────────────────────────

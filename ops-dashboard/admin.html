@@ -126,23 +126,14 @@
           Leave <em>Item</em> blank to apply to all items for a customer.
         </p>
 
-        <!-- Add form -->
+        <!-- Add / update form -->
         <div class="form-row" style="flex-wrap:wrap;gap:6px">
-          <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:120px">
-          <input type="text" id="note-item" placeholder="Item (blank=all)" style="flex:1.5;min-width:100px">
-          <select id="note-type" style="flex:1;min-width:90px">
-            <option value="note">note</option>
-            <option value="complaint">complaint</option>
-            <option value="quantity">quantity</option>
-            <option value="quality">quality</option>
-            <option value="delivery">delivery</option>
-            <option value="payment">payment</option>
-            <option value="integrity">integrity</option>
-            <option value="other">other</option>
-          </select>
-          <input type="text" id="note-text" placeholder="Note text" style="flex:3;min-width:160px">
-          <button class="btn btn-primary btn-sm" onclick="addNote()" style="white-space:nowrap">Add</button>
+          <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:140px">
+          <input type="text" id="note-text" placeholder="Note" style="flex:3;min-width:180px">
+          <input type="date" id="note-complaint-date" title="Last complaint date" style="flex:1;min-width:130px">
+          <button class="btn btn-primary btn-sm" onclick="saveNote()" style="white-space:nowrap">Save</button>
         </div>
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px">Saving again for the same customer updates their existing note.</p>
 
         <!-- CSV import (collapsible) -->
         <details style="margin-top:8px">
@@ -153,7 +144,7 @@
               <button class="btn btn-secondary btn-sm" onclick="importNotesCSV()">Import</button>
             </div>
             <p style="font-size:0.75rem;color:var(--text-muted)">
-              Columns: customer_name, note, note_type, note_date (YYYY-MM-DD), item_name, invoice_number
+              Columns: customer_name, note, last_complaint_date (YYYY-MM-DD)
             </p>
             <div id="note-import-status"></div>
           </div>

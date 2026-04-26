@@ -124,19 +124,21 @@ async function lookupCustomer() {
       return true;
     }).slice(0, 8);
 
-    // Fetch complaint/note history in parallel
-    const { data: complaints } = await sb
+    // Fetch customer note / complaint record
+    const { data: noteRows } = await sb
       .from('customer_notes')
-      .select('note_date, note_type, note, invoice_number')
+      .select('note, last_complaint_date')
       .ilike('customer_name', `%${customerName}%`)
-      .order('note_date', { ascending: false })
-      .limit(20);
+      .limit(1);
 
-    const orderCount = new Set(data.map(r => r.invoice_number)).size;
-    const complaintCount = complaints?.filter(c => c.note_type !== 'note')?.length || 0;
-    const hasIntegrityComplaint = complaints?.some(c => c.note_type === 'integrity') || false;
+    const customerNote      = noteRows?.[0] || null;
+    const orderCount        = new Set(data.map(r => r.invoice_number)).size;
+    const hasComplaintDate  = !!customerNote?.last_complaint_date;
+    const hasIntegrityComplaint = customerNote?.note?.toLowerCase().includes('integrity') || false;
+    const complaintCount    = hasComplaintDate ? 1 : 0;
+    const complaints        = customerNote ? [customerNote] : [];
 
-    currentCustomerData = { customerName, invoices, complaints: complaints || [], orderCount, complaintCount, hasIntegrityComplaint };
+    currentCustomerData = { customerName, invoices, customerNote, orderCount, complaintCount, hasIntegrityComplaint };
 
     const rows = invoices.map(inv => {
       const short = inv.requested_quantity && inv.final_quantity &&
@@ -157,14 +159,15 @@ async function lookupCustomer() {
       </div>`;
     }).join('');
 
-    // Complaint summary badge
+    // Complaint / note badge
     let complaintBadge = '';
     if (hasIntegrityComplaint) {
-      complaintBadge = `<div style="margin-top:8px;padding:6px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:0.78rem;color:#dc2626;font-weight:500">⚠️ Integrity/ethics complaint on record — AI will use firm, direct tone</div>`;
-    } else if (orderCount > 0 && complaintCount / orderCount >= 0.5) {
-      complaintBadge = `<div style="margin-top:8px;padding:6px 10px;background:#fff3e0;border:1px solid #ffe0b2;border-radius:6px;font-size:0.78rem;color:#e65100;font-weight:500">⚠️ Frequent complainer (${complaintCount}/${orderCount} orders) — AI will use direct, friendly tone</div>`;
-    } else if (complaintCount > 0) {
-      complaintBadge = `<div style="margin-top:8px;font-size:0.78rem;color:var(--text-muted)">${complaintCount} past complaint${complaintCount > 1 ? 's' : ''} on record</div>`;
+      complaintBadge = `<div style="margin-top:8px;padding:6px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:0.78rem;color:#dc2626;font-weight:500">⚠️ Integrity/ethics note on record — AI will use firm, direct tone</div>`;
+    } else if (customerNote?.last_complaint_date) {
+      complaintBadge = `<div style="margin-top:8px;padding:6px 10px;background:#fff3e0;border:1px solid #ffe0b2;border-radius:6px;font-size:0.78rem;color:#e65100">⚠️ Complaint on record (${customerNote.last_complaint_date}) — AI will adjust tone</div>`;
+    }
+    if (customerNote?.note) {
+      complaintBadge += `<div style="margin-top:6px;font-size:0.78rem;color:var(--text-muted);font-style:italic">${customerNote.note}</div>`;
     }
 
     infoEl.innerHTML = `<div class="customer-info">

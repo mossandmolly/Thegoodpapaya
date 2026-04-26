@@ -221,11 +221,10 @@ async function deleteAssignment(id, itemName) {
 let _allNotes = [];
 
 async function loadNotes() {
-  const { data, error } = await sb
+  const { data } = await sb
     .from('customer_notes')
-    .select('id, customer_name, item_name, note_type, note_date, note, invoice_number')
-    .order('customer_name')
-    .order('created_at', { ascending: false });
+    .select('id, customer_name, note, last_complaint_date')
+    .order('customer_name');
 
   _allNotes = data || [];
   renderNotesTable(_allNotes);
@@ -241,11 +240,9 @@ function renderNotesTable(notes) {
 
   const rows = notes.map(n => `
     <tr>
-      <td>${escapeHtml(n.customer_name)}</td>
-      <td style="color:var(--text-muted)">${n.item_name ? escapeHtml(n.item_name) : '<em style="opacity:0.5">All</em>'}</td>
-      <td><span class="note-type-badge type-${n.note_type}">${n.note_type}</span></td>
-      <td style="color:var(--text-muted);white-space:nowrap">${n.note_date || ''}</td>
-      <td style="max-width:200px;word-break:break-word">${escapeHtml(n.note)}</td>
+      <td style="font-weight:500;white-space:nowrap">${escapeHtml(n.customer_name)}</td>
+      <td style="max-width:260px;word-break:break-word">${escapeHtml(n.note)}</td>
+      <td style="color:var(--text-muted);white-space:nowrap;font-size:0.8rem">${n.last_complaint_date || '—'}</td>
       <td><button class="btn btn-sm btn-danger" onclick="deleteNote('${n.id}')">×</button></td>
     </tr>
   `).join('');
@@ -254,36 +251,31 @@ function renderNotesTable(notes) {
     <table class="notes-table">
       <thead>
         <tr>
-          <th>Customer</th><th>Item</th><th>Type</th><th>Date</th><th>Note</th><th></th>
+          <th>Customer</th><th>Note</th><th>Last complaint</th><th></th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
 
-async function addNote() {
-  const customer = document.getElementById('note-customer').value.trim();
-  const item     = document.getElementById('note-item').value.trim() || null;
-  const type     = document.getElementById('note-type').value;
-  const note     = document.getElementById('note-text').value.trim();
+async function saveNote() {
+  const customer      = document.getElementById('note-customer').value.trim();
+  const note          = document.getElementById('note-text').value.trim();
+  const complaintDate = document.getElementById('note-complaint-date').value || null;
 
   if (!customer || !note) { showToast('Customer and note are required', 'error'); return; }
 
-  const { error } = await sb.from('customer_notes').insert({
-    customer_name: customer,
-    item_name:     item,
-    note_type:     type,
-    note:          note,
-    note_date:     todayIST(),
-  });
+  const { error } = await sb.from('customer_notes').upsert(
+    { customer_name: customer, note, last_complaint_date: complaintDate },
+    { onConflict: 'customer_name' }
+  );
 
-  if (error) { showToast('Failed to add note', 'error'); return; }
+  if (error) { showToast('Failed to save note', 'error'); return; }
 
-  document.getElementById('note-customer').value = '';
-  document.getElementById('note-item').value     = '';
-  document.getElementById('note-text').value     = '';
-  document.getElementById('note-type').value     = 'note';
-  showToast('Note added ✓');
+  document.getElementById('note-customer').value       = '';
+  document.getElementById('note-text').value           = '';
+  document.getElementById('note-complaint-date').value = '';
+  showToast('Note saved ✓');
   await loadNotes();
 }
 
@@ -305,19 +297,16 @@ async function importNotesCSV() {
   if (!rows.length) { showToast('CSV appears empty', 'error'); return; }
 
   const records = rows.map(r => ({
-    customer_name:  (r['customer_name'] || '').trim(),
-    item_name:      (r['item_name'] || '').trim() || null,
-    note:           (r['note'] || r['description'] || '').trim(),
-    note_type:      (r['note_type'] || r['complaint_type'] || 'note').trim().toLowerCase(),
-    note_date:      (r['note_date'] || r['complaint_date'] || '').trim() || null,
-    invoice_number: (r['invoice_number'] || '').trim() || null,
+    customer_name:       (r['customer_name'] || '').trim(),
+    note:                (r['note'] || r['description'] || '').trim(),
+    last_complaint_date: (r['last_complaint_date'] || r['complaint_date'] || r['note_date'] || '').trim() || null,
   })).filter(r => r.customer_name && r.note);
 
   if (!records.length) { showToast('No valid rows found', 'error'); return; }
 
   statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:6px">Importing ${records.length} rows…</p>`;
 
-  const { error } = await sb.from('customer_notes').insert(records);
+  const { error } = await sb.from('customer_notes').upsert(records, { onConflict: 'customer_name' });
   if (error) {
     statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:6px">Import failed: ${error.message}</p>`;
     return;
@@ -332,7 +321,7 @@ async function importNotesCSV() {
 function exportNotes() {
   if (!_allNotes.length) { showToast('No notes to export', 'error'); return; }
 
-  const headers = ['customer_name', 'item_name', 'note_type', 'note_date', 'note', 'invoice_number'];
+  const headers = ['customer_name', 'note', 'last_complaint_date'];
   const csv = [
     headers.join(','),
     ..._allNotes.map(n => headers.map(h => JSON.stringify(n[h] ?? '')).join(',')),
