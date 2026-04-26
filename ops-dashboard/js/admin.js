@@ -1,6 +1,27 @@
 // ── Password gate ──────────────────────────────────────────────
 let adminPassword = null;
 
+// Auto-unlock if password was saved in this session
+(async function tryAutoUnlock() {
+  const stored = sessionStorage.getItem('adminPw');
+  if (!stored) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+      body: JSON.stringify({ password: stored, records: [] }),
+    });
+    if (res.status !== 401) {
+      adminPassword = stored;
+      document.getElementById('password-screen').classList.add('hidden');
+      document.getElementById('admin-content').classList.remove('hidden');
+      loadAll();
+    } else {
+      sessionStorage.removeItem('adminPw');
+    }
+  } catch (_) { /* network error — fall through to manual gate */ }
+})();
+
 async function checkPassword() {
   const input  = document.getElementById('admin-password');
   const btn    = document.querySelector('#password-screen button');
@@ -38,6 +59,7 @@ async function checkPassword() {
   }
 
   adminPassword = pw;
+  sessionStorage.setItem('adminPw', pw);
   document.getElementById('password-screen').classList.add('hidden');
   document.getElementById('admin-content').classList.remove('hidden');
   loadAll();
