@@ -159,18 +159,16 @@ function buildCard(item) {
         <div class="card-customer">${item.customer_name}</div>
         ${item.community ? `<div class="card-community">${item.community}</div>` : ''}
       </div>
-      <span class="status-badge badge-${item.status}">${item.status}</span>
+      <div style="text-align:right;flex-shrink:0">
+        <span class="status-badge badge-${item.status}">${item.status}</span>
+        ${item.last_updated_by ? `<div class="card-meta" style="margin-top:4px">✏️ ${fmtTime(item.last_updated_at)}<br>${item.last_updated_by}</div>` : ''}
+        ${item.finalized_by   ? `<div class="card-meta card-meta-final" style="margin-top:2px">✓ ${fmtTime(item.finalized_at)}<br>${item.finalized_by}</div>` : ''}
+      </div>
     </div>
 
     <div class="card-item">${item.item_name}</div>
 
     ${item.description ? `<div class="card-desc">${item.description}</div>` : ''}
-
-    ${(item.last_updated_by || item.finalized_by) ? `
-    <div class="card-meta-wrap">
-      ${item.last_updated_by ? `<div class="card-meta">✏️ ${fmtTime(item.last_updated_at)} · ${item.last_updated_by}</div>` : ''}
-      ${item.finalized_by   ? `<div class="card-meta card-meta-final">✓ ${fmtTime(item.finalized_at)} · ${item.finalized_by}</div>` : ''}
-    </div>` : ''}
 
     ${note ? `<div class="card-note"><strong>📋 Note</strong>${note}</div>` : ''}
 
