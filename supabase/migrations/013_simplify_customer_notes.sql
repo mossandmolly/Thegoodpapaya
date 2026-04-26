@@ -14,7 +14,7 @@ DELETE FROM customer_notes
 WHERE id NOT IN (
   SELECT DISTINCT ON (customer_name) id
   FROM customer_notes
-  ORDER BY customer_name, last_complaint_date DESC NULLS LAST, created_at DESC NULLS LAST
+  ORDER BY customer_name, last_complaint_date DESC NULLS LAST, updated_at DESC NULLS LAST
 );
 
 -- Enforce one row per customer going forward
