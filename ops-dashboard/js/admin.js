@@ -195,9 +195,9 @@ async function parseVoiceOrders() {
   statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Fetching Zoho catalog and parsing with AI…</p>`;
 
   try {
-    const res    = await fetch('/api/parse-orders', {
+    const res    = await fetch(`${SUPABASE_URL}/functions/v1/parse-orders`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
       body:    JSON.stringify({ text, date }),
     });
     const result = await res.json();
