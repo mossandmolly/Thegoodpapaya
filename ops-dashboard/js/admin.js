@@ -60,29 +60,24 @@ async function uploadOrders() {
     status:             'draft',
   })).filter(r => r.sales_order_id && r.customer_name && r.item_name);
 
-  // Delete existing records for this date then insert fresh
-  // This allows duplicate sales_order+item combos (e.g. one free + one charged)
+  // Send to edge function — password verified server-side, uses service role key
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+    body: JSON.stringify({ password: ADMIN_PASSWORD, records }),
+  });
+
+  const result = await res.json();
+
+  if (!res.ok) {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${result.error}</p>`;
+    return;
+  }
+
   const uploadDate = records[0]?.invoice_date;
-  const { error: delError } = await sb
-    .from('operations')
-    .delete()
-    .eq('invoice_date', uploadDate);
-
-  if (delError) {
-    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${delError.message}</p>`;
-    return;
-  }
-
-  const { error } = await sb.from('operations').insert(records);
-
-  if (error) {
-    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${error.message}</p>`;
-    return;
-  }
-
   fileInput.value = '';
-  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${records.length} orders uploaded${uploadDate ? ' for ' + formatDate(uploadDate) : ''}</p>`;
-  showToast(`${records.length} orders loaded ✓`);
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${result.inserted} orders uploaded${uploadDate ? ' for ' + formatDate(uploadDate) : ''}</p>`;
+  showToast(`${result.inserted} orders loaded ✓`);
 }
 
 // ── Packers ────────────────────────────────────────────────────
