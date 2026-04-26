@@ -50,14 +50,39 @@
       <!-- Upload Today's Orders -->
       <div class="admin-section" style="border:1.5px solid #bfdbfe">
         <h2 style="color:#1d4ed8">📋 Upload Today's Orders</h2>
-        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-          Upload a CSV to populate the packer and checker views for today.<br>
-          <strong>Columns:</strong> sales_order, order_date, customer_name, item_name, description, quantity
-        </p>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <input type="file" id="orders-csv" accept=".csv" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:'DM Sans',sans-serif">
-          <button class="btn btn-primary" onclick="uploadOrders()">Upload Orders</button>
+
+        <div class="upload-tabs">
+          <button class="upload-tab active" id="tab-csv"   onclick="switchUploadTab('csv')">📄 CSV</button>
+          <button class="upload-tab"        id="tab-voice" onclick="switchUploadTab('voice')">🎤 Voice / Text</button>
         </div>
+
+        <!-- CSV panel -->
+        <div id="upload-panel-csv">
+          <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+            <strong>Columns:</strong> sales_order, order_date, customer_name, item_name, description, quantity
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <input type="file" id="orders-csv" accept=".csv" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:'DM Sans',sans-serif">
+            <button class="btn btn-primary" onclick="uploadOrders()">Preview &amp; Upload</button>
+          </div>
+        </div>
+
+        <!-- Voice / Text panel -->
+        <div id="upload-panel-voice" class="hidden">
+          <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px">
+            Speak or type orders. Claude maps them to your Zoho catalog — the original text is always saved as a description safety net.
+          </p>
+          <textarea id="voice-order-text" class="voice-textarea"
+            placeholder="E.g. Villa 83 — 2kg apples, half kg white guava. B-12 — 3 dozen bananas, 1kg Kesar mangoes…"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+            <input type="date" id="voice-order-date"
+              style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:'DM Sans',sans-serif">
+            <button class="btn btn-secondary btn-sm" id="voice-mic-btn" onclick="toggleVoiceInput()">🎤 Speak</button>
+            <button class="btn btn-primary"           id="voice-parse-btn" onclick="parseVoiceOrders()">Parse &amp; Preview</button>
+          </div>
+          <div id="voice-parse-status"></div>
+        </div>
+
         <div id="orders-upload-status"></div>
       </div>
 
@@ -161,6 +186,22 @@
         </details>
       </div>
 
+    </div>
+  </div>
+
+  <!-- ── Orders preview modal ── -->
+  <div id="orders-preview-modal" class="preview-overlay hidden">
+    <div class="preview-modal">
+      <div class="preview-modal-header">
+        <h3>Preview Orders</h3>
+        <span id="preview-stats" style="font-size:0.82rem;color:var(--text-muted)"></span>
+        <button class="btn btn-sm btn-secondary" onclick="closePreview()">✕ Cancel</button>
+      </div>
+      <div class="preview-modal-body" id="preview-modal-body"></div>
+      <div class="preview-modal-footer">
+        <span id="preview-row-count" style="font-size:0.85rem;color:var(--text-muted)"></span>
+        <button class="btn btn-primary" id="preview-confirm-btn" onclick="confirmUpload()">Confirm Upload</button>
+      </div>
     </div>
   </div>
 </div>

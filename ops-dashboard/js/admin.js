@@ -79,10 +79,20 @@ document.getElementById('admin-password').addEventListener('keydown', e => {
 
 // ── Load everything ────────────────────────────────────────────
 async function loadAll() {
+  const dateInput = document.getElementById('voice-order-date');
+  if (dateInput && !dateInput.value) dateInput.value = todayIST();
   await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadSnapshots()]);
 }
 
-// ── Daily orders CSV upload ────────────────────────────────────
+// ── Upload tab switching ───────────────────────────────────────
+function switchUploadTab(tab) {
+  document.getElementById('upload-panel-csv').classList.toggle('hidden', tab !== 'csv');
+  document.getElementById('upload-panel-voice').classList.toggle('hidden', tab !== 'voice');
+  document.getElementById('tab-csv').classList.toggle('active', tab === 'csv');
+  document.getElementById('tab-voice').classList.toggle('active', tab === 'voice');
+}
+
+// ── Daily orders CSV upload — now shows preview ───────────────
 async function uploadOrders() {
   const fileInput = document.getElementById('orders-csv');
   const statusEl  = document.getElementById('orders-upload-status');
@@ -98,8 +108,6 @@ async function uploadOrders() {
   const missing = ['sales_order', 'order_date', 'customer_name', 'item_name', 'quantity'].filter(c => !headers.includes(c));
   if (missing.length) { showToast(`Missing columns: ${missing.join(', ')}`, 'error'); return; }
 
-  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Uploading ${rows.length} rows…</p>`;
-
   const records = rows.map(r => ({
     sales_order_id:     (r['sales_order']   || '').trim(),
     invoice_date:       (r['order_date']     || '').trim(),
@@ -110,23 +118,233 @@ async function uploadOrders() {
     status:             'draft',
   })).filter(r => r.sales_order_id && r.customer_name && r.item_name);
 
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
-    body: JSON.stringify({ password: adminPassword, records }),
-  });
+  if (!records.length) { showToast('No valid rows found in CSV', 'error'); return; }
 
-  const result = await res.json();
+  statusEl.innerHTML = '';
+  showPreview(records, 'csv');
+}
 
-  if (!res.ok) {
-    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${result.error}</p>`;
+// ── Voice input ────────────────────────────────────────────────
+let _recognition = null;
+let _isRecording  = false;
+
+function toggleVoiceInput() {
+  if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+    showToast('Voice input not supported — use Chrome on Android', 'error');
     return;
   }
+  _isRecording ? stopVoiceInput() : startVoiceInput();
+}
 
-  const uploadDate = records[0]?.invoice_date;
-  fileInput.value = '';
-  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${result.inserted} orders uploaded${uploadDate ? ' for ' + formatDate(uploadDate) : ''}</p>`;
-  showToast(`${result.inserted} orders loaded ✓`);
+function startVoiceInput() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  _recognition = new SR();
+  _recognition.continuous    = true;
+  _recognition.interimResults = true;
+  _recognition.lang           = 'en-IN';
+
+  const textarea = document.getElementById('voice-order-text');
+  const btn      = document.getElementById('voice-mic-btn');
+  let base       = textarea.value;
+
+  _recognition.onstart = () => {
+    _isRecording = true;
+    btn.textContent = '⏹ Stop';
+    btn.classList.add('btn-recording');
+  };
+
+  _recognition.onresult = e => {
+    let final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+    }
+    if (final) {
+      base += (base.trim() ? ' ' : '') + final.trim();
+      textarea.value = base;
+    }
+  };
+
+  _recognition.onend = () => {
+    _isRecording = false;
+    btn.textContent = '🎤 Speak';
+    btn.classList.remove('btn-recording');
+    _recognition = null;
+  };
+
+  _recognition.start();
+}
+
+function stopVoiceInput() {
+  if (_recognition) { _recognition.stop(); _recognition = null; }
+  _isRecording = false;
+}
+
+// ── Parse voice/text orders ────────────────────────────────────
+async function parseVoiceOrders() {
+  if (_isRecording) stopVoiceInput();
+
+  const text     = document.getElementById('voice-order-text').value.trim();
+  const date     = document.getElementById('voice-order-date').value || todayIST();
+  const statusEl = document.getElementById('voice-parse-status');
+  const btn      = document.getElementById('voice-parse-btn');
+
+  if (!text) { showToast('Enter or speak some orders first', 'error'); return; }
+
+  btn.disabled    = true;
+  btn.textContent = 'Parsing…';
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Fetching Zoho catalog and parsing with AI…</p>`;
+
+  try {
+    const res    = await fetch('/api/parse-orders', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text, date }),
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || 'Parse failed');
+    if (!result.orders?.length) throw new Error('No orders could be extracted from that text');
+
+    const catalogNote = result.zohoItemCount
+      ? `Matched against ${result.zohoItemCount} Zoho items`
+      : 'No Zoho catalog — item names may need review';
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">${catalogNote}</p>`;
+
+    showPreview(result.orders, 'voice');
+  } catch (e) {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Error: ${e.message}</p>`;
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Parse & Preview';
+  }
+}
+
+// ── Preview modal ──────────────────────────────────────────────
+let _previewOrders  = [];
+let _previewDeleted = new Set();
+
+function showPreview(orders, source) {
+  _previewOrders  = orders;
+  _previewDeleted = new Set();
+
+  const hasLow = source === 'voice' && orders.some(o => o._confidence === 'low');
+  const hasMed = source === 'voice' && orders.some(o => o._confidence === 'medium');
+
+  let statsText = `${orders.length} row${orders.length !== 1 ? 's' : ''}`;
+  if (source === 'voice') {
+    if (hasLow)       statsText += ' · ⚠️ review red rows (low confidence)';
+    else if (hasMed)  statsText += ' · review amber rows';
+  }
+  document.getElementById('preview-stats').textContent = statsText;
+
+  document.getElementById('preview-modal-body').innerHTML = buildPreviewTable(orders, source);
+  updatePreviewCount();
+  document.getElementById('orders-preview-modal').classList.remove('hidden');
+}
+
+function buildPreviewTable(orders, source) {
+  const showConf = source === 'voice';
+  const rows = orders.map((o, idx) => {
+    const conf     = o._confidence || 'high';
+    const rowClass = conf === 'low' ? 'conf-low' : conf === 'medium' ? 'conf-medium' : '';
+    const badge    = showConf
+      ? `<span class="conf-badge conf-${conf}">${conf}</span>`
+      : '';
+    const note     = showConf && o._match_note
+      ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px">${escapeHtml(o._match_note)}</div>`
+      : '';
+    const descText = o.description || '';
+    const descCell = descText
+      ? `<span style="font-size:0.75rem;color:var(--text-muted)" title="${escapeHtml(descText)}">${escapeHtml(descText.substring(0, 48))}${descText.length > 48 ? '…' : ''}</span>`
+      : '—';
+
+    return `
+      <tr class="${rowClass}" id="preview-row-${idx}">
+        <td style="text-align:center;width:36px">
+          <button class="btn btn-sm btn-danger" onclick="deletePreviewRow(${idx})" title="Remove">×</button>
+        </td>
+        <td style="font-weight:500;white-space:nowrap">${escapeHtml(o.customer_name)}</td>
+        <td>${escapeHtml(o.item_name)}${badge}${note}</td>
+        <td>
+          <input type="number" class="preview-qty-input" value="${o.requested_quantity}"
+            min="0" step="0.01" onchange="updatePreviewQty(${idx}, this.value)">
+        </td>
+        <td style="color:var(--text-muted);white-space:nowrap;font-size:0.8rem">${o.invoice_date || ''}</td>
+        <td style="max-width:180px">${descCell}</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <table class="preview-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Customer</th>
+          <th>Item</th>
+          <th>Qty</th>
+          <th>Date</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function deletePreviewRow(idx) {
+  _previewDeleted.add(idx);
+  const row = document.getElementById(`preview-row-${idx}`);
+  if (row) row.classList.add('preview-deleted');
+  updatePreviewCount();
+}
+
+function updatePreviewQty(idx, val) {
+  _previewOrders[idx].requested_quantity = parseFloat(val) || 0;
+}
+
+function updatePreviewCount() {
+  const active = _previewOrders.length - _previewDeleted.size;
+  document.getElementById('preview-row-count').textContent =
+    `${active} of ${_previewOrders.length} rows will be uploaded`;
+}
+
+function closePreview() {
+  document.getElementById('orders-preview-modal').classList.add('hidden');
+}
+
+// ── Confirm upload from preview ────────────────────────────────
+async function confirmUpload() {
+  const records = _previewOrders
+    .filter((_, idx) => !_previewDeleted.has(idx))
+    .map(({ _confidence, _match_note, ...r }) => r)
+    .filter(r => r.sales_order_id && r.customer_name && r.item_name && r.requested_quantity > 0);
+
+  if (!records.length) { showToast('No rows to upload', 'error'); return; }
+
+  const btn = document.getElementById('preview-confirm-btn');
+  btn.disabled    = true;
+  btn.textContent = 'Uploading…';
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+      body:    JSON.stringify({ password: adminPassword, records }),
+    });
+    const result = await res.json();
+
+    if (!res.ok) {
+      showToast(`Upload failed: ${result.error}`, 'error');
+      return;
+    }
+
+    closePreview();
+    const uploadDate = records[0]?.invoice_date;
+    document.getElementById('orders-upload-status').innerHTML =
+      `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${result.inserted} orders uploaded${uploadDate ? ' for ' + formatDate(uploadDate) : ''}</p>`;
+    showToast(`${result.inserted} orders uploaded ✓`);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Confirm Upload';
+  }
 }
 
 // ── Packers ────────────────────────────────────────────────────
