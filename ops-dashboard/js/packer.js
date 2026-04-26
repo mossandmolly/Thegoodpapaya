@@ -114,17 +114,24 @@ async function loadItems() {
 // ── Status filter ─────────────────────────────────────────────
 function selectStatusFilter(filter) {
   statusFilter = filter;
-  ['all', 'draft', 'packed', 'final'].forEach(f => {
+  ['all', 'draft', 'packed', 'final', 'deviations'].forEach(f => {
     document.getElementById(`sf-${f}`)?.classList.toggle('selected', f === filter);
   });
   renderCards(allItems);
 }
 
+function hasDeviation(item) {
+  const req = parseFloat(item.requested_quantity);
+  const fin = parseFloat(item.final_quantity);
+  return req > 0 && !isNaN(fin) && Math.abs(fin - req) / req > 0.25;
+}
+
 function applyStatusFilter(items) {
-  if (statusFilter === 'all')    return items;
-  if (statusFilter === 'final')  return items.filter(i => i.status === 'final');
-  if (statusFilter === 'packed') return items.filter(i => i.status === 'draft' && i.final_quantity != null);
-  if (statusFilter === 'draft')  return items.filter(i => i.status === 'draft' && i.final_quantity == null);
+  if (statusFilter === 'all')        return items;
+  if (statusFilter === 'final')      return items.filter(i => i.status === 'final');
+  if (statusFilter === 'packed')     return items.filter(i => i.status === 'draft' && i.final_quantity != null);
+  if (statusFilter === 'draft')      return items.filter(i => i.status === 'draft' && i.final_quantity == null);
+  if (statusFilter === 'deviations') return items.filter(hasDeviation);
   return items;
 }
 
