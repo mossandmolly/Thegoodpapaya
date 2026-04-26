@@ -157,6 +157,7 @@ function buildCard(item, note) {
     <div class="card-item">${item.item_name}</div>
 
     ${item.description ? `<div class="card-desc">${item.description}</div>` : ''}
+    ${item.last_updated_by ? `<div class="card-desc" style="font-size:0.75rem">✏️ ${item.last_updated_by}</div>` : ''}
 
     ${note ? `<div class="card-note"><strong>📋 Customer Note</strong>${note}</div>` : ''}
 
@@ -210,7 +211,11 @@ async function saveItem(id) {
 
   const { error } = await sb
     .from('operations')
-    .update({ final_quantity: val, status: 'draft' })
+    .update({
+      final_quantity:  val,
+      status:          'draft',
+      last_updated_by: (await sb.auth.getUser())?.data?.user?.email ?? 'unknown',
+    })
     .eq('id', id);
 
   if (error) { showToast('Save failed', 'error'); if (btn) { btn.textContent = 'Save'; btn.disabled = false; } return; }

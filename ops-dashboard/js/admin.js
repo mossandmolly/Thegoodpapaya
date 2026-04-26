@@ -20,7 +20,7 @@ document.getElementById('admin-password').addEventListener('keydown', e => {
 
 // ── Load everything ────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadComplaints()]);
+  await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadComplaints(), loadSnapshots()]);
 }
 
 // ── Daily orders CSV upload ────────────────────────────────────
@@ -372,6 +372,75 @@ function parseCSV(text) {
     headers.forEach((h, i) => { obj[h] = vals[i] ?? ''; });
     return obj;
   });
+}
+
+// ── Snapshots ──────────────────────────────────────────────────
+async function loadSnapshots() {
+  const sel = document.getElementById('snapshot-select');
+
+  // Get distinct snapshot timestamps
+  const { data, error } = await sb
+    .from('operations_snapshots')
+    .select('snapshot_at')
+    .order('snapshot_at', { ascending: false })
+    .limit(200);
+
+  if (error || !data?.length) {
+    sel.innerHTML = '<option value="">No snapshots yet</option>';
+    return;
+  }
+
+  // Deduplicate timestamps
+  const timestamps = [...new Set(data.map(r => r.snapshot_at))];
+
+  sel.innerHTML = timestamps.map(ts => {
+    const d = new Date(ts);
+    const label = d.toLocaleString('en-IN', {
+      day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
+    });
+    return `<option value="${ts}">${label}</option>`;
+  }).join('');
+}
+
+async function restoreSnapshot() {
+  const sel      = document.getElementById('snapshot-select');
+  const statusEl = document.getElementById('restore-status');
+  const ts       = sel.value;
+
+  if (!ts) { showToast('Select a snapshot first', 'error'); return; }
+
+  const label = sel.options[sel.selectedIndex].text;
+  if (!confirm(`Restore final quantities and statuses to snapshot from ${label}?\n\nThis only affects packer-entered data — orders are untouched.`)) return;
+
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Restoring…</p>`;
+
+  // Fetch snapshot rows for this timestamp
+  const { data: snapRows, error: fetchErr } = await sb
+    .from('operations_snapshots')
+    .select('operation_id, final_quantity, status')
+    .eq('snapshot_at', ts);
+
+  if (fetchErr || !snapRows?.length) {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Failed to load snapshot</p>`;
+    return;
+  }
+
+  // Update each operation row
+  let failed = 0;
+  await Promise.all(snapRows.map(async (row) => {
+    const { error } = await sb
+      .from('operations')
+      .update({ final_quantity: row.final_quantity, status: row.status })
+      .eq('id', row.operation_id);
+    if (error) failed++;
+  }));
+
+  if (failed > 0) {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Restored with ${failed} errors</p>`;
+  } else {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ Restored ${snapRows.length} rows to ${label}</p>`;
+    showToast(`Restored to ${label} ✓`);
+  }
 }
 
 // ── Danger zone ────────────────────────────────────────────────

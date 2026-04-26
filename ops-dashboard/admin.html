@@ -18,6 +18,7 @@
       <a href="checker.html">Checker</a>
       <a href="admin.html" class="active">Admin</a>
       <a href="somya.html">Somya AI</a>
+    <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
     </nav>
   </div>
 </header>
@@ -102,6 +103,22 @@
     </div>
     <div id="upload-status"></div>
     <div id="complaints-list" style="margin-top:12px"><div class="skeleton" style="height:40px"></div></div>
+  </div>
+
+  <!-- Snapshot restore -->
+  <div class="admin-section" style="border:1.5px solid #bfdbfe">
+    <h2 style="color:#1d4ed8">🕐 Restore from Snapshot</h2>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+      Rolls back <strong>final_quantity and status only</strong> for all matching rows.<br>
+      New orders and order details are never affected.
+    </p>
+    <div class="form-row">
+      <select id="snapshot-select" style="flex:1">
+        <option value="">Loading snapshots…</option>
+      </select>
+      <button class="btn btn-primary" onclick="restoreSnapshot()">Restore</button>
+    </div>
+    <div id="restore-status"></div>
   </div>
 
   <!-- Danger zone -->
