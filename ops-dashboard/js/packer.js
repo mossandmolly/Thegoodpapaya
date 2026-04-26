@@ -209,17 +209,71 @@ function buildCard(item) {
   return card;
 }
 
+// ── Deviation confirmation modal ───────────────────────────────
+function checkDeviation(item, enteredQty, onConfirm) {
+  const requested = parseFloat(item.requested_quantity);
+  if (!requested || isNaN(enteredQty) || Math.abs(enteredQty - requested) / requested <= 0.25) {
+    onConfirm();
+    return;
+  }
+
+  const pct       = Math.round(Math.abs(enteredQty - requested) / requested * 100);
+  const direction = enteredQty > requested ? 'above' : 'below';
+  const modal     = document.createElement('div');
+  modal.id        = 'dev-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = `
+    <div style="background:white;border-radius:16px;padding:24px;max-width:320px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.2)">
+      <div style="font-size:1.4rem;margin-bottom:6px">⚠️</div>
+      <h3 style="font-size:1rem;margin-bottom:6px;color:var(--red)">${pct}% ${direction} requested</h3>
+      ${item.description ? `<p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px;font-style:italic">${item.description}</p>` : ''}
+      <div style="background:var(--bg);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.88rem;display:flex;justify-content:space-between;gap:16px">
+        <span>Requested: <strong>${requested}</strong></span>
+        <span>Entered: <strong style="color:var(--red)">${enteredQty}</strong></span>
+      </div>
+      <p style="font-size:0.82rem;margin-bottom:8px">Re-enter <strong>${enteredQty}</strong> to confirm:</p>
+      <input type="number" id="dev-input" inputmode="decimal" step="0.1" placeholder="Re-enter qty"
+        style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:1rem;font-family:'DM Sans',sans-serif;text-align:center;margin-bottom:12px;box-sizing:border-box">
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('dev-modal').remove()"
+          style="flex:1;padding:10px;border:1.5px solid var(--border);border-radius:8px;background:white;font-family:'DM Sans',sans-serif;font-size:0.9rem;cursor:pointer">Cancel</button>
+        <button id="dev-confirm"
+          style="flex:1;padding:10px;background:var(--red);color:white;border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-weight:600;font-size:0.9rem;cursor:pointer">Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const inp = document.getElementById('dev-input');
+  inp.focus();
+
+  function tryConfirm() {
+    if (parseFloat(inp.value) === enteredQty) {
+      modal.remove();
+      onConfirm();
+    } else {
+      inp.style.borderColor = 'var(--red)';
+      inp.value = '';
+      inp.placeholder = `Must be ${enteredQty}`;
+      inp.focus();
+    }
+  }
+
+  document.getElementById('dev-confirm').onclick = tryConfirm;
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') tryConfirm(); });
+}
+
 // ── Save final quantity ───────────────────────────────────────
 async function saveItem(id) {
   const input = document.getElementById(`input-${id}`);
   const val   = parseFloat(input.value);
+  if (isNaN(val) || val < 0) { showToast('Enter a valid quantity', 'error'); return; }
 
-  if (isNaN(val) || val < 0) {
-    showToast('Enter a valid quantity', 'error');
-    return;
-  }
+  const item = allItems.find(i => i.id === id);
+  checkDeviation(item, val, () => doSave(id, val));
+}
 
-  const actions = input.nextElementSibling;
+async function doSave(id, val) {
+  const actions = document.getElementById(`input-${id}`)?.nextElementSibling;
   const saveBtn = actions?.querySelector('.btn-primary');
   if (saveBtn) { saveBtn.textContent = 'Saving…'; saveBtn.disabled = true; }
 
@@ -251,10 +305,21 @@ async function saveItem(id) {
 
 // ── Mark as final ─────────────────────────────────────────────
 async function finalizeItem(id) {
-  const { data: { user } } = await sb.auth.getUser();
-  const email    = user?.email ?? 'unknown';
-  const now      = new Date().toISOString();
   const inputVal = parseFloat(document.getElementById(`input-${id}`)?.value);
+  const item     = allItems.find(i => i.id === id);
+
+  const proceed = () => doFinalize(id, inputVal);
+  if (!isNaN(inputVal) && inputVal >= 0) {
+    checkDeviation(item, inputVal, proceed);
+  } else {
+    proceed();
+  }
+}
+
+async function doFinalize(id, inputVal) {
+  const { data: { user } } = await sb.auth.getUser();
+  const email = user?.email ?? 'unknown';
+  const now   = new Date().toISOString();
 
   const update = { status: 'final', finalized_by: email, finalized_at: now };
   if (!isNaN(inputVal) && inputVal >= 0) {
