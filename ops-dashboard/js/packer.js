@@ -171,7 +171,7 @@ function buildCard(item) {
 
     ${item.description ? `<div class="card-desc">${item.description}</div>` : ''}
 
-    ${note ? `<div class="card-note"><strong>📋 Note</strong>${note}</div>` : ''}
+    ${note ? `<div class="card-note"><strong>📋 Packer Note</strong><span style="color:var(--red)">${note}</span></div>` : ''}
 
     <div class="qty-row">
       <div class="qty-box">

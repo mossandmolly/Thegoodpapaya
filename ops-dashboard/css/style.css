@@ -192,7 +192,7 @@ header nav a.active { color: white; font-weight: 600; }
   color: #5d4037;
   margin-bottom: 12px;
 }
-.card-note strong { display: block; font-size: 0.75rem; margin-bottom: 2px; color: #8d6e63; }
+.card-note strong { display: block; font-size: 0.75rem; margin-bottom: 2px; color: var(--text); }
 
 .qty-row {
   display: flex;
