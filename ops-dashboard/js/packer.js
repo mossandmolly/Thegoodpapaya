@@ -159,10 +159,10 @@ function buildCard(item) {
         <div class="card-customer">${item.customer_name}</div>
         ${item.community ? `<div class="card-community">${item.community}</div>` : ''}
       </div>
-      <div style="text-align:right;flex-shrink:0">
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;max-width:55%;min-width:0">
         <span class="status-badge badge-${item.status}">${item.status}</span>
-        ${item.last_updated_by ? `<div class="card-meta" style="margin-top:4px">✏️ ${fmtTime(item.last_updated_at)}<br>${item.last_updated_by}</div>` : ''}
-        ${item.finalized_by   ? `<div class="card-meta card-meta-final" style="margin-top:2px">✓ ${fmtTime(item.finalized_at)}<br>${item.finalized_by}</div>` : ''}
+        ${item.last_updated_by ? `<div class="card-meta" style="text-align:right">✏️ ${fmtTime(item.last_updated_at)}<br>${item.last_updated_by}</div>` : ''}
+        ${item.finalized_by   ? `<div class="card-meta card-meta-final" style="text-align:right">✓ ${fmtTime(item.finalized_at)}<br>${item.finalized_by}</div>` : ''}
       </div>
     </div>
 
