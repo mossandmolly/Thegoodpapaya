@@ -2,6 +2,7 @@
 let selectedPackerId   = localStorage.getItem('packerId')   || null;
 let selectedPackerName = localStorage.getItem('packerName') || null;
 let allItems = [];
+let noteMap  = {}; // { customer_name: { '__all__': note, item_name: note } }
 
 // ── Init ──────────────────────────────────────────────────────
 (async function init() {
@@ -9,7 +10,6 @@ let allItems = [];
   await loadPackers();
   if (selectedPackerId) await loadItems();
 })();
-
 
 // ── Load packers ──────────────────────────────────────────────
 async function loadPackers() {
@@ -22,7 +22,6 @@ async function loadPackers() {
   const container = document.getElementById('packer-chips');
   container.innerHTML = '';
 
-  // Always show "All" chip first
   const allChip = document.createElement('button');
   allChip.className = 'chip' + (selectedPackerId === 'all' ? ' selected' : '');
   allChip.textContent = 'All';
@@ -65,7 +64,6 @@ async function loadItems() {
   container.classList.remove('hidden');
   empty.classList.add('hidden');
 
-  // Get today's operations — all items or packer-specific
   let query = sb
     .from('operations')
     .select('*')
@@ -98,52 +96,68 @@ async function loadItems() {
     return;
   }
 
-  // Get customer notes for these customers
+  // Load notes for all customers in this batch
   const customerNames = [...new Set(items.map(i => i.customer_name))];
   const { data: notes } = await sb
     .from('customer_notes')
-    .select('customer_name, note')
+    .select('customer_name, item_name, note, note_type')
     .in('customer_name', customerNames);
 
-  const noteMap = {};
-  (notes || []).forEach(n => { noteMap[n.customer_name] = n.note; });
+  noteMap = {};
+  (notes || []).forEach(n => {
+    if (!noteMap[n.customer_name]) noteMap[n.customer_name] = {};
+    const key      = n.item_name || '__all__';
+    const existing = noteMap[n.customer_name][key];
+    noteMap[n.customer_name][key] = existing ? existing + ' · ' + n.note : n.note;
+  });
 
   allItems = items;
-  renderCards(items, noteMap);
+  renderCards(items);
 }
 
 // ── Render cards ──────────────────────────────────────────────
-function renderCards(items, noteMap) {
+function renderCards(items) {
   const container = document.getElementById('cards-container');
   container.innerHTML = '';
   container.classList.remove('hidden');
 
-  // Summary
-  const total   = items.length;
-  const done    = items.filter(i => i.status === 'final').length;
-  const pending = total - done;
+  const total = items.length;
+  const done  = items.filter(i => i.status === 'final').length;
   document.getElementById('sum-total').textContent   = total;
   document.getElementById('sum-done').textContent    = done;
-  document.getElementById('sum-pending').textContent = pending;
+  document.getElementById('sum-pending').textContent = total - done;
   document.getElementById('summary-bar').classList.remove('hidden');
   document.getElementById('section-header').classList.remove('hidden');
   document.getElementById('section-count').textContent = selectedPackerId === 'all'
     ? `${total} item${total !== 1 ? 's' : ''} today (all packers)`
     : `${total} item${total !== 1 ? 's' : ''} assigned to you`;
 
-  items.forEach(item => {
-    const note = noteMap[item.customer_name];
-    container.appendChild(buildCard(item, note));
+  items.forEach(item => container.appendChild(buildCard(item)));
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function fmtTime(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('en-IN', {
+    day: 'numeric', month: 'short',
+    hour: '2-digit', minute: '2-digit', hour12: true,
   });
 }
 
+function noteFor(item) {
+  const cn = noteMap[item.customer_name] || {};
+  return cn[item.item_name] || cn['__all__'] || null;
+}
+
 // ── Build a single card ───────────────────────────────────────
-function buildCard(item, note) {
+function buildCard(item) {
   const card = document.createElement('div');
   card.className = `item-card status-${item.status}`;
   card.id = `card-${item.id}`;
 
-  const isFinal = item.status === 'final';
+  const isFinal    = item.status === 'final';
+  const hasFinalQty = item.final_quantity != null;
+  const note        = noteFor(item);
 
   card.innerHTML = `
     <div class="card-header">
@@ -157,9 +171,14 @@ function buildCard(item, note) {
     <div class="card-item">${item.item_name}</div>
 
     ${item.description ? `<div class="card-desc">${item.description}</div>` : ''}
-    ${item.last_updated_by ? `<div class="card-desc" style="font-size:0.75rem">✏️ ${item.last_updated_by}</div>` : ''}
 
-    ${note ? `<div class="card-note"><strong>📋 Customer Note</strong>${note}</div>` : ''}
+    ${(item.last_updated_by || item.finalized_by) ? `
+    <div class="card-meta-wrap">
+      ${item.last_updated_by ? `<div class="card-meta">✏️ ${fmtTime(item.last_updated_at)} · ${item.last_updated_by}</div>` : ''}
+      ${item.finalized_by   ? `<div class="card-meta card-meta-final">✓ ${fmtTime(item.finalized_at)} · ${item.finalized_by}</div>` : ''}
+    </div>` : ''}
+
+    ${note ? `<div class="card-note"><strong>📋 Note</strong>${note}</div>` : ''}
 
     <div class="qty-row">
       <div class="qty-box">
@@ -185,6 +204,7 @@ function buildCard(item, note) {
       >
       <div class="card-actions">
         <button class="btn btn-primary" onclick="saveItem('${item.id}')">Save</button>
+        ${hasFinalQty ? `<button class="btn btn-success" onclick="finalizeItem('${item.id}')">Mark Final</button>` : ''}
       </div>
     ` : `
       <div class="card-actions">
@@ -206,67 +226,76 @@ async function saveItem(id) {
     return;
   }
 
-  const btn = input.nextElementSibling?.querySelector('button');
-  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+  const actions = input.nextElementSibling;
+  const saveBtn = actions?.querySelector('.btn-primary');
+  if (saveBtn) { saveBtn.textContent = 'Saving…'; saveBtn.disabled = true; }
+
+  const { data: { user } } = await sb.auth.getUser();
+  const email = user?.email ?? 'unknown';
+  const now   = new Date().toISOString();
 
   const { error } = await sb
     .from('operations')
-    .update({
-      final_quantity:  val,
-      status:          'draft',
-      last_updated_by: (await sb.auth.getUser())?.data?.user?.email ?? 'unknown',
-    })
+    .update({ final_quantity: val, status: 'draft', last_updated_by: email, last_updated_at: now })
     .eq('id', id);
 
-  if (error) { showToast('Save failed', 'error'); if (btn) { btn.textContent = 'Save'; btn.disabled = false; } return; }
+  if (error) {
+    showToast('Save failed', 'error');
+    if (saveBtn) { saveBtn.textContent = 'Save'; saveBtn.disabled = false; }
+    return;
+  }
 
   showToast('Saved ✓');
-  // Update local state and re-render card
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    allItems[idx].final_quantity = val;
-    allItems[idx].status = 'draft';
-    const noteMap = buildNoteMapFromDOM();
-    const newCard = buildCard(allItems[idx], noteMap[allItems[idx].customer_name]);
-    document.getElementById(`card-${id}`).replaceWith(newCard);
+    Object.assign(allItems[idx], { final_quantity: val, status: 'draft', last_updated_by: email, last_updated_at: now });
+    document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
     updateSummary();
   }
 }
 
-// ── Remove final tag ──────────────────────────────────────────
+// ── Mark as final ─────────────────────────────────────────────
+async function finalizeItem(id) {
+  const { data: { user } } = await sb.auth.getUser();
+  const email = user?.email ?? 'unknown';
+  const now   = new Date().toISOString();
+
+  const { error } = await sb
+    .from('operations')
+    .update({ status: 'final', finalized_by: email, finalized_at: now })
+    .eq('id', id);
+
+  if (error) { showToast('Failed to mark final', 'error'); return; }
+
+  const idx = allItems.findIndex(i => i.id === id);
+  if (idx !== -1) {
+    Object.assign(allItems[idx], { status: 'final', finalized_by: email, finalized_at: now });
+    document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
+    updateSummary();
+  }
+  showToast('Marked as final ✓');
+}
+
+// ── Unfinalize ────────────────────────────────────────────────
 async function unfinalize(id) {
   const { error } = await sb
     .from('operations')
-    .update({ status: 'draft' })
+    .update({ status: 'draft', finalized_by: null, finalized_at: null })
     .eq('id', id);
 
   if (error) { showToast('Failed to edit', 'error'); return; }
 
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    allItems[idx].status = 'draft';
-    const noteMap = buildNoteMapFromDOM();
-    const newCard = buildCard(allItems[idx], noteMap[allItems[idx].customer_name]);
-    document.getElementById(`card-${id}`).replaceWith(newCard);
+    Object.assign(allItems[idx], { status: 'draft', finalized_by: null, finalized_at: null });
+    document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
     updateSummary();
   }
 }
 
-function buildNoteMapFromDOM() {
-  const map = {};
-  document.querySelectorAll('.card-note').forEach(el => {
-    const card = el.closest('.item-card');
-    if (!card) return;
-    const name = card.querySelector('.card-customer')?.textContent;
-    const note = el.textContent.replace('📋 Customer Note', '').trim();
-    if (name) map[name] = note;
-  });
-  return map;
-}
-
 function updateSummary() {
-  const total   = allItems.length;
-  const done    = allItems.filter(i => i.status === 'final').length;
+  const total = allItems.length;
+  const done  = allItems.filter(i => i.status === 'final').length;
   document.getElementById('sum-total').textContent   = total;
   document.getElementById('sum-done').textContent    = done;
   document.getElementById('sum-pending').textContent = total - done;
