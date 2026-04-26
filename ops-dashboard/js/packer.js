@@ -133,10 +133,11 @@ function renderCards(items) {
 // ── Helpers ───────────────────────────────────────────────────
 function fmtTime(iso) {
   if (!iso) return '';
-  return new Date(iso).toLocaleString('en-IN', {
-    day: 'numeric', month: 'short',
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  });
+  return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function shortUser(email) {
+  return (email || '').split('@')[0];
 }
 
 function noteFor(item) {
@@ -161,8 +162,8 @@ function buildCard(item) {
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;max-width:55%;min-width:0">
         <span class="status-badge badge-${item.status}">${item.status}</span>
-        ${item.last_updated_by ? `<div class="card-meta" style="text-align:right">✏️ ${fmtTime(item.last_updated_at)}<br>${item.last_updated_by}</div>` : ''}
-        ${item.finalized_by   ? `<div class="card-meta card-meta-final" style="text-align:right">✓ ${fmtTime(item.finalized_at)}<br>${item.finalized_by}</div>` : ''}
+        ${item.last_updated_by ? `<div class="card-meta" style="text-align:right;white-space:nowrap">✏️ ${fmtTime(item.last_updated_at)} · ${shortUser(item.last_updated_by)}</div>` : ''}
+        ${item.finalized_by   ? `<div class="card-meta card-meta-final" style="text-align:right;white-space:nowrap">✓ ${fmtTime(item.finalized_at)} · ${shortUser(item.finalized_by)}</div>` : ''}
       </div>
     </div>
 
@@ -251,19 +252,23 @@ async function saveItem(id) {
 // ── Mark as final ─────────────────────────────────────────────
 async function finalizeItem(id) {
   const { data: { user } } = await sb.auth.getUser();
-  const email = user?.email ?? 'unknown';
-  const now   = new Date().toISOString();
+  const email    = user?.email ?? 'unknown';
+  const now      = new Date().toISOString();
+  const inputVal = parseFloat(document.getElementById(`input-${id}`)?.value);
 
-  const { error } = await sb
-    .from('operations')
-    .update({ status: 'final', finalized_by: email, finalized_at: now })
-    .eq('id', id);
+  const update = { status: 'final', finalized_by: email, finalized_at: now };
+  if (!isNaN(inputVal) && inputVal >= 0) {
+    update.final_quantity  = inputVal;
+    update.last_updated_by = email;
+    update.last_updated_at = now;
+  }
 
+  const { error } = await sb.from('operations').update(update).eq('id', id);
   if (error) { showToast('Failed to mark final', 'error'); return; }
 
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    Object.assign(allItems[idx], { status: 'final', finalized_by: email, finalized_at: now });
+    Object.assign(allItems[idx], update);
     document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
     updateSummary();
   }
