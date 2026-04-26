@@ -244,6 +244,8 @@ async function saveItem(id) {
   if (idx !== -1) {
     Object.assign(allItems[idx], { final_quantity: val, status: 'draft', last_updated_by: email, last_updated_at: now });
     document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
+    const newInput = document.getElementById(`input-${id}`);
+    if (newInput) newInput.value = '';
     updateSummary();
   }
 }
