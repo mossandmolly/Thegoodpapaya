@@ -197,7 +197,11 @@ async function parseVoiceOrders() {
   try {
     const res    = await fetch(`${SUPABASE_URL}/functions/v1/parse-orders`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON}`,
+        'apikey':        SUPABASE_ANON,
+      },
       body:    JSON.stringify({ text, date }),
     });
     const result = await res.json();
