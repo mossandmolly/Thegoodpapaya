@@ -2,7 +2,8 @@
 let selectedPackerId   = localStorage.getItem('packerId')   || null;
 let selectedPackerName = localStorage.getItem('packerName') || null;
 let allItems = [];
-let noteMap  = {}; // { customer_name: { '__all__': note, item_name: note } }
+let noteMap  = {};
+let statusFilter = 'all'; // 'all' | 'draft' | 'packed' | 'final' // { customer_name: { '__all__': note, item_name: note } }
 
 // ── Init ──────────────────────────────────────────────────────
 (async function init() {
@@ -110,6 +111,23 @@ async function loadItems() {
   renderCards(items);
 }
 
+// ── Status filter ─────────────────────────────────────────────
+function selectStatusFilter(filter) {
+  statusFilter = filter;
+  ['all', 'draft', 'packed', 'final'].forEach(f => {
+    document.getElementById(`sf-${f}`)?.classList.toggle('selected', f === filter);
+  });
+  renderCards(allItems);
+}
+
+function applyStatusFilter(items) {
+  if (statusFilter === 'all')    return items;
+  if (statusFilter === 'final')  return items.filter(i => i.status === 'final');
+  if (statusFilter === 'packed') return items.filter(i => i.status === 'draft' && i.final_quantity != null);
+  if (statusFilter === 'draft')  return items.filter(i => i.status === 'draft' && i.final_quantity == null);
+  return items;
+}
+
 // ── Render cards ──────────────────────────────────────────────
 function renderCards(items) {
   const container = document.getElementById('cards-container');
@@ -127,7 +145,12 @@ function renderCards(items) {
     ? `${total} item${total !== 1 ? 's' : ''} today (all packers)`
     : `${total} item${total !== 1 ? 's' : ''} assigned to you`;
 
-  items.forEach(item => container.appendChild(buildCard(item)));
+  const visible = applyStatusFilter(items);
+  if (!visible.length) {
+    container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--text-muted);font-size:0.9rem">No ${statusFilter === 'all' ? '' : statusFilter + ' '}items</div>`;
+    return;
+  }
+  visible.forEach(item => container.appendChild(buildCard(item)));
 }
 
 // ── Helpers ───────────────────────────────────────────────────
