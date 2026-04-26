@@ -1,17 +1,48 @@
 // ── Password gate ──────────────────────────────────────────────
-const ADMIN_PASSWORD = '1234'; // change this in config or here
+let adminPassword = null; // set after server-side verification
 
-function checkPassword() {
-  const input = document.getElementById('admin-password');
-  if (input.value === ADMIN_PASSWORD) {
-    document.getElementById('password-screen').classList.add('hidden');
-    document.getElementById('admin-content').classList.remove('hidden');
-    loadAll();
-  } else {
-    document.getElementById('pw-error').style.display = 'block';
+async function checkPassword() {
+  const input  = document.getElementById('admin-password');
+  const btn    = document.querySelector('#password-screen button');
+  const errEl  = document.getElementById('pw-error');
+  const pw     = input.value;
+  if (!pw) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  errEl.style.display = 'none';
+
+  // Probe the edge function — empty records array triggers 400 (correct pw) or 401 (wrong pw)
+  let res;
+  try {
+    res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+      body: JSON.stringify({ password: pw, records: [] }),
+    });
+  } catch (e) {
+    errEl.textContent = 'Network error — try again';
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Unlock';
+    return;
+  }
+
+  if (res.status === 401) {
+    errEl.textContent = 'Wrong password';
+    errEl.style.display = 'block';
     input.value = '';
     input.focus();
+    btn.disabled = false;
+    btn.textContent = 'Unlock';
+    return;
   }
+
+  // 400 "No records provided" = password correct
+  adminPassword = pw;
+  document.getElementById('password-screen').classList.add('hidden');
+  document.getElementById('admin-content').classList.remove('hidden');
+  loadAll();
 }
 
 document.getElementById('admin-password').addEventListener('keydown', e => {
@@ -64,7 +95,7 @@ async function uploadOrders() {
   const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
-    body: JSON.stringify({ password: ADMIN_PASSWORD, records }),
+    body: JSON.stringify({ password: adminPassword, records }),
   });
 
   const result = await res.json();
