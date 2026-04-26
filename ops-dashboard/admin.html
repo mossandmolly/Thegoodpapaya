@@ -54,9 +54,9 @@
           Upload a CSV to populate the packer and checker views for today.<br>
           <strong>Columns:</strong> sales_order, order_date, customer_name, item_name, description, quantity
         </p>
-        <div class="form-row">
-          <input type="file" id="orders-csv" accept=".csv" style="flex:1;padding:8px">
-          <button class="btn btn-primary btn-sm" onclick="uploadOrders()">Upload</button>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <input type="file" id="orders-csv" accept=".csv" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:'DM Sans',sans-serif">
+          <button class="btn btn-primary" onclick="uploadOrders()">Upload Orders</button>
         </div>
         <div id="orders-upload-status"></div>
       </div>
@@ -117,23 +117,33 @@
 
       <!-- Customer Notes & History -->
       <div class="admin-section">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <h2 style="margin-bottom:0">Customer Notes &amp; History</h2>
-          <button class="btn btn-secondary btn-sm" onclick="exportNotes()">Export CSV</button>
-        </div>
+        <h2 style="margin-bottom:8px">Customer Notes &amp; History</h2>
         <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-          Shown on packer cards and used by Somya AI to calibrate tone.<br>
-          Leave <em>Item</em> blank to apply to all items for a customer.
+          Shown on packer cards and used by Somya AI to calibrate tone. One note per customer.
         </p>
 
         <!-- Add / update form -->
-        <div class="form-row" style="flex-wrap:wrap;gap:6px">
+        <div class="form-row" style="flex-wrap:wrap;gap:6px;margin-bottom:4px">
           <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:140px">
           <input type="text" id="note-text" placeholder="Note" style="flex:3;min-width:180px">
           <input type="date" id="note-complaint-date" title="Last complaint date" style="flex:1;min-width:130px">
           <button class="btn btn-primary btn-sm" onclick="saveNote()" style="white-space:nowrap">Save</button>
         </div>
-        <p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px">Saving again for the same customer updates their existing note.</p>
+        <div id="note-save-status" style="margin-bottom:8px"></div>
+
+        <!-- Read-only recent notes (last 10) -->
+        <div class="notes-table-wrap" id="notes-preview">
+          <div class="skeleton" style="height:40px;margin:8px"></div>
+        </div>
+
+        <!-- Manage all + delete (collapsible) -->
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:0.82rem;color:var(--text-muted);user-select:none">Manage all / delete</summary>
+          <div class="notes-table-wrap" id="notes-table-wrap" style="margin-top:8px">
+            <div class="skeleton" style="height:40px;margin:8px"></div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="exportNotes()" style="margin-top:8px">Export CSV</button>
+        </details>
 
         <!-- CSV import (collapsible) -->
         <details style="margin-top:8px">
@@ -149,11 +159,6 @@
             <div id="note-import-status"></div>
           </div>
         </details>
-
-        <!-- Notes table -->
-        <div class="notes-table-wrap" id="notes-table-wrap">
-          <div class="skeleton" style="height:40px;margin:8px"></div>
-        </div>
       </div>
 
     </div>

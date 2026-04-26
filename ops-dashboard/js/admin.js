@@ -221,40 +221,59 @@ async function deleteAssignment(id, itemName) {
 let _allNotes = [];
 
 async function loadNotes() {
-  const { data } = await sb
+  const { data, error } = await sb
     .from('customer_notes')
     .select('id, customer_name, note, last_complaint_date')
-    .order('customer_name');
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    document.getElementById('notes-preview').innerHTML =
+      `<p style="font-size:0.82rem;color:var(--red);padding:10px">Error loading notes: ${error.message}</p>`;
+    return;
+  }
 
   _allNotes = data || [];
+  renderNotesPreview(_allNotes.slice(0, 10));
   renderNotesTable(_allNotes);
 }
 
-function renderNotesTable(notes) {
-  const wrap = document.getElementById('notes-table-wrap');
-
+function renderNotesPreview(notes) {
+  const wrap = document.getElementById('notes-preview');
   if (!notes.length) {
     wrap.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted);padding:12px">No notes yet</p>';
     return;
   }
-
-  const rows = notes.map(n => `
-    <tr>
-      <td style="font-weight:500;white-space:nowrap">${escapeHtml(n.customer_name)}</td>
-      <td style="max-width:260px;word-break:break-word">${escapeHtml(n.note)}</td>
-      <td style="color:var(--text-muted);white-space:nowrap;font-size:0.8rem">${n.last_complaint_date || '—'}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="deleteNote('${n.id}')">×</button></td>
-    </tr>
-  `).join('');
-
   wrap.innerHTML = `
     <table class="notes-table">
-      <thead>
+      <thead><tr><th>Customer</th><th>Note</th><th>Last complaint</th></tr></thead>
+      <tbody>${notes.map(n => `
         <tr>
-          <th>Customer</th><th>Note</th><th>Last complaint</th><th></th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
+          <td style="font-weight:500;white-space:nowrap">${escapeHtml(n.customer_name)}</td>
+          <td style="max-width:260px;word-break:break-word">${escapeHtml(n.note)}</td>
+          <td style="color:var(--text-muted);white-space:nowrap;font-size:0.8rem">${n.last_complaint_date || '—'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderNotesTable(notes) {
+  const wrap = document.getElementById('notes-table-wrap');
+  if (!wrap) return;
+  if (!notes.length) {
+    wrap.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted);padding:12px">No notes yet</p>';
+    return;
+  }
+  wrap.innerHTML = `
+    <table class="notes-table">
+      <thead><tr><th>Customer</th><th>Note</th><th>Last complaint</th><th></th></tr></thead>
+      <tbody>${notes.map(n => `
+        <tr>
+          <td style="font-weight:500;white-space:nowrap">${escapeHtml(n.customer_name)}</td>
+          <td style="max-width:240px;word-break:break-word">${escapeHtml(n.note)}</td>
+          <td style="color:var(--text-muted);white-space:nowrap;font-size:0.8rem">${n.last_complaint_date || '—'}</td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteNote('${n.id}')">×</button></td>
+        </tr>`).join('')}
+      </tbody>
     </table>`;
 }
 
@@ -262,15 +281,20 @@ async function saveNote() {
   const customer      = document.getElementById('note-customer').value.trim();
   const note          = document.getElementById('note-text').value.trim();
   const complaintDate = document.getElementById('note-complaint-date').value || null;
+  const statusEl      = document.getElementById('note-save-status');
 
   if (!customer || !note) { showToast('Customer and note are required', 'error'); return; }
 
+  statusEl.innerHTML = '';
   const { error } = await sb.from('customer_notes').upsert(
     { customer_name: customer, note, last_complaint_date: complaintDate },
     { onConflict: 'customer_name' }
   );
 
-  if (error) { showToast('Failed to save note', 'error'); return; }
+  if (error) {
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red)">${error.message}</p>`;
+    return;
+  }
 
   document.getElementById('note-customer').value       = '';
   document.getElementById('note-text').value           = '';
