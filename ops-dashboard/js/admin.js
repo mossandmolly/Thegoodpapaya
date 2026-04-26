@@ -1,10 +1,16 @@
 // ── Password gate ──────────────────────────────────────────────
 let adminPassword = null;
 
-// Auto-unlock if password was saved in this session
+// Auto-unlock if a verified password exists and is less than 24 hours old
 (async function tryAutoUnlock() {
-  const stored = sessionStorage.getItem('adminPw');
-  if (!stored) return;
+  const stored    = localStorage.getItem('adminPw');
+  const storedAt  = parseInt(localStorage.getItem('adminPwAt') || '0', 10);
+  const age       = Date.now() - storedAt;
+  if (!stored || age > 24 * 60 * 60 * 1000) {
+    localStorage.removeItem('adminPw');
+    localStorage.removeItem('adminPwAt');
+    return;
+  }
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
       method: 'POST',
@@ -17,7 +23,8 @@ let adminPassword = null;
       document.getElementById('admin-content').classList.remove('hidden');
       loadAll();
     } else {
-      sessionStorage.removeItem('adminPw');
+      localStorage.removeItem('adminPw');
+      localStorage.removeItem('adminPwAt');
     }
   } catch (_) { /* network error — fall through to manual gate */ }
 })();
@@ -59,7 +66,8 @@ async function checkPassword() {
   }
 
   adminPassword = pw;
-  sessionStorage.setItem('adminPw', pw);
+  localStorage.setItem('adminPw', pw);
+  localStorage.setItem('adminPwAt', Date.now().toString());
   document.getElementById('password-screen').classList.add('hidden');
   document.getElementById('admin-content').classList.remove('hidden');
   loadAll();
