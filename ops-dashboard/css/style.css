@@ -165,11 +165,23 @@ header nav a.active { color: white; font-weight: 600; }
 }
 
 .card-desc {
-  font-size: 0.85rem;
-  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 5px 10px;
   margin-bottom: 10px;
-  font-style: italic;
 }
+
+.card-meta-wrap { margin-bottom: 8px; }
+.card-meta {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+.card-meta-final { color: var(--green); }
 
 .card-note {
   background: #fff8e1;
@@ -325,14 +337,84 @@ tr.selected td { background: #fff3e0; }
 }
 .filter-bar select:focus, .filter-bar input:focus { outline: none; border-color: var(--brand); }
 
+/* ── Admin 2-column layout ── */
+.admin-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.5fr);
+  gap: 16px;
+  padding: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+  align-items: start;
+}
+.admin-left, .admin-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+@media (max-width: 800px) {
+  .admin-layout { grid-template-columns: 1fr; }
+}
+
+/* ── Note type badges ── */
+.note-type-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.type-note       { background: #e8f5e9; color: var(--green); }
+.type-complaint  { background: #fef3c7; color: #92400e; }
+.type-quantity   { background: #e3f2fd; color: #1565c0; }
+.type-quality    { background: #f3e5f5; color: #6a1b9a; }
+.type-delivery   { background: #e8eaf6; color: #283593; }
+.type-payment    { background: #fff3e0; color: #e65100; }
+.type-integrity  { background: #fef2f2; color: var(--red); }
+.type-other      { background: var(--bg); color: var(--text-muted); }
+
+/* ── Notes inline table ── */
+.notes-table-wrap {
+  margin-top: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.notes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.notes-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  z-index: 1;
+}
+.notes-table td {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  vertical-align: middle;
+}
+.notes-table tr:first-child td { border-top: none; }
+
 /* ── Admin ── */
 .admin-section {
   background: white;
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 20px;
-  margin: 16px;
-  max-width: 640px;
+  max-width: none;
 }
 .admin-section h2 { font-size: 1rem; margin-bottom: 16px; }
 .form-row { display: flex; gap: 8px; margin-bottom: 12px; }

@@ -18,7 +18,7 @@
       <a href="checker.html">Checker</a>
       <a href="admin.html" class="active">Admin</a>
       <a href="somya.html">Somya AI</a>
-    <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
+      <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
     </nav>
   </div>
 </header>
@@ -31,7 +31,7 @@
     <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:20px">Enter your admin password</p>
     <input type="password" id="admin-password" placeholder="Password"
       style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:0.95rem;font-family:'DM Sans',sans-serif;text-align:center;letter-spacing:0.1em;margin-bottom:12px"
-      >
+    >
     <button onclick="checkPassword()"
       style="width:100%;padding:12px;background:var(--brand);color:white;border:none;border-radius:8px;font-size:0.95rem;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer">
       Unlock
@@ -40,103 +40,133 @@
   </div>
 </div>
 
-<!-- Admin content (hidden until password) -->
+<!-- Admin content -->
 <div id="admin-content" class="hidden">
+  <div class="admin-layout">
 
-  <!-- Daily orders upload — shown first, it's the daily action -->
-  <div class="admin-section" style="margin-top:16px;border:1.5px solid #bfdbfe">
-    <h2 style="color:#1d4ed8">📋 Upload Today's Orders</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-      Upload a CSV to populate the packer and checker views for today.<br>
-      <strong>Columns:</strong> sales_order, order_date, customer_name, item_name, description, quantity
-    </p>
-    <div class="form-row">
-      <input type="file" id="orders-csv" accept=".csv" style="flex:1;padding:8px">
-      <button class="btn btn-primary" onclick="uploadOrders()">Upload</button>
+    <!-- ── LEFT: daily operations ── -->
+    <div class="admin-left">
+
+      <!-- Upload Today's Orders -->
+      <div class="admin-section" style="border:1.5px solid #bfdbfe">
+        <h2 style="color:#1d4ed8">📋 Upload Today's Orders</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+          Upload a CSV to populate the packer and checker views for today.<br>
+          <strong>Columns:</strong> sales_order, order_date, customer_name, item_name, description, quantity
+        </p>
+        <div class="form-row">
+          <input type="file" id="orders-csv" accept=".csv" style="flex:1;padding:8px">
+          <button class="btn btn-primary btn-sm" onclick="uploadOrders()">Upload</button>
+        </div>
+        <div id="orders-upload-status"></div>
+      </div>
+
+      <!-- Restore from Snapshot -->
+      <div class="admin-section" style="border:1.5px solid #bfdbfe">
+        <h2 style="color:#1d4ed8">🕐 Restore from Snapshot</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+          Rolls back <strong>final_quantity and status only</strong> for all matching rows.<br>
+          New orders and order details are never affected.
+        </p>
+        <div class="form-row">
+          <select id="snapshot-select" style="flex:1">
+            <option value="">Loading snapshots…</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="restoreSnapshot()">Restore</button>
+        </div>
+        <div id="restore-status"></div>
+      </div>
+
+      <!-- Danger zone -->
+      <div class="admin-section" style="border:1.5px solid #fecaca">
+        <h2 style="color:var(--red)">Danger Zone</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px">
+          Reset today's operations status — sets all items back to draft.
+        </p>
+        <button class="btn btn-danger btn-sm" onclick="resetTodayStatus()">Reset Today's Status</button>
+      </div>
+
     </div>
-    <div id="orders-upload-status"></div>
-  </div>
 
-  <!-- Packers section -->
-  <div class="admin-section" style="margin-top:16px">
-    <h2>Packers</h2>
-    <div class="form-row">
-      <input type="text" id="new-packer-name" placeholder="Packer name" maxlength="60">
-      <button class="btn btn-primary" onclick="addPacker()">Add</button>
+    <!-- ── RIGHT: configuration ── -->
+    <div class="admin-right">
+
+      <!-- Packers -->
+      <div class="admin-section">
+        <h2>Packers</h2>
+        <div class="form-row">
+          <input type="text" id="new-packer-name" placeholder="Packer name" maxlength="60">
+          <button class="btn btn-primary btn-sm" onclick="addPacker()">Add</button>
+        </div>
+        <div id="packers-list"><div class="skeleton" style="height:40px"></div></div>
+      </div>
+
+      <!-- Fruit Assignments -->
+      <div class="admin-section">
+        <h2>Fruit Assignments</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+          Assign which fruits each packer handles
+        </p>
+        <div class="form-row">
+          <select id="assign-packer" style="flex:1"></select>
+          <input type="text" id="assign-fruit" placeholder="Fruit / item name" style="flex:2">
+          <button class="btn btn-primary btn-sm" onclick="addAssignment()">Add</button>
+        </div>
+        <div id="assignments-list"><div class="skeleton" style="height:40px"></div></div>
+      </div>
+
+      <!-- Customer Notes & History -->
+      <div class="admin-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h2 style="margin-bottom:0">Customer Notes &amp; History</h2>
+          <button class="btn btn-secondary btn-sm" onclick="exportNotes()">Export CSV</button>
+        </div>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+          Shown on packer cards and used by Somya AI to calibrate tone.<br>
+          Leave <em>Item</em> blank to apply to all items for a customer.
+        </p>
+
+        <!-- Add form -->
+        <div class="form-row" style="flex-wrap:wrap;gap:6px">
+          <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:120px">
+          <input type="text" id="note-item" placeholder="Item (blank=all)" style="flex:1.5;min-width:100px">
+          <select id="note-type" style="flex:1;min-width:90px">
+            <option value="note">note</option>
+            <option value="complaint">complaint</option>
+            <option value="quantity">quantity</option>
+            <option value="quality">quality</option>
+            <option value="delivery">delivery</option>
+            <option value="payment">payment</option>
+            <option value="integrity">integrity</option>
+            <option value="other">other</option>
+          </select>
+          <input type="text" id="note-text" placeholder="Note text" style="flex:3;min-width:160px">
+          <button class="btn btn-primary btn-sm" onclick="addNote()" style="white-space:nowrap">Add</button>
+        </div>
+
+        <!-- CSV import (collapsible) -->
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:0.82rem;color:var(--text-muted);user-select:none">Import CSV</summary>
+          <div style="margin-top:8px">
+            <div class="form-row">
+              <input type="file" id="note-csv" accept=".csv" style="flex:1;padding:6px;font-size:0.8rem">
+              <button class="btn btn-secondary btn-sm" onclick="importNotesCSV()">Import</button>
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-muted)">
+              Columns: customer_name, note, note_type, note_date (YYYY-MM-DD), item_name, invoice_number
+            </p>
+            <div id="note-import-status"></div>
+          </div>
+        </details>
+
+        <!-- Notes table -->
+        <div class="notes-table-wrap" id="notes-table-wrap">
+          <div class="skeleton" style="height:40px;margin:8px"></div>
+        </div>
+      </div>
+
     </div>
-    <div id="packers-list"><div class="skeleton" style="height:40px"></div></div>
   </div>
-
-  <!-- Packer assignments section -->
-  <div class="admin-section">
-    <h2>Fruit Assignments</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-      Assign which fruits each packer handles
-    </p>
-    <div class="form-row">
-      <select id="assign-packer" style="flex:1"></select>
-      <input type="text" id="assign-fruit" placeholder="Fruit / item name" style="flex:2">
-      <button class="btn btn-primary" onclick="addAssignment()">Add</button>
-    </div>
-    <div id="assignments-list"><div class="skeleton" style="height:40px"></div></div>
-  </div>
-
-  <!-- Customer notes section -->
-  <div class="admin-section">
-    <h2>Customer Notes</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-      Notes shown on packer cards (allergies, preferences, etc.)
-    </p>
-    <div class="form-row">
-      <input type="text" id="note-customer" placeholder="Customer name (exact)" style="flex:2">
-      <input type="text" id="note-text" placeholder="Note" style="flex:3">
-      <button class="btn btn-primary" onclick="saveNote()">Save</button>
-    </div>
-    <div id="notes-list"><div class="skeleton" style="height:40px"></div></div>
-  </div>
-
-  <!-- Complaint history upload -->
-  <div class="admin-section">
-    <h2>Complaint History</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-      Upload a CSV to log customer complaints. Used by Somya AI to adjust tone.<br>
-      <strong>Required columns:</strong> customer_name, complaint_date (YYYY-MM-DD), complaint_type, description<br>
-      <strong>Optional:</strong> invoice_number<br>
-      <strong>Types:</strong> quantity · quality · delivery · payment · integrity · other
-    </p>
-    <div class="form-row">
-      <input type="file" id="complaint-csv" accept=".csv" style="flex:1;padding:8px">
-      <button class="btn btn-primary" onclick="uploadComplaints()">Upload CSV</button>
-    </div>
-    <div id="upload-status"></div>
-    <div id="complaints-list" style="margin-top:12px"><div class="skeleton" style="height:40px"></div></div>
-  </div>
-
-  <!-- Snapshot restore -->
-  <div class="admin-section" style="border:1.5px solid #bfdbfe">
-    <h2 style="color:#1d4ed8">🕐 Restore from Snapshot</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-      Rolls back <strong>final_quantity and status only</strong> for all matching rows.<br>
-      New orders and order details are never affected.
-    </p>
-    <div class="form-row">
-      <select id="snapshot-select" style="flex:1">
-        <option value="">Loading snapshots…</option>
-      </select>
-      <button class="btn btn-primary" onclick="restoreSnapshot()">Restore</button>
-    </div>
-    <div id="restore-status"></div>
-  </div>
-
-  <!-- Danger zone -->
-  <div class="admin-section" style="border:1.5px solid #fecaca">
-    <h2 style="color:var(--red)">Danger Zone</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px">
-      Reset today's operations status — sets all items back to draft.
-    </p>
-    <button class="btn btn-danger" onclick="resetTodayStatus()">Reset Today's Status</button>
-  </div>
-
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>

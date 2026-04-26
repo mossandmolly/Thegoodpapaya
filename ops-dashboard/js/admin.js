@@ -1,5 +1,5 @@
 // ── Password gate ──────────────────────────────────────────────
-let adminPassword = null; // set after server-side verification
+let adminPassword = null;
 
 async function checkPassword() {
   const input  = document.getElementById('admin-password');
@@ -12,7 +12,6 @@ async function checkPassword() {
   btn.textContent = 'Checking…';
   errEl.style.display = 'none';
 
-  // Probe the edge function — empty records array triggers 400 (correct pw) or 401 (wrong pw)
   let res;
   try {
     res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
@@ -38,7 +37,6 @@ async function checkPassword() {
     return;
   }
 
-  // 400 "No records provided" = password correct
   adminPassword = pw;
   document.getElementById('password-screen').classList.add('hidden');
   document.getElementById('admin-content').classList.remove('hidden');
@@ -51,7 +49,7 @@ document.getElementById('admin-password').addEventListener('keydown', e => {
 
 // ── Load everything ────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadComplaints(), loadSnapshots()]);
+  await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadSnapshots()]);
 }
 
 // ── Daily orders CSV upload ────────────────────────────────────
@@ -59,25 +57,16 @@ async function uploadOrders() {
   const fileInput = document.getElementById('orders-csv');
   const statusEl  = document.getElementById('orders-upload-status');
 
-  if (!fileInput.files.length) {
-    showToast('Select a CSV file first', 'error');
-    return;
-  }
+  if (!fileInput.files.length) { showToast('Select a CSV file first', 'error'); return; }
 
   const text = await fileInput.files[0].text();
   const rows  = parseCSV(text);
 
-  if (!rows.length) {
-    showToast('CSV appears empty', 'error');
-    return;
-  }
+  if (!rows.length) { showToast('CSV appears empty', 'error'); return; }
 
   const headers = Object.keys(rows[0]).map(h => h.trim().toLowerCase());
   const missing = ['sales_order', 'order_date', 'customer_name', 'item_name', 'quantity'].filter(c => !headers.includes(c));
-  if (missing.length) {
-    showToast(`Missing columns: ${missing.join(', ')}`, 'error');
-    return;
-  }
+  if (missing.length) { showToast(`Missing columns: ${missing.join(', ')}`, 'error'); return; }
 
   statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Uploading ${rows.length} rows…</p>`;
 
@@ -91,7 +80,6 @@ async function uploadOrders() {
     status:             'draft',
   })).filter(r => r.sales_order_id && r.customer_name && r.item_name);
 
-  // Send to edge function — password verified server-side, uses service role key
   const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
@@ -113,12 +101,9 @@ async function uploadOrders() {
 
 // ── Packers ────────────────────────────────────────────────────
 async function loadPackers() {
-  const { data, error } = await sb
-    .from('packers')
-    .select('id, name, active')
-    .order('name');
+  const { data, error } = await sb.from('packers').select('id, name, active').order('name');
 
-  const list = document.getElementById('packers-list');
+  const list      = document.getElementById('packers-list');
   const assignSel = document.getElementById('assign-packer');
   assignSel.innerHTML = '<option value="">Select packer…</option>';
 
@@ -129,13 +114,10 @@ async function loadPackers() {
 
   list.innerHTML = '';
   data.forEach(p => {
-    // Populate assignment dropdown
     const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.name;
+    opt.value = p.id; opt.textContent = p.name;
     assignSel.appendChild(opt);
 
-    // List item
     const row = document.createElement('div');
     row.className = 'list-item';
     row.id = `packer-row-${p.id}`;
@@ -158,10 +140,8 @@ async function addPacker() {
   const input = document.getElementById('new-packer-name');
   const name  = input.value.trim();
   if (!name) { showToast('Enter a name', 'error'); return; }
-
   const { error } = await sb.from('packers').insert({ name, active: true });
   if (error) { showToast('Failed to add', 'error'); return; }
-
   input.value = '';
   showToast(`${name} added ✓`);
   await loadPackers();
@@ -212,17 +192,16 @@ async function loadAssignments() {
 }
 
 async function addAssignment() {
-  const packerId  = document.getElementById('assign-packer').value;
+  const packerId   = document.getElementById('assign-packer').value;
   const fruitInput = document.getElementById('assign-fruit');
-  const itemName  = fruitInput.value.trim();
+  const itemName   = fruitInput.value.trim();
 
   if (!packerId) { showToast('Select a packer', 'error'); return; }
   if (!itemName) { showToast('Enter a fruit name', 'error'); return; }
 
   const { error } = await sb.from('packer_assignments').insert({ packer_id: packerId, item_name: itemName });
   if (error) {
-    if (error.code === '23505') showToast('Already assigned', 'error');
-    else showToast('Failed to assign', 'error');
+    showToast(error.code === '23505' ? 'Already assigned' : 'Failed to assign', 'error');
     return;
   }
 
@@ -238,173 +217,139 @@ async function deleteAssignment(id, itemName) {
   await loadAssignments();
 }
 
-// ── Customer notes ─────────────────────────────────────────────
+// ── Customer Notes & History ───────────────────────────────────
+let _allNotes = [];
+
 async function loadNotes() {
   const { data, error } = await sb
     .from('customer_notes')
-    .select('id, customer_name, note')
-    .order('customer_name');
+    .select('id, customer_name, item_name, note_type, note_date, note, invoice_number')
+    .order('customer_name')
+    .order('created_at', { ascending: false });
 
-  const list = document.getElementById('notes-list');
+  _allNotes = data || [];
+  renderNotesTable(_allNotes);
+}
 
-  if (error || !data?.length) {
-    list.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted)">No notes yet</p>';
+function renderNotesTable(notes) {
+  const wrap = document.getElementById('notes-table-wrap');
+
+  if (!notes.length) {
+    wrap.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted);padding:12px">No notes yet</p>';
     return;
   }
 
-  list.innerHTML = '';
-  data.forEach(n => {
-    const row = document.createElement('div');
-    row.className = 'list-item';
-    row.innerHTML = `
-      <div>
-        <div style="font-weight:500">${n.customer_name}</div>
-        <div style="font-size:0.82rem;color:var(--text-muted)">${n.note}</div>
-      </div>
-      <button class="btn btn-sm btn-danger" onclick="deleteNote('${n.id}', '${escapeAttr(n.customer_name)}')">Remove</button>
-    `;
-    list.appendChild(row);
-  });
+  const rows = notes.map(n => `
+    <tr>
+      <td>${escapeHtml(n.customer_name)}</td>
+      <td style="color:var(--text-muted)">${n.item_name ? escapeHtml(n.item_name) : '<em style="opacity:0.5">All</em>'}</td>
+      <td><span class="note-type-badge type-${n.note_type}">${n.note_type}</span></td>
+      <td style="color:var(--text-muted);white-space:nowrap">${n.note_date || ''}</td>
+      <td style="max-width:200px;word-break:break-word">${escapeHtml(n.note)}</td>
+      <td><button class="btn btn-sm btn-danger" onclick="deleteNote('${n.id}')">×</button></td>
+    </tr>
+  `).join('');
+
+  wrap.innerHTML = `
+    <table class="notes-table">
+      <thead>
+        <tr>
+          <th>Customer</th><th>Item</th><th>Type</th><th>Date</th><th>Note</th><th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
 }
 
-async function saveNote() {
-  const customerInput = document.getElementById('note-customer');
-  const noteInput     = document.getElementById('note-text');
-  const customer      = customerInput.value.trim();
-  const note          = noteInput.value.trim();
+async function addNote() {
+  const customer = document.getElementById('note-customer').value.trim();
+  const item     = document.getElementById('note-item').value.trim() || null;
+  const type     = document.getElementById('note-type').value;
+  const note     = document.getElementById('note-text').value.trim();
 
-  if (!customer || !note) { showToast('Fill both fields', 'error'); return; }
+  if (!customer || !note) { showToast('Customer and note are required', 'error'); return; }
 
-  // Upsert: update if customer already has a note, insert otherwise
-  const { error } = await sb
-    .from('customer_notes')
-    .upsert({ customer_name: customer, note }, { onConflict: 'customer_name' });
+  const { error } = await sb.from('customer_notes').insert({
+    customer_name: customer,
+    item_name:     item,
+    note_type:     type,
+    note:          note,
+    note_date:     todayIST(),
+  });
 
-  if (error) { showToast('Save failed', 'error'); return; }
+  if (error) { showToast('Failed to add note', 'error'); return; }
 
-  customerInput.value = '';
-  noteInput.value     = '';
-  showToast('Note saved ✓');
+  document.getElementById('note-customer').value = '';
+  document.getElementById('note-item').value     = '';
+  document.getElementById('note-text').value     = '';
+  document.getElementById('note-type').value     = 'note';
+  showToast('Note added ✓');
   await loadNotes();
 }
 
-async function deleteNote(id, customerName) {
+async function deleteNote(id) {
   const { error } = await sb.from('customer_notes').delete().eq('id', id);
   if (error) { showToast('Delete failed', 'error'); return; }
-  showToast(`Note for ${customerName} removed`);
+  showToast('Deleted');
   await loadNotes();
 }
 
-// ── Complaint history ──────────────────────────────────────────
-async function loadComplaints() {
-  const { data, error } = await sb
-    .from('complaint_history')
-    .select('id, customer_name, invoice_number, complaint_date, complaint_type, description')
-    .order('complaint_date', { ascending: false })
-    .limit(50);
+async function importNotesCSV() {
+  const fileInput = document.getElementById('note-csv');
+  const statusEl  = document.getElementById('note-import-status');
 
-  const list = document.getElementById('complaints-list');
-
-  if (error || !data?.length) {
-    list.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted)">No complaints logged yet</p>';
-    return;
-  }
-
-  list.innerHTML = '';
-  data.forEach(c => {
-    const row = document.createElement('div');
-    row.className = 'list-item';
-    row.style.flexDirection = 'column';
-    row.style.alignItems = 'flex-start';
-    row.style.gap = '4px';
-    row.innerHTML = `
-      <div style="display:flex;justify-content:space-between;width:100%;align-items:center">
-        <span style="font-weight:500">${c.customer_name}</span>
-        <div style="display:flex;gap:6px;align-items:center">
-          <span style="font-size:0.75rem;background:var(--bg);padding:2px 8px;border-radius:8px;color:var(--text-muted)">${c.complaint_type}</span>
-          <span style="font-size:0.75rem;color:var(--text-muted)">${c.complaint_date}</span>
-          <button class="btn btn-sm btn-danger" onclick="deleteComplaint('${c.id}')">×</button>
-        </div>
-      </div>
-      ${c.description ? `<div style="font-size:0.82rem;color:var(--text-muted)">${c.description}</div>` : ''}
-      ${c.invoice_number ? `<div style="font-size:0.75rem;color:var(--text-muted)">Invoice: ${c.invoice_number}</div>` : ''}
-    `;
-    list.appendChild(row);
-  });
-}
-
-async function uploadComplaints() {
-  const fileInput = document.getElementById('complaint-csv');
-  const statusEl  = document.getElementById('upload-status');
-
-  if (!fileInput.files.length) {
-    showToast('Select a CSV file first', 'error');
-    return;
-  }
+  if (!fileInput.files.length) { showToast('Select a CSV file', 'error'); return; }
 
   const text = await fileInput.files[0].text();
-  const rows  = parseCSV(text);
-
-  if (!rows.length) {
-    showToast('CSV appears empty', 'error');
-    return;
-  }
-
-  const required = ['customer_name', 'complaint_date', 'complaint_type'];
-  const headers  = Object.keys(rows[0]).map(h => h.trim().toLowerCase());
-  const missing  = required.filter(r => !headers.includes(r));
-  if (missing.length) {
-    showToast(`Missing columns: ${missing.join(', ')}`, 'error');
-    return;
-  }
-
-  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Uploading ${rows.length} rows…</p>`;
+  const rows = parseCSV(text);
+  if (!rows.length) { showToast('CSV appears empty', 'error'); return; }
 
   const records = rows.map(r => ({
     customer_name:  (r['customer_name'] || '').trim(),
+    item_name:      (r['item_name'] || '').trim() || null,
+    note:           (r['note'] || r['description'] || '').trim(),
+    note_type:      (r['note_type'] || r['complaint_type'] || 'note').trim().toLowerCase(),
+    note_date:      (r['note_date'] || r['complaint_date'] || '').trim() || null,
     invoice_number: (r['invoice_number'] || '').trim() || null,
-    complaint_date: (r['complaint_date'] || '').trim(),
-    complaint_type: (r['complaint_type'] || 'other').trim().toLowerCase(),
-    description:    (r['description'] || '').trim() || null,
-  })).filter(r => r.customer_name && r.complaint_date);
+  })).filter(r => r.customer_name && r.note);
 
-  const { error } = await sb.from('complaint_history').insert(records);
+  if (!records.length) { showToast('No valid rows found', 'error'); return; }
 
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:6px">Importing ${records.length} rows…</p>`;
+
+  const { error } = await sb.from('customer_notes').insert(records);
   if (error) {
-    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Upload failed: ${error.message}</p>`;
+    statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red);margin-top:6px">Import failed: ${error.message}</p>`;
     return;
   }
 
   fileInput.value = '';
-  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${records.length} complaints uploaded</p>`;
-  showToast(`${records.length} complaints added ✓`);
-  await loadComplaints();
+  statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--green);margin-top:6px">✓ ${records.length} notes imported</p>`;
+  showToast(`${records.length} notes imported ✓`);
+  await loadNotes();
 }
 
-async function deleteComplaint(id) {
-  const { error } = await sb.from('complaint_history').delete().eq('id', id);
-  if (error) { showToast('Delete failed', 'error'); return; }
-  showToast('Complaint removed');
-  await loadComplaints();
-}
+function exportNotes() {
+  if (!_allNotes.length) { showToast('No notes to export', 'error'); return; }
 
-function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
-  return lines.slice(1).map(line => {
-    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = vals[i] ?? ''; });
-    return obj;
-  });
+  const headers = ['customer_name', 'item_name', 'note_type', 'note_date', 'note', 'invoice_number'];
+  const csv = [
+    headers.join(','),
+    ..._allNotes.map(n => headers.map(h => JSON.stringify(n[h] ?? '')).join(',')),
+  ].join('\n');
+
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `customer-notes-${todayIST()}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 // ── Snapshots ──────────────────────────────────────────────────
 async function loadSnapshots() {
   const sel = document.getElementById('snapshot-select');
 
-  // Get distinct snapshot timestamps
   const { data, error } = await sb
     .from('operations_snapshots')
     .select('snapshot_at')
@@ -416,13 +361,11 @@ async function loadSnapshots() {
     return;
   }
 
-  // Deduplicate timestamps
   const timestamps = [...new Set(data.map(r => r.snapshot_at))];
-
   sel.innerHTML = timestamps.map(ts => {
     const d = new Date(ts);
     const label = d.toLocaleString('en-IN', {
-      day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
+      day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true,
     });
     return `<option value="${ts}">${label}</option>`;
   }).join('');
@@ -440,7 +383,6 @@ async function restoreSnapshot() {
 
   statusEl.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Restoring…</p>`;
 
-  // Fetch snapshot rows for this timestamp
   const { data: snapRows, error: fetchErr } = await sb
     .from('operations_snapshots')
     .select('operation_id, final_quantity, status')
@@ -451,9 +393,8 @@ async function restoreSnapshot() {
     return;
   }
 
-  // Update each operation row
   let failed = 0;
-  await Promise.all(snapRows.map(async (row) => {
+  await Promise.all(snapRows.map(async row => {
     const { error } = await sb
       .from('operations')
       .update({ final_quantity: row.final_quantity, status: row.status })
@@ -483,7 +424,26 @@ async function resetTodayStatus() {
   showToast('All items reset to draft ✓');
 }
 
+// ── CSV parser ─────────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+  return lines.slice(1).map(line => {
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const obj  = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] ?? ''; });
+    return obj;
+  });
+}
+
 // ── Utility ────────────────────────────────────────────────────
 function escapeAttr(s) {
   return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

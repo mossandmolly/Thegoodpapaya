@@ -257,9 +257,12 @@ async function inlineSave(id) {
   const val = parseFloat(input.value);
   if (isNaN(val) || val < 0) return;
 
+  const { data: { user } } = await sb.auth.getUser();
+  const email = user?.email ?? 'unknown';
+
   const { error } = await sb
     .from('operations')
-    .update({ final_quantity: val, status: 'draft' })
+    .update({ final_quantity: val, status: 'draft', last_updated_by: email, last_updated_at: new Date().toISOString() })
     .eq('id', id);
 
   if (error) { showToast('Save failed', 'error'); return; }
@@ -274,7 +277,11 @@ async function finalizeItem(id) {
   const input = document.getElementById(`inline-${id}`);
   const val   = input ? parseFloat(input.value) : null;
 
-  const update = { status: 'final' };
+  const { data: { user } } = await sb.auth.getUser();
+  const email = user?.email ?? 'unknown';
+  const now   = new Date().toISOString();
+
+  const update = { status: 'final', finalized_by: email, finalized_at: now };
   if (input && !isNaN(val) && val >= 0) update.final_quantity = val;
 
   const { error } = await sb.from('operations').update(update).eq('id', id);
@@ -282,7 +289,7 @@ async function finalizeItem(id) {
 
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    allItems[idx].status = 'final';
+    Object.assign(allItems[idx], { status: 'final', finalized_by: email, finalized_at: now });
     if (update.final_quantity !== undefined) allItems[idx].final_quantity = update.final_quantity;
   }
   refreshRow(id);
@@ -292,10 +299,10 @@ async function finalizeItem(id) {
 
 // ── Unfinalize single item ────────────────────────────────────
 async function unfinalizeItem(id) {
-  const { error } = await sb.from('operations').update({ status: 'draft' }).eq('id', id);
+  const { error } = await sb.from('operations').update({ status: 'draft', finalized_by: null, finalized_at: null }).eq('id', id);
   if (error) { showToast('Failed', 'error'); return; }
   const idx = allItems.findIndex(i => i.id === id);
-  if (idx !== -1) allItems[idx].status = 'draft';
+  if (idx !== -1) Object.assign(allItems[idx], { status: 'draft', finalized_by: null, finalized_at: null });
   refreshRow(id);
   updateSummary();
   refreshOrderHeader(id);
@@ -309,6 +316,10 @@ async function finalizeOrder(customerName) {
   const pendingIds = group.items.filter(i => i.status !== 'final').map(i => i.id);
   if (!pendingIds.length) return;
 
+  const { data: { user } } = await sb.auth.getUser();
+  const email = user?.email ?? 'unknown';
+  const now   = new Date().toISOString();
+
   // Save any inline values first
   for (const id of pendingIds) {
     const input = document.getElementById(`inline-${id}`);
@@ -317,21 +328,21 @@ async function finalizeOrder(customerName) {
       if (!isNaN(val) && val >= 0) {
         const idx = allItems.findIndex(i => i.id === id);
         if (idx !== -1) allItems[idx].final_quantity = val;
-        await sb.from('operations').update({ final_quantity: val }).eq('id', id);
+        await sb.from('operations').update({ final_quantity: val, last_updated_by: email, last_updated_at: now }).eq('id', id);
       }
     }
   }
 
   const { error } = await sb
     .from('operations')
-    .update({ status: 'final' })
+    .update({ status: 'final', finalized_by: email, finalized_at: now })
     .in('id', pendingIds);
 
   if (error) { showToast('Failed to finalize', 'error'); return; }
 
   pendingIds.forEach(id => {
     const idx = allItems.findIndex(i => i.id === id);
-    if (idx !== -1) allItems[idx].status = 'final';
+    if (idx !== -1) Object.assign(allItems[idx], { status: 'final', finalized_by: email, finalized_at: now });
   });
 
   showToast(`${customerName} finalized ✓`);
@@ -344,12 +355,12 @@ async function unfinalizeOrder(customerName) {
   if (!group) return;
 
   const ids = group.items.map(i => i.id);
-  const { error } = await sb.from('operations').update({ status: 'draft' }).in('id', ids);
+  const { error } = await sb.from('operations').update({ status: 'draft', finalized_by: null, finalized_at: null }).in('id', ids);
   if (error) { showToast('Failed', 'error'); return; }
 
   ids.forEach(id => {
     const idx = allItems.findIndex(i => i.id === id);
-    if (idx !== -1) allItems[idx].status = 'draft';
+    if (idx !== -1) Object.assign(allItems[idx], { status: 'draft', finalized_by: null, finalized_at: null });
   });
 
   groupAndRender();
@@ -360,12 +371,16 @@ async function bulkFinalize() {
   if (!selectedIds.size) return;
   const ids = [...selectedIds];
 
-  const { error } = await sb.from('operations').update({ status: 'final' }).in('id', ids);
+  const { data: { user } } = await sb.auth.getUser();
+  const email = user?.email ?? 'unknown';
+  const now   = new Date().toISOString();
+
+  const { error } = await sb.from('operations').update({ status: 'final', finalized_by: email, finalized_at: now }).in('id', ids);
   if (error) { showToast('Failed', 'error'); return; }
 
   ids.forEach(id => {
     const idx = allItems.findIndex(i => i.id === id);
-    if (idx !== -1) allItems[idx].status = 'final';
+    if (idx !== -1) Object.assign(allItems[idx], { status: 'final', finalized_by: email, finalized_at: now });
   });
 
   showToast(`${ids.length} item${ids.length !== 1 ? 's' : ''} finalized ✓`);

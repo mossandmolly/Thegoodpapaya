@@ -124,17 +124,17 @@ async function lookupCustomer() {
       return true;
     }).slice(0, 8);
 
-    // Fetch complaint history in parallel
+    // Fetch complaint/note history in parallel
     const { data: complaints } = await sb
-      .from('complaint_history')
-      .select('complaint_date, complaint_type, description, invoice_number')
+      .from('customer_notes')
+      .select('note_date, note_type, note, invoice_number')
       .ilike('customer_name', `%${customerName}%`)
-      .order('complaint_date', { ascending: false })
+      .order('note_date', { ascending: false })
       .limit(20);
 
     const orderCount = new Set(data.map(r => r.invoice_number)).size;
-    const complaintCount = complaints?.length || 0;
-    const hasIntegrityComplaint = complaints?.some(c => c.complaint_type === 'integrity') || false;
+    const complaintCount = complaints?.filter(c => c.note_type !== 'note')?.length || 0;
+    const hasIntegrityComplaint = complaints?.some(c => c.note_type === 'integrity') || false;
 
     currentCustomerData = { customerName, invoices, complaints: complaints || [], orderCount, complaintCount, hasIntegrityComplaint };
 
