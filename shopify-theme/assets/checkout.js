@@ -1,9 +1,17 @@
 // Edge function URL — update after deploying create-payment-link
-const PAYMENT_EDGE_FN = 'https://YOUR_SUPABASE_PROJECT.supabase.co/functions/v1/create-payment-link';
+const PAYMENT_EDGE_FN = 'https://fykqprogzqcfzrgwlrem.supabase.co/functions/v1/create-payment-link';
 
 // ── Load cart ─────────────────────────────────────────────────
 function getCart() {
   try { return JSON.parse(localStorage.getItem('gp_cart') || '[]'); } catch { return []; }
+}
+
+function fmtQty(item) {
+  if (item.mode === 'weight') {
+    const w = parseFloat(item.quantity);
+    return w >= 1 ? `${w} kg` : `${Math.round(w * 1000)}g`;
+  }
+  return String(item.quantity);
 }
 
 function renderCart() {
@@ -21,12 +29,12 @@ function renderCart() {
   let total = 0;
   container.innerHTML = '';
   cart.forEach(item => {
-    const lineTotal = parseFloat(item.price) * item.quantity;
+    const lineTotal = parseFloat(item.price) * parseFloat(item.quantity);
     total += lineTotal;
     const row = document.createElement('div');
     row.className = 'checkout-item-row';
     row.innerHTML = `
-      <span>${item.title} × ${item.quantity}</span>
+      <span>${item.title} × ${fmtQty(item)}</span>
       <span>₹${lineTotal.toFixed(0)}</span>
     `;
     container.appendChild(row);
