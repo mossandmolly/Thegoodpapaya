@@ -30,10 +30,11 @@ type CartItem = {
 };
 
 function cartTotal(cart: CartItem[]): number {
-  return cart.reduce(
-    (s, i) => s + parseFloat(String(i.price)) * parseFloat(String(i.quantity)),
-    0
-  );
+  return cart.reduce((s, i) => {
+    const p = parseFloat(String(i.price));
+    const q = parseFloat(String(i.quantity));
+    return s + (isNaN(p) || isNaN(q) ? 0 : p * q);
+  }, 0);
 }
 
 function fmtQty(item: CartItem): string {
@@ -130,7 +131,7 @@ Deno.serve(async (req) => {
       payment_method: method,
       status:         'placed',
       cart,
-      total:          Math.round(total * 100) / 100,
+      total:          Math.round((isNaN(total) ? 0 : total) * 100) / 100,
       notes:          notes || null,
     });
     if (orderErr) throw new Error(orderErr.message);
