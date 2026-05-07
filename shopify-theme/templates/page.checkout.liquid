@@ -60,16 +60,25 @@
     </div>
 
     <div class="form-group">
-      <label>Delivery address</label>
-      <textarea class="co-field" id="co-address" rows="3"
-        placeholder="Flat / building, street, area, city, pincode"></textarea>
+      <label>Community name</label>
+      <input class="co-field" type="text" id="co-community"
+        placeholder="e.g. APR Villas, Brigade Meadows">
     </div>
 
     <div class="form-group" style="margin-bottom:0">
-      <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
-      <input class="co-field" type="text" id="co-notes"
-        placeholder="Delivery time, gate code, allergies…">
+      <label>Door / flat number</label>
+      <input class="co-field" type="text" id="co-door"
+        placeholder="e.g. 83, B-204">
     </div>
+  </div>
+
+  <!-- Order notes -->
+  <div class="card checkout-section" style="padding-bottom:1rem">
+    <div class="checkout-section-title">Special instructions
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)"> (optional)</span>
+    </div>
+    <input class="co-field" type="text" id="co-notes"
+      placeholder="e.g. Leave at door, call before delivery…">
   </div>
 
   <!-- Payment method -->

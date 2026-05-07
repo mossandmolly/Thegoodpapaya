@@ -69,20 +69,22 @@ function selectPayment(method) {
 
 // ── Submit ─────────────────────────────────────────────────────────────────
 async function submitOrder() {
-  const cart    = getCart();
-  const name    = document.getElementById('co-name').value.trim();
-  const phone   = document.getElementById('co-phone').value.trim();
-  const address = document.getElementById('co-address').value.trim();
-  const notes   = document.getElementById('co-notes').value.trim();
-  const errEl   = document.getElementById('co-error');
-  const btn     = document.getElementById('pay-btn');
+  const cart      = getCart();
+  const name      = document.getElementById('co-name').value.trim();
+  const phone     = document.getElementById('co-phone').value.trim();
+  const community = document.getElementById('co-community').value.trim();
+  const door      = document.getElementById('co-door').value.trim();
+  const notes     = document.getElementById('co-notes').value.trim();
+  const errEl     = document.getElementById('co-error');
+  const btn       = document.getElementById('pay-btn');
 
   errEl.textContent = '';
 
   if (!cart.length)             { errEl.textContent = 'Your cart is empty.'; return; }
   if (!name)                    { errEl.textContent = 'Please enter your name.'; return; }
   if (!/^\d{10}$/.test(phone)) { errEl.textContent = 'Enter a valid 10-digit mobile number.'; return; }
-  if (!address)                 { errEl.textContent = 'Please enter your delivery address.'; return; }
+  if (!community)               { errEl.textContent = 'Please enter your community name.'; return; }
+  if (!door)                    { errEl.textContent = 'Please enter your door / flat number.'; return; }
 
   btn.disabled    = true;
   btn.textContent = _payMethod === 'cod' ? 'Placing order…' : 'Creating order…';
@@ -93,28 +95,29 @@ async function submitOrder() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
         cart,
-        customer_name:  name,
+        community,
+        door_number:    door,
         phone,
-        address,
         notes,
         payment_method: _payMethod,
       }),
     });
 
     const data = await res.json();
-    if (!res.ok || !data.ref) throw new Error(data.error || 'Could not place order');
+    if (!res.ok || !data.sales_id) throw new Error(data.error || 'Could not place order');
 
     // Save summary for the confirmation page
     localStorage.setItem('gp_last_order', JSON.stringify({
-      ref:    data.ref,
+      ref:       data.sales_id,
       name,
       phone,
-      address,
-      notes,
+      community,
+      door,
       cart,
-      total:  cartTotal(cart),
-      method: _payMethod,
-      ts:     Date.now(),
+      notes,
+      total:     cartTotal(cart),
+      method:    _payMethod,
+      ts:        Date.now(),
     }));
 
     localStorage.removeItem('gp_cart');

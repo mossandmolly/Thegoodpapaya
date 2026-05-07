@@ -78,11 +78,16 @@
   document.getElementById(isCOD ? 'cod-note' : 'online-note').style.display = 'block';
 
   // Populate order card
+  var customerDisplay = (o.community && o.door)
+    ? o.community + ' ' + o.door
+    : (o.name || '');
+
   document.getElementById('order-card').style.display = 'block';
   document.getElementById('o-ref').textContent   = o.ref || '—';
   document.getElementById('o-total').textContent = '₹' + parseFloat(o.total).toFixed(0);
   document.getElementById('o-method').textContent =
-    isCOD ? 'Payment: Cash on Delivery' : 'Payment: Paid online via Razorpay';
+    (isCOD ? 'Cash on Delivery' : 'Paid online via Razorpay') +
+    (customerDisplay ? '  ·  ' + customerDisplay : '');
 
   function fmtQty(item) {
     if (item.mode === 'weight') {

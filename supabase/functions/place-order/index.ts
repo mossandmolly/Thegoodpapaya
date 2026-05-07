@@ -1,10 +1,10 @@
-// Supabase Edge Function — place a website order (COD or online)
+// Supabase Edge Function — place a website order
 //
-// Called by checkout.js with:
-//   { cart, customer_name, phone, address, notes, payment_method }
+// Input:  { cart, community, door_number, phone, notes, payment_method }
+// Output: { sales_id }                          for COD
+//         { sales_id, payment_url }             for online
 //
-// For COD:    saves order → returns { ref }
-// For online: saves order → creates Razorpay payment link → returns { ref, payment_url }
+// Saves to: orders (header) + order_items (one row per cart item)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -21,13 +21,12 @@ const CORS = {
 };
 
 type CartItem = {
-  id:       number;
-  title:    string;
-  price:    string | number;
-  quantity: string | number;
-  mode?:    string;
-  pills?:   string[];
-  notes?:   string;
+  title:     string;
+  price:     string | number;
+  quantity:  string | number;
+  mode?:     string;
+  pills?:    string[];
+  notes?:    string;
 };
 
 function cartTotal(cart: CartItem[]): number {
@@ -45,19 +44,25 @@ function fmtQty(item: CartItem): string {
   return String(item.quantity);
 }
 
+// description = quality pills + customer's special instructions for that item
+function buildDescription(item: CartItem): string | null {
+  const parts: string[] = [];
+  if (item.pills?.length)        parts.push(item.pills.join(', '));
+  if (item.notes?.trim())        parts.push(item.notes.trim());
+  return parts.length ? parts.join(' · ') : null;
+}
+
 async function createRazorpayLink(
   cart: CartItem[],
   customer_name: string,
   phone: string,
-  address: string,
   notes: string,
-  ref: string,
+  sales_id: string,
 ): Promise<{ id: string; short_url: string }> {
   const amountPaise = Math.round(cartTotal(cart) * 100);
   if (amountPaise < 100) throw new Error('Minimum order is ₹1');
 
   const description = cart.map(i => `${i.title} ×${fmtQty(i)}`).join(', ');
-
   const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
 
   const res = await fetch('https://api.razorpay.com/v1/payment_links', {
@@ -73,7 +78,7 @@ async function createRazorpayLink(
       },
       notify:          { sms: true, email: false },
       reminder_enable: false,
-      notes:           { ref, address: address || '', notes: notes || '', source: 'website' },
+      notes:           { sales_id, notes: notes || '', source: 'website' },
       callback_url:    'https://thegoodpapaya.com/pages/order-confirmed',
       callback_method: 'get',
     }),
@@ -88,51 +93,79 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { cart, customer_name, phone, address, notes, payment_method } = await req.json();
+    const { cart, community, door_number, phone, notes, payment_method } = await req.json();
 
+    // Validate
     if (!cart?.length)  throw new Error('No items in cart');
-    if (!customer_name) throw new Error('Missing customer name');
-    if (!phone)         throw new Error('Missing phone');
-    if (!address)       throw new Error('Missing address');
+    if (!community)     throw new Error('Missing community name');
+    if (!door_number)   throw new Error('Missing door number');
+    if (!phone)         throw new Error('Missing phone number');
+    if (!/^\d{10}$/.test(phone.replace(/^\+91/, ''))) {
+      throw new Error('Invalid phone number');
+    }
 
-    const method = payment_method === 'online' ? 'online' : 'cod';
-    const total  = cartTotal(cart);
-    const ref    = 'GP' + Date.now().toString(36).toUpperCase();
+    const method        = payment_method === 'online' ? 'online' : 'cod';
+    const customer_name = `${community.trim()} ${String(door_number).trim()}`;
+    const total         = cartTotal(cart);
+
+    // Generate sales_id: YYYY-MM-DD-Community-Door
+    const today    = new Date().toISOString().split('T')[0];
+    const safeName = customer_name.replace(/\s+/g, '-');
+    let   sales_id = `${today}-${safeName}`;
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
-    // Save order first — status depends on method
-    const { error: insertError } = await supabase.from('orders').insert({
-      ref,
+    // Handle rare duplicate (same customer, same day, second order)
+    const { data: existing } = await supabase
+      .from('orders').select('sales_id').eq('sales_id', sales_id);
+    if (existing?.length) sales_id = `${sales_id}-2`;
+
+    // Insert order header
+    const { error: orderErr } = await supabase.from('orders').insert({
+      sales_id,
       customer_name,
+      community:      community.trim(),
       phone:          phone.replace(/^\+91/, ''),
-      address,
-      notes:          notes || null,
+      payment_method: method,
+      status:         'placed',
       cart,
       total:          Math.round(total * 100) / 100,
-      payment_method: method,
-      status:         method === 'online' ? 'awaiting_payment' : 'pending',
+      notes:          notes || null,
     });
+    if (orderErr) throw new Error(orderErr.message);
 
-    if (insertError) throw new Error(insertError.message);
+    // Expand cart into order_items — one row per item
+    const orderItems = cart.map((item: CartItem) => ({
+      order_id:      sales_id,
+      order_date:    today,
+      customer_name,
+      community:     community.trim(),
+      item_name:     item.title,
+      description:   buildDescription(item),
+      requested_qty: parseFloat(String(item.quantity)),
+      final_qty:     null,
+      status:        'pending',
+    }));
 
-    // For online: create Razorpay payment link and store the reference
+    const { error: itemsErr } = await supabase.from('order_items').insert(orderItems);
+    if (itemsErr) throw new Error(itemsErr.message);
+
+    // For online: create Razorpay link and store it
     if (method === 'online') {
-      const rzp = await createRazorpayLink(cart, customer_name, phone, address, notes || '', ref);
+      const rzp = await createRazorpayLink(cart, customer_name, phone, notes || '', sales_id);
 
       await supabase.from('orders')
         .update({ razorpay_link_id: rzp.id, razorpay_url: rzp.short_url })
-        .eq('ref', ref);
+        .eq('sales_id', sales_id);
 
       return new Response(
-        JSON.stringify({ ref, payment_url: rzp.short_url }),
+        JSON.stringify({ sales_id, payment_url: rzp.short_url }),
         { headers: { ...CORS, 'Content-Type': 'application/json' } }
       );
     }
 
-    // COD — just return the ref
     return new Response(
-      JSON.stringify({ ref }),
+      JSON.stringify({ sales_id }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     );
 
