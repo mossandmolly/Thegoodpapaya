@@ -1,49 +1,108 @@
 {% comment %} Checkout page {% endcomment %}
+<style>
+.pay-methods {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .65rem;
+  margin-bottom: 0;
+}
+.pay-method {
+  display: flex; flex-direction: column; align-items: center; gap: .3rem;
+  padding: .85rem .5rem;
+  border: 2px solid var(--border); border-radius: 10px;
+  cursor: pointer; transition: all .15s; background: none; width: 100%;
+}
+.pay-method.active {
+  border-color: var(--green); background: var(--green-pale);
+}
+.pay-method-icon  { font-size: 1.5rem; line-height: 1; }
+.pay-method-label { font-size: .82rem; font-weight: 700; color: var(--text); }
+.pay-method-sub   { font-size: .7rem; color: var(--muted); }
+.pay-method.active .pay-method-label { color: var(--green); }
+
+.co-field {
+  width: 100%; padding: .6rem .85rem;
+  border: 1.5px solid var(--border); border-radius: 7px;
+  font-size: .95rem; font-family: inherit; outline: none;
+  transition: border-color .15s; resize: vertical; background: #fff;
+}
+.co-field:focus { border-color: var(--green-light); }
+</style>
+
 <div class="checkout-wrap">
   <h1 class="checkout-title">Your Order</h1>
 
   <!-- Cart summary -->
-  <div class="card checkout-section" id="cart-summary">
+  <div class="card checkout-section">
     <div class="checkout-section-title">Items</div>
     <div id="checkout-items"></div>
     <div class="checkout-total-row">
       <span>Total</span>
-      <strong id="checkout-total">₹0</strong>
+      <strong id="checkout-total" style="color:var(--green)">₹0</strong>
     </div>
   </div>
 
-  <!-- Customer details -->
+  <!-- Delivery details -->
   <div class="card checkout-section">
     <div class="checkout-section-title">Delivery details</div>
+
     <div class="form-group">
       <label>Your name</label>
-      <input type="text" id="co-name" placeholder="Full name" autocomplete="name">
+      <input class="co-field" type="text" id="co-name" placeholder="Full name" autocomplete="name">
     </div>
+
     <div class="form-group">
       <label>Mobile number</label>
       <div class="phone-input-wrap">
         <span class="phone-prefix">+91</span>
-        <input type="tel" id="co-phone" placeholder="9876543210" maxlength="10" inputmode="numeric" autocomplete="tel">
+        <input type="tel" id="co-phone" placeholder="9876543210"
+          maxlength="10" inputmode="numeric" autocomplete="tel"
+          style="border:none;outline:none;padding:.6rem .75rem;font-size:.95rem;width:100%;background:transparent">
       </div>
     </div>
+
     <div class="form-group">
       <label>Delivery address</label>
-      <textarea id="co-address" rows="3" placeholder="Flat / building, street, area, city"></textarea>
+      <textarea class="co-field" id="co-address" rows="3"
+        placeholder="Flat / building, street, area, city, pincode"></textarea>
     </div>
-    <div class="form-group">
+
+    <div class="form-group" style="margin-bottom:0">
       <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
-      <input type="text" id="co-notes" placeholder="Allergies, preferences, gate code…">
+      <input class="co-field" type="text" id="co-notes"
+        placeholder="Delivery time, gate code, allergies…">
     </div>
   </div>
 
-  <div id="co-error" class="error-msg" style="margin-bottom:.75rem"></div>
+  <!-- Payment method -->
+  <div class="card checkout-section">
+    <div class="checkout-section-title">Payment method</div>
+    <div class="pay-methods">
+      <button class="pay-method active" id="pm-online" onclick="selectPayment('online')">
+        <span class="pay-method-icon">💳</span>
+        <span class="pay-method-label">Pay Online</span>
+        <span class="pay-method-sub">UPI · Card · Netbanking</span>
+      </button>
+      <button class="pay-method" id="pm-cod" onclick="selectPayment('cod')">
+        <span class="pay-method-icon">💵</span>
+        <span class="pay-method-label">Cash on Delivery</span>
+        <span class="pay-method-sub">Pay when delivered</span>
+      </button>
+    </div>
+  </div>
 
-  <button class="btn btn-primary" id="pay-btn" onclick="submitOrder()">
+  <div id="co-error" class="error-msg" style="margin-bottom:.75rem;min-height:1.2rem"></div>
+
+  <button class="btn btn-primary" id="pay-btn" onclick="submitOrder()" style="font-size:1rem;padding:.8rem">
     Pay with Razorpay
   </button>
 
-  <p style="text-align:center;font-size:.78rem;color:var(--muted);margin-top:.75rem">
+  <p id="pay-note" style="text-align:center;font-size:.78rem;color:var(--muted);margin-top:.65rem">
     You'll be redirected to Razorpay's secure payment page
+  </p>
+
+  <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:1.5rem">
+    By placing your order you agree to our
+    <a href="/pages/terms" style="color:var(--green)">Terms</a> &amp;
+    <a href="/pages/refund" style="color:var(--green)">Refund policy</a>
   </p>
 </div>
 

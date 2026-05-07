@@ -1,7 +1,9 @@
-// Edge function URL — update after deploying create-payment-link
 const PAYMENT_EDGE_FN = 'https://fykqprogzqcfzrgwlrem.supabase.co/functions/v1/create-payment-link';
 
-// ── Load cart ─────────────────────────────────────────────────
+// ── Replace with the business WhatsApp number (country code + number, no +) ──
+const WA_NUMBER = '919000000000';
+
+// ── Cart ───────────────────────────────────────────────────────────────────
 function getCart() {
   try { return JSON.parse(localStorage.getItem('gp_cart') || '[]'); } catch { return []; }
 }
@@ -14,59 +16,147 @@ function fmtQty(item) {
   return String(item.quantity);
 }
 
+function cartTotal(cart) {
+  return cart.reduce((s, i) => s + parseFloat(i.price) * parseFloat(i.quantity), 0);
+}
+
+// ── Render cart summary ────────────────────────────────────────────────────
 function renderCart() {
-  const cart = getCart();
+  const cart      = getCart();
   const container = document.getElementById('checkout-items');
   const totalEl   = document.getElementById('checkout-total');
+  const btn       = document.getElementById('pay-btn');
 
   if (!cart.length) {
-    container.innerHTML = '<p style="color:var(--muted);font-size:.9rem">Your cart is empty. <a href="/pages/shop">Browse products</a></p>';
+    container.innerHTML =
+      '<p style="color:var(--muted);font-size:.9rem">Your cart is empty. ' +
+      '<a href="/pages/shop" style="color:var(--green)">Browse products</a></p>';
     totalEl.textContent = '₹0';
-    document.getElementById('pay-btn').disabled = true;
+    btn.disabled = true;
     return;
   }
 
-  let total = 0;
   container.innerHTML = '';
   cart.forEach(item => {
-    const lineTotal = parseFloat(item.price) * parseFloat(item.quantity);
-    total += lineTotal;
+    const line = parseFloat(item.price) * parseFloat(item.quantity);
+    const pills = item.pills && item.pills.length ? ` · ${item.pills.join(', ')}` : '';
     const row = document.createElement('div');
     row.className = 'checkout-item-row';
-    row.innerHTML = `
-      <span>${item.title} × ${fmtQty(item)}</span>
-      <span>₹${lineTotal.toFixed(0)}</span>
-    `;
+    row.innerHTML =
+      `<span>${item.title} × ${fmtQty(item)}${pills}</span>` +
+      `<span>₹${line.toFixed(0)}</span>`;
     container.appendChild(row);
   });
-  totalEl.textContent = `₹${total.toFixed(0)}`;
+  totalEl.textContent = `₹${cartTotal(cart).toFixed(0)}`;
 }
 
-// ── Submit order ──────────────────────────────────────────────
-async function submitOrder() {
+// ── Payment method toggle ──────────────────────────────────────────────────
+let _payMethod = 'online';
+
+function selectPayment(method) {
+  _payMethod = method;
+  document.getElementById('pm-online').classList.toggle('active', method === 'online');
+  document.getElementById('pm-cod').classList.toggle('active', method === 'cod');
+
+  const btn  = document.getElementById('pay-btn');
+  const note = document.getElementById('pay-note');
+
+  if (method === 'cod') {
+    btn.textContent  = 'Place Order (Cash on Delivery)';
+    note.textContent = "We'll send a WhatsApp confirmation. Pay when your fruits arrive.";
+  } else {
+    btn.textContent  = 'Pay with Razorpay';
+    note.textContent = "You'll be redirected to Razorpay's secure payment page.";
+  }
+}
+
+// ── Validation ─────────────────────────────────────────────────────────────
+function validate() {
   const cart    = getCart();
   const name    = document.getElementById('co-name').value.trim();
   const phone   = document.getElementById('co-phone').value.trim();
   const address = document.getElementById('co-address').value.trim();
-  const notes   = document.getElementById('co-notes').value.trim();
   const errEl   = document.getElementById('co-error');
-  const btn     = document.getElementById('pay-btn');
 
   errEl.textContent = '';
 
-  if (!cart.length)       { errEl.textContent = 'Your cart is empty.'; return; }
-  if (!name)              { errEl.textContent = 'Please enter your name.'; return; }
-  if (!/^\d{10}$/.test(phone)) { errEl.textContent = 'Enter a valid 10-digit mobile number.'; return; }
-  if (!address)           { errEl.textContent = 'Please enter your delivery address.'; return; }
+  if (!cart.length)              { errEl.textContent = 'Your cart is empty.'; return null; }
+  if (!name)                     { errEl.textContent = 'Please enter your name.'; return null; }
+  if (!/^\d{10}$/.test(phone))  { errEl.textContent = 'Enter a valid 10-digit mobile number.'; return null; }
+  if (!address)                  { errEl.textContent = 'Please enter your delivery address.'; return null; }
+
+  return {
+    cart,
+    name,
+    phone,
+    address,
+    notes: document.getElementById('co-notes').value.trim(),
+  };
+}
+
+// ── Main submit ────────────────────────────────────────────────────────────
+async function submitOrder() {
+  const fields = validate();
+  if (!fields) return;
+
+  document.getElementById('pay-btn').disabled = true;
+
+  if (_payMethod === 'cod') {
+    placeCOD(fields);
+  } else {
+    await payOnline(fields);
+  }
+}
+
+// ── Cash on Delivery ───────────────────────────────────────────────────────
+function placeCOD({ cart, name, phone, address, notes }) {
+  const total    = cartTotal(cart);
+  const orderRef = 'GP' + Date.now().toString(36).toUpperCase();
+
+  // Save for confirmation page
+  localStorage.setItem('gp_last_order', JSON.stringify({
+    ref: orderRef, name, phone, address, notes,
+    cart, total, method: 'cod', ts: Date.now(),
+  }));
+
+  // Build WhatsApp message for business
+  const itemLines = cart
+    .map(i => `• ${i.title} × ${fmtQty(i)} — ₹${(parseFloat(i.price) * parseFloat(i.quantity)).toFixed(0)}`)
+    .join('\n');
+
+  const msg = [
+    '🍑 New order — The Good Papaya',
+    `Ref: ${orderRef}`,
+    '',
+    `Customer: ${name}`,
+    `Phone: +91${phone}`,
+    `Address: ${address}`,
+    notes ? `Notes: ${notes}` : null,
+    '',
+    itemLines,
+    '',
+    `Total: ₹${total.toFixed(0)}`,
+    'Payment: Cash on Delivery',
+  ].filter(l => l !== null).join('\n');
+
+  window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, '_blank');
+
+  localStorage.removeItem('gp_cart');
+  window.location.href = '/pages/order-confirmed';
+}
+
+// ── Razorpay online payment ────────────────────────────────────────────────
+async function payOnline({ cart, name, phone, address, notes }) {
+  const btn   = document.getElementById('pay-btn');
+  const errEl = document.getElementById('co-error');
 
   btn.textContent = 'Creating order…';
-  btn.disabled    = true;
 
   try {
     const res = await fetch(PAYMENT_EDGE_FN, {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: cart, customer_name: name, phone, address, notes }),
+      body:    JSON.stringify({ items: cart, customer_name: name, phone, address, notes }),
     });
 
     const data = await res.json();
@@ -75,7 +165,13 @@ async function submitOrder() {
       throw new Error(data.error || 'Failed to create payment link');
     }
 
-    // Clear cart and redirect to Razorpay
+    const total    = cartTotal(cart);
+    const orderRef = 'GP' + Date.now().toString(36).toUpperCase();
+    localStorage.setItem('gp_last_order', JSON.stringify({
+      ref: orderRef, name, phone, address, notes,
+      cart, total, method: 'online', ts: Date.now(),
+    }));
+
     localStorage.removeItem('gp_cart');
     window.location.href = data.payment_url;
 
@@ -86,4 +182,5 @@ async function submitOrder() {
   }
 }
 
+// ── Init ───────────────────────────────────────────────────────────────────
 renderCart();
