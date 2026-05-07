@@ -139,6 +139,7 @@ function addFromSheet() {
     title:    _sp.title,
     price:    _sp.price,
     mode:     _sMode,
+    unit:     _sMode === 'box' ? _sp.boxUnit : 'kg',
     quantity: qty,
     pills:    [..._sPills],
     notes,

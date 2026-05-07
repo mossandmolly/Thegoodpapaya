@@ -90,19 +90,26 @@
     (customerDisplay ? '  ·  ' + customerDisplay : '');
 
   function fmtQty(item) {
+    var qty = parseFloat(item.quantity);
+    if (isNaN(qty)) return '?';
     if (item.mode === 'weight') {
-      var w = parseFloat(item.quantity);
-      return w >= 1 ? w + ' kg' : Math.round(w * 1000) + 'g';
+      return qty >= 1 ? qty + ' kg' : Math.round(qty * 1000) + 'g';
     }
-    return String(item.quantity);
+    var unit = item.unit || 'box';
+    return qty === 1 ? '1 ' + unit : qty + ' ' + unit + 's';
+  }
+
+  function lineTotal(item) {
+    var p = parseFloat(item.price), q = parseFloat(item.quantity);
+    return isNaN(p) || isNaN(q) ? 0 : p * q;
   }
 
   var itemsHtml = (o.cart || []).map(function (i) {
-    var line = parseFloat(i.price) * parseFloat(i.quantity);
+    var line = lineTotal(i);
     var pills = i.pills && i.pills.length ? ' <span style="color:var(--muted)">· ' + i.pills.join(', ') + '</span>' : '';
     return '<div style="display:flex;justify-content:space-between;font-size:.85rem;' +
       'padding:.28rem 0;border-bottom:1px solid #f3f4f0">' +
-      '<span>' + i.title + ' × ' + fmtQty(i) + pills + '</span>' +
+      '<span>' + (i.title || '?') + ' × ' + fmtQty(i) + pills + '</span>' +
       '<span>₹' + line.toFixed(0) + '</span>' +
       '</div>';
   }).join('');

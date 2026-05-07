@@ -1,23 +1,43 @@
 const PLACE_ORDER_FN = 'https://fykqprogzqcfzrgwlrem.supabase.co/functions/v1/place-order';
 
-// ── Cart ───────────────────────────────────────────────────────────────────
+// ── Cart helpers ───────────────────────────────────────────────────────────
 function getCart() {
   try { return JSON.parse(localStorage.getItem('gp_cart') || '[]'); } catch { return []; }
 }
 
 function fmtQty(item) {
+  const qty = parseFloat(item.quantity);
+  if (isNaN(qty)) return '?';
   if (item.mode === 'weight') {
-    const w = parseFloat(item.quantity);
-    return w >= 1 ? `${w} kg` : `${Math.round(w * 1000)}g`;
+    return qty >= 1 ? `${qty} kg` : `${Math.round(qty * 1000)}g`;
   }
-  return String(item.quantity);
+  const unit = item.unit || 'box';
+  return qty === 1 ? `1 ${unit}` : `${qty} ${unit}s`;
+}
+
+function lineTotal(item) {
+  const p = parseFloat(item.price);
+  const q = parseFloat(item.quantity);
+  return isNaN(p) || isNaN(q) ? 0 : p * q;
 }
 
 function cartTotal(cart) {
-  return cart.reduce((s, i) => s + parseFloat(i.price) * parseFloat(i.quantity), 0);
+  return cart.reduce((s, i) => s + lineTotal(i), 0);
 }
 
-// ── Render cart summary ────────────────────────────────────────────────────
+// ── Remove item ────────────────────────────────────────────────────────────
+function removeItem(idx) {
+  const cart = getCart();
+  cart.splice(idx, 1);
+  localStorage.setItem('gp_cart', JSON.stringify(cart));
+  renderCart();
+  const icon = document.getElementById('cart-nav-icon');
+  const cnt  = document.getElementById('cart-nav-count');
+  if (icon) icon.style.display = cart.length > 0 ? 'inline-flex' : 'none';
+  if (cnt)  cnt.textContent = cart.length;
+}
+
+// ── Render cart ────────────────────────────────────────────────────────────
 function renderCart() {
   const cart      = getCart();
   const container = document.getElementById('checkout-items');
@@ -26,24 +46,39 @@ function renderCart() {
 
   if (!cart.length) {
     container.innerHTML =
-      '<p style="color:var(--muted);font-size:.9rem">Your cart is empty. ' +
-      '<a href="/pages/shop" style="color:var(--green)">Browse products</a></p>';
+      '<p style="color:var(--muted);font-size:.9rem;padding:.25rem 0">Your cart is empty. ' +
+      '<a href="/pages/shop" style="color:var(--green)">Browse products →</a></p>';
     totalEl.textContent = '₹0';
-    btn.disabled = true;
+    if (btn) btn.disabled = true;
     return;
   }
 
-  container.innerHTML = '';
-  cart.forEach(item => {
-    const line  = parseFloat(item.price) * parseFloat(item.quantity);
-    const pills = item.pills && item.pills.length ? ` · ${item.pills.join(', ')}` : '';
-    const row   = document.createElement('div');
-    row.className = 'checkout-item-row';
-    row.innerHTML =
-      `<span>${item.title} × ${fmtQty(item)}${pills}</span>` +
-      `<span>₹${line.toFixed(0)}</span>`;
-    container.appendChild(row);
-  });
+  if (btn) btn.disabled = false;
+
+  container.innerHTML = cart.map((item, idx) => {
+    const pillsHtml = item.pills && item.pills.length
+      ? `<div class="ci-pills">${item.pills.map(p =>
+          `<span class="ci-pill">${p}</span>`).join('')}</div>`
+      : '';
+    const notesHtml = item.notes
+      ? `<div class="ci-notes">&ldquo;${item.notes}&rdquo;</div>`
+      : '';
+    return `
+      <div class="cart-item">
+        <div class="ci-body">
+          <div class="ci-top">
+            <span class="ci-name">${item.title || '?'}</span>
+            <span class="ci-qty">${fmtQty(item)}</span>
+          </div>
+          ${pillsHtml}${notesHtml}
+        </div>
+        <div class="ci-right">
+          <span class="ci-total">₹${lineTotal(item).toFixed(0)}</span>
+          <button class="ci-remove" onclick="removeItem(${idx})" title="Remove">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+
   totalEl.textContent = `₹${cartTotal(cart).toFixed(0)}`;
 }
 
@@ -60,7 +95,7 @@ function selectPayment(method) {
 
   if (method === 'cod') {
     btn.textContent  = 'Place Order (Cash on Delivery)';
-    note.textContent = 'Your order will be saved and confirmed before dispatch. Pay when delivered.';
+    note.textContent = 'Your order will be confirmed before dispatch. Pay when delivered.';
   } else {
     btn.textContent  = 'Pay with Razorpay';
     note.textContent = "You'll be redirected to Razorpay's secure payment page.";
@@ -70,7 +105,6 @@ function selectPayment(method) {
 // ── Submit ─────────────────────────────────────────────────────────────────
 async function submitOrder() {
   const cart      = getCart();
-  const name      = document.getElementById('co-name').value.trim();
   const phone     = document.getElementById('co-phone').value.trim();
   const community = document.getElementById('co-community').value.trim();
   const door      = document.getElementById('co-door').value.trim();
@@ -80,11 +114,10 @@ async function submitOrder() {
 
   errEl.textContent = '';
 
-  if (!cart.length)             { errEl.textContent = 'Your cart is empty.'; return; }
-  if (!name)                    { errEl.textContent = 'Please enter your name.'; return; }
-  if (!/^\d{10}$/.test(phone)) { errEl.textContent = 'Enter a valid 10-digit mobile number.'; return; }
-  if (!community)               { errEl.textContent = 'Please enter your community name.'; return; }
-  if (!door)                    { errEl.textContent = 'Please enter your door / flat number.'; return; }
+  if (!cart.length)              { errEl.textContent = 'Your cart is empty.'; return; }
+  if (!/^\d{10}$/.test(phone))  { errEl.textContent = 'Enter a valid 10-digit mobile number.'; return; }
+  if (!community)                { errEl.textContent = 'Please enter your community name.'; return; }
+  if (!door)                     { errEl.textContent = 'Please enter your door / flat number.'; return; }
 
   btn.disabled    = true;
   btn.textContent = _payMethod === 'cod' ? 'Placing order…' : 'Creating order…';
@@ -98,7 +131,6 @@ async function submitOrder() {
         community,
         door_number:    door,
         phone,
-        contact_name:   name,
         notes,
         payment_method: _payMethod,
       }),
@@ -107,10 +139,8 @@ async function submitOrder() {
     const data = await res.json();
     if (!res.ok || !data.sales_id) throw new Error(data.error || 'Could not place order');
 
-    // Save summary for the confirmation page
     localStorage.setItem('gp_last_order', JSON.stringify({
       ref:       data.sales_id,
-      name,
       phone,
       community,
       door,
@@ -123,7 +153,6 @@ async function submitOrder() {
 
     localStorage.removeItem('gp_cart');
 
-    // Online: redirect to Razorpay; COD: go straight to confirmation
     window.location.href = _payMethod === 'online'
       ? data.payment_url
       : '/pages/order-confirmed';

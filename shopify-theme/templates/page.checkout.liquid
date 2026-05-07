@@ -10,9 +10,7 @@
   border: 2px solid var(--border); border-radius: 10px;
   cursor: pointer; transition: all .15s; background: none; width: 100%;
 }
-.pay-method.active {
-  border-color: var(--green); background: var(--green-pale);
-}
+.pay-method.active { border-color: var(--green); background: var(--green-pale); }
 .pay-method-icon  { font-size: 1.5rem; line-height: 1; }
 .pay-method-label { font-size: .82rem; font-weight: 700; color: var(--text); }
 .pay-method-sub   { font-size: .7rem; color: var(--muted); }
@@ -25,6 +23,32 @@
   transition: border-color .15s; resize: vertical; background: #fff;
 }
 .co-field:focus { border-color: var(--green-light); }
+
+/* Cart item rows */
+.cart-item {
+  display: flex; align-items: flex-start; gap: .75rem;
+  padding: .7rem 0; border-bottom: 1px solid var(--border);
+}
+.cart-item:last-child { border-bottom: none; }
+.ci-body  { flex: 1; min-width: 0; }
+.ci-top   { display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
+.ci-name  { font-weight: 600; font-size: .93rem; }
+.ci-qty   { font-size: .8rem; color: var(--muted); }
+.ci-pills { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .3rem; }
+.ci-pill  {
+  font-size: .68rem; padding: .1rem .45rem;
+  background: var(--green-pale); color: var(--green);
+  border-radius: 99px; font-weight: 600;
+}
+.ci-notes { font-size: .75rem; color: var(--muted); font-style: italic; margin-top: .25rem; }
+.ci-right { display: flex; flex-direction: column; align-items: flex-end; gap: .3rem; flex-shrink: 0; }
+.ci-total { font-weight: 700; font-size: .9rem; }
+.ci-remove {
+  border: none; background: none; cursor: pointer;
+  color: var(--muted); font-size: .7rem; padding: .15rem .35rem;
+  border-radius: 4px; line-height: 1;
+}
+.ci-remove:hover { background: #fee2e2; color: #dc2626; }
 </style>
 
 <div class="checkout-wrap">
@@ -32,7 +56,10 @@
 
   <!-- Cart summary -->
   <div class="card checkout-section">
-    <div class="checkout-section-title">Items</div>
+    <div class="checkout-section-title" style="display:flex;justify-content:space-between;align-items:center">
+      Order summary
+      <a href="/pages/shop" style="font-size:.75rem;font-weight:500;color:var(--green);text-transform:none;letter-spacing:0">← Edit items</a>
+    </div>
     <div id="checkout-items"></div>
     <div class="checkout-total-row">
       <span>Total</span>
@@ -43,11 +70,6 @@
   <!-- Delivery details -->
   <div class="card checkout-section">
     <div class="checkout-section-title">Delivery details</div>
-
-    <div class="form-group">
-      <label>Your name</label>
-      <input class="co-field" type="text" id="co-name" placeholder="Full name" autocomplete="name">
-    </div>
 
     <div class="form-group">
       <label>Mobile number</label>
