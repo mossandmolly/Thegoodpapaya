@@ -51,7 +51,7 @@ function renderCart() {
   if (!cart.length) {
     container.innerHTML =
       '<p style="color:var(--muted);font-size:.9rem;padding:.25rem 0">Your cart is empty. ' +
-      '<a href="/pages/shop" style="color:var(--green)">Browse products →</a></p>';
+      '<a href="/" style="color:var(--green)">Browse products →</a></p>';
     totalEl.textContent = '₹0';
     if (btn) btn.disabled = true;
     return;
