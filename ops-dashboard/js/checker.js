@@ -1,28 +1,28 @@
-// ── State ─────────────────────────────────────────────────────
-let allItems     = [];   // flat list of all operations rows
-let allOrders    = {};   // grouped by sales_order_id (or customer+date key)
-let selectedIds  = new Set();
+// ── State ──────────────────────────────────────────────────────────────────
+let allItems    = [];   // flat list of order_items rows (with nested order data)
+let allGroups   = {};   // keyed by order_id
+let selectedIds = new Set();
 
-// ── Init ──────────────────────────────────────────────────────
+// ── Init ───────────────────────────────────────────────────────────────────
 (async function init() {
   document.getElementById('section-date').textContent = formatDate(todayIST());
   await loadItems();
   setupFilters();
 })();
 
-// ── Load items ────────────────────────────────────────────────
+// ── Load items ─────────────────────────────────────────────────────────────
 async function loadItems() {
   const empty = document.getElementById('empty-state');
-  empty.querySelector('p').textContent = 'Loading today's items…';
+  empty.querySelector('p').textContent = 'Loading today\'s items…';
   empty.classList.remove('hidden');
   document.getElementById('orders-container').innerHTML = '';
   document.getElementById('summary-bar').classList.add('hidden');
   document.getElementById('section-header').classList.add('hidden');
 
   const { data: items, error } = await sb
-    .from('operations')
-    .select('*')
-    .eq('invoice_date', todayIST())
+    .from('order_items')
+    .select('*, order:orders(sales_id, contact_name, payment_method, status)')
+    .eq('order_date', todayIST())
     .order('community')
     .order('customer_name')
     .order('item_name');
@@ -35,10 +35,10 @@ async function loadItems() {
   // Populate community filter
   const communities = [...new Set(items.map(i => i.community).filter(Boolean))].sort();
   const sel = document.getElementById('filter-community');
+  sel.innerHTML = '<option value="">All communities</option>';
   communities.forEach(c => {
     const opt = document.createElement('option');
-    opt.value = c;
-    opt.textContent = c;
+    opt.value = c; opt.textContent = c;
     sel.appendChild(opt);
   });
 
@@ -46,28 +46,34 @@ async function loadItems() {
   groupAndRender();
 }
 
-// ── Group items by customer order ─────────────────────────────
+// ── Group items by order_id and render ─────────────────────────────────────
 function groupAndRender() {
   const communityFilter = document.getElementById('filter-community').value;
   const statusFilter    = document.getElementById('filter-status').value;
   const searchFilter    = document.getElementById('filter-search').value.trim().toLowerCase();
 
-  // Apply filters
-  let filtered = allItems.filter(i => {
-    if (communityFilter && i.community !== communityFilter) return false;
-    if (statusFilter    && i.status    !== statusFilter)    return false;
+  const filtered = allItems.filter(i => {
+    if (communityFilter && i.community    !== communityFilter) return false;
+    if (statusFilter    && i.status       !== statusFilter)    return false;
     if (searchFilter    && !i.customer_name.toLowerCase().includes(searchFilter)) return false;
     return true;
   });
 
-  // Group by customer_name (within today's date — one "order" per customer)
+  // Group by order_id
   const groups = {};
   filtered.forEach(item => {
-    const key = item.customer_name;
-    if (!groups[key]) groups[key] = { customer_name: item.customer_name, community: item.community, items: [] };
-    groups[key].items.push(item);
+    if (!groups[item.order_id]) {
+      groups[item.order_id] = {
+        order_id:     item.order_id,
+        customer_name: item.customer_name,
+        community:    item.community,
+        contact_name: item.order?.contact_name || null,
+        items: [],
+      };
+    }
+    groups[item.order_id].items.push(item);
   });
-  allOrders = groups;
+  allGroups = groups;
 
   const container = document.getElementById('orders-container');
   const empty     = document.getElementById('empty-state');
@@ -85,55 +91,58 @@ function groupAndRender() {
   document.getElementById('summary-bar').classList.remove('hidden');
   document.getElementById('section-header').classList.remove('hidden');
 
-  // Update summary counts from full allItems (not filtered)
   updateSummary();
 
   const total = filtered.length;
   document.getElementById('section-count').textContent =
-    `${total} item${total !== 1 ? 's' : ''} today · ${Object.keys(groups).length} customers`;
+    `${total} item${total !== 1 ? 's' : ''} today · ${Object.keys(groups).length} orders`;
 
   container.innerHTML = '';
   Object.values(groups).forEach(g => container.appendChild(buildOrderBlock(g)));
 }
 
-// ── Build order block ─────────────────────────────────────────
+// ── Build order block ──────────────────────────────────────────────────────
 function buildOrderBlock(group) {
-  const allFinal   = group.items.every(i => i.status === 'final');
-  const noneFinal  = group.items.every(i => i.status !== 'final');
-  const someFinal  = !allFinal && !noneFinal;
+  const allPacked  = group.items.every(i => i.status === 'packed');
+  const nonePacked = group.items.every(i => i.status !== 'packed');
+  const somePacked = !allPacked && !nonePacked;
 
   const wrap = document.createElement('div');
-  wrap.className = 'order-block' + (allFinal ? ' order-complete' : '');
-  wrap.id = `order-${slugify(group.customer_name)}`;
+  wrap.className = 'order-block' + (allPacked ? ' order-complete' : '');
+  wrap.id = `order-${slugify(group.order_id)}`;
 
-  // Header
+  const nameDisplay = group.contact_name
+    ? `${group.customer_name} <span style="font-weight:400;color:var(--text-muted);font-size:.82rem">(${group.contact_name})</span>`
+    : group.customer_name;
+
   const hdr = document.createElement('div');
   hdr.className = 'order-header';
   hdr.innerHTML = `
     <div class="order-header-left">
-      <span class="order-customer">${group.customer_name}</span>
+      <span class="order-customer">${nameDisplay}</span>
       ${group.community ? `<span class="order-community">${group.community}</span>` : ''}
     </div>
     <div class="order-header-right">
-      ${someFinal ? `<span class="order-warn">⚠ ${group.items.filter(i=>i.status!=='final').length} pending</span>` : ''}
-      <span class="order-progress ${allFinal ? 'progress-done' : 'progress-partial'}">
-        ${group.items.filter(i=>i.status==='final').length}/${group.items.length}
+      ${somePacked ? `<span class="order-warn">⚠ ${group.items.filter(i=>i.status!=='packed').length} pending</span>` : ''}
+      <span class="order-progress ${allPacked ? 'progress-done' : 'progress-partial'}">
+        ${group.items.filter(i=>i.status==='packed').length}/${group.items.length}
       </span>
-      ${allFinal
-        ? `<button class="btn btn-sm btn-secondary" onclick="unfinalizeOrder('${group.customer_name}')">Edit</button>`
-        : `<button class="btn btn-sm btn-success"   onclick="finalizeOrder('${group.customer_name}')">Finalize All</button>`
+      ${allPacked
+        ? `<button class="btn btn-sm btn-secondary" onclick="unpackOrder('${group.order_id}')">Edit</button>`
+        : `<button class="btn btn-sm btn-success"   onclick="packOrder('${group.order_id}')">Pack All</button>`
       }
     </div>
   `;
   wrap.appendChild(hdr);
 
-  // Items table
   const tbl = document.createElement('table');
   tbl.className = 'order-table';
   tbl.innerHTML = `
     <thead>
       <tr>
-        <th style="width:32px"><input type="checkbox" onchange="toggleOrderSelection('${group.customer_name}', this.checked)" id="chk-order-${slugify(group.customer_name)}"></th>
+        <th style="width:32px"><input type="checkbox"
+          onchange="toggleOrderSelection('${group.order_id}', this.checked)"
+          id="chk-order-${slugify(group.order_id)}"></th>
         <th>Item</th>
         <th style="text-align:center">Req</th>
         <th style="text-align:center">Final</th>
@@ -146,31 +155,30 @@ function buildOrderBlock(group) {
   group.items.forEach(item => tbody.appendChild(buildItemRow(item)));
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
-
   return wrap;
 }
 
-// ── Build item row ─────────────────────────────────────────────
+// ── Build item row ─────────────────────────────────────────────────────────
 function buildItemRow(item) {
   const tr = document.createElement('tr');
   tr.id = `row-${item.id}`;
-  tr.className = item.status === 'final' ? 'final' : '';
+  tr.className = item.status === 'packed' ? 'final' : '';
 
-  const isFinal = item.status === 'final';
+  const isPacked = item.status === 'packed';
   tr.innerHTML = `
     <td><input type="checkbox" class="row-check" data-id="${item.id}"
       ${selectedIds.has(item.id) ? 'checked' : ''}
       onchange="toggleItem('${item.id}', this.checked)"></td>
     <td>
       <div style="font-weight:500">${item.item_name}</div>
-      ${item.description ? `<div style="font-size:0.75rem;color:var(--text-muted)">${item.description}</div>` : ''}
+      ${item.description ? `<div style="font-size:.75rem;color:var(--text-muted)">${item.description}</div>` : ''}
     </td>
-    <td style="text-align:center;font-size:0.9rem">${item.requested_quantity ?? '—'}</td>
+    <td style="text-align:center;font-size:.9rem">${item.requested_qty ?? '—'}</td>
     <td style="text-align:center">
-      ${isFinal
-        ? `<span style="font-weight:600">${item.final_quantity ?? '—'}</span>`
+      ${isPacked
+        ? `<span style="font-weight:600">${item.final_qty ?? '—'}</span>`
         : `<input type="number" class="inline-qty-input" id="inline-${item.id}"
-             value="${item.final_quantity ?? ''}" placeholder="—"
+             value="${item.final_qty ?? ''}" placeholder="—"
              inputmode="decimal" step="0.1"
              onblur="inlineSave('${item.id}')"
              onkeydown="if(event.key==='Enter') inlineSave('${item.id}')">`
@@ -180,7 +188,7 @@ function buildItemRow(item) {
       <span class="status-badge badge-${item.status}">${item.status}</span>
     </td>
     <td>
-      ${isFinal
+      ${isPacked
         ? `<button class="btn btn-sm btn-secondary" onclick="unfinalizeItem('${item.id}')">Edit</button>`
         : `<button class="btn btn-sm btn-success"   onclick="finalizeItem('${item.id}')">✓</button>`
       }
@@ -189,26 +197,24 @@ function buildItemRow(item) {
   return tr;
 }
 
-// ── Filters ───────────────────────────────────────────────────
+// ── Filters ────────────────────────────────────────────────────────────────
 function setupFilters() {
   document.getElementById('filter-community').addEventListener('change', groupAndRender);
   document.getElementById('filter-status').addEventListener('change', groupAndRender);
   document.getElementById('filter-search').addEventListener('input', groupAndRender);
 }
 
-// ── Selection ─────────────────────────────────────────────────
+// ── Selection ──────────────────────────────────────────────────────────────
 function toggleItem(id, checked) {
-  if (checked) selectedIds.add(id);
-  else         selectedIds.delete(id);
+  if (checked) selectedIds.add(id); else selectedIds.delete(id);
   updateBulkBar();
 }
 
-function toggleOrderSelection(customerName, checked) {
-  const group = allOrders[customerName];
+function toggleOrderSelection(orderId, checked) {
+  const group = allGroups[orderId];
   if (!group) return;
   group.items.forEach(i => {
-    if (checked) selectedIds.add(i.id);
-    else         selectedIds.delete(i.id);
+    if (checked) selectedIds.add(i.id); else selectedIds.delete(i.id);
     const chk = document.querySelector(`input.row-check[data-id="${i.id}"]`);
     if (chk) chk.checked = checked;
   });
@@ -219,14 +225,13 @@ let allSelected = false;
 function toggleSelectAll() {
   allSelected = !allSelected;
   document.getElementById('btn-select-all').textContent = allSelected ? 'Deselect All' : 'Select All';
-  Object.values(allOrders).forEach(g => {
+  Object.values(allGroups).forEach(g => {
     g.items.forEach(i => {
-      if (allSelected) selectedIds.add(i.id);
-      else             selectedIds.delete(i.id);
+      if (allSelected) selectedIds.add(i.id); else selectedIds.delete(i.id);
       const chk = document.querySelector(`input.row-check[data-id="${i.id}"]`);
       if (chk) chk.checked = allSelected;
     });
-    const orderChk = document.getElementById(`chk-order-${slugify(g.customer_name)}`);
+    const orderChk = document.getElementById(`chk-order-${slugify(g.order_id)}`);
     if (orderChk) orderChk.checked = allSelected;
   });
   updateBulkBar();
@@ -250,7 +255,7 @@ function updateBulkBar() {
   }
 }
 
-// ── Inline save (blur / Enter) ────────────────────────────────
+// ── Inline save ────────────────────────────────────────────────────────────
 async function inlineSave(id) {
   const input = document.getElementById(`inline-${id}`);
   if (!input) return;
@@ -258,122 +263,107 @@ async function inlineSave(id) {
   if (isNaN(val) || val < 0) return;
 
   const { error } = await sb
-    .from('operations')
-    .update({ final_quantity: val, status: 'draft' })
+    .from('order_items')
+    .update({ final_qty: val })
     .eq('id', id);
 
   if (error) { showToast('Save failed', 'error'); return; }
 
   const idx = allItems.findIndex(i => i.id === id);
-  if (idx !== -1) { allItems[idx].final_quantity = val; allItems[idx].status = 'draft'; }
+  if (idx !== -1) allItems[idx].final_qty = val;
   input.style.borderColor = 'var(--green)';
 }
 
-// ── Finalize single item ───────────────────────────────────────
+// ── Finalize / pack single item ────────────────────────────────────────────
 async function finalizeItem(id) {
   const input = document.getElementById(`inline-${id}`);
   const val   = input ? parseFloat(input.value) : null;
+  const update = { status: 'packed' };
+  if (input && !isNaN(val) && val >= 0) update.final_qty = val;
 
-  const update = { status: 'final' };
-  if (input && !isNaN(val) && val >= 0) update.final_quantity = val;
-
-  const { error } = await sb.from('operations').update(update).eq('id', id);
+  const { error } = await sb.from('order_items').update(update).eq('id', id);
   if (error) { showToast('Failed', 'error'); return; }
 
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    allItems[idx].status = 'final';
-    if (update.final_quantity !== undefined) allItems[idx].final_quantity = update.final_quantity;
+    allItems[idx].status = 'packed';
+    if (update.final_qty !== undefined) allItems[idx].final_qty = update.final_qty;
   }
   refreshRow(id);
   updateSummary();
   refreshOrderHeader(id);
 }
 
-// ── Unfinalize single item ────────────────────────────────────
 async function unfinalizeItem(id) {
-  const { error } = await sb.from('operations').update({ status: 'draft' }).eq('id', id);
+  const { error } = await sb.from('order_items').update({ status: 'pending' }).eq('id', id);
   if (error) { showToast('Failed', 'error'); return; }
   const idx = allItems.findIndex(i => i.id === id);
-  if (idx !== -1) allItems[idx].status = 'draft';
+  if (idx !== -1) allItems[idx].status = 'pending';
   refreshRow(id);
   updateSummary();
   refreshOrderHeader(id);
 }
 
-// ── Finalize all items for one customer ───────────────────────
-async function finalizeOrder(customerName) {
-  const group = allOrders[customerName];
+// ── Pack / unpack all items for one order ──────────────────────────────────
+async function packOrder(orderId) {
+  const group = allGroups[orderId];
   if (!group) return;
-
-  const pendingIds = group.items.filter(i => i.status !== 'final').map(i => i.id);
+  const pendingIds = group.items.filter(i => i.status !== 'packed').map(i => i.id);
   if (!pendingIds.length) return;
 
-  // Save any inline values first
   for (const id of pendingIds) {
     const input = document.getElementById(`inline-${id}`);
     if (input) {
       const val = parseFloat(input.value);
       if (!isNaN(val) && val >= 0) {
         const idx = allItems.findIndex(i => i.id === id);
-        if (idx !== -1) allItems[idx].final_quantity = val;
-        await sb.from('operations').update({ final_quantity: val }).eq('id', id);
+        if (idx !== -1) allItems[idx].final_qty = val;
+        await sb.from('order_items').update({ final_qty: val }).eq('id', id);
       }
     }
   }
 
-  const { error } = await sb
-    .from('operations')
-    .update({ status: 'final' })
-    .in('id', pendingIds);
-
-  if (error) { showToast('Failed to finalize', 'error'); return; }
+  const { error } = await sb.from('order_items').update({ status: 'packed' }).in('id', pendingIds);
+  if (error) { showToast('Failed to pack', 'error'); return; }
 
   pendingIds.forEach(id => {
     const idx = allItems.findIndex(i => i.id === id);
-    if (idx !== -1) allItems[idx].status = 'final';
+    if (idx !== -1) allItems[idx].status = 'packed';
   });
 
-  showToast(`${customerName} finalized ✓`);
+  showToast(`${group.customer_name} packed ✓`);
   groupAndRender();
 }
 
-// ── Unfinalize all items for one customer ─────────────────────
-async function unfinalizeOrder(customerName) {
-  const group = allOrders[customerName];
+async function unpackOrder(orderId) {
+  const group = allGroups[orderId];
   if (!group) return;
-
   const ids = group.items.map(i => i.id);
-  const { error } = await sb.from('operations').update({ status: 'draft' }).in('id', ids);
+  const { error } = await sb.from('order_items').update({ status: 'pending' }).in('id', ids);
   if (error) { showToast('Failed', 'error'); return; }
-
   ids.forEach(id => {
     const idx = allItems.findIndex(i => i.id === id);
-    if (idx !== -1) allItems[idx].status = 'draft';
+    if (idx !== -1) allItems[idx].status = 'pending';
   });
-
   groupAndRender();
 }
 
-// ── Bulk finalize selected items ──────────────────────────────
+// ── Bulk pack selected ─────────────────────────────────────────────────────
 async function bulkFinalize() {
   if (!selectedIds.size) return;
   const ids = [...selectedIds];
-
-  const { error } = await sb.from('operations').update({ status: 'final' }).in('id', ids);
+  const { error } = await sb.from('order_items').update({ status: 'packed' }).in('id', ids);
   if (error) { showToast('Failed', 'error'); return; }
-
   ids.forEach(id => {
     const idx = allItems.findIndex(i => i.id === id);
-    if (idx !== -1) allItems[idx].status = 'final';
+    if (idx !== -1) allItems[idx].status = 'packed';
   });
-
-  showToast(`${ids.length} item${ids.length !== 1 ? 's' : ''} finalized ✓`);
+  showToast(`${ids.length} item${ids.length !== 1 ? 's' : ''} packed ✓`);
   clearSelection();
   groupAndRender();
 }
 
-// ── DOM helpers ───────────────────────────────────────────────
+// ── DOM helpers ────────────────────────────────────────────────────────────
 function refreshRow(id) {
   const item = allItems.find(i => i.id === id);
   if (!item) return;
@@ -384,25 +374,21 @@ function refreshRow(id) {
 function refreshOrderHeader(id) {
   const item = allItems.find(i => i.id === id);
   if (!item) return;
-  const group = allOrders[item.customer_name];
+  const group = allGroups[item.order_id];
   if (!group) return;
-  // Sync group items state
   group.items = group.items.map(i => allItems.find(a => a.id === i.id) || i);
-
-  const wrap = document.getElementById(`order-${slugify(item.customer_name)}`);
-  if (!wrap) return;
-  const newBlock = buildOrderBlock(group);
-  wrap.replaceWith(newBlock);
+  const wrap = document.getElementById(`order-${slugify(item.order_id)}`);
+  if (wrap) wrap.replaceWith(buildOrderBlock(group));
 }
 
 function updateSummary() {
-  const total   = allItems.length;
-  const done    = allItems.filter(i => i.status === 'final').length;
+  const total = allItems.length;
+  const done  = allItems.filter(i => i.status === 'packed').length;
   document.getElementById('sum-total').textContent   = total;
   document.getElementById('sum-done').textContent    = done;
   document.getElementById('sum-pending').textContent = total - done;
 }
 
 function slugify(s) {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '-');
+  return String(s).toLowerCase().replace(/[^a-z0-9]/g, '-');
 }

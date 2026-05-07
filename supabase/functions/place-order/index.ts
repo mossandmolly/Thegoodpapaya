@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { cart, community, door_number, phone, notes, payment_method } = await req.json();
+    const { cart, community, door_number, phone, contact_name, notes, payment_method } = await req.json();
 
     // Validate
     if (!cart?.length)  throw new Error('No items in cart');
@@ -125,6 +125,7 @@ Deno.serve(async (req) => {
       sales_id,
       customer_name,
       community:      community.trim(),
+      contact_name:   contact_name || null,
       phone:          phone.replace(/^\+91/, ''),
       payment_method: method,
       status:         'placed',

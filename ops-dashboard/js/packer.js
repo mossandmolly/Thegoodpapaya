@@ -72,11 +72,11 @@ async function loadItems() {
 
   const fruits = assignments.map(a => a.item_name);
 
-  // Get today's operations for those fruits
+  // Get today's order_items for those fruits
   const { data: items, error } = await sb
-    .from('operations')
+    .from('order_items')
     .select('*')
-    .eq('invoice_date', todayIST())
+    .eq('order_date', todayIST())
     .in('item_name', fruits)
     .order('community')
     .order('customer_name');
@@ -88,29 +88,18 @@ async function loadItems() {
     return;
   }
 
-  // Get customer notes for these customers
-  const customerNames = [...new Set(items.map(i => i.customer_name))];
-  const { data: notes } = await sb
-    .from('customer_notes')
-    .select('customer_name, note')
-    .in('customer_name', customerNames);
-
-  const noteMap = {};
-  (notes || []).forEach(n => { noteMap[n.customer_name] = n.note; });
-
   allItems = items;
-  renderCards(items, noteMap);
+  renderCards(items);
 }
 
 // ── Render cards ──────────────────────────────────────────────
-function renderCards(items, noteMap) {
+function renderCards(items) {
   const container = document.getElementById('cards-container');
   container.innerHTML = '';
   container.classList.remove('hidden');
 
-  // Summary
   const total   = items.length;
-  const done    = items.filter(i => i.status === 'final').length;
+  const done    = items.filter(i => i.status === 'packed').length;
   const pending = total - done;
   document.getElementById('sum-total').textContent   = total;
   document.getElementById('sum-done').textContent    = done;
@@ -119,19 +108,16 @@ function renderCards(items, noteMap) {
   document.getElementById('section-header').classList.remove('hidden');
   document.getElementById('section-count').textContent = `${total} item${total !== 1 ? 's' : ''} assigned to you`;
 
-  items.forEach(item => {
-    const note = noteMap[item.customer_name];
-    container.appendChild(buildCard(item, note));
-  });
+  items.forEach(item => container.appendChild(buildCard(item)));
 }
 
 // ── Build a single card ───────────────────────────────────────
-function buildCard(item, note) {
+function buildCard(item) {
   const card = document.createElement('div');
   card.className = `item-card status-${item.status}`;
   card.id = `card-${item.id}`;
 
-  const isFinal = item.status === 'final';
+  const isPacked = item.status === 'packed';
 
   card.innerHTML = `
     <div class="card-header">
@@ -146,36 +132,34 @@ function buildCard(item, note) {
 
     ${item.description ? `<div class="card-desc">${item.description}</div>` : ''}
 
-    ${note ? `<div class="card-note"><strong>📋 Customer Note</strong>${note}</div>` : ''}
-
     <div class="qty-row">
       <div class="qty-box">
         <label>Requested</label>
-        <div class="qty-val">${item.requested_quantity ?? '—'}</div>
+        <div class="qty-val">${item.requested_qty ?? '—'}</div>
       </div>
       <div class="qty-arrow">→</div>
       <div class="qty-box">
         <label>Final</label>
-        <div class="qty-val">${item.final_quantity ?? '—'}</div>
+        <div class="qty-val">${item.final_qty ?? '—'}</div>
       </div>
     </div>
 
-    ${!isFinal ? `
+    ${!isPacked ? `
       <input
         class="final-qty-input"
         id="input-${item.id}"
         type="number"
         inputmode="decimal"
         placeholder="Enter final qty"
-        value="${item.final_quantity ?? ''}"
+        value="${item.final_qty ?? ''}"
         step="0.1"
       >
       <div class="card-actions">
-        <button class="btn btn-primary" onclick="saveItem('${item.id}')">Save</button>
+        <button class="btn btn-primary" onclick="packItem('${item.id}')">Pack ✓</button>
       </div>
     ` : `
       <div class="card-actions">
-        <button class="btn btn-secondary btn-sm" onclick="unfinalize('${item.id}')">Edit</button>
+        <button class="btn btn-secondary btn-sm" onclick="unpackItem('${item.id}')">Edit</button>
       </div>
     `}
   `;
@@ -183,73 +167,60 @@ function buildCard(item, note) {
   return card;
 }
 
-// ── Save final quantity ───────────────────────────────────────
-async function saveItem(id) {
+// ── Pack item (save final qty + mark packed) ──────────────────
+async function packItem(id) {
   const input = document.getElementById(`input-${id}`);
-  const val   = parseFloat(input.value);
+  const val   = parseFloat(input?.value);
 
   if (isNaN(val) || val < 0) {
     showToast('Enter a valid quantity', 'error');
     return;
   }
 
-  const btn = input.nextElementSibling?.querySelector('button');
+  const btn = input?.nextElementSibling?.querySelector('button');
   if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
 
   const { error } = await sb
-    .from('operations')
-    .update({ final_quantity: val, status: 'draft' })
+    .from('order_items')
+    .update({ final_qty: val, status: 'packed' })
     .eq('id', id);
 
-  if (error) { showToast('Save failed', 'error'); if (btn) { btn.textContent = 'Save'; btn.disabled = false; } return; }
+  if (error) {
+    showToast('Save failed', 'error');
+    if (btn) { btn.textContent = 'Pack ✓'; btn.disabled = false; }
+    return;
+  }
 
-  showToast('Saved ✓');
-  // Update local state and re-render card
+  showToast('Packed ✓');
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    allItems[idx].final_quantity = val;
-    allItems[idx].status = 'draft';
-    const noteMap = buildNoteMapFromDOM();
-    const newCard = buildCard(allItems[idx], noteMap[allItems[idx].customer_name]);
-    document.getElementById(`card-${id}`).replaceWith(newCard);
+    allItems[idx].final_qty = val;
+    allItems[idx].status = 'packed';
+    document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
     updateSummary();
   }
 }
 
-// ── Remove final tag ──────────────────────────────────────────
-async function unfinalize(id) {
+// ── Unpack item ───────────────────────────────────────────────
+async function unpackItem(id) {
   const { error } = await sb
-    .from('operations')
-    .update({ status: 'draft' })
+    .from('order_items')
+    .update({ status: 'pending' })
     .eq('id', id);
 
   if (error) { showToast('Failed to edit', 'error'); return; }
 
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    allItems[idx].status = 'draft';
-    const noteMap = buildNoteMapFromDOM();
-    const newCard = buildCard(allItems[idx], noteMap[allItems[idx].customer_name]);
-    document.getElementById(`card-${id}`).replaceWith(newCard);
+    allItems[idx].status = 'pending';
+    document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
     updateSummary();
   }
 }
 
-function buildNoteMapFromDOM() {
-  const map = {};
-  document.querySelectorAll('.card-note').forEach(el => {
-    const card = el.closest('.item-card');
-    if (!card) return;
-    const name = card.querySelector('.card-customer')?.textContent;
-    const note = el.textContent.replace('📋 Customer Note', '').trim();
-    if (name) map[name] = note;
-  });
-  return map;
-}
-
 function updateSummary() {
-  const total   = allItems.length;
-  const done    = allItems.filter(i => i.status === 'final').length;
+  const total = allItems.length;
+  const done  = allItems.filter(i => i.status === 'packed').length;
   document.getElementById('sum-total').textContent   = total;
   document.getElementById('sum-done').textContent    = done;
   document.getElementById('sum-pending').textContent = total - done;

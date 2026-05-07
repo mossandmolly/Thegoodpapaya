@@ -98,6 +98,7 @@ async function submitOrder() {
         community,
         door_number:    door,
         phone,
+        contact_name:   name,
         notes,
         payment_method: _payMethod,
       }),

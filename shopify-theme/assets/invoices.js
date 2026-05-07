@@ -31,9 +31,10 @@
   const paginationWrap  = $('pagination');
   const toast           = $('toast');
 
-  let allInvoices = [];
-  let currentPage = 0;
-  let activePhone = '';
+  let allInvoices  = [];
+  let allOrders    = [];
+  let currentPage  = 0;
+  let activePhone  = '';
 
   // ── Toast ─────────────────────────────────────────────────────────
   function showToast(msg, ms = 3500) {
@@ -96,23 +97,125 @@
     invoiceList.innerHTML = skeletonHtml();
     paginationWrap.innerHTML = '';
 
-    const { data: rows, error } = await sb.rpc('get_invoices_by_phone', { p_phone: phone });
+    const [ordersRes, invoicesRes] = await Promise.all([
+      sb.rpc('get_orders_by_phone',  { p_phone: phone }),
+      sb.rpc('get_invoices_by_phone', { p_phone: phone }),
+    ]);
 
-    if (error) {
-      invoiceList.innerHTML = `<p class="error-msg">Could not load invoices: ${esc(error.message)}</p>`;
-      return;
-    }
+    const hasOrders   = ordersRes.data?.length   > 0;
+    const hasInvoices = invoicesRes.data?.length  > 0;
 
-    if (!rows || rows.length === 0) {
+    if (!hasOrders && !hasInvoices) {
       invoiceList.innerHTML = emptyStateHtml();
       return;
     }
 
-    if (welcomeName) welcomeName.textContent = rows[0].customer_name;
+    if (welcomeName) {
+      const name = ordersRes.data?.[0]?.contact_name || invoicesRes.data?.[0]?.customer_name || '';
+      welcomeName.textContent = name;
+    }
 
-    allInvoices = groupByInvoice(rows);
+    allOrders   = ordersRes.data  || [];
+    allInvoices = groupByInvoice(invoicesRes.data || []);
     currentPage = 0;
-    renderPage();
+    renderAll();
+  }
+
+  function renderAll() {
+    let html = '';
+
+    if (allOrders.length) {
+      html += `<div style="font-size:.72rem;font-weight:800;text-transform:uppercase;
+        letter-spacing:.07em;color:var(--muted);margin:1rem 0 .65rem">Your Orders</div>`;
+      html += allOrders.map(renderOrderCard).join('');
+    }
+
+    if (allInvoices.length) {
+      html += `<div style="font-size:.72rem;font-weight:800;text-transform:uppercase;
+        letter-spacing:.07em;color:var(--muted);margin:1.5rem 0 .65rem">Subscription Invoices</div>`;
+      const start = currentPage * PAGE_SIZE;
+      const page  = allInvoices.slice(start, start + PAGE_SIZE);
+      html += page.map(renderInvoiceCard).join('');
+    }
+
+    invoiceList.innerHTML = html;
+
+    if (allInvoices.length > PAGE_SIZE) {
+      const total = allInvoices.length;
+      const start = currentPage * PAGE_SIZE;
+      const end   = Math.min(start + PAGE_SIZE, total);
+      paginationWrap.innerHTML = `
+        <div class="pagination-inner">
+          <span class="pagination-count">${start+1}–${end} of ${total}</span>
+          <div class="pagination-btns">
+            <button class="btn btn-outline btn-sm" id="prev-page" ${currentPage>0?'':'disabled'}>← Newer</button>
+            <button class="btn btn-outline btn-sm" id="next-page" ${end<total?'':'disabled'}>Older →</button>
+          </div>
+        </div>`;
+      if (currentPage > 0) $('prev-page').addEventListener('click', () => { currentPage--; renderAll(); window.scrollTo(0,0); });
+      if (end < total)     $('next-page').addEventListener('click', () => { currentPage++; renderAll(); window.scrollTo(0,0); });
+    } else {
+      paginationWrap.innerHTML = '';
+    }
+  }
+
+  function renderOrderCard(order) {
+    const dateStr = new Date(order.created_at)
+      .toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const statusMap = {
+      placed:           ['badge-pending', 'Placed'],
+      awaiting_payment: ['badge-pending', 'Awaiting payment'],
+      paid:             ['badge-paid',    'Paid'],
+      delivered:        ['badge-paid',    'Delivered'],
+      cancelled:        ['badge-pending', 'Cancelled'],
+    };
+    const [badgeCls, badgeTxt] = statusMap[order.status] || ['badge-pending', order.status];
+    const methodLabel = order.payment_method === 'cod' ? 'Cash on Delivery' : 'Online';
+
+    function fmtQty(item) {
+      if (item.mode === 'weight') {
+        const w = parseFloat(item.quantity);
+        return w >= 1 ? `${w} kg` : `${Math.round(w * 1000)}g`;
+      }
+      return String(item.quantity);
+    }
+
+    const itemRows = (order.cart || []).map(i => {
+      const line = (parseFloat(i.price) * parseFloat(i.quantity)).toFixed(0);
+      const desc = i.pills?.length
+        ? `<div style="font-size:.75rem;color:var(--muted)">${esc(i.pills.join(', '))}</div>` : '';
+      return `<tr>
+        <td>${esc(i.title)}${desc}</td>
+        <td class="text-right num">${esc(fmtQty(i))}</td>
+        <td class="text-right num">₹${line}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <div class="invoice-card card">
+        <div class="invoice-card-header">
+          <div class="invoice-meta">
+            <span class="invoice-number">${esc(order.sales_id)}</span>
+            <span class="invoice-date">${dateStr} · ${esc(methodLabel)}</span>
+          </div>
+          <div class="invoice-actions">
+            <span class="badge ${badgeCls}">${badgeTxt}</span>
+            <span class="invoice-total">₹${Number(order.total).toLocaleString('en-IN')}</span>
+          </div>
+        </div>
+        <div class="items-wrap">
+          <table class="items-table">
+            <thead><tr>
+              <th>Item</th><th class="text-right">Qty</th><th class="text-right">Amount</th>
+            </tr></thead>
+            <tbody>${itemRows}</tbody>
+          </table>
+          <div class="invoice-total-row">
+            <span>Total</span>
+            <span>₹${Number(order.total).toLocaleString('en-IN', { minimumFractionDigits: 0 })}</span>
+          </div>
+        </div>
+      </div>`;
   }
 
   // ── Group flat rows → invoice objects ─────────────────────────────
@@ -133,32 +236,6 @@
       map.get(row.invoice_number).items.push(row);
     }
     return Array.from(map.values());
-  }
-
-  // ── Pagination ────────────────────────────────────────────────────
-  function renderPage() {
-    const start   = currentPage * PAGE_SIZE;
-    const end     = start + PAGE_SIZE;
-    const page    = allInvoices.slice(start, end);
-    const total   = allInvoices.length;
-    const hasPrev = currentPage > 0;
-    const hasNext = end < total;
-
-    invoiceList.innerHTML = page.map(renderInvoiceCard).join('');
-
-    const from = start + 1;
-    const to   = Math.min(end, total);
-    paginationWrap.innerHTML = `
-      <div class="pagination-inner">
-        <span class="pagination-count">${from}–${to} of ${total} invoice${total !== 1 ? 's' : ''}</span>
-        <div class="pagination-btns">
-          <button class="btn btn-outline btn-sm" id="prev-page" ${hasPrev ? '' : 'disabled'}>&#8592; Newer</button>
-          <button class="btn btn-outline btn-sm" id="next-page" ${hasNext ? '' : 'disabled'}>Older &#8594;</button>
-        </div>
-      </div>`;
-
-    if (hasPrev) $('prev-page').addEventListener('click', () => { currentPage--; renderPage(); window.scrollTo(0,0); });
-    if (hasNext) $('next-page').addEventListener('click', () => { currentPage++; renderPage(); window.scrollTo(0,0); });
   }
 
   // ── Invoice card ──────────────────────────────────────────────────
@@ -261,8 +338,8 @@
         <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
           <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
         </svg>
-        <p>No invoices found for this number.</p>
-        <p style="font-size:.8rem;margin-top:.25rem">Orders placed on WhatsApp will appear here once invoiced.</p>
+        <p>No orders or invoices found for this number.</p>
+        <p style="font-size:.8rem;margin-top:.25rem">Orders placed on the website will appear here.</p>
         <button class="btn btn-outline btn-sm" style="margin-top:1rem" onclick="localStorage.removeItem('tgp_phone');location.reload()">Try a different number</button>
       </div>`;
   }

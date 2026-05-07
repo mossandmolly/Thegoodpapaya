@@ -40,7 +40,7 @@
   (function() {
     try {
       var cart = JSON.parse(localStorage.getItem('gp_cart') || '[]');
-      var count = cart.reduce(function(s, i) { return s + i.quantity; }, 0);
+      var count = cart.length;
       if (count > 0) {
         var icon = document.getElementById('cart-nav-icon');
         var cnt  = document.getElementById('cart-nav-count');
