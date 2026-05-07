@@ -109,17 +109,22 @@ Deno.serve(async (req) => {
     const customer_name = `${community.trim()} ${String(door_number).trim()}`;
     const total         = cartTotal(cart);
 
-    // Generate sales_id: YYYY-MM-DD-Community-Door
     const today    = new Date().toISOString().split('T')[0];
     const safeName = customer_name.replace(/\s+/g, '-');
-    let   sales_id = `${today}-${safeName}`;
+    const baseId   = `${today}-${safeName}`;
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
-    // Handle rare duplicate (same customer, same day, second order)
-    const { data: existing } = await supabase
-      .from('orders').select('sales_id').eq('sales_id', sales_id);
-    if (existing?.length) sales_id = `${sales_id}-2`;
+    // Find a free sales_id (loop in case of multiple same-day orders or prior failures)
+    let sales_id = baseId;
+    let suffix   = 1;
+    while (true) {
+      const { data: hit } = await supabase
+        .from('orders').select('sales_id').eq('sales_id', sales_id).maybeSingle();
+      if (!hit) break;
+      suffix++;
+      sales_id = `${baseId}-${suffix}`;
+    }
 
     // Insert order header
     const { error: orderErr } = await supabase.from('orders').insert({
@@ -150,7 +155,10 @@ Deno.serve(async (req) => {
     }));
 
     const { error: itemsErr } = await supabase.from('order_items').insert(orderItems);
-    if (itemsErr) throw new Error(itemsErr.message);
+    if (itemsErr) {
+      await supabase.from('orders').delete().eq('sales_id', sales_id);
+      throw new Error(itemsErr.message);
+    }
 
     // For online: create Razorpay link and store it
     if (method === 'online') {
