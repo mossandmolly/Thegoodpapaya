@@ -23,26 +23,34 @@ const CORS = {
 type CartItem = {
   title:     string;
   price:     string | number;
-  quantity:  string | number;
+  quantity?: string | number;
+  qty?:      string | number;
+  amount?:   string | number;
   mode?:     string;
   pills?:    string[];
   notes?:    string;
 };
 
+function getQty(item: CartItem): number {
+  const raw = item.quantity ?? item.qty ?? item.amount ?? 1;
+  const q   = parseFloat(String(raw));
+  return isNaN(q) || q <= 0 ? 1 : q;
+}
+
 function cartTotal(cart: CartItem[]): number {
   return cart.reduce((s, i) => {
     const p = parseFloat(String(i.price));
-    const q = parseFloat(String(i.quantity));
-    return s + (isNaN(p) || isNaN(q) ? 0 : p * q);
+    const q = getQty(i);
+    return s + (isNaN(p) ? 0 : p * q);
   }, 0);
 }
 
 function fmtQty(item: CartItem): string {
+  const q = getQty(item);
   if (item.mode === 'weight') {
-    const w = parseFloat(String(item.quantity));
-    return w >= 1 ? `${w}kg` : `${Math.round(w * 1000)}g`;
+    return q >= 1 ? `${q}kg` : `${Math.round(q * 1000)}g`;
   }
-  return String(item.quantity);
+  return String(q);
 }
 
 // description = quality pills + customer's special instructions for that item
@@ -149,7 +157,7 @@ Deno.serve(async (req) => {
       community:     community.trim(),
       item_name:     item.title,
       description:   buildDescription(item),
-      requested_qty: (() => { const q = parseFloat(String(item.quantity ?? item.qty ?? item.amount ?? 0)); return isNaN(q) ? 0 : q; })(),
+      requested_qty: getQty(item),
       final_qty:     null,
       status:        'pending',
     }));

@@ -20,7 +20,7 @@ function fmtQty(item) {
 
 function lineTotal(item) {
   const p = parseFloat(item.price ?? item.unit_price ?? 0);
-  const raw = item.quantity ?? item.qty ?? item.amount ?? 0;
+  const raw = item.quantity ?? item.qty ?? item.amount ?? 1;
   const q = parseFloat(raw);
   return isNaN(p) || isNaN(q) ? 0 : p * q;
 }
