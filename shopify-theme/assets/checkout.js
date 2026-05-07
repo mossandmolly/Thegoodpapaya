@@ -1,6 +1,4 @@
-const SUPABASE_URL    = 'https://fykqprogzqcfzrgwlrem.supabase.co';
-const PAYMENT_EDGE_FN = SUPABASE_URL + '/functions/v1/create-payment-link';
-const ORDER_EDGE_FN   = SUPABASE_URL + '/functions/v1/place-order';
+const PLACE_ORDER_FN = 'https://fykqprogzqcfzrgwlrem.supabase.co/functions/v1/place-order';
 
 // ── Cart ───────────────────────────────────────────────────────────────────
 function getCart() {
@@ -37,9 +35,9 @@ function renderCart() {
 
   container.innerHTML = '';
   cart.forEach(item => {
-    const line = parseFloat(item.price) * parseFloat(item.quantity);
+    const line  = parseFloat(item.price) * parseFloat(item.quantity);
     const pills = item.pills && item.pills.length ? ` · ${item.pills.join(', ')}` : '';
-    const row = document.createElement('div');
+    const row   = document.createElement('div');
     row.className = 'checkout-item-row';
     row.innerHTML =
       `<span>${item.title} × ${fmtQty(item)}${pills}</span>` +
@@ -62,119 +60,73 @@ function selectPayment(method) {
 
   if (method === 'cod') {
     btn.textContent  = 'Place Order (Cash on Delivery)';
-    note.textContent = "We'll send a WhatsApp confirmation. Pay when your fruits arrive.";
+    note.textContent = 'Your order will be saved and confirmed before dispatch. Pay when delivered.';
   } else {
     btn.textContent  = 'Pay with Razorpay';
     note.textContent = "You'll be redirected to Razorpay's secure payment page.";
   }
 }
 
-// ── Validation ─────────────────────────────────────────────────────────────
-function validate() {
+// ── Submit ─────────────────────────────────────────────────────────────────
+async function submitOrder() {
   const cart    = getCart();
   const name    = document.getElementById('co-name').value.trim();
   const phone   = document.getElementById('co-phone').value.trim();
   const address = document.getElementById('co-address').value.trim();
+  const notes   = document.getElementById('co-notes').value.trim();
   const errEl   = document.getElementById('co-error');
+  const btn     = document.getElementById('pay-btn');
 
   errEl.textContent = '';
 
-  if (!cart.length)              { errEl.textContent = 'Your cart is empty.'; return null; }
-  if (!name)                     { errEl.textContent = 'Please enter your name.'; return null; }
-  if (!/^\d{10}$/.test(phone))  { errEl.textContent = 'Enter a valid 10-digit mobile number.'; return null; }
-  if (!address)                  { errEl.textContent = 'Please enter your delivery address.'; return null; }
+  if (!cart.length)             { errEl.textContent = 'Your cart is empty.'; return; }
+  if (!name)                    { errEl.textContent = 'Please enter your name.'; return; }
+  if (!/^\d{10}$/.test(phone)) { errEl.textContent = 'Enter a valid 10-digit mobile number.'; return; }
+  if (!address)                 { errEl.textContent = 'Please enter your delivery address.'; return; }
 
-  return {
-    cart,
-    name,
-    phone,
-    address,
-    notes: document.getElementById('co-notes').value.trim(),
-  };
-}
-
-// ── Main submit ────────────────────────────────────────────────────────────
-async function submitOrder() {
-  const fields = validate();
-  if (!fields) return;
-
-  document.getElementById('pay-btn').disabled = true;
-
-  if (_payMethod === 'cod') {
-    await placeCOD(fields);
-  } else {
-    await payOnline(fields);
-  }
-}
-
-// ── Cash on Delivery ───────────────────────────────────────────────────────
-async function placeCOD({ cart, name, phone, address, notes }) {
-  const btn   = document.getElementById('pay-btn');
-  const errEl = document.getElementById('co-error');
-
-  btn.textContent = 'Placing order…';
+  btn.disabled    = true;
+  btn.textContent = _payMethod === 'cod' ? 'Placing order…' : 'Creating order…';
 
   try {
-    const res = await fetch(ORDER_EDGE_FN, {
+    const res = await fetch(PLACE_ORDER_FN, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ cart, customer_name: name, phone, address, notes }),
+      body:    JSON.stringify({
+        cart,
+        customer_name:  name,
+        phone,
+        address,
+        notes,
+        payment_method: _payMethod,
+      }),
     });
 
     const data = await res.json();
+    if (!res.ok || !data.ref) throw new Error(data.error || 'Could not place order');
 
-    if (!res.ok || !data.ref) {
-      throw new Error(data.error || 'Could not place order');
-    }
-
+    // Save summary for the confirmation page
     localStorage.setItem('gp_last_order', JSON.stringify({
-      ref: data.ref, name, phone, address, notes,
-      cart, total: cartTotal(cart), method: 'cod', ts: Date.now(),
+      ref:    data.ref,
+      name,
+      phone,
+      address,
+      notes,
+      cart,
+      total:  cartTotal(cart),
+      method: _payMethod,
+      ts:     Date.now(),
     }));
 
     localStorage.removeItem('gp_cart');
-    window.location.href = '/pages/order-confirmed';
+
+    // Online: redirect to Razorpay; COD: go straight to confirmation
+    window.location.href = _payMethod === 'online'
+      ? data.payment_url
+      : '/pages/order-confirmed';
 
   } catch (err) {
     errEl.textContent = err.message || 'Something went wrong. Please try again.';
-    btn.textContent   = 'Place Order (Cash on Delivery)';
-    btn.disabled      = false;
-  }
-}
-
-// ── Razorpay online payment ────────────────────────────────────────────────
-async function payOnline({ cart, name, phone, address, notes }) {
-  const btn   = document.getElementById('pay-btn');
-  const errEl = document.getElementById('co-error');
-
-  btn.textContent = 'Creating order…';
-
-  try {
-    const res = await fetch(PAYMENT_EDGE_FN, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ items: cart, customer_name: name, phone, address, notes }),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok || !data.payment_url) {
-      throw new Error(data.error || 'Failed to create payment link');
-    }
-
-    const total    = cartTotal(cart);
-    const orderRef = 'GP' + Date.now().toString(36).toUpperCase();
-    localStorage.setItem('gp_last_order', JSON.stringify({
-      ref: orderRef, name, phone, address, notes,
-      cart, total, method: 'online', ts: Date.now(),
-    }));
-
-    localStorage.removeItem('gp_cart');
-    window.location.href = data.payment_url;
-
-  } catch (err) {
-    errEl.textContent = err.message || 'Something went wrong. Please try again.';
-    btn.textContent   = 'Pay with Razorpay';
+    btn.textContent   = _payMethod === 'cod' ? 'Place Order (Cash on Delivery)' : 'Pay with Razorpay';
     btn.disabled      = false;
   }
 }
