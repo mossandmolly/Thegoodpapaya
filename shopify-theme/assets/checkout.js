@@ -108,8 +108,8 @@ function selectPayment(method) {
     btn.textContent  = 'Place Order (Cash on Delivery)';
     note.textContent = 'Your order will be confirmed before dispatch. Pay when delivered.';
   } else {
-    btn.textContent  = 'Pay with Razorpay';
-    note.textContent = "You'll be redirected to Razorpay's secure payment page.";
+    btn.textContent  = 'Pay Online';
+    note.textContent = "You'll be redirected to a secure payment page.";
   }
 }
 
@@ -170,7 +170,7 @@ async function submitOrder() {
 
   } catch (err) {
     errEl.textContent = err.message || 'Something went wrong. Please try again.';
-    btn.textContent   = _payMethod === 'cod' ? 'Place Order (Cash on Delivery)' : 'Pay with Razorpay';
+    btn.textContent   = _payMethod === 'cod' ? 'Place Order (Cash on Delivery)' : 'Pay Online';
     btn.disabled      = false;
   }
 }
