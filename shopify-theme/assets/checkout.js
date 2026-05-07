@@ -6,18 +6,22 @@ function getCart() {
 }
 
 function fmtQty(item) {
-  const qty = parseFloat(item.quantity);
-  if (isNaN(qty)) return '?';
+  const raw = item.quantity ?? item.qty ?? item.amount;
+  const qty = parseFloat(raw);
+  if (isNaN(qty)) return raw != null ? String(raw) : '—';
   if (item.mode === 'weight') {
     return qty >= 1 ? `${qty} kg` : `${Math.round(qty * 1000)}g`;
   }
-  const unit = item.unit || 'box';
-  return qty === 1 ? `1 ${unit}` : `${qty} ${unit}s`;
+  // box / piece / plain integer
+  const unit = item.unit || null;
+  if (unit && unit !== 'kg') return qty === 1 ? `1 ${unit}` : `${qty} ${unit}s`;
+  return String(qty);
 }
 
 function lineTotal(item) {
-  const p = parseFloat(item.price);
-  const q = parseFloat(item.quantity);
+  const p = parseFloat(item.price ?? item.unit_price ?? 0);
+  const raw = item.quantity ?? item.qty ?? item.amount ?? 0;
+  const q = parseFloat(raw);
   return isNaN(p) || isNaN(q) ? 0 : p * q;
 }
 

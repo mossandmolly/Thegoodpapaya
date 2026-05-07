@@ -2,15 +2,15 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --green:       #2d6a4f;
-  --green-dark:  #1e4d38;
-  --green-light: #52b788;
-  --green-pale:  #d8f3dc;
+  --green:       #e8621a;
+  --green-dark:  #c04e10;
+  --green-light: #f4975a;
+  --green-pale:  #fff3eb;
   --yellow:      #f4a261;
   --red:         #dc2626;
-  --bg:          #f7f8f4;
+  --bg:          #faf9f7;
   --surface:     #ffffff;
-  --border:      #e2e4dc;
+  --border:      #e8e2dc;
   --text:        #1a1a18;
   --muted:       #6b7280;
   --radius:      12px;
