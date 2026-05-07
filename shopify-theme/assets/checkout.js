@@ -59,31 +59,38 @@ function renderCart() {
 
   if (btn) btn.disabled = false;
 
-  container.innerHTML = cart.map((item, idx) => {
-    const pillsHtml = item.pills && item.pills.length
-      ? `<div class="ci-pills">${item.pills.map(p =>
-          `<span class="ci-pill">${p}</span>`).join('')}</div>`
-      : '';
+  const rows = cart.map((item, idx) => {
+    const rate  = parseFloat(item.price ?? item.unit_price ?? 0);
+    const total = lineTotal(item);
+    const pillsHtml = item.pills?.length
+      ? `<div class="co-item-pills">${item.pills.join(', ')}</div>` : '';
     const notesHtml = item.notes
-      ? `<div class="ci-notes">&ldquo;${item.notes}&rdquo;</div>`
-      : '';
-    return `
-      <div class="cart-item">
-        <div class="ci-body">
-          <div class="ci-top">
-            <span class="ci-name">${item.title || '?'}</span>
-            <span class="ci-qty">${fmtQty(item)}</span>
-          </div>
-          ${pillsHtml}${notesHtml}
-        </div>
-        <div class="ci-right">
-          <span class="ci-total">₹${lineTotal(item).toFixed(0)}</span>
-          <button class="ci-remove" onclick="removeItem(${idx})" title="Remove">✕</button>
-        </div>
-      </div>`;
+      ? `<div class="co-item-notes">&ldquo;${item.notes}&rdquo;</div>` : '';
+    return `<tr>
+      <td>
+        <div class="co-item-name">${item.title || '?'}</div>
+        ${pillsHtml}${notesHtml}
+      </td>
+      <td class="co-num co-qty">${fmtQty(item)}</td>
+      <td class="co-num">₹${isNaN(rate) ? '—' : rate.toFixed(0)}</td>
+      <td class="co-num">₹${total.toFixed(0)}</td>
+      <td><button class="ci-remove" onclick="removeItem(${idx})" title="Remove">✕</button></td>
+    </tr>`;
   }).join('');
 
-  totalEl.textContent = `₹${cartTotal(cart).toFixed(0)}`;
+  container.innerHTML = `
+    <table class="checkout-table">
+      <thead><tr>
+        <th>Item</th>
+        <th class="co-num">Qty</th>
+        <th class="co-num">Rate</th>
+        <th class="co-num">Amount</th>
+        <th style="width:24px"></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  totalEl.textContent = `₹${cart.reduce((s, i) => s + lineTotal(i), 0).toFixed(0)}`;
 }
 
 // ── Payment method toggle ──────────────────────────────────────────────────
@@ -141,7 +148,7 @@ async function submitOrder() {
     });
 
     const data = await res.json();
-    if (!res.ok || !data.sales_id) throw new Error(data.error || 'Could not place order');
+    if (!res.ok || !data.sales_id) throw new Error(data.error || data.message || 'Could not place order — is the order function deployed?');
 
     localStorage.setItem('gp_last_order', JSON.stringify({
       ref:       data.sales_id,
