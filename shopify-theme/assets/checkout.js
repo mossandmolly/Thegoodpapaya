@@ -1,7 +1,6 @@
-const PAYMENT_EDGE_FN = 'https://fykqprogzqcfzrgwlrem.supabase.co/functions/v1/create-payment-link';
-
-// ── Replace with the business WhatsApp number (country code + number, no +) ──
-const WA_NUMBER = '919000000000';
+const SUPABASE_URL    = 'https://fykqprogzqcfzrgwlrem.supabase.co';
+const PAYMENT_EDGE_FN = SUPABASE_URL + '/functions/v1/create-payment-link';
+const ORDER_EDGE_FN   = SUPABASE_URL + '/functions/v1/place-order';
 
 // ── Cart ───────────────────────────────────────────────────────────────────
 function getCart() {
@@ -102,47 +101,45 @@ async function submitOrder() {
   document.getElementById('pay-btn').disabled = true;
 
   if (_payMethod === 'cod') {
-    placeCOD(fields);
+    await placeCOD(fields);
   } else {
     await payOnline(fields);
   }
 }
 
 // ── Cash on Delivery ───────────────────────────────────────────────────────
-function placeCOD({ cart, name, phone, address, notes }) {
-  const total    = cartTotal(cart);
-  const orderRef = 'GP' + Date.now().toString(36).toUpperCase();
+async function placeCOD({ cart, name, phone, address, notes }) {
+  const btn   = document.getElementById('pay-btn');
+  const errEl = document.getElementById('co-error');
 
-  // Save for confirmation page
-  localStorage.setItem('gp_last_order', JSON.stringify({
-    ref: orderRef, name, phone, address, notes,
-    cart, total, method: 'cod', ts: Date.now(),
-  }));
+  btn.textContent = 'Placing order…';
 
-  // Build WhatsApp message for business
-  const itemLines = cart
-    .map(i => `• ${i.title} × ${fmtQty(i)} — ₹${(parseFloat(i.price) * parseFloat(i.quantity)).toFixed(0)}`)
-    .join('\n');
+  try {
+    const res = await fetch(ORDER_EDGE_FN, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ cart, customer_name: name, phone, address, notes }),
+    });
 
-  const msg = [
-    '🍑 New order — The Good Papaya',
-    `Ref: ${orderRef}`,
-    '',
-    `Customer: ${name}`,
-    `Phone: +91${phone}`,
-    `Address: ${address}`,
-    notes ? `Notes: ${notes}` : null,
-    '',
-    itemLines,
-    '',
-    `Total: ₹${total.toFixed(0)}`,
-    'Payment: Cash on Delivery',
-  ].filter(l => l !== null).join('\n');
+    const data = await res.json();
 
-  window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, '_blank');
+    if (!res.ok || !data.ref) {
+      throw new Error(data.error || 'Could not place order');
+    }
 
-  localStorage.removeItem('gp_cart');
-  window.location.href = '/pages/order-confirmed';
+    localStorage.setItem('gp_last_order', JSON.stringify({
+      ref: data.ref, name, phone, address, notes,
+      cart, total: cartTotal(cart), method: 'cod', ts: Date.now(),
+    }));
+
+    localStorage.removeItem('gp_cart');
+    window.location.href = '/pages/order-confirmed';
+
+  } catch (err) {
+    errEl.textContent = err.message || 'Something went wrong. Please try again.';
+    btn.textContent   = 'Place Order (Cash on Delivery)';
+    btn.disabled      = false;
+  }
 }
 
 // ── Razorpay online payment ────────────────────────────────────────────────
