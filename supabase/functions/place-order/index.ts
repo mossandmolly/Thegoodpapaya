@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
       community:     community.trim(),
       item_name:     item.title,
       description:   buildDescription(item),
-      requested_qty: parseFloat(String(item.quantity)),
+      requested_qty: (() => { const q = parseFloat(String(item.quantity ?? item.qty ?? item.amount ?? 0)); return isNaN(q) ? 0 : q; })(),
       final_qty:     null,
       status:        'pending',
     }));
