@@ -22,9 +22,11 @@ BEGIN
   FOR r IN
     SELECT constraint_name
     FROM information_schema.table_constraints
-    WHERE table_schema = 'public'
-      AND table_name   = 'order_items'
+    WHERE table_schema   = 'public'
+      AND table_name     = 'order_items'
       AND constraint_type = 'CHECK'
+      -- skip internal NOT NULL constraints (names like "2200_22557_1_not_null")
+      AND constraint_name NOT LIKE '%\_not\_null'
   LOOP
     EXECUTE format('ALTER TABLE order_items DROP CONSTRAINT %I', r.constraint_name);
   END LOOP;
