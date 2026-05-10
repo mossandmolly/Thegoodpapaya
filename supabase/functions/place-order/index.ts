@@ -150,6 +150,15 @@ Deno.serve(async (req) => {
     });
     if (orderErr) throw new Error(orderErr.message);
 
+    // Look up unit prices from catalog (match by normalised name)
+    const itemNames = [...new Set(cart.map((i: CartItem) => i.title))];
+    const { data: catalogRows } = await supabase
+      .from('catalog')
+      .select('item_name, unit_price')
+      .in('item_name', itemNames);
+    const priceMap: Record<string, number> = {};
+    (catalogRows || []).forEach((r: any) => { priceMap[r.item_name] = r.unit_price; });
+
     // Expand cart into order_items — one row per item
     const orderItems = cart.map((item: CartItem) => ({
       order_id:      sales_id,
@@ -159,8 +168,9 @@ Deno.serve(async (req) => {
       item_name:     item.title,
       description:   buildDescription(item),
       requested_qty: getQty(item),
+      unit_price:    priceMap[item.title] ?? parseFloat(String(item.price)) ?? null,
       final_qty:     null,
-      status:        'pending',
+      status:        'open',
     }));
 
     const { error: itemsErr } = await supabase.from('order_items').insert(orderItems);

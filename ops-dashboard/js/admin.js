@@ -20,7 +20,98 @@ document.getElementById('admin-password').addEventListener('keydown', e => {
 
 // ── Load everything ────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadPackers(), loadAssignments(), loadNotes()]);
+  await Promise.all([loadCatalog(), loadPackers(), loadAssignments(), loadNotes()]);
+}
+
+// ── Catalog ────────────────────────────────────────────────────
+let catalogItems = [];   // [{ item_name, unit_price, unit, active, zoho_item_id }]
+
+async function loadCatalog() {
+  const { data, error } = await sb
+    .from('catalog')
+    .select('id, item_name, unit_price, unit, active, zoho_item_id, synced_at')
+    .order('item_name');
+
+  const list = document.getElementById('catalog-list');
+
+  if (error || !data?.length) {
+    list.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted)">No catalog items yet — click Sync from Shopify</p>';
+    catalogItems = [];
+    populateFruitDropdown();
+    return;
+  }
+
+  catalogItems = data;
+  populateFruitDropdown();
+
+  list.innerHTML = '';
+  const tbl = document.createElement('table');
+  tbl.className = 'diff-table';
+  tbl.innerHTML = `<thead><tr>
+    <th>Item name</th><th>Price</th><th>Unit</th>
+    <th>Zoho linked</th><th>Last synced</th><th></th>
+  </tr></thead>`;
+  const tbody = document.createElement('tbody');
+  data.forEach(item => {
+    const tr = document.createElement('tr');
+    if (!item.active) tr.style.opacity = '0.45';
+    const syncedAgo = item.synced_at
+      ? new Date(item.synced_at).toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+      : '—';
+    tr.innerHTML = `
+      <td style="font-weight:500">${item.item_name}</td>
+      <td>₹${parseFloat(item.unit_price).toFixed(0)}</td>
+      <td style="color:var(--text-muted)">${item.unit}</td>
+      <td>${item.zoho_item_id
+        ? `<span style="color:var(--green);font-size:.75rem">✓ ${item.zoho_item_id}</span>`
+        : `<span style="color:var(--text-muted);font-size:.75rem">—</span>`}</td>
+      <td style="font-size:.75rem;color:var(--text-muted)">${syncedAgo}</td>
+      <td><button class="btn btn-sm btn-danger" onclick="deleteCatalogItem('${item.id}','${escapeAttr(item.item_name)}')">✕</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  list.appendChild(tbl);
+}
+
+function populateFruitDropdown() {
+  const sel = document.getElementById('assign-fruit');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select fruit…</option>';
+  catalogItems.filter(i => i.active).forEach(i => {
+    const opt = document.createElement('option');
+    opt.value = i.item_name;
+    opt.textContent = `${i.item_name}  (₹${parseFloat(i.unit_price).toFixed(0)}/${i.unit})`;
+    sel.appendChild(opt);
+  });
+}
+
+async function syncCatalog() {
+  const btn = document.getElementById('sync-btn');
+  btn.textContent = 'Syncing…'; btn.disabled = true;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/sync-catalog`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON}` },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Sync failed');
+    showToast(`${data.synced} items synced ✓`);
+    await loadCatalog();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.textContent = '↻ Sync from Shopify'; btn.disabled = false;
+  }
+}
+
+async function deleteCatalogItem(id, name) {
+  if (!confirm(`Remove "${name}" from catalog?`)) return;
+  const { error } = await sb.from('catalog').delete().eq('id', id);
+  if (error) { showToast('Delete failed', 'error'); return; }
+  showToast(`${name} removed`);
+  await loadCatalog();
 }
 
 // ── Packers ────────────────────────────────────────────────────
@@ -124,12 +215,11 @@ async function loadAssignments() {
 }
 
 async function addAssignment() {
-  const packerId  = document.getElementById('assign-packer').value;
-  const fruitInput = document.getElementById('assign-fruit');
-  const itemName  = fruitInput.value.trim();
+  const packerId = document.getElementById('assign-packer').value;
+  const itemName = document.getElementById('assign-fruit').value;
 
   if (!packerId) { showToast('Select a packer', 'error'); return; }
-  if (!itemName) { showToast('Enter a fruit name', 'error'); return; }
+  if (!itemName) { showToast('Select a fruit', 'error'); return; }
 
   const { error } = await sb.from('packer_assignments').insert({ packer_id: packerId, item_name: itemName });
   if (error) {
@@ -138,7 +228,7 @@ async function addAssignment() {
     return;
   }
 
-  fruitInput.value = '';
+  document.getElementById('assign-fruit').value = '';
   showToast(`${itemName} assigned ✓`);
   await loadAssignments();
 }
@@ -222,11 +312,33 @@ async function resetTodayStatus() {
   showToast('All items reset to open ✓');
 }
 
+// ── Normalise string for fuzzy matching ───────────────────────────────────
+function normalise(s) {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// ── Find best catalog match for a CSV item name ────────────────────────────
+// Returns { catalogName, confidence: 'exact'|'fuzzy'|'none' }
+function findCatalogMatch(csvName) {
+  const n = normalise(csvName);
+  // Exact normalised match
+  const exact = catalogItems.find(i => normalise(i.item_name) === n);
+  if (exact) return { catalogName: exact.item_name, confidence: 'exact' };
+  // Partial match (CSV name contained in catalog name or vice versa)
+  const partial = catalogItems.find(i => {
+    const cn = normalise(i.item_name);
+    return cn.includes(n) || n.includes(cn);
+  });
+  if (partial) return { catalogName: partial.item_name, confidence: 'fuzzy' };
+  return { catalogName: '', confidence: 'none' };
+}
+
 // ── CSV Import ─────────────────────────────────────────────────────────────
 // Expected CSV: customer_name, item_name, quantity[, date]
 // All rows are trimmed; first row is treated as header if non-numeric quantity
 
 let csvRows = [];    // parsed { customer_name, item_name, qty, date, _state, _existingId }
+let csvNameMapping = {};   // { csvName → catalogName } confirmed by user
 
 function getDefaultDate() {
   const d = document.getElementById('csv-default-date').value;
@@ -239,6 +351,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (dateInput) dateInput.value = todayIST();
 });
 
+let _parsedCsvRows = [];   // raw parsed rows before mapping
+
 async function parseCsv(event) {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -247,7 +361,7 @@ async function parseCsv(event) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   if (!lines.length) { showToast('Empty file', 'error'); return; }
 
-  // Detect header: skip first row if its "quantity" column isn't a number
+  // Detect header
   let startIdx = 0;
   const firstCols = lines[0].split(',').map(c => c.trim());
   if (isNaN(parseFloat(firstCols[2]))) startIdx = 1;
@@ -266,6 +380,75 @@ async function parseCsv(event) {
   }
 
   if (!parsed.length) { showToast('No valid rows found', 'error'); return; }
+
+  _parsedCsvRows = parsed;
+
+  // Build unique CSV item names → show mapping step
+  const uniqueCsvNames = [...new Set(parsed.map(r => r.item_name))];
+  csvNameMapping = {};
+  uniqueCsvNames.forEach(name => {
+    const match = findCatalogMatch(name);
+    csvNameMapping[name] = match.catalogName;
+  });
+
+  showMappingStep(uniqueCsvNames);
+}
+
+function showMappingStep(uniqueCsvNames) {
+  const tbody = document.getElementById('csv-mapping-body');
+  tbody.innerHTML = '';
+
+  uniqueCsvNames.forEach(csvName => {
+    const match      = findCatalogMatch(csvName);
+    const confidence = match.confidence;
+    const tr         = document.createElement('tr');
+
+    const confLabel = confidence === 'exact'
+      ? `<span style="color:var(--green);font-size:.75rem">✓ exact</span>`
+      : confidence === 'fuzzy'
+        ? `<span style="color:#d97706;font-size:.75rem">~ fuzzy</span>`
+        : `<span style="color:var(--red);font-size:.75rem">✗ no match</span>`;
+
+    const sel = document.createElement('select');
+    sel.style.cssText = 'width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:.85rem';
+    sel.innerHTML = `<option value="">— not in catalog —</option>`;
+    catalogItems.filter(i => i.active).forEach(ci => {
+      const opt = document.createElement('option');
+      opt.value = ci.item_name;
+      opt.textContent = `${ci.item_name}  (₹${parseFloat(ci.unit_price).toFixed(0)}/${ci.unit})`;
+      if (ci.item_name === match.catalogName) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', () => {
+      csvNameMapping[csvName] = sel.value;
+    });
+
+    tr.innerHTML = `
+      <td style="font-weight:500">${csvName}</td>
+      <td></td>
+      <td>${confLabel}</td>
+    `;
+    tr.cells[1].appendChild(sel);
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('csv-mapping-wrap').style.display = 'block';
+  document.getElementById('csv-diff-wrap').style.display    = 'none';
+}
+
+async function confirmMapping() {
+  // Check all CSV names are mapped
+  const unmapped = Object.entries(csvNameMapping).filter(([,v]) => !v).map(([k]) => k);
+  if (unmapped.length) {
+    if (!confirm(`These items have no catalog match and will be skipped:\n\n${unmapped.join('\n')}\n\nContinue?`)) return;
+  }
+
+  // Apply mapping to parsed rows (replace item_name with catalog name)
+  const parsed = _parsedCsvRows
+    .map(r => ({ ...r, item_name: csvNameMapping[r.item_name] || r.item_name }))
+    .filter(r => csvNameMapping[r.item_name] !== '');   // skip unmapped
+
+  document.getElementById('csv-mapping-wrap').style.display = 'none';
 
   // Check against existing order_items
   const dates  = [...new Set(parsed.map(r => r.date))];
@@ -385,11 +568,15 @@ function toggleCsvRow(idx, checked) {
 
 function clearCsvImport() {
   csvRows = [];
+  _parsedCsvRows = [];
+  csvNameMapping = {};
   window._csvDisplayRows = [];
-  document.getElementById('csv-diff-wrap').style.display = 'none';
-  document.getElementById('csv-ofd-warning').style.display = 'none';
-  document.getElementById('csv-diff-body').innerHTML = '';
-  document.getElementById('csv-file').value = '';
+  document.getElementById('csv-mapping-wrap').style.display = 'none';
+  document.getElementById('csv-diff-wrap').style.display    = 'none';
+  document.getElementById('csv-ofd-warning').style.display  = 'none';
+  document.getElementById('csv-diff-body').innerHTML        = '';
+  document.getElementById('csv-mapping-body').innerHTML     = '';
+  document.getElementById('csv-file').value                 = '';
 }
 
 async function saveCsvImport() {
@@ -471,17 +658,21 @@ async function saveCsvImport() {
       }
 
       // Insert order_items
-      const newItems = items.map((row) => ({
-        order_id:      orderId,
-        order_date:    date,
-        customer_name,
-        community:     customer_name.match(/^(.+?)\s+[\w-]+$/)?.[1] || customer_name,
-        item_name:     row.item_name,
-        description:   row._state === 'changed' ? `Weight changed from ${row._oldQty} to ${row.qty}` : null,
-        requested_qty: row.qty,
-        final_qty:     null,
-        status:        'open',
-      }));
+      const newItems = items.map((row) => {
+        const cat = catalogItems.find(c => c.item_name === row.item_name);
+        return {
+          order_id:      orderId,
+          order_date:    date,
+          customer_name,
+          community:     customer_name.match(/^(.+?)\s+[\w-]+$/)?.[1] || customer_name,
+          item_name:     row.item_name,
+          description:   row._state === 'changed' ? `Weight changed from ${row._oldQty} to ${row.qty}` : null,
+          requested_qty: row.qty,
+          unit_price:    cat?.unit_price ?? null,
+          final_qty:     null,
+          status:        'open',
+        };
+      });
 
       const { error: insertErr } = await sb.from('order_items').insert(newItems);
       if (insertErr) throw new Error(insertErr.message);

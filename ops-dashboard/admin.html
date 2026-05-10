@@ -34,8 +34,20 @@
 <!-- Admin content (hidden until password) -->
 <div id="admin-content" class="hidden">
 
-  <!-- Packers section -->
+  <!-- Catalog section -->
   <div class="admin-section" style="margin-top:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h2 style="margin:0">Fruit Catalog</h2>
+      <button class="btn btn-secondary btn-sm" onclick="syncCatalog()" id="sync-btn">↻ Sync from Shopify</button>
+    </div>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+      Synced from Shopify. Names and prices here are also pushed to Zoho.
+    </p>
+    <div id="catalog-list"><div class="skeleton" style="height:40px"></div></div>
+  </div>
+
+  <!-- Packers section -->
+  <div class="admin-section">
     <h2>Packers</h2>
     <div class="form-row">
       <input type="text" id="new-packer-name" placeholder="Packer name" maxlength="60">
@@ -52,7 +64,9 @@
     </p>
     <div class="form-row">
       <select id="assign-packer" style="flex:1"></select>
-      <input type="text" id="assign-fruit" placeholder="Fruit / item name" style="flex:2">
+      <select id="assign-fruit" style="flex:2">
+        <option value="">Select fruit…</option>
+      </select>
       <button class="btn btn-primary" onclick="addAssignment()">Add</button>
     </div>
     <div id="assignments-list"><div class="skeleton" style="height:40px"></div></div>
@@ -91,7 +105,33 @@
       </label>
     </div>
 
-    <!-- Diff preview table -->
+    <!-- Step 1: Name mapping (shown before diff) -->
+    <div id="csv-mapping-wrap" style="display:none;margin-top:14px">
+      <div style="font-size:0.88rem;font-weight:600;margin-bottom:8px">
+        Step 1 — Confirm item name mapping
+        <span style="font-weight:400;color:var(--text-muted);font-size:0.78rem">
+          · CSV names matched to catalog. Change any incorrect mapping.
+        </span>
+      </div>
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:10px">
+        <table class="diff-table" id="csv-mapping-table">
+          <thead>
+            <tr>
+              <th>CSV name</th>
+              <th>Matched catalog item</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody id="csv-mapping-body"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmMapping()">Confirm mapping →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Diff preview table -->
     <div id="csv-diff-wrap" style="display:none;margin-top:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <div style="font-size:0.8rem;color:var(--text-muted)" id="csv-diff-legend">
