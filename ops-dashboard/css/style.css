@@ -496,3 +496,82 @@ input[type=checkbox] {
   gap: 8px;
 }
 .bulk-bar .btn { flex: 0; }
+
+/* ── Status badges (new lifecycle) ── */
+.badge-open              { background: #fee2e2; color: #b91c1c; }
+.badge-packed            { background: #fef3c7; color: #92400e; }
+.badge-final             { background: #dcfce7; color: #166534; }
+.badge-invoice_generated { background: #ede9fe; color: #6d28d9; }
+.badge-ofd               { background: #dbeafe; color: #1d4ed8; }
+.badge-delivered         { background: #f0fdf4; color: #15803d; }
+.badge-nobill            { background: #e0f2fe; color: #0369a1; }
+.badge-removed           { background: #f1f5f9; color: #94a3b8; }
+
+/* ── REMOVED item card — greyed out ── */
+.item-removed {
+  opacity: 0.45;
+  border-left-color: #cbd5e1 !important;
+  pointer-events: none;
+}
+.item-removed .card-item { color: var(--text-muted); }
+
+/* ── Audit line ── */
+.card-audit {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: -4px;
+  margin-bottom: 10px;
+}
+
+/* ── Checker: row status colours ── */
+.order-table tr.row-open   td { background: #fff5f5; }
+.order-table tr.row-open   td:first-child { border-left: 3px solid #ef4444; }
+.order-table tr.row-packed td { background: #fffbeb; }
+.order-table tr.row-final  td { background: #f0fdf4; }
+.order-table tr.row-removed td { opacity: 0.45; }
+.order-table tr.row-nobill td { background: #f0f9ff; }
+
+/* ── Checker: Generate invoice button ── */
+.btn-invoice {
+  background: #7c3aed;
+  color: white;
+  border: none;
+}
+.btn-invoice:hover { background: #6d28d9; }
+
+/* ── Checker: date + name bar ── */
+.view-controls {
+  background: white;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.view-controls label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.view-controls input[type=date],
+.view-controls input[type=text] {
+  padding: 6px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-size: 0.88rem;
+  font-family: 'DM Sans', sans-serif;
+}
+.view-controls input:focus { outline: none; border-color: var(--brand); }
+
+/* ── CSV diff table ── */
+.diff-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.diff-table th { background: var(--bg); padding: 8px 10px; text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); border-bottom: 2px solid var(--border); }
+.diff-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.diff-row-new      { background: #f0fdf4; }
+.diff-row-removed  { background: #fff5f5; text-decoration: line-through; color: var(--text-muted); }
+.diff-row-dup      { background: #f8fafc; color: var(--text-muted); }
+.diff-row-ofd      { background: #eff6ff; }
+

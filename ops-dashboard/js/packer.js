@@ -57,7 +57,6 @@ async function loadItems() {
   container.classList.remove('hidden');
   empty.classList.add('hidden');
 
-  // Get fruits assigned to this packer
   const { data: assignments } = await sb
     .from('packer_assignments')
     .select('item_name')
@@ -72,7 +71,6 @@ async function loadItems() {
 
   const fruits = assignments.map(a => a.item_name);
 
-  // Get today's order_items for those fruits
   const { data: items, error } = await sb
     .from('order_items')
     .select('*')
@@ -98,15 +96,18 @@ function renderCards(items) {
   container.innerHTML = '';
   container.classList.remove('hidden');
 
-  const total   = items.length;
-  const done    = items.filter(i => i.status === 'packed').length;
-  const pending = total - done;
-  document.getElementById('sum-total').textContent   = total;
-  document.getElementById('sum-done').textContent    = done;
+  // Exclude REMOVED from progress counts
+  const active  = items.filter(i => i.item_status !== 'REMOVED');
+  const done    = active.filter(i => ['packed', 'final', 'invoice_generated', 'ofd', 'delivered'].includes(i.status));
+  const pending = active.length - done.length;
+
+  document.getElementById('sum-total').textContent   = active.length;
+  document.getElementById('sum-done').textContent    = done.length;
   document.getElementById('sum-pending').textContent = pending;
   document.getElementById('summary-bar').classList.remove('hidden');
   document.getElementById('section-header').classList.remove('hidden');
-  document.getElementById('section-count').textContent = `${total} item${total !== 1 ? 's' : ''} assigned to you`;
+  document.getElementById('section-count').textContent =
+    `${active.length} item${active.length !== 1 ? 's' : ''} assigned to you`;
 
   items.forEach(item => container.appendChild(buildCard(item)));
 }
@@ -114,10 +115,46 @@ function renderCards(items) {
 // ── Build a single card ───────────────────────────────────────
 function buildCard(item) {
   const card = document.createElement('div');
-  card.className = `item-card status-${item.status}`;
+  const isRemoved  = item.item_status === 'REMOVED';
+  const isNobill   = item.item_status === 'NOBILL';
+  const isPacked   = ['packed', 'final', 'invoice_generated', 'ofd', 'delivered'].includes(item.status);
+
+  card.className = `item-card${isRemoved ? ' item-removed' : ''}`;
   card.id = `card-${item.id}`;
 
-  const isPacked = item.status === 'packed';
+  const statusBadge = isRemoved
+    ? `<span class="status-badge badge-removed">REMOVED</span>`
+    : isNobill
+      ? `<span class="status-badge badge-nobill">NOBILL</span>`
+      : `<span class="status-badge badge-${item.status}">${item.status}</span>`;
+
+  const auditHtml = item.packed_by
+    ? `<div class="card-audit">Packed by ${item.packed_by}${item.packed_at ? ' · ' + fmtTime(item.packed_at) : ''}</div>`
+    : '';
+
+  let actionsHtml = '';
+  if (!isRemoved) {
+    if (!isPacked) {
+      actionsHtml = `
+        <input
+          class="final-qty-input"
+          id="input-${item.id}"
+          type="number"
+          inputmode="decimal"
+          placeholder="Enter weight"
+          value="${item.final_qty ?? ''}"
+          step="0.1"
+        >
+        <div class="card-actions">
+          <button class="btn btn-primary" onclick="packItem('${item.id}')">Pack ✓</button>
+        </div>`;
+    } else {
+      actionsHtml = `
+        <div class="card-actions">
+          <button class="btn btn-secondary btn-sm" onclick="unpackItem('${item.id}')">Edit weight</button>
+        </div>`;
+    }
+  }
 
   card.innerHTML = `
     <div class="card-header">
@@ -125,7 +162,7 @@ function buildCard(item) {
         <div class="card-customer">${item.customer_name}</div>
         ${item.community ? `<div class="card-community">${item.community}</div>` : ''}
       </div>
-      <span class="status-badge badge-${item.status}">${item.status}</span>
+      ${statusBadge}
     </div>
 
     <div class="card-item">${item.item_name}</div>
@@ -144,36 +181,20 @@ function buildCard(item) {
       </div>
     </div>
 
-    ${!isPacked ? `
-      <input
-        class="final-qty-input"
-        id="input-${item.id}"
-        type="number"
-        inputmode="decimal"
-        placeholder="Enter final qty"
-        value="${item.final_qty ?? ''}"
-        step="0.1"
-      >
-      <div class="card-actions">
-        <button class="btn btn-primary" onclick="packItem('${item.id}')">Pack ✓</button>
-      </div>
-    ` : `
-      <div class="card-actions">
-        <button class="btn btn-secondary btn-sm" onclick="unpackItem('${item.id}')">Edit</button>
-      </div>
-    `}
+    ${auditHtml}
+    ${actionsHtml}
   `;
 
   return card;
 }
 
-// ── Pack item (save final qty + mark packed) ──────────────────
+// ── Pack item (save weight + mark packed) ─────────────────────
 async function packItem(id) {
   const input = document.getElementById(`input-${id}`);
   const val   = parseFloat(input?.value);
 
   if (isNaN(val) || val < 0) {
-    showToast('Enter a valid quantity', 'error');
+    showToast('Enter a valid weight', 'error');
     return;
   }
 
@@ -182,7 +203,12 @@ async function packItem(id) {
 
   const { error } = await sb
     .from('order_items')
-    .update({ final_qty: val, status: 'packed' })
+    .update({
+      final_qty:  val,
+      status:     'packed',
+      packed_by:  selectedPackerName,
+      packed_at:  new Date().toISOString(),
+    })
     .eq('id', id);
 
   if (error) {
@@ -194,34 +220,39 @@ async function packItem(id) {
   showToast('Packed ✓');
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    allItems[idx].final_qty = val;
-    allItems[idx].status = 'packed';
+    allItems[idx] = { ...allItems[idx], final_qty: val, status: 'packed', packed_by: selectedPackerName, packed_at: new Date().toISOString() };
     document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
     updateSummary();
   }
 }
 
-// ── Unpack item ───────────────────────────────────────────────
+// ── Unpack item (revert to open for re-weighing) ──────────────
 async function unpackItem(id) {
   const { error } = await sb
     .from('order_items')
-    .update({ status: 'pending' })
+    .update({ status: 'open', final_qty: null })
     .eq('id', id);
 
   if (error) { showToast('Failed to edit', 'error'); return; }
 
   const idx = allItems.findIndex(i => i.id === id);
   if (idx !== -1) {
-    allItems[idx].status = 'pending';
+    allItems[idx] = { ...allItems[idx], status: 'open', final_qty: null };
     document.getElementById(`card-${id}`).replaceWith(buildCard(allItems[idx]));
     updateSummary();
   }
 }
 
 function updateSummary() {
-  const total = allItems.length;
-  const done  = allItems.filter(i => i.status === 'packed').length;
-  document.getElementById('sum-total').textContent   = total;
-  document.getElementById('sum-done').textContent    = done;
-  document.getElementById('sum-pending').textContent = total - done;
+  const active  = allItems.filter(i => i.item_status !== 'REMOVED');
+  const done    = active.filter(i => ['packed', 'final', 'invoice_generated', 'ofd', 'delivered'].includes(i.status));
+  document.getElementById('sum-total').textContent   = active.length;
+  document.getElementById('sum-done').textContent    = done.length;
+  document.getElementById('sum-pending').textContent = active.length - done.length;
+}
+
+function fmtTime(isoStr) {
+  try {
+    return new Date(isoStr).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  } catch { return ''; }
 }

@@ -72,11 +72,65 @@
     <div id="notes-list"><div class="skeleton" style="height:40px"></div></div>
   </div>
 
+  <!-- CSV Upload section -->
+  <div class="admin-section">
+    <h2>Import Orders from CSV</h2>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:4px">
+      CSV format: <code>customer_name, item_name, quantity, date (optional)</code>
+    </p>
+    <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:12px">
+      Date defaults to today. Same customer+date = same order. Changed quantities show as red → green diff.
+    </p>
+
+    <div class="form-row" style="flex-wrap:wrap;gap:10px">
+      <input type="file" id="csv-file" accept=".csv" onchange="parseCsv(event)"
+        style="flex:2;min-width:0;padding:8px;font-size:0.85rem">
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;flex-shrink:0">
+        <input type="date" id="csv-default-date" style="padding:8px;border:1.5px solid var(--border);border-radius:7px">
+        Default date
+      </label>
+    </div>
+
+    <!-- Diff preview table -->
+    <div id="csv-diff-wrap" style="display:none;margin-top:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:0.8rem;color:var(--text-muted)" id="csv-diff-legend">
+          <span style="background:#f0fdf4;padding:2px 8px;border-radius:4px;margin-right:6px">Green = new / changed</span>
+          <span style="background:#fff5f5;padding:2px 8px;border-radius:4px;margin-right:6px">Red = replaced</span>
+          <span style="background:#f8fafc;padding:2px 8px;border-radius:4px">Grey = duplicate (ignored)</span>
+        </div>
+      </div>
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
+        <table class="diff-table" id="csv-diff-table">
+          <thead>
+            <tr>
+              <th style="width:28px"></th>
+              <th>Customer</th>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>Date</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="csv-diff-body"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Clear</button>
+        <button class="btn btn-primary" id="csv-save-btn" onclick="saveCsvImport()">Save Import</button>
+      </div>
+    </div>
+    <div id="csv-ofd-warning" style="display:none;background:#fffbeb;border:1px solid #fcd34d;
+      border-radius:8px;padding:10px 14px;margin-top:10px;font-size:0.85rem;color:#78350f">
+      ⚠️ Some customers have OFD orders on the same date. Review carefully before saving.
+    </div>
+  </div>
+
   <!-- Danger zone -->
   <div class="admin-section" style="border:1.5px solid #fecaca">
     <h2 style="color:var(--red)">Danger Zone</h2>
     <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px">
-      Reset today's operations status — sets all items back to draft.
+      Reset today's operations status — sets all items back to open.
     </p>
     <button class="btn btn-danger" onclick="resetTodayStatus()">Reset Today's Status</button>
   </div>
