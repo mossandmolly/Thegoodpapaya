@@ -37,8 +37,14 @@ function unitLabel(tags) {
   const hasW = tags.includes('mode:weight');
   const hasB = tags.includes('mode:box');
   const hasP = tags.includes('mode:piece');
-  if (!hasW && hasP) return '/piece';
-  if (!hasW && hasB) return '/box';
+  if (!hasW && hasP) {
+    const sizeTag = tags.find(t => t.startsWith('box-size:'));
+    return sizeTag ? `/${sizeTag.replace('box-size:', '')} piece` : '/piece';
+  }
+  if (!hasW && hasB) {
+    const sizeTag = tags.find(t => t.startsWith('box-size:'));
+    return sizeTag ? `/${sizeTag.replace('box-size:', '')} box` : '/box';
+  }
   return '/kg';
 }
 
