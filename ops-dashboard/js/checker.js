@@ -44,7 +44,7 @@ async function loadItems() {
 
   const { data: items, error } = await sb
     .from('order_items')
-    .select('*, order:orders(sales_id, contact_name, payment_method, status, zoho_invoice_id)')
+    .select('*, order:orders(sales_id, contact_name, payment_method, status, payment_status, zoho_invoice_id)')
     .eq('order_date', viewDate())
     .order('community')
     .order('customer_name')
@@ -91,6 +91,7 @@ function groupAndRender() {
         community:     item.community,
         contact_name:  item.order?.contact_name || null,
         zoho_invoice:  item.order?.zoho_invoice_id || null,
+        payment_status: item.order?.payment_status || null,
         items:         [],
       };
     }
@@ -156,6 +157,7 @@ function buildOrderBlock(group) {
         ${finalCount}/${activeItems.length} final
       </span>
       ${group.zoho_invoice ? `<span class="status-badge badge-invoice_generated">Invoiced</span>` : ''}
+      ${group.payment_status ? `<span class="status-badge badge-pay-${group.payment_status}">${group.payment_status.replace('_',' ')}</span>` : ''}
       ${!allFinal
         ? `<button class="btn btn-sm btn-success" onclick="finalizeOrder('${escapeJs(group.order_id)}')">Final All</button>`
         : `<button class="btn btn-sm btn-secondary" onclick="unfinalizeOrder('${escapeJs(group.order_id)}')">Reopen</button>`
