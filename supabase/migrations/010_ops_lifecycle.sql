@@ -10,9 +10,13 @@
 --   trigger              → auto-set item_status=NOBILL when description contains
 --                          replacement / exchange / sample
 
--- ── 1. Add item_status column (needs to exist before data migration) ──────────
+-- ── 1. Add item_status column + drop old status constraint first ──────────────
 ALTER TABLE order_items
   ADD COLUMN IF NOT EXISTS item_status TEXT;
+
+-- Drop old constraint BEFORE migrating data (old constraint blocks 'open')
+ALTER TABLE order_items
+  DROP CONSTRAINT IF EXISTS order_items_status_check;
 
 -- ── 2. Migrate old status values ──────────────────────────────────────────────
 -- cancelled → REMOVED (item_status) + revert to open
@@ -26,8 +30,6 @@ SET status = 'open'
 WHERE status IN ('pending', 'adjusted');
 
 -- ── 3. Enforce new constraints ─────────────────────────────────────────────────
-ALTER TABLE order_items
-  DROP CONSTRAINT IF EXISTS order_items_status_check;
 ALTER TABLE order_items
   ADD  CONSTRAINT order_items_status_check
   CHECK (status IN ('open', 'packed', 'final', 'invoice_generated', 'ofd', 'delivered'));
