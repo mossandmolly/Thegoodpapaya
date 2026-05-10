@@ -133,23 +133,23 @@ Deno.serve(async (req) => {
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
     const orgId    = env('ZOHO_ORG_ID');
 
-    // ── Fetch all Shopify products ────────────────────────────────────────────
-    const shopifyDomain = env('SHOPIFY_STORE_DOMAIN');
-    const shopifyToken  = env('SHOPIFY_ADMIN_TOKEN');
+    // ── Fetch all Shopify products via public /products.json ─────────────────
+    // No auth token needed — same endpoint the storefront uses
+    const shopifyDomain = Deno.env.get('SHOPIFY_STORE_DOMAIN') || 'thegoodpapaya.com';
 
     let allProducts: any[] = [];
-    let url = `https://${shopifyDomain}/admin/api/2024-01/products.json?limit=250&status=active`;
-    while (url) {
-      const res  = await fetch(url, { headers: { 'X-Shopify-Access-Token': shopifyToken } });
+    let page = 1;
+    while (true) {
+      const res  = await fetch(`https://${shopifyDomain}/products.json?limit=250&page=${page}`);
       const data = await res.json();
-      allProducts.push(...(data.products || []));
-      // Follow pagination link header if present
-      const link = res.headers.get('Link') || '';
-      const next = link.match(/<([^>]+)>;\s*rel="next"/)?.[1];
-      url = next || '';
+      const batch = data.products || [];
+      if (!batch.length) break;
+      allProducts.push(...batch);
+      if (batch.length < 250) break;
+      page++;
     }
 
-    if (!allProducts.length) throw new Error('No active products returned from Shopify');
+    if (!allProducts.length) throw new Error('No products returned from Shopify');
 
     // ── Get Zoho token + existing items ──────────────────────────────────────
     const token     = await zohoToken();
