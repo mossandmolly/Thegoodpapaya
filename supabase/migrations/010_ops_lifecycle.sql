@@ -10,13 +10,25 @@
 --   trigger              → auto-set item_status=NOBILL when description contains
 --                          replacement / exchange / sample
 
--- ── 1. Add item_status column + drop old status constraint first ──────────────
+-- ── 1. Add item_status column + drop ALL check constraints on order_items ─────
+-- (the inline check in migration 008 may have an auto-generated name, so we
+--  drop every CHECK constraint on the table rather than guessing the name)
 ALTER TABLE order_items
   ADD COLUMN IF NOT EXISTS item_status TEXT;
 
--- Drop old constraint BEFORE migrating data (old constraint blocks 'open')
-ALTER TABLE order_items
-  DROP CONSTRAINT IF EXISTS order_items_status_check;
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN
+    SELECT constraint_name
+    FROM information_schema.table_constraints
+    WHERE table_schema = 'public'
+      AND table_name   = 'order_items'
+      AND constraint_type = 'CHECK'
+  LOOP
+    EXECUTE format('ALTER TABLE order_items DROP CONSTRAINT %I', r.constraint_name);
+  END LOOP;
+END $$;
 
 -- ── 2. Migrate old status values ──────────────────────────────────────────────
 -- cancelled → REMOVED (item_status) + revert to open
@@ -31,13 +43,11 @@ WHERE status IN ('pending', 'adjusted');
 
 -- ── 3. Enforce new constraints ─────────────────────────────────────────────────
 ALTER TABLE order_items
-  ADD  CONSTRAINT order_items_status_check
+  ADD CONSTRAINT order_items_status_check
   CHECK (status IN ('open', 'packed', 'final', 'invoice_generated', 'ofd', 'delivered'));
 
 ALTER TABLE order_items
-  DROP CONSTRAINT IF EXISTS order_items_item_status_check;
-ALTER TABLE order_items
-  ADD  CONSTRAINT order_items_item_status_check
+  ADD CONSTRAINT order_items_item_status_check
   CHECK (item_status IN ('NOBILL', 'REMOVED'));
 
 -- ── 4. Audit columns ──────────────────────────────────────────────────────────
