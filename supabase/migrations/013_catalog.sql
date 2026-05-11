@@ -28,6 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_catalog_shopify  ON catalog(shopify_product_id);
 ALTER TABLE catalog ENABLE ROW LEVEL SECURITY;
 -- service role (edge functions) bypasses RLS; ops dashboard uses anon key → read-only
 
+DROP POLICY IF EXISTS catalog_read_anon ON catalog;
 CREATE POLICY catalog_read_anon ON catalog
   FOR SELECT TO anon USING (true);
 
