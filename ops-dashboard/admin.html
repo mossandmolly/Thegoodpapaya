@@ -86,6 +86,18 @@
         <div id="orders-upload-status"></div>
       </div>
 
+      <!-- Invoices with no payment link -->
+      <div class="admin-section" style="border:1.5px solid #fde68a">
+        <h2 style="color:#92400e">⚠️ No Payment Link</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px">
+          Invoices where no Razorpay link was created — usually because the customer has no phone number in Zoho.
+        </p>
+        <div id="missing-links-list">
+          <div class="skeleton" style="height:40px"></div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="loadMissingLinks()" style="margin-top:8px">Refresh</button>
+      </div>
+
       <!-- Restore from Snapshot -->
       <div class="admin-section" style="border:1.5px solid #bfdbfe">
         <h2 style="color:#1d4ed8">🕐 Restore from Snapshot</h2>
@@ -118,7 +130,6 @@
 
       <!-- Packers -->
       <div class="admin-section">
-        <h2>Packers</h2>
         <div class="form-row">
           <input type="text" id="new-packer-name" placeholder="Packer name" maxlength="60">
           <button class="btn btn-primary btn-sm" onclick="addPacker()">Add</button>

@@ -242,9 +242,9 @@ async function processInvoice(summary: any) {
 
   const customerName  = detail.customer_name;
   const zohoContactId = detail.customer_id;
-  const phone         = await resolveAndSyncCustomer(customerName, zohoContactId);
+  const phone: string | null = await resolveAndSyncCustomer(customerName, zohoContactId);
 
-  if (!phone) { console.warn(`[sync] No phone for "${customerName}" — skipping`); return; }
+  if (!phone) console.warn(`[sync] No phone for "${customerName}" — syncing without Razorpay link`);
 
   const invoiceDate   = detail.date;
   const invoiceNumber = detail.invoice_number;
@@ -280,8 +280,8 @@ async function processInvoice(summary: any) {
       await cancelPaymentLink(existing.payment_link_id);
       console.log(`[sync] Cancelled old link for ${invoiceNumber} — balance changed (${storedBalance} → ${invoiceBalance})`);
     }
-    // Create new link for outstanding balance (not total)
-    if (paymentStatus !== 'paid' && invoiceBalance > 0) {
+    // Create new link for outstanding balance (not total) — only if phone is known
+    if (paymentStatus !== 'paid' && invoiceBalance > 0 && phone) {
       try {
         const rpl = await createPaymentLink(invoiceNumber, customerName, phone, Math.round(invoiceBalance * 100));
         paymentLink   = rpl.short_url;

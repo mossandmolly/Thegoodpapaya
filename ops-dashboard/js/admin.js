@@ -81,7 +81,44 @@ document.getElementById('admin-password').addEventListener('keydown', e => {
 async function loadAll() {
   const dateInput = document.getElementById('voice-order-date');
   if (dateInput && !dateInput.value) dateInput.value = todayIST();
-  await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadSnapshots()]);
+  await Promise.all([loadPackers(), loadAssignments(), loadNotes(), loadSnapshots(), loadMissingLinks()]);
+}
+
+// ── Invoices with no payment link ─────────────────────────────
+async function loadMissingLinks() {
+  const listEl = document.getElementById('missing-links-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="skeleton" style="height:40px"></div>';
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-missing-links`, {
+      headers: { 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON },
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || 'Failed to load');
+
+    const invoices = result.invoices || [];
+    if (!invoices.length) {
+      listEl.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted);padding:4px 0">None in the last 7 days ✓</p>';
+      return;
+    }
+
+    listEl.innerHTML = `
+      <table class="notes-table" style="width:100%">
+        <thead><tr><th>Customer</th><th>Invoice</th><th>Date</th><th>Total</th></tr></thead>
+        <tbody>
+          ${invoices.map(inv => `
+            <tr>
+              <td style="font-weight:500">${escapeHtml(inv.customer_name)}</td>
+              <td style="color:var(--text-muted);font-size:0.82rem">${escapeHtml(inv.invoice_number)}</td>
+              <td style="color:var(--text-muted);font-size:0.82rem;white-space:nowrap">${inv.invoice_date || '—'}</td>
+              <td style="font-size:0.85rem">₹${inv.invoice_total != null ? Number(inv.invoice_total).toLocaleString('en-IN') : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    listEl.innerHTML = `<p style="font-size:0.82rem;color:var(--red)">${e.message}</p>`;
+  }
 }
 
 // ── Upload tab switching ───────────────────────────────────────
