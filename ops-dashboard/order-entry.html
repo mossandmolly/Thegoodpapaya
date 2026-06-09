@@ -24,9 +24,12 @@
   </div>
 </header>
 
-<div class="section-header" style="display:block">
-  <h2>Order Entry</h2>
-  <p class="count" id="section-count">Loading…</p>
+<div class="section-header" style="display:block;display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px">
+  <div>
+    <h2>Order Entry</h2>
+    <p class="count" id="section-count">Loading…</p>
+  </div>
+  <button class="btn btn-secondary btn-sm" id="sync-btn" onclick="syncFromZoho()" style="font-size:0.78rem;white-space:nowrap">↻ Sync from Zoho</button>
 </div>
 
 <main style="padding:12px 16px">

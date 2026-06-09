@@ -260,6 +260,32 @@ async function submitWithPhones() {
   catch (e) { document.getElementById('oe-status').innerHTML = `<span style="color:var(--red)">${e.message}</span>`; }
 }
 
+// ── Sync customers + items from Zoho ─────────────────────────
+async function syncFromZoho() {
+  const btn   = document.getElementById('sync-btn');
+  const count = document.getElementById('section-count');
+  btn.disabled    = true;
+  btn.textContent = '↻ Syncing…';
+
+  try {
+    const res    = await fetch(`${SUPABASE_URL}/functions/v1/get-masters?force=1`, {
+      headers: { 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON },
+    });
+    const data   = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Sync failed');
+
+    _customers = data.customers || [];
+    _items     = data.items     || [];
+    count.textContent = `${_customers.length} customers · ${_items.length} items loaded`;
+    showToast(`Synced ${data.syncedCustomers} customers · ${data.syncedItems} items from Zoho`);
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '↻ Sync from Zoho';
+  }
+}
+
 function slugify(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '-'); }
 
 function escHtml(s) {
