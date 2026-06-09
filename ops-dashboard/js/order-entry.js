@@ -1,10 +1,10 @@
-// ── State ─────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────
 let _rowIdx        = 0;
 let _customers     = [];   // string[]
 let _items         = [];   // { name, unit }[]
 let _pendingSubmit = null;
 
-// ── Singleton combobox ────────────────────────────────────
+// ── Singleton combobox ────────────────────────────────────────────
 let _cbEl    = null;
 let _cbInput = null;
 let _cbOpts  = null;
@@ -68,7 +68,7 @@ function attachCombobox(input, getOpts) {
   input.addEventListener('keydown', e  => { if (e.key === 'Escape' || e.key === 'Tab') _cbClose(); });
 }
 
-// ── Init ──────────────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────────
 (async function init() {
   _cbInit();
   document.getElementById('section-count').textContent = 'Loading customers and items…';
@@ -90,7 +90,7 @@ function attachCombobox(input, getOpts) {
   addRow();
 })();
 
-// ── Add a new row ─────────────────────────────────────────────
+// ── Add a new row ─────────────────────────────────────────────────────
 function addRow(prefillCustomer) {
   _rowIdx++;
   const n        = _rowIdx;
@@ -127,7 +127,7 @@ function removeRow(n) {
   document.getElementById(`oe-row-${n}`)?.remove();
 }
 
-// ── Collect all non-empty rows ────────────────────────────────
+// ── Collect all non-empty rows ────────────────────────────────────────────
 function collectRows() {
   const rows = [];
   document.getElementById('oe-tbody').querySelectorAll('tr').forEach(tr => {
@@ -149,7 +149,7 @@ function getLastVal(field) {
   return document.getElementById(`r${last}-${field}`)?.value || '';
 }
 
-// ── Submit ────────────────────────────────────────────────────
+// ── Submit ────────────────────────────────────────────────────────────
 async function submitOrders() {
   const rows = collectRows();
   if (!rows.length) { showToast('Add at least one valid row', 'error'); return; }
@@ -194,7 +194,7 @@ async function submitOrders() {
   }
 }
 
-// ── Core submit ─────────────────────────────────────────────
+// ── Core submit ─────────────────────────────────────────────────────────
 async function doSubmit(phones) {
   const { records, newCustomers, newItems } = _pendingSubmit;
   const status = document.getElementById('oe-status');
@@ -221,7 +221,7 @@ async function doSubmit(phones) {
   addRow('');
 }
 
-// ── Phone prompt ────────────────────────────────────────────
+// ── Phone prompt ────────────────────────────────────────────────────────
 function showPhonePrompt(missingNames) {
   let wrap = document.getElementById('oe-phone-prompt');
   if (!wrap) {
@@ -258,6 +258,32 @@ async function submitWithPhones() {
   }
   try { await doSubmit(phones); }
   catch (e) { document.getElementById('oe-status').innerHTML = `<span style="color:var(--red)">${e.message}</span>`; }
+}
+
+// ── Sync customers + items from Zoho ─────────────────────────────
+async function syncFromZoho() {
+  const btn   = document.getElementById('sync-btn');
+  const count = document.getElementById('section-count');
+  btn.disabled    = true;
+  btn.textContent = '↻ Syncing…';
+
+  try {
+    const res    = await fetch(`${SUPABASE_URL}/functions/v1/get-masters?force=1`, {
+      headers: { 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON },
+    });
+    const data   = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Sync failed');
+
+    _customers = data.customers || [];
+    _items     = data.items     || [];
+    count.textContent = `${_customers.length} customers · ${_items.length} items loaded`;
+    showToast(`Synced ${data.syncedCustomers} customers · ${data.syncedItems} items from Zoho`);
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '↻ Sync from Zoho';
+  }
 }
 
 function slugify(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '-'); }
