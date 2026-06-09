@@ -58,7 +58,7 @@ function addRow(prefillCustomer) {
   document.getElementById('oe-tbody').appendChild(tr);
   document.getElementById(`r${n}-item`).focus();
 
-  // Enter on qty → add new row for same customer
+  // Enter on qty → add another item for same customer
   document.getElementById(`r${n}-qty`).addEventListener('keydown', e => {
     if (e.key === 'Enter') addRow(document.getElementById(`r${n}-customer`).value.trim());
   });

@@ -51,11 +51,13 @@
     </table>
   </div>
 
-  <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <button class="btn btn-secondary btn-sm" onclick="addRow()">+ Add row</button>
-    <button class="btn btn-success" id="oe-submit-btn" onclick="submitOrders()">Submit Orders</button>
-    <span id="oe-status" style="font-size:0.85rem"></span>
+  <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+    <button class="btn btn-secondary btn-sm" onclick="addRow()">+ Add item</button>
+    <button class="btn btn-secondary btn-sm" onclick="addRow('')">+ New customer</button>
+    <div style="flex:1"></div>
+    <button class="btn btn-primary btn-sm" id="oe-submit-btn" onclick="submitOrders()">Submit orders →</button>
   </div>
+  <div id="oe-status" style="font-size:0.85rem;margin-top:6px"></div>
 
 </main>
 
