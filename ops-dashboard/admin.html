@@ -16,165 +16,206 @@
     <nav>
       <a href="index.html">Packer</a>
       <a href="checker.html">Checker</a>
+      <a href="order-entry.html">Order Entry</a>
       <a href="admin.html" class="active">Admin</a>
+      <a href="somya.html">Somya AI</a>
+      <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
     </nav>
   </div>
 </header>
 
 <!-- Password gate -->
 <div class="password-screen" id="password-screen">
-  <div style="font-size:2.5rem;margin-bottom:12px">🔒</div>
-  <h2>Admin Access</h2>
-  <input type="password" id="admin-password" placeholder="••••" maxlength="10"
-    onkeydown="if(event.key==='Enter') checkPassword()">
-  <button class="btn btn-primary" onclick="checkPassword()">Enter</button>
-  <p id="pw-error" style="color:var(--red);font-size:0.85rem;margin-top:10px;display:none">Wrong password</p>
+  <div style="background:white;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.10);padding:32px 28px;width:100%;max-width:320px;text-align:center">
+    <div style="font-size:2rem;margin-bottom:8px">🔒</div>
+    <h2 style="font-size:1.1rem;margin-bottom:4px">Admin Access</h2>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:20px">Enter your admin password</p>
+    <input type="password" id="admin-password" placeholder="Password"
+      style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:0.95rem;font-family:'DM Sans',sans-serif;text-align:center;letter-spacing:0.1em;margin-bottom:12px"
+    >
+    <button onclick="checkPassword()"
+      style="width:100%;padding:12px;background:var(--brand);color:white;border:none;border-radius:8px;font-size:0.95rem;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer">
+      Unlock
+    </button>
+    <p id="pw-error" style="color:var(--red);font-size:0.82rem;margin-top:10px;display:none">Wrong password</p>
+  </div>
 </div>
 
-<!-- Admin content (hidden until password) -->
+<!-- Admin content -->
 <div id="admin-content" class="hidden">
+  <div class="admin-layout">
 
-  <!-- Catalog section -->
-  <div class="admin-section" style="margin-top:16px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <h2 style="margin:0">Fruit Catalog</h2>
-      <button class="btn btn-secondary btn-sm" onclick="syncCatalog()" id="sync-btn">↻ Sync from Shopify</button>
-    </div>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-      Synced from Shopify. Names and prices here are also pushed to Zoho.
-    </p>
-    <div id="catalog-list"><div class="skeleton" style="height:40px"></div></div>
-  </div>
+    <!-- ── LEFT: daily operations ── -->
+    <div class="admin-left">
 
-  <!-- Packers section -->
-  <div class="admin-section">
-    <h2>Packers</h2>
-    <div class="form-row">
-      <input type="text" id="new-packer-name" placeholder="Packer name" maxlength="60">
-      <button class="btn btn-primary" onclick="addPacker()">Add</button>
-    </div>
-    <div id="packers-list"><div class="skeleton" style="height:40px"></div></div>
-  </div>
+      <!-- Upload Today's Orders -->
+      <div class="admin-section" style="border:1.5px solid #bfdbfe">
+        <h2 style="color:#1d4ed8">📋 Upload Today's Orders</h2>
 
-  <!-- Packer assignments section -->
-  <div class="admin-section">
-    <h2>Fruit Assignments</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-      Assign which fruits each packer handles
-    </p>
-    <div class="form-row">
-      <select id="assign-packer" style="flex:1"></select>
-      <select id="assign-fruit" style="flex:2">
-        <option value="">Select fruit…</option>
-      </select>
-      <button class="btn btn-primary" onclick="addAssignment()">Add</button>
-    </div>
-    <div id="assignments-list"><div class="skeleton" style="height:40px"></div></div>
-  </div>
-
-  <!-- Customer notes section -->
-  <div class="admin-section">
-    <h2>Customer Notes</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-      Notes shown on packer cards (allergies, preferences, etc.)
-    </p>
-    <div class="form-row">
-      <input type="text" id="note-customer" placeholder="Customer name (exact)" style="flex:2">
-      <input type="text" id="note-text" placeholder="Note" style="flex:3">
-      <button class="btn btn-primary" onclick="saveNote()">Save</button>
-    </div>
-    <div id="notes-list"><div class="skeleton" style="height:40px"></div></div>
-  </div>
-
-  <!-- CSV Upload section -->
-  <div class="admin-section">
-    <h2>Import Orders from CSV</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:4px">
-      CSV format: <code>customer_name, item_name, quantity, date (optional)</code>
-    </p>
-    <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:12px">
-      Date defaults to today. Same customer+date = same order. Changed quantities show as red → green diff.
-    </p>
-
-    <div class="form-row" style="flex-wrap:wrap;gap:10px">
-      <input type="file" id="csv-file" accept=".csv" onchange="parseCsv(event)"
-        style="flex:2;min-width:0;padding:8px;font-size:0.85rem">
-      <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;flex-shrink:0">
-        <input type="date" id="csv-default-date" style="padding:8px;border:1.5px solid var(--border);border-radius:7px">
-        Default date
-      </label>
-    </div>
-
-    <!-- Step 1: Name mapping (shown before diff) -->
-    <div id="csv-mapping-wrap" style="display:none;margin-top:14px">
-      <div style="font-size:0.88rem;font-weight:600;margin-bottom:8px">
-        Step 1 — Confirm item name mapping
-        <span style="font-weight:400;color:var(--text-muted);font-size:0.78rem">
-          · CSV names matched to catalog. Change any incorrect mapping.
-        </span>
-      </div>
-      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:10px">
-        <table class="diff-table" id="csv-mapping-table">
-          <thead>
-            <tr>
-              <th>CSV name</th>
-              <th>Matched catalog item</th>
-              <th>Confidence</th>
-            </tr>
-          </thead>
-          <tbody id="csv-mapping-body"></tbody>
-        </table>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Cancel</button>
-        <button class="btn btn-primary btn-sm" onclick="confirmMapping()">Confirm mapping →</button>
-      </div>
-    </div>
-
-    <!-- Step 2: Diff preview table -->
-    <div id="csv-diff-wrap" style="display:none;margin-top:14px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div style="font-size:0.8rem;color:var(--text-muted)" id="csv-diff-legend">
-          <span style="background:#f0fdf4;padding:2px 8px;border-radius:4px;margin-right:6px">Green = new / changed</span>
-          <span style="background:#fff5f5;padding:2px 8px;border-radius:4px;margin-right:6px">Red = replaced</span>
-          <span style="background:#f8fafc;padding:2px 8px;border-radius:4px">Grey = duplicate (ignored)</span>
+        <div class="upload-tabs">
+          <button class="upload-tab active" id="tab-csv"   onclick="switchUploadTab('csv')">📄 CSV</button>
+          <button class="upload-tab"        id="tab-voice" onclick="switchUploadTab('voice')">🎤 Voice / Text</button>
         </div>
+
+        <!-- CSV panel -->
+        <div id="upload-panel-csv">
+          <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+            <strong>Columns:</strong> sales_order, order_date, customer_name, item_name, description, quantity
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <input type="file" id="orders-csv" accept=".csv" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:'DM Sans',sans-serif">
+            <button class="btn btn-primary" onclick="uploadOrders()">Preview &amp; Upload</button>
+          </div>
+        </div>
+
+        <!-- Voice / Text panel -->
+        <div id="upload-panel-voice" class="hidden">
+          <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px">
+            Speak or type orders. Claude maps them to your Zoho catalog — the original text is always saved as a description safety net.
+          </p>
+          <textarea id="voice-order-text" class="voice-textarea"
+            placeholder="E.g. Villa 83 — 2kg apples, half kg white guava. B-12 — 3 dozen bananas, 1kg Kesar mangoes…"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+            <input type="date" id="voice-order-date"
+              style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:'DM Sans',sans-serif">
+            <button class="btn btn-secondary btn-sm" id="voice-mic-btn" onclick="toggleVoiceInput()">🎤 Speak</button>
+            <button class="btn btn-primary"           id="voice-parse-btn" onclick="parseVoiceOrders()">Parse &amp; Preview</button>
+          </div>
+          <div id="voice-parse-status"></div>
+        </div>
+
+        <div id="orders-upload-status"></div>
       </div>
-      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
-        <table class="diff-table" id="csv-diff-table">
-          <thead>
-            <tr>
-              <th style="width:28px"></th>
-              <th>Customer</th>
-              <th>Item</th>
-              <th>Qty</th>
-              <th>Date</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="csv-diff-body"></tbody>
-        </table>
+
+      <!-- Invoices with no payment link -->
+      <div class="admin-section" style="border:1.5px solid #fde68a">
+        <h2 style="color:#92400e">⚠️ No Payment Link</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px">
+          Invoices where no Razorpay link was created — usually because the customer has no phone number in Zoho.
+        </p>
+        <div id="missing-links-list">
+          <div class="skeleton" style="height:40px"></div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="loadMissingLinks()" style="margin-top:8px">Refresh</button>
       </div>
-      <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
-        <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Clear</button>
-        <button class="btn btn-primary" id="csv-save-btn" onclick="saveCsvImport()">Save Import</button>
+
+      <!-- Restore from Snapshot -->
+      <div class="admin-section" style="border:1.5px solid #bfdbfe">
+        <h2 style="color:#1d4ed8">🕐 Restore from Snapshot</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+          Rolls back <strong>final_quantity and status only</strong> for all matching rows.<br>
+          New orders and order details are never affected.
+        </p>
+        <div class="form-row">
+          <select id="snapshot-select" style="flex:1">
+            <option value="">Loading snapshots…</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="restoreSnapshot()">Restore</button>
+        </div>
+        <div id="restore-status"></div>
       </div>
+
+      <!-- Danger zone -->
+      <div class="admin-section" style="border:1.5px solid #fecaca">
+        <h2 style="color:var(--red)">Danger Zone</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px">
+          Reset today's operations status — sets all items back to draft.
+        </p>
+        <button class="btn btn-danger btn-sm" onclick="resetTodayStatus()">Reset Today's Status</button>
+      </div>
+
     </div>
-    <div id="csv-ofd-warning" style="display:none;background:#fffbeb;border:1px solid #fcd34d;
-      border-radius:8px;padding:10px 14px;margin-top:10px;font-size:0.85rem;color:#78350f">
-      ⚠️ Some customers have OFD orders on the same date. Review carefully before saving.
+
+    <!-- ── RIGHT: configuration ── -->
+    <div class="admin-right">
+
+      <!-- Packers -->
+      <div class="admin-section">
+        <div class="form-row">
+          <input type="text" id="new-packer-name" placeholder="Packer name" maxlength="60">
+          <button class="btn btn-primary btn-sm" onclick="addPacker()">Add</button>
+        </div>
+        <div id="packers-list"><div class="skeleton" style="height:40px"></div></div>
+      </div>
+
+      <!-- Fruit Assignments -->
+      <div class="admin-section">
+        <h2>Fruit Assignments</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+          Assign which fruits each packer handles
+        </p>
+        <div class="form-row">
+          <select id="assign-packer" style="flex:1"></select>
+          <input type="text" id="assign-fruit" placeholder="Fruit / item name" style="flex:2">
+          <button class="btn btn-primary btn-sm" onclick="addAssignment()">Add</button>
+        </div>
+        <div id="assignments-list"><div class="skeleton" style="height:40px"></div></div>
+      </div>
+
+      <!-- Customer Notes & History -->
+      <div class="admin-section">
+        <h2 style="margin-bottom:8px">Customer Notes &amp; History</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
+          Shown on packer cards and used by Somya AI to calibrate tone. One note per customer.
+        </p>
+
+        <!-- Add / update form -->
+        <div class="form-row" style="flex-wrap:wrap;gap:6px;margin-bottom:4px">
+          <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:140px">
+          <input type="text" id="note-text" placeholder="Note" style="flex:3;min-width:180px">
+          <input type="date" id="note-complaint-date" title="Last complaint date" style="flex:1;min-width:130px">
+          <button class="btn btn-primary btn-sm" onclick="saveNote()" style="white-space:nowrap">Save</button>
+        </div>
+        <div id="note-save-status" style="margin-bottom:8px"></div>
+
+        <!-- Read-only recent notes (last 10) -->
+        <div class="notes-table-wrap" id="notes-preview">
+          <div class="skeleton" style="height:40px;margin:8px"></div>
+        </div>
+
+        <!-- Manage all + delete (collapsible) -->
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:0.82rem;color:var(--text-muted);user-select:none">Manage all / delete</summary>
+          <div class="notes-table-wrap" id="notes-table-wrap" style="margin-top:8px">
+            <div class="skeleton" style="height:40px;margin:8px"></div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="exportNotes()" style="margin-top:8px">Export CSV</button>
+        </details>
+
+        <!-- CSV import (collapsible) -->
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:0.82rem;color:var(--text-muted);user-select:none">Import CSV</summary>
+          <div style="margin-top:8px">
+            <div class="form-row">
+              <input type="file" id="note-csv" accept=".csv" style="flex:1;padding:6px;font-size:0.8rem">
+              <button class="btn btn-secondary btn-sm" onclick="importNotesCSV()">Import</button>
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-muted)">
+              Columns: customer_name, note, last_complaint_date (YYYY-MM-DD)
+            </p>
+            <div id="note-import-status"></div>
+          </div>
+        </details>
+      </div>
+
     </div>
   </div>
 
-  <!-- Danger zone -->
-  <div class="admin-section" style="border:1.5px solid #fecaca">
-    <h2 style="color:var(--red)">Danger Zone</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px">
-      Reset today's operations status — sets all items back to open.
-    </p>
-    <button class="btn btn-danger" onclick="resetTodayStatus()">Reset Today's Status</button>
+  <!-- ── Orders preview modal ── -->
+  <div id="orders-preview-modal" class="preview-overlay hidden">
+    <div class="preview-modal">
+      <div class="preview-modal-header">
+        <h3>Preview Orders</h3>
+        <span id="preview-stats" style="font-size:0.82rem;color:var(--text-muted)"></span>
+        <button class="btn btn-sm btn-secondary" onclick="closePreview()">✕ Cancel</button>
+      </div>
+      <div class="preview-modal-body" id="preview-modal-body"></div>
+      <div class="preview-modal-footer">
+        <span id="preview-row-count" style="font-size:0.85rem;color:var(--text-muted)"></span>
+        <button class="btn btn-primary" id="preview-confirm-btn" onclick="confirmUpload()">Confirm Upload</button>
+      </div>
+    </div>
   </div>
-
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>

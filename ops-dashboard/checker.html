@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Checker — Good Papaya Ops</title>
+  <title>Checker View — Good Papaya Ops</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
@@ -16,23 +16,13 @@
     <nav>
       <a href="index.html">Packer</a>
       <a href="checker.html" class="active">Checker</a>
+      <a href="order-entry.html">Order Entry</a>
       <a href="admin.html">Admin</a>
+      <a href="somya.html">Somya AI</a>
+    <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
     </nav>
   </div>
 </header>
-
-<!-- Date + Checker name controls -->
-<div class="view-controls">
-  <label>
-    Date:
-    <input type="date" id="view-date">
-  </label>
-  <label>
-    Your name:
-    <input type="text" id="checker-name" placeholder="Checker name" style="width:140px">
-  </label>
-  <button class="btn btn-secondary btn-sm" onclick="loadItems()">Reload</button>
-</div>
 
 <!-- Filter bar -->
 <div class="filter-bar" id="filter-bar">
@@ -41,10 +31,9 @@
   </select>
   <select id="filter-status">
     <option value="">All Status</option>
-    <option value="open">Open (pending)</option>
+    <option value="draft">Draft</option>
     <option value="packed">Packed</option>
     <option value="final">Final</option>
-    <option value="invoice_generated">Invoiced</option>
   </select>
   <input type="text" id="filter-search" placeholder="Search customer…" style="flex:1;min-width:120px">
 </div>
@@ -52,9 +41,8 @@
 <!-- Summary bar -->
 <div class="summary-bar hidden" id="summary-bar">
   <span>Total: <strong id="sum-total">0</strong></span>
-  <span style="color:#b91c1c">Open: <strong id="sum-open">0</strong></span>
-  <span>Packed: <strong id="sum-packed">0</strong></span>
-  <span style="color:#166534">Final: <strong id="sum-final">0</strong></span>
+  <span>Done: <strong id="sum-done">0</strong></span>
+  <span>Pending: <strong id="sum-pending">0</strong></span>
   <span style="margin-left:auto">
     <button class="btn btn-sm btn-secondary" id="btn-select-all" onclick="toggleSelectAll()">Select All</button>
   </span>
@@ -62,10 +50,9 @@
 
 <!-- Bulk action bar -->
 <div class="bulk-bar hidden" id="bulk-bar">
-  <span id="bulk-count">0 orders selected</span>
+  <span id="bulk-count">0 selected</span>
   <div style="display:flex;gap:8px;margin-left:auto">
-    <button class="btn btn-sm btn-success" onclick="bulkFinalizeOrders()">Mark All Final</button>
-    <button class="btn btn-sm btn-invoice" onclick="generateInvoices()">Generate Invoice</button>
+    <button class="btn btn-sm btn-success" onclick="bulkFinalize()">Mark Final</button>
     <button class="btn btn-sm btn-secondary" onclick="clearSelection()">Clear</button>
   </div>
 </div>
@@ -79,13 +66,12 @@
 <main>
   <div class="empty-state" id="empty-state">
     <div style="font-size:2.5rem">📋</div>
-    <p>Loading items…</p>
+    <p>Loading today's items…</p>
   </div>
 
+  <!-- Orders accordion -->
   <div id="orders-container"></div>
 </main>
-
-<div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/config.js"></script>
