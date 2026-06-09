@@ -37,6 +37,25 @@ function addItem() {
   renderList();
 }
 
+// ── New customer — clear form and focus customer field ────────
+function newCustomer() {
+  document.getElementById('oe-customer').value = '';
+  document.getElementById('oe-item').value     = '';
+  document.getElementById('oe-qty').value      = '';
+  document.getElementById('oe-desc').value     = '';
+  document.getElementById('oe-customer').focus();
+}
+
+// ── Add item for a specific customer from the list ────────────
+function addItemForCustomer(name) {
+  document.getElementById('oe-customer').value = name;
+  document.getElementById('oe-item').value     = '';
+  document.getElementById('oe-qty').value      = '';
+  document.getElementById('oe-desc').value     = '';
+  document.getElementById('oe-item').focus();
+  document.getElementById('oe-item').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 // ── Remove one item ───────────────────────────────────────────
 function removeItem(idx) {
   _items.splice(idx, 1);
@@ -76,9 +95,10 @@ function renderList() {
 
   list.innerHTML = Object.entries(byCustomer).map(([cust, items]) => `
     <div style="border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden">
-      <div style="background:#f5f5f5;padding:8px 14px;font-weight:600;font-size:0.88rem;display:flex;justify-content:space-between;align-items:center">
-        <span>${escHtml(cust)}</span>
+      <div style="background:#f5f5f5;padding:8px 14px;font-weight:600;font-size:0.88rem;display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span style="flex:1">${escHtml(cust)}</span>
         <span style="color:var(--text-muted);font-weight:400;font-size:0.8rem">${items[0].date}</span>
+        <button class="btn btn-sm btn-secondary" onclick="addItemForCustomer('${escHtml(cust)}')" style="font-size:0.75rem;padding:3px 10px">＋ item</button>
       </div>
       ${items.map(it => `
         <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-top:1px solid #f0f0f0">
