@@ -315,14 +315,19 @@ function closePreview() {
 }
 
 // ── Confirm upload from preview ────────────────────────────────
+let _pendingUploadRecords = null;
+
 async function confirmUpload() {
-  const records = _previewOrders
+  _pendingUploadRecords = _previewOrders
     .filter((_, idx) => !_previewDeleted.has(idx))
     .map(({ _confidence, _match_note, ...r }) => r)
     .filter(r => r.sales_order_id && r.customer_name && r.item_name && r.requested_quantity > 0);
 
-  if (!records.length) { showToast('No rows to upload', 'error'); return; }
+  if (!_pendingUploadRecords.length) { showToast('No rows to upload', 'error'); return; }
+  await doUpload({});
+}
 
+async function doUpload(phones) {
   const btn = document.getElementById('preview-confirm-btn');
   btn.disabled    = true;
   btn.textContent = 'Uploading…';
@@ -330,25 +335,72 @@ async function confirmUpload() {
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
-      body:    JSON.stringify({ password: adminPassword, records }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON },
+      body:    JSON.stringify({ password: adminPassword, records: _pendingUploadRecords, phones }),
     });
     const result = await res.json();
 
-    if (!res.ok) {
-      showToast(`Upload failed: ${result.error}`, 'error');
+    if (result.missingPhones?.length) {
+      showUploadPhonePrompt(result.missingPhones);
       return;
     }
 
+    if (!res.ok) { showToast(`Upload failed: ${result.error}`, 'error'); return; }
+
+    hideUploadPhonePrompt();
     closePreview();
-    const uploadDate = records[0]?.invoice_date;
+    const uploadDate = _pendingUploadRecords[0]?.invoice_date;
     document.getElementById('orders-upload-status').innerHTML =
       `<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ${result.inserted} orders uploaded${uploadDate ? ' for ' + formatDate(uploadDate) : ''}</p>`;
     showToast(`${result.inserted} orders uploaded ✓`);
+    _pendingUploadRecords = null;
   } finally {
     btn.disabled    = false;
     btn.textContent = 'Confirm Upload';
   }
+}
+
+function showUploadPhonePrompt(missingNames) {
+  let wrap = document.getElementById('upload-phone-prompt');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'upload-phone-prompt';
+    wrap.className = 'phone-prompt';
+    document.getElementById('preview-modal-footer').prepend(wrap);
+  }
+  wrap.innerHTML = `
+    <h4>Phone numbers required</h4>
+    <p>Enter mobile numbers for these customers before uploading.</p>
+    ${missingNames.map(name => `
+      <div class="phone-prompt-row">
+        <label>${escapeHtml(name)}</label>
+        <input type="tel" id="uph-${slugifyAdmin(name)}" placeholder="+91 99999 99999" data-customer="${escapeHtml(name)}">
+      </div>`).join('')}
+    <button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="uploadWithPhones()">Continue →</button>
+  `;
+  wrap.style.display = 'block';
+  wrap.querySelector('input')?.focus();
+}
+
+function hideUploadPhonePrompt() {
+  const wrap = document.getElementById('upload-phone-prompt');
+  if (wrap) wrap.style.display = 'none';
+}
+
+async function uploadWithPhones() {
+  const inputs = document.querySelectorAll('#upload-phone-prompt input[data-customer]');
+  const phones = {};
+  for (const input of inputs) {
+    const name = input.getAttribute('data-customer');
+    const val  = input.value.trim();
+    if (!val) { showToast(`Enter phone for ${name}`, 'error'); input.focus(); return; }
+    phones[name] = val;
+  }
+  await doUpload(phones);
+}
+
+function slugifyAdmin(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 }
 
 // ── Packers ────────────────────────────────────────────────────

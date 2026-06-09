@@ -1,7 +1,8 @@
 // ── State ─────────────────────────────────────────────────────
-let _rowIdx    = 0;
-let _customers = [];   // string[]
-let _items     = [];   // { name, unit }[]
+let _rowIdx       = 0;
+let _customers    = [];   // string[]
+let _items        = [];   // { name, unit }[]
+let _pendingSubmit = null; // { records, newCustomers, newItems } — held while awaiting phones
 
 // ── Init ──────────────────────────────────────────────────────
 (async function init() {
@@ -126,40 +127,108 @@ async function submitOrders() {
   )].map(name => ({ name, unit: '' }));
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/add-orders`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON },
-      body:    JSON.stringify({ records, newCustomers, newItems }),
-    });
-
-    const result = await res.json();
-    if (!res.ok) throw new Error(result.error || 'Submit failed');
-
-    // Update local master lists so they appear immediately in autocomplete
-    newCustomers.forEach(c => {
-      _customers.push(c);
-      const opt = document.createElement('option'); opt.value = c;
-      document.getElementById('customer-list').appendChild(opt);
-    });
-    newItems.forEach(i => {
-      _items.push(i);
-      const opt = document.createElement('option'); opt.value = i.name;
-      document.getElementById('item-list').appendChild(opt);
-    });
-
-    showToast(`${result.inserted} order${result.inserted !== 1 ? 's' : ''} submitted ✓`);
-    status.innerHTML = `<span style="color:var(--green)">✓ ${result.inserted} items sent to packer view${newCustomers.length || newItems.length ? ' · ' + (newCustomers.length + newItems.length) + ' new master entries saved' : ''}</span>`;
-
-    // Clear table, add one fresh row
-    document.getElementById('oe-tbody').innerHTML = '';
-    addRow('');
-
+    _pendingSubmit = { records, newCustomers, newItems };
+    await doSubmit({});
   } catch (e) {
     status.innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
   } finally {
     btn.disabled    = false;
     btn.textContent = 'Submit Orders';
   }
+}
+
+// ── Core submit (called with phones map on first + retry) ─────
+async function doSubmit(phones) {
+  const { records, newCustomers, newItems } = _pendingSubmit;
+  const status = document.getElementById('oe-status');
+
+  const res    = await fetch(`${SUPABASE_URL}/functions/v1/add-orders`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON },
+    body:    JSON.stringify({ records, newCustomers, newItems, phones }),
+  });
+  const result = await res.json();
+
+  if (result.missingPhones?.length) {
+    showPhonePrompt(result.missingPhones);
+    return;
+  }
+
+  if (!res.ok) throw new Error(result.error || 'Submit failed');
+
+  // Update local autocomplete lists
+  newCustomers.forEach(c => {
+    if (!_customers.includes(c)) {
+      _customers.push(c);
+      const opt = document.createElement('option'); opt.value = c;
+      document.getElementById('customer-list').appendChild(opt);
+    }
+  });
+  newItems.forEach(i => {
+    if (!_items.find(x => x.name === i.name)) {
+      _items.push(i);
+      const opt = document.createElement('option'); opt.value = i.name;
+      document.getElementById('item-list').appendChild(opt);
+    }
+  });
+
+  hidePhonePrompt();
+  showToast(`${result.inserted} order${result.inserted !== 1 ? 's' : ''} submitted ✓`);
+  status.innerHTML = `<span style="color:var(--green)">✓ ${result.inserted} items sent to packer view</span>`;
+  _pendingSubmit = null;
+
+  document.getElementById('oe-tbody').innerHTML = '';
+  addRow('');
+}
+
+// ── Phone prompt ──────────────────────────────────────────────
+function showPhonePrompt(missingNames) {
+  let wrap = document.getElementById('oe-phone-prompt');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id        = 'oe-phone-prompt';
+    wrap.className = 'phone-prompt';
+    document.getElementById('oe-status').insertAdjacentElement('afterend', wrap);
+  }
+
+  wrap.innerHTML = `
+    <h4>Phone numbers required</h4>
+    <p>These customers aren't in the system yet — enter their mobile numbers to continue.</p>
+    ${missingNames.map(name => `
+      <div class="phone-prompt-row">
+        <label>${escHtml(name)}</label>
+        <input type="tel" id="ph-${slugify(name)}" placeholder="+91 99999 99999"
+          data-customer="${escHtml(name)}">
+      </div>`).join('')}
+    <button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="submitWithPhones()">Continue →</button>
+  `;
+  wrap.style.display = 'block';
+  wrap.querySelector('input')?.focus();
+}
+
+function hidePhonePrompt() {
+  const wrap = document.getElementById('oe-phone-prompt');
+  if (wrap) wrap.style.display = 'none';
+}
+
+async function submitWithPhones() {
+  const inputs = document.querySelectorAll('#oe-phone-prompt input[data-customer]');
+  const phones = {};
+  for (const input of inputs) {
+    const name  = input.getAttribute('data-customer');
+    const value = input.value.trim();
+    if (!value) { showToast(`Enter phone for ${name}`, 'error'); input.focus(); return; }
+    phones[name] = value;
+  }
+  try {
+    await doSubmit(phones);
+  } catch (e) {
+    document.getElementById('oe-status').innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
+  }
+}
+
+function slugify(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 }
 
 // ── Utility ───────────────────────────────────────────────────

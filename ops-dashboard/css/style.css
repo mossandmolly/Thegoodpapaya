@@ -851,3 +851,46 @@ input[type=checkbox] {
 .oe-input:focus { outline: none; border-color: var(--brand); }
 
 .oe-qty-input { text-align: center; }
+
+/* ── Phone prompt ── */
+.phone-prompt {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1.5px solid #fde68a;
+  border-radius: 10px;
+  background: #fffbeb;
+}
+.phone-prompt h4 {
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+  color: #92400e;
+}
+.phone-prompt p {
+  font-size: 0.8rem;
+  color: #92400e;
+  margin: 0 0 12px 0;
+}
+.phone-prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.phone-prompt-row label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  min-width: 120px;
+  flex: 1;
+}
+.phone-prompt-row input {
+  flex: 1;
+  min-width: 160px;
+  padding: 7px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-family: 'DM Sans', sans-serif;
+}
+.phone-prompt-row input:focus { outline: none; border-color: var(--brand); }

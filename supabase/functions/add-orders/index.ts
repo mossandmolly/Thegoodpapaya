@@ -1,6 +1,6 @@
 // Supabase Edge Function — insert manually entered orders into operations
-// Called by order-entry.js with: { records: [...], newCustomers?: string[], newItems?: {name,unit}[] }
-// Saves any new customer/item names into master tables for future autocomplete.
+// Looks up phone numbers for all customers; returns { missingPhones } if any absent.
+// Accepts optional phones map on resubmit; saves new phones to customers table.
 
 function env(key: string) {
   const val = Deno.env.get(key);
@@ -14,15 +14,36 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
 };
 
-function sbHeaders(serviceKey: string) {
-  return { 'Authorization': `Bearer ${serviceKey}`, 'apikey': serviceKey, 'Content-Type': 'application/json' };
+function sbHeaders() {
+  return {
+    'Authorization': `Bearer ${env('SUPABASE_SERVICE_ROLE_KEY')}`,
+    'apikey':        env('SUPABASE_SERVICE_ROLE_KEY'),
+    'Content-Type':  'application/json',
+  };
 }
 
-async function sbUpsert(url: string, serviceKey: string, table: string, rows: any[], onConflict: string) {
+function normalizePhone(raw: string): string | null {
+  const d = (raw ?? '').replace(/\D/g, '');
+  if (d.length === 10 && /^[6-9]/.test(d))                          return '+91' + d;
+  if (d.length === 12 && d.startsWith('91') && /^[6-9]/.test(d[2])) return '+' + d;
+  if (d.length === 11 && d.startsWith('0')  && /^[6-9]/.test(d[1])) return '+91' + d.slice(1);
+  return null;
+}
+
+async function fetchAllPhones(): Promise<Map<string, string>> {
+  const url = `${env('SUPABASE_URL')}/rest/v1/customers?select=customer_name,phone_number`;
+  const res  = await fetch(url, { headers: sbHeaders() });
+  const rows = res.ok ? await res.json() : [];
+  const map  = new Map<string, string>();
+  for (const r of rows) map.set((r.customer_name as string).toLowerCase().trim(), r.phone_number);
+  return map;
+}
+
+async function sbUpsert(table: string, rows: any[], onConflict: string) {
   if (!rows.length) return;
-  await fetch(`${url}/rest/v1/${table}?on_conflict=${onConflict}`, {
+  await fetch(`${env('SUPABASE_URL')}/rest/v1/${table}?on_conflict=${onConflict}`, {
     method:  'POST',
-    headers: { ...sbHeaders(serviceKey), 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    headers: { ...sbHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal' },
     body:    JSON.stringify(rows),
   });
 }
@@ -31,7 +52,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { records, newCustomers = [], newItems = [] } = await req.json();
+    const { records, phones = {}, newCustomers = [], newItems = [] } = await req.json();
 
     if (!records?.length) {
       return new Response(
@@ -40,33 +61,64 @@ Deno.serve(async (req) => {
       );
     }
 
-    const supabaseUrl = env('SUPABASE_URL');
-    const serviceKey  = env('SUPABASE_SERVICE_ROLE_KEY');
+    // ── Phone resolution ──────────────────────────────────────
+    const phoneMap   = await fetchAllPhones();
+    const newEntries: { customer_name: string; phone_number: string }[] = [];
+    const missing:    string[] = [];
 
-    // Insert orders
-    const res = await fetch(`${supabaseUrl}/rest/v1/operations`, {
-      method:  'POST',
-      headers: { ...sbHeaders(serviceKey), 'Prefer': 'return=minimal' },
-      body:    JSON.stringify(records),
-    });
+    const uniqueCustomers = [...new Set((records as any[]).map(r => (r.customer_name as string).trim()))];
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message ?? `Insert failed: ${res.status}`);
+    for (const name of uniqueCustomers) {
+      const key      = name.toLowerCase();
+      let   phone    = phoneMap.get(key) ?? null;
+
+      const supplied = phones[name] ?? phones[key] ?? null;
+      if (supplied) {
+        const norm = normalizePhone(supplied);
+        if (norm) {
+          phone = norm;
+          newEntries.push({ customer_name: name, phone_number: norm });
+        }
+      }
+
+      if (!phone) missing.push(name);
+      else phoneMap.set(key, phone);
     }
 
-    // Save new master entries in parallel (best effort — don't fail the order if this errors)
+    if (missing.length) {
+      return new Response(
+        JSON.stringify({ missingPhones: missing }),
+        { headers: { ...CORS, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Save new phones to customers table
+    await sbUpsert('customers', newEntries, 'customer_name');
+
+    // Attach phone to every record
+    const enriched = (records as any[]).map(r => ({
+      ...r,
+      phone_number: phoneMap.get((r.customer_name as string).toLowerCase().trim()),
+    }));
+
+    // Insert orders
+    const res = await fetch(`${env('SUPABASE_URL')}/rest/v1/operations`, {
+      method:  'POST',
+      headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
+      body:    JSON.stringify(enriched),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? `Insert failed: ${res.status}`);
+
+    // Save new master entries (best effort)
     await Promise.allSettled([
-      sbUpsert(supabaseUrl, serviceKey, 'customer_master',
-        (newCustomers as string[]).filter(Boolean).map(n => ({ name: n.trim(), source: 'manual' })),
-        'name'),
-      sbUpsert(supabaseUrl, serviceKey, 'item_master',
-        (newItems as any[]).filter(i => i?.name).map(i => ({ name: i.name.trim(), unit: i.unit ?? '', source: 'manual' })),
-        'name'),
+      sbUpsert('customer_master',
+        (newCustomers as string[]).filter(Boolean).map(n => ({ name: n.trim(), source: 'manual' })), 'name'),
+      sbUpsert('item_master',
+        (newItems as any[]).filter(i => i?.name).map(i => ({ name: i.name.trim(), unit: i.unit ?? '', source: 'manual' })), 'name'),
     ]);
 
     return new Response(
-      JSON.stringify({ inserted: records.length }),
+      JSON.stringify({ inserted: enriched.length }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     );
 
