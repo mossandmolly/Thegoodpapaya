@@ -1,5 +1,6 @@
 // Supabase Edge Function — returns customer and item master lists for order-entry autocomplete
-// Serves from item_master table (Supabase) — only calls Zoho if table is empty or stale (>1hr)
+// Customers: read from `customers` table (synced by sync-invoices, phone required)
+// Items: cached in `item_master`, refreshed from Zoho when stale (>1hr)
 
 function env(key: string, fallback = '') { return Deno.env.get(key) ?? fallback; }
 
@@ -30,22 +31,14 @@ async function sbUpsert(table: string, rows: any[], onConflict: string) {
   });
 }
 
-function normaliseName(raw: string): string {
-  const s = raw.trim().replace(/\s+/g, ' ');
-  const i = s.indexOf(' ');
-  if (i === -1) return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
-  const first = s.slice(0, i);
-  const rest  = s.slice(i + 1);
-  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() + ' ' + rest;
-}
-
 function deduplicateNames(names: string[]): string[] {
-  const map = new Map<string, string>();
+  const seen = new Map<string, string>();
   for (const raw of names) {
-    const norm = normaliseName(raw);
-    if (!map.has(norm.toLowerCase())) map.set(norm.toLowerCase(), norm);
+    const trimmed = (raw || '').trim();
+    if (!trimmed) continue;
+    if (!seen.has(trimmed.toLowerCase())) seen.set(trimmed.toLowerCase(), trimmed);
   }
-  return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
 }
 
 async function fetchZohoItems(): Promise<{ name: string; unit: string }[]> {
@@ -75,21 +68,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    // ── Customers: read from DB only (already synced by sync-invoices) ──
-    const [existingCustomers, masterCustomers] = await Promise.all([
-      sbSelect('customers',       'customer_name'),
-      sbSelect('customer_master', 'name'),
-    ]);
-
-    const allNames = [
-      ...existingCustomers.map((r: any) => r.customer_name as string),
-      ...masterCustomers.map((r: any) => r.name as string),
-    ].filter(Boolean);
-
-    const customers = deduplicateNames(allNames);
-
-    // Back-fill normalised names (fire-and-forget, don't await)
-    sbUpsert('customer_master', customers.map(n => ({ name: n, source: 'zoho' })), 'name');
+    // ── Customers: read directly from `customers` table ──
+    const rows = await sbSelect('customers', 'customer_name');
+    const customers = deduplicateNames(rows.map((r: any) => r.customer_name));
 
     // ── Items: serve from item_master; only hit Zoho if stale/empty ──
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
