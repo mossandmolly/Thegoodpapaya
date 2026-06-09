@@ -802,3 +802,13 @@ input[type=checkbox] {
   text-align: center;
 }
 .preview-qty-input:focus { outline: none; border-color: var(--brand); }
+
+.field-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
