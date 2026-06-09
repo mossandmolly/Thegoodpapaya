@@ -24,60 +24,37 @@
   </div>
 </header>
 
+<!-- Autocomplete sources -->
+<datalist id="customer-list"></datalist>
+<datalist id="item-list"></datalist>
+
 <div class="section-header" style="display:block">
   <h2>Order Entry</h2>
-  <p class="count" id="section-count">Add items below, then submit</p>
+  <p class="count" id="section-count">Loading…</p>
 </div>
 
-<main style="max-width:680px;margin:0 auto;padding:16px">
+<main style="padding:12px 16px">
 
-  <!-- Entry form -->
-  <div class="admin-section" style="margin-bottom:16px">
-    <div style="display:flex;flex-direction:column;gap:10px">
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <div style="flex:1;min-width:140px">
-          <label class="field-label">Date</label>
-          <input type="date" id="oe-date" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:0.9rem;font-family:'DM Sans',sans-serif;box-sizing:border-box">
-        </div>
-        <div style="flex:2;min-width:180px">
-          <label class="field-label">Customer / Door number</label>
-          <input type="text" id="oe-customer" placeholder="e.g. Villa 83, B-12" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:0.9rem;font-family:'DM Sans',sans-serif;box-sizing:border-box">
-        </div>
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <div style="flex:2;min-width:160px">
-          <label class="field-label">Fruit / Item</label>
-          <input type="text" id="oe-item" placeholder="e.g. Alphonso Mango" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:0.9rem;font-family:'DM Sans',sans-serif;box-sizing:border-box">
-        </div>
-        <div style="flex:1;min-width:80px">
-          <label class="field-label">Qty</label>
-          <input type="number" id="oe-qty" placeholder="1" min="0" step="0.01" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:0.9rem;font-family:'DM Sans',sans-serif;box-sizing:border-box">
-        </div>
-      </div>
-
-      <div>
-        <label class="field-label">Description <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
-        <input type="text" id="oe-desc" placeholder="Any notes for the packer" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:0.9rem;font-family:'DM Sans',sans-serif;box-sizing:border-box">
-      </div>
-
-      <button class="btn btn-primary" onclick="addItem()" style="align-self:flex-start;padding:10px 28px">+ Add item</button>
-      <button class="btn btn-secondary btn-sm" onclick="newCustomer()" style="align-self:flex-start;margin-top:-4px">👤 New customer</button>
-    </div>
+  <div style="overflow-x:auto">
+    <table class="oe-table" id="oe-table">
+      <thead>
+        <tr>
+          <th style="width:130px">Date</th>
+          <th style="min-width:160px">Customer</th>
+          <th style="min-width:160px">Item</th>
+          <th style="width:72px">Qty</th>
+          <th style="min-width:140px">Description</th>
+          <th style="width:36px"></th>
+        </tr>
+      </thead>
+      <tbody id="oe-tbody"></tbody>
+    </table>
   </div>
 
-  <!-- Pending items list -->
-  <div id="oe-list-wrap" class="hidden">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <h3 style="font-size:0.95rem;margin:0">Items to submit <span id="oe-count" style="color:var(--text-muted);font-weight:400"></span></h3>
-      <button class="btn btn-sm btn-secondary" onclick="clearAll()">Clear all</button>
-    </div>
-    <div id="oe-list"></div>
-    <div style="margin-top:14px;display:flex;align-items:center;gap:12px">
-      <button class="btn btn-success" id="oe-submit-btn" onclick="submitOrders()">Submit Orders</button>
-      <span id="oe-status" style="font-size:0.85rem"></span>
-    </div>
+  <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <button class="btn btn-secondary btn-sm" onclick="addRow()">+ Add row</button>
+    <button class="btn btn-success" id="oe-submit-btn" onclick="submitOrders()">Submit Orders</button>
+    <span id="oe-status" style="font-size:0.85rem"></span>
   </div>
 
 </main>
