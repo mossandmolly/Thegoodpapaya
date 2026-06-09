@@ -894,3 +894,37 @@ input[type=checkbox] {
   font-family: 'DM Sans', sans-serif;
 }
 .phone-prompt-row input:focus { outline: none; border-color: var(--brand); }
+
+/* ── Combobox dropdown ── */
+.cb-dropdown {
+  position: absolute;
+  display: none;
+  background: white;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 1000;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.cb-item {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  color: var(--text);
+}
+.cb-item:hover { background: var(--bg); }
+.cb-item strong { color: var(--brand); font-weight: 600; }
+
+/* ── Order entry: per-row add button ── */
+.oe-add-btn {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1.5px solid #a7d7a9;
+  padding: 5px 9px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.oe-add-btn:hover { background: #dcfce7; }

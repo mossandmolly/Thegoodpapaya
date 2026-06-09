@@ -24,10 +24,6 @@
   </div>
 </header>
 
-<!-- Autocomplete sources -->
-<datalist id="customer-list"></datalist>
-<datalist id="item-list"></datalist>
-
 <div class="section-header" style="display:block">
   <h2>Order Entry</h2>
   <p class="count" id="section-count">Loading…</p>
@@ -39,22 +35,21 @@
     <table class="oe-table" id="oe-table">
       <thead>
         <tr>
-          <th style="width:130px">Date</th>
-          <th style="min-width:160px">Customer</th>
-          <th style="min-width:160px">Item</th>
-          <th style="width:72px">Qty</th>
-          <th style="min-width:140px">Description</th>
-          <th style="width:36px"></th>
+          <th style="width:108px">Date</th>
+          <th style="width:120px">Customer</th>
+          <th style="min-width:150px">Item</th>
+          <th style="width:64px">Qty</th>
+          <th style="min-width:110px">Notes</th>
+          <th style="width:32px"></th>
+          <th style="width:32px"></th>
         </tr>
       </thead>
       <tbody id="oe-tbody"></tbody>
     </table>
   </div>
 
-  <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
-    <button class="btn btn-secondary btn-sm" onclick="addRow()">+ Add item</button>
+  <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between">
     <button class="btn btn-secondary btn-sm" onclick="addRow('')">+ New customer</button>
-    <div style="flex:1"></div>
     <button class="btn btn-primary btn-sm" id="oe-submit-btn" onclick="submitOrders()">Submit orders →</button>
   </div>
   <div id="oe-status" style="font-size:0.85rem;margin-top:6px"></div>

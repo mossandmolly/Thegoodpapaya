@@ -1,11 +1,76 @@
 // ── State ─────────────────────────────────────────────────────
-let _rowIdx       = 0;
-let _customers    = [];   // string[]
-let _items        = [];   // { name, unit }[]
-let _pendingSubmit = null; // { records, newCustomers, newItems } — held while awaiting phones
+let _rowIdx        = 0;
+let _customers     = [];   // string[]
+let _items         = [];   // { name, unit }[]
+let _pendingSubmit = null;
+
+// ── Singleton combobox ────────────────────────────────────
+let _cbEl    = null;
+let _cbInput = null;
+let _cbOpts  = null;
+
+function _cbInit() {
+  _cbEl = document.createElement('div');
+  _cbEl.className = 'cb-dropdown';
+  document.body.appendChild(_cbEl);
+
+  _cbEl.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const item = e.target.closest('.cb-item');
+    if (!item || !_cbInput) return;
+    _cbInput.value = item.dataset.value;
+    _cbInput.dispatchEvent(new Event('change', { bubbles: true }));
+    _cbClose();
+  });
+
+  document.addEventListener('mousedown', e => {
+    if (_cbEl && !_cbEl.contains(e.target) && e.target !== _cbInput) _cbClose();
+  });
+}
+
+function _cbOpen(input, opts) {
+  _cbInput = input;
+  _cbOpts  = opts;
+  _cbRender();
+}
+
+function _cbRender() {
+  const q       = (_cbInput.value || '').toLowerCase();
+  const matches = (_cbOpts || []).filter(o => !q || o.toLowerCase().includes(q)).slice(0, 30);
+  if (!matches.length) { _cbClose(); return; }
+
+  _cbEl.innerHTML = matches.map(o => {
+    const idx = q ? o.toLowerCase().indexOf(q) : -1;
+    const hl  = idx >= 0
+      ? escHtml(o.slice(0, idx)) + '<strong>' + escHtml(o.slice(idx, idx + q.length)) + '</strong>' + escHtml(o.slice(idx + q.length))
+      : escHtml(o);
+    return `<div class="cb-item" data-value="${escHtml(o)}">${hl}</div>`;
+  }).join('');
+
+  const r = _cbInput.getBoundingClientRect();
+  Object.assign(_cbEl.style, {
+    display: 'block',
+    left:    r.left + window.scrollX + 'px',
+    top:     r.bottom + window.scrollY + 2 + 'px',
+    width:   Math.max(r.width, 180) + 'px',
+  });
+}
+
+function _cbClose() {
+  if (_cbEl) _cbEl.style.display = 'none';
+  _cbInput = null;
+}
+
+function attachCombobox(input, getOpts) {
+  input.addEventListener('focus',   () => _cbOpen(input, getOpts()));
+  input.addEventListener('input',   () => _cbInput === input ? _cbRender() : _cbOpen(input, getOpts()));
+  input.addEventListener('blur',    () => setTimeout(() => { if (_cbInput === input) _cbClose(); }, 160));
+  input.addEventListener('keydown', e  => { if (e.key === 'Escape' || e.key === 'Tab') _cbClose(); });
+}
 
 // ── Init ──────────────────────────────────────────────────────
 (async function init() {
+  _cbInit();
   document.getElementById('section-count').textContent = 'Loading customers and items…';
 
   try {
@@ -18,19 +83,6 @@ let _pendingSubmit = null; // { records, newCustomers, newItems } — held while
   } catch (e) {
     console.warn('Could not load masters:', e.message);
   }
-
-  const custList = document.getElementById('customer-list');
-  _customers.forEach(c => {
-    const opt = document.createElement('option'); opt.value = c;
-    custList.appendChild(opt);
-  });
-
-  const itemList = document.getElementById('item-list');
-  _items.forEach(i => {
-    const opt = document.createElement('option'); opt.value = i.name;
-    if (i.unit) opt.label = i.unit;
-    itemList.appendChild(opt);
-  });
 
   document.getElementById('section-count').textContent =
     `${_customers.length} customers · ${_items.length} items loaded`;
@@ -48,19 +100,26 @@ function addRow(prefillCustomer) {
   const tr = document.createElement('tr');
   tr.id    = `oe-row-${n}`;
   tr.innerHTML = `
-    <td><input class="oe-input" type="date"   id="r${n}-date"     value="${lastDate}"></td>
-    <td><input class="oe-input" type="text"   id="r${n}-customer" value="${escHtml(lastCust)}" list="customer-list" placeholder="Villa 83" autocomplete="off"></td>
-    <td><input class="oe-input" type="text"   id="r${n}-item"     list="item-list"    placeholder="Alphonso Mango" autocomplete="off"></td>
-    <td><input class="oe-input oe-qty-input"  type="number" id="r${n}-qty" placeholder="1" min="0" step="0.01"></td>
-    <td><input class="oe-input" type="text"   id="r${n}-desc"     placeholder="Notes…"></td>
+    <td><input class="oe-input" type="date"  id="r${n}-date"     value="${lastDate}"></td>
+    <td><input class="oe-input" type="text"  id="r${n}-customer" value="${escHtml(lastCust)}" placeholder="Villa 83"  autocomplete="off"></td>
+    <td><input class="oe-input" type="text"  id="r${n}-item"     placeholder="Item" autocomplete="off"></td>
+    <td><input class="oe-input oe-qty-input" type="number" id="r${n}-qty" placeholder="1" min="0" step="0.01"></td>
+    <td><input class="oe-input" type="text"  id="r${n}-desc"     placeholder="Notes…"></td>
+    <td><button class="btn btn-sm oe-add-btn" onclick="addRow(document.getElementById('r${n}-customer').value.trim())" title="Add item for same customer">+</button></td>
     <td><button class="btn btn-sm btn-danger" onclick="removeRow(${n})">×</button></td>`;
 
   document.getElementById('oe-tbody').appendChild(tr);
-  document.getElementById(`r${n}-item`).focus();
 
-  // Enter on qty → add another item for same customer
+  const custInput = document.getElementById(`r${n}-customer`);
+  const itemInput = document.getElementById(`r${n}-item`);
+
+  attachCombobox(custInput, () => _customers);
+  attachCombobox(itemInput, () => _items.map(i => i.name));
+
+  itemInput.focus();
+
   document.getElementById(`r${n}-qty`).addEventListener('keydown', e => {
-    if (e.key === 'Enter') addRow(document.getElementById(`r${n}-customer`).value.trim());
+    if (e.key === 'Enter') addRow(custInput.value.trim());
   });
 }
 
@@ -70,9 +129,8 @@ function removeRow(n) {
 
 // ── Collect all non-empty rows ────────────────────────────────
 function collectRows() {
-  const rows  = [];
-  const trs   = document.getElementById('oe-tbody').querySelectorAll('tr');
-  trs.forEach(tr => {
+  const rows = [];
+  document.getElementById('oe-tbody').querySelectorAll('tr').forEach(tr => {
     const n    = tr.id.replace('oe-row-', '');
     const date = document.getElementById(`r${n}-date`)?.value;
     const cust = document.getElementById(`r${n}-customer`)?.value.trim();
@@ -115,7 +173,6 @@ async function submitOrders() {
     status:             'draft',
   }));
 
-  // Detect new customers / items not in master lists
   const knownCustomers = new Set(_customers.map(c => c.toLowerCase()));
   const knownItems     = new Set(_items.map(i => i.name.toLowerCase()));
 
@@ -137,7 +194,7 @@ async function submitOrders() {
   }
 }
 
-// ── Core submit (called with phones map on first + retry) ─────
+// ── Core submit ─────────────────────────────────────────────
 async function doSubmit(phones) {
   const { records, newCustomers, newItems } = _pendingSubmit;
   const status = document.getElementById('oe-status');
@@ -149,28 +206,11 @@ async function doSubmit(phones) {
   });
   const result = await res.json();
 
-  if (result.missingPhones?.length) {
-    showPhonePrompt(result.missingPhones);
-    return;
-  }
-
+  if (result.missingPhones?.length) { showPhonePrompt(result.missingPhones); return; }
   if (!res.ok) throw new Error(result.error || 'Submit failed');
 
-  // Update local autocomplete lists
-  newCustomers.forEach(c => {
-    if (!_customers.includes(c)) {
-      _customers.push(c);
-      const opt = document.createElement('option'); opt.value = c;
-      document.getElementById('customer-list').appendChild(opt);
-    }
-  });
-  newItems.forEach(i => {
-    if (!_items.find(x => x.name === i.name)) {
-      _items.push(i);
-      const opt = document.createElement('option'); opt.value = i.name;
-      document.getElementById('item-list').appendChild(opt);
-    }
-  });
+  newCustomers.forEach(c => { if (!_customers.includes(c)) _customers.push(c); });
+  newItems.forEach(i => { if (!_items.find(x => x.name === i.name)) _items.push(i); });
 
   hidePhonePrompt();
   showToast(`${result.inserted} order${result.inserted !== 1 ? 's' : ''} submitted ✓`);
@@ -181,7 +221,7 @@ async function doSubmit(phones) {
   addRow('');
 }
 
-// ── Phone prompt ──────────────────────────────────────────────
+// ── Phone prompt ────────────────────────────────────────────
 function showPhonePrompt(missingNames) {
   let wrap = document.getElementById('oe-phone-prompt');
   if (!wrap) {
@@ -190,18 +230,15 @@ function showPhonePrompt(missingNames) {
     wrap.className = 'phone-prompt';
     document.getElementById('oe-status').insertAdjacentElement('afterend', wrap);
   }
-
   wrap.innerHTML = `
     <h4>Phone numbers required</h4>
     <p>These customers aren't in the system yet — enter their mobile numbers to continue.</p>
     ${missingNames.map(name => `
       <div class="phone-prompt-row">
         <label>${escHtml(name)}</label>
-        <input type="tel" id="ph-${slugify(name)}" placeholder="+91 99999 99999"
-          data-customer="${escHtml(name)}">
+        <input type="tel" id="ph-${slugify(name)}" placeholder="+91 99999 99999" data-customer="${escHtml(name)}">
       </div>`).join('')}
-    <button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="submitWithPhones()">Continue →</button>
-  `;
+    <button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="submitWithPhones()">Continue →</button>`;
   wrap.style.display = 'block';
   wrap.querySelector('input')?.focus();
 }
@@ -212,26 +249,19 @@ function hidePhonePrompt() {
 }
 
 async function submitWithPhones() {
-  const inputs = document.querySelectorAll('#oe-phone-prompt input[data-customer]');
   const phones = {};
-  for (const input of inputs) {
-    const name  = input.getAttribute('data-customer');
-    const value = input.value.trim();
-    if (!value) { showToast(`Enter phone for ${name}`, 'error'); input.focus(); return; }
-    phones[name] = value;
+  for (const input of document.querySelectorAll('#oe-phone-prompt input[data-customer]')) {
+    const name = input.getAttribute('data-customer');
+    const val  = input.value.trim();
+    if (!val) { showToast(`Enter phone for ${name}`, 'error'); input.focus(); return; }
+    phones[name] = val;
   }
-  try {
-    await doSubmit(phones);
-  } catch (e) {
-    document.getElementById('oe-status').innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
-  }
+  try { await doSubmit(phones); }
+  catch (e) { document.getElementById('oe-status').innerHTML = `<span style="color:var(--red)">${e.message}</span>`; }
 }
 
-function slugify(s) {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
-}
+function slugify(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '-'); }
 
-// ── Utility ───────────────────────────────────────────────────
 function escHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
