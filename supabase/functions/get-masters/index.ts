@@ -31,15 +31,89 @@ async function sbUpsert(table: string, rows: any[], onConflict: string) {
   });
 }
 
-function deduplicateNames(names: string[]): string[] {
-  const seen = new Map<string, string>();
-  for (const raw of names) {
-    const trimmed = (raw || '').trim();
-    if (!trimmed) continue;
-    if (!seen.has(trimmed.toLowerCase())) seen.set(trimmed.toLowerCase(), trimmed);
-  }
-  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+// ── Name normalisation ────────────────────────────────────────────────────────
+
+// Dedup key: strip everything except letters, digits, spaces → lowercase.
+// "Villa-83", "VILLA 83", "villa 83" all → "villa 83"
+function dedupKey(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
+
+// Score a raw Zoho customer name — higher = preferred candidate when duplicates exist.
+// Prefers: proper mixed casing, starts with letters (society first, not door number),
+// space-separated parts, no special characters like parens/slashes/quotes.
+function scoreCustomerName(name: string): number {
+  let score = 0;
+  if (name !== name.toUpperCase() && name !== name.toLowerCase()) score += 4; // mixed case
+  if (/^[A-Za-z]/.test(name))                                                 score += 3; // letter-first (society then door)
+  if (/ /.test(name))                                                          score += 2; // space-separated
+  if (!/[()\/\\'"]/.test(name))                                               score += 1; // no special chars
+  return score;
+}
+
+// Normalise a customer name word-by-word:
+//   - Short alphanumeric unit codes (B-12, 4A, A101, ≤5 chars containing a digit) → UPPERCASE
+//   - Pure numbers (83, 4) → keep as-is
+//   - Regular words → Sentence-case (first letter up, rest down)
+function normaliseCustomerName(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ').split(' ').map(word => {
+    if (!word) return word;
+    if (/^\d+$/.test(word)) return word;                                        // pure number
+    if (word.length <= 5 && /\d/.test(word) && /^[A-Za-z\d][\w\-\/]*$/.test(word)) {
+      return word.toUpperCase();                                                 // unit code: B-12, 4A, C/102
+    }
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();          // regular word
+  }).join(' ');
+}
+
+// Normalise an item name: sentence case (first letter up, rest down).
+// "ALPHONSO MANGOES" → "Alphonso mangoes"
+// "Dragon Fruit (1 kg)" → "Dragon fruit (1 kg)"
+function normaliseItemName(raw: string): string {
+  const s = raw.trim().replace(/\s+/g, ' ');
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+// Deduplicate customer names: group by dedupKey, pick best-scored candidate, normalise it.
+function deduplicateCustomers(names: string[]): string[] {
+  const groups = new Map<string, string[]>();
+  for (const name of names) {
+    const key = dedupKey(name);
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(name);
+  }
+  const result: string[] = [];
+  for (const candidates of groups.values()) {
+    const best = [...candidates].sort((a, b) => scoreCustomerName(b) - scoreCustomerName(a))[0];
+    result.push(normaliseCustomerName(best));
+  }
+  return result.sort((a, b) => a.localeCompare(b));
+}
+
+// Deduplicate items: group by dedupKey, pick best-scored candidate (prefers mixed case),
+// then normalise to sentence case.
+function deduplicateItems(items: { name: string; unit: string }[]): { name: string; unit: string }[] {
+  const groups = new Map<string, { name: string; unit: string }[]>();
+  for (const item of items) {
+    const key = dedupKey(item.name);
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(item);
+  }
+  const result: { name: string; unit: string }[] = [];
+  for (const candidates of groups.values()) {
+    const best = [...candidates].sort((a, b) => {
+      const mixA = a.name !== a.name.toUpperCase() && a.name !== a.name.toLowerCase() ? 1 : 0;
+      const mixB = b.name !== b.name.toUpperCase() && b.name !== b.name.toLowerCase() ? 1 : 0;
+      return mixB - mixA;
+    })[0];
+    result.push({ name: normaliseItemName(best.name), unit: best.unit });
+  }
+  return result.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ── Zoho helpers ──────────────────────────────────────────────────────────────
 
 async function getZohoToken(): Promise<{ access_token: string; orgId: string } | null> {
   const cid = env('ZOHO_CLIENT_ID'), cs = env('ZOHO_CLIENT_SECRET'), rt = env('ZOHO_REFRESH_TOKEN');
@@ -65,18 +139,20 @@ async function fetchAndCacheItems(accessToken: string, orgId: string): Promise<n
     { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
   );
   const data = await res.json();
-  const items = (data.items ?? []).map((i: any) => ({
-    name:   (i.name ?? '').trim(),
-    unit:   (i.unit ?? '').trim(),
-    source: 'zoho',
-  })).filter((i: any) => i.name);
 
-  await sbUpsert('item_master', items, 'name');
-  return items.length;
+  const raw = (data.items ?? [])
+    .map((i: any) => ({ name: (i.name ?? '').trim(), unit: (i.unit ?? '').trim() }))
+    .filter((i: any) => i.name);
+
+  const normalised = deduplicateItems(raw);
+  if (normalised.length) {
+    await sbUpsert('item_master', normalised.map(i => ({ ...i, source: 'zoho' })), 'name');
+  }
+  return normalised.length;
 }
 
 async function fetchAndCacheCustomers(accessToken: string, orgId: string): Promise<number> {
-  const rows: { customer_name: string; phone_number: string }[] = [];
+  const raw: { customer_name: string; phone_number: string }[] = [];
   let page = 1;
 
   while (true) {
@@ -91,16 +167,35 @@ async function fetchAndCacheCustomers(accessToken: string, orgId: string): Promi
     for (const c of contacts) {
       const phone = ((c.mobile || c.phone || '') as string).trim().replace(/[\s\-()]/g, '');
       const name  = ((c.contact_name || '') as string).trim();
-      if (name && phone) rows.push({ customer_name: name, phone_number: phone });
+      if (name && phone) raw.push({ customer_name: name, phone_number: phone });
     }
 
     if (!data.page_context?.has_more_page) break;
     page++;
   }
 
-  if (rows.length) await sbUpsert('customers', rows, 'customer_name');
-  return rows.length;
+  if (!raw.length) return 0;
+
+  // Deduplicate and normalise names; preserve the phone from the best-scored entry.
+  const groups = new Map<string, { customer_name: string; phone_number: string }[]>();
+  for (const row of raw) {
+    const key = dedupKey(row.customer_name);
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(row);
+  }
+
+  const normalised: { customer_name: string; phone_number: string }[] = [];
+  for (const candidates of groups.values()) {
+    const best = [...candidates].sort((a, b) => scoreCustomerName(b.customer_name) - scoreCustomerName(a.customer_name))[0];
+    normalised.push({ customer_name: normaliseCustomerName(best.customer_name), phone_number: best.phone_number });
+  }
+
+  await sbUpsert('customers', normalised, 'customer_name');
+  return normalised.length;
 }
+
+// ── Handler ───────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -113,7 +208,6 @@ Deno.serve(async (req) => {
     let syncedItems     = 0;
 
     if (force) {
-      // ── Force sync: pull everything from Zoho right now ──
       const zoho = await getZohoToken();
       if (zoho) {
         [syncedCustomers, syncedItems] = await Promise.all([
@@ -122,7 +216,7 @@ Deno.serve(async (req) => {
         ]);
       }
     } else {
-      // ── Normal path: lazy refresh items in background if stale (>1hr) ──
+      // Lazy refresh items in background if cache is stale (>1hr)
       const oneHourAgo  = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       const recentItems = await sbSelect('item_master', 'name',
         `&order=created_at.desc&limit=1&created_at=gte.${encodeURIComponent(oneHourAgo)}`);
@@ -134,16 +228,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Read from DB and return ──
+    // Read from DB and return normalised lists
     const [customerRows, storedItems] = await Promise.all([
       sbSelect('customers', 'customer_name'),
       sbSelect('item_master', 'name,unit'),
     ]);
 
-    const customers = deduplicateNames(customerRows.map((r: any) => r.customer_name));
-    const items     = (storedItems as any[])
-      .map(r => ({ name: r.name as string, unit: (r.unit ?? '') as string }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    const customers = deduplicateCustomers(customerRows.map((r: any) => r.customer_name));
+    const items     = deduplicateItems(
+      (storedItems as any[]).map(r => ({ name: r.name as string, unit: (r.unit ?? '') as string }))
+    );
 
     return new Response(
       JSON.stringify({ customers, items, ...(force ? { syncedCustomers, syncedItems } : {}) }),
