@@ -11,7 +11,7 @@ let adminPassword = null;
     return;
   }
   try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/upload-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
       body: JSON.stringify({ password: stored, records: [] }),
@@ -41,7 +41,7 @@ async function checkPassword() {
 
   let res;
   try {
-    res = await fetch(`${SUPABASE_URL}/functions/v1/upload-orders`, {
+    res = await fetch(SUPABASE_URL + '/functions/v1/upload-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
       body: JSON.stringify({ password: pw, records: [] }),
@@ -141,9 +141,9 @@ async function syncCatalog() {
   const btn = document.getElementById('sync-btn');
   btn.textContent = 'Syncing…'; btn.disabled = true;
   try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/sync-catalog`, {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/sync-catalog', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON },
       body: JSON.stringify({}),
     });
     const data = await res.json();
@@ -171,7 +171,17 @@ async function loadAll() {
   if (d1 && !d1.value) d1.value = todayIST();
   const d2 = document.getElementById('csv-default-date');
   if (d2 && !d2.value) d2.value = todayIST();
-  await Promise.all([loadCatalog(), loadPackers(), loadAssignments(), loadNotes(), loadSnapshots(), loadMissingLinks()]);
+  await Promise.all([loadCatalog(), loadSocieties(), loadPackers(), loadAssignments(), loadNotes(), loadSnapshots(), loadMissingLinks()]);
+}
+
+async function loadSocieties() {
+  const { data } = await sb.from('societies').select('canonical_name, aliases').eq('active', true);
+  if (data && data.length) {
+    const canonicals = data.map(s => s.canonical_name);
+    const aliasMap = {};
+    data.forEach(s => (s.aliases || []).forEach(a => { aliasMap[a] = s.canonical_name; }));
+    if (typeof setSocieties === 'function') setSocieties(canonicals, aliasMap);
+  }
 }
 
 // ── Missing payment links ──────────────────────────────────────
@@ -180,8 +190,8 @@ async function loadMissingLinks() {
   if (!listEl) return;
   listEl.innerHTML = '<div class="skeleton" style="height:40px"></div>';
   try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-missing-links`, {
-      headers: { 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON },
+    const res = await fetch(SUPABASE_URL + '/functions/v1/admin-missing-links', {
+      headers: { 'Authorization': 'Bearer ' + SUPABASE_ANON, 'apikey': SUPABASE_ANON },
     });
     const result = await res.json();
     if (!res.ok) throw new Error(result.error || 'Failed to load');
