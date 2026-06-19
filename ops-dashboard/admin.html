@@ -7,6 +7,62 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    .admin-shell{display:flex;min-height:calc(100vh - 56px)}
+    .admin-nav{
+      width:210px;flex-shrink:0;background:white;
+      border-right:1px solid var(--border);padding:12px 0 24px;
+      position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;
+    }
+    .admin-nav-group{
+      font-size:.68rem;font-weight:600;color:var(--text-muted);
+      text-transform:uppercase;letter-spacing:.07em;padding:14px 16px 4px;
+    }
+    .admin-nav-item{
+      display:flex;align-items:center;gap:9px;width:100%;
+      padding:9px 16px;border:none;border-left:3px solid transparent;
+      background:none;font-family:'DM Sans',sans-serif;font-size:.875rem;
+      color:var(--text);text-align:left;cursor:pointer;
+      transition:background .1s,color .1s,border-color .1s;
+    }
+    .admin-nav-item:hover{background:var(--bg)}
+    .admin-nav-item.active{
+      background:#fff4ed;border-left-color:var(--brand);
+      color:var(--brand);font-weight:600;
+    }
+    .admin-nav-item .ni{width:18px;text-align:center;flex-shrink:0}
+    .admin-nav-item.danger{color:var(--red)}
+    .admin-nav-item.danger:hover{background:#fef2f2}
+    .admin-nav-item.danger.active{background:#fef2f2;border-left-color:var(--red);color:var(--red)}
+    .admin-main{flex:1;padding:24px;min-width:0;max-width:860px}
+    .admin-panel{display:none}
+    .admin-panel.active{display:block}
+    .panel-heading{font-size:1.1rem;font-weight:600;margin-bottom:18px;color:var(--text)}
+    .diff-table{width:100%;border-collapse:collapse;font-size:.83rem}
+    .diff-table th{background:var(--bg);padding:7px 10px;text-align:left;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);border-bottom:1px solid var(--border)}
+    .diff-table td{padding:7px 10px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
+    .diff-row-new td{background:#f0fdf4}
+    .diff-row-removed td{background:#fef2f2;text-decoration:line-through;opacity:.65}
+    .diff-row-dup td{background:#fafafa;color:var(--text-muted)}
+    @media(max-width:640px){
+      .admin-shell{flex-direction:column}
+      .admin-nav{
+        width:100%;height:auto;position:static;
+        display:flex;flex-wrap:nowrap;overflow-x:auto;
+        padding:0;border-right:none;border-bottom:2px solid var(--border);
+        -webkit-overflow-scrolling:touch;scrollbar-width:none;
+      }
+      .admin-nav::-webkit-scrollbar{display:none}
+      .admin-nav-group{display:none}
+      .admin-nav-item{
+        flex-shrink:0;border-left:none;border-bottom:3px solid transparent;
+        padding:12px 14px;white-space:nowrap;font-size:.82rem;
+      }
+      .admin-nav-item.active{border-left:none;border-bottom-color:var(--brand);background:none}
+      .admin-nav-item.danger.active{border-bottom-color:var(--red);background:none}
+      .admin-main{padding:16px}
+    }
+  </style>
 </head>
 <body>
 
@@ -26,112 +82,140 @@
 
 <!-- Password gate -->
 <div class="password-screen" id="password-screen">
-  <div style="background:white;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.10);padding:32px 28px;width:100%;max-width:320px;text-align:center">
+  <div style="background:white;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.10);padding:32px 28px;width:100%;max-width:320px;text-align:center">
     <div style="font-size:2rem;margin-bottom:8px">🔒</div>
     <h2 style="font-size:1.1rem;margin-bottom:4px">Admin Access</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:20px">Enter your admin password</p>
+    <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:20px">Enter your admin password</p>
     <input type="password" id="admin-password" placeholder="Password"
-      style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:0.95rem;font-family:'DM Sans',sans-serif;text-align:center;letter-spacing:0.1em;margin-bottom:12px"
-    >
+      style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:.95rem;font-family:'DM Sans',sans-serif;text-align:center;letter-spacing:.1em;margin-bottom:12px">
     <button onclick="checkPassword()"
-      style="width:100%;padding:12px;background:var(--brand);color:white;border:none;border-radius:8px;font-size:0.95rem;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer">
+      style="width:100%;padding:12px;background:var(--brand);color:white;border:none;border-radius:8px;font-size:.95rem;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer">
       Unlock
     </button>
-    <p id="pw-error" style="color:var(--red);font-size:0.82rem;margin-top:10px;display:none">Wrong password</p>
+    <p id="pw-error" style="color:var(--red);font-size:.82rem;margin-top:10px;display:none">Wrong password</p>
   </div>
 </div>
 
-<!-- Admin content -->
+<!-- Admin shell -->
 <div id="admin-content" class="hidden">
-  <div class="admin-layout">
+  <div class="admin-shell">
 
-    <!-- ── LEFT: daily operations ── -->
-    <div class="admin-left">
+    <nav class="admin-nav">
+      <div class="admin-nav-group">Catalog</div>
+      <button class="admin-nav-item active" onclick="showPanel('panel-catalog',this)">
+        <span class="ni">🛒</span> Catalog
+      </button>
 
-      <!-- Upload Today's Orders -->
-      <div class="admin-section" style="border:1.5px solid #bfdbfe">
-        <h2 style="color:#1d4ed8">📋 Upload Today's Orders</h2>
+      <div class="admin-nav-group">Orders</div>
+      <button class="admin-nav-item" onclick="showPanel('panel-csv',this)">
+        <span class="ni">📄</span> Import CSV
+      </button>
+      <button class="admin-nav-item" onclick="showPanel('panel-voice',this)">
+        <span class="ni">🎤</span> Voice Orders
+      </button>
 
-        <div class="upload-tabs">
-          <button class="upload-tab active" id="tab-csv"   onclick="switchUploadTab('csv')">📄 CSV</button>
-          <button class="upload-tab"        id="tab-voice" onclick="switchUploadTab('voice')">🎤 Voice / Text</button>
+      <div class="admin-nav-group">Packers</div>
+      <button class="admin-nav-item" onclick="showPanel('panel-packers',this)">
+        <span class="ni">👤</span> Packers
+      </button>
+      <button class="admin-nav-item" onclick="showPanel('panel-assignments',this)">
+        <span class="ni">🍊</span> Fruit Assignments
+      </button>
+
+      <div class="admin-nav-group">Customers</div>
+      <button class="admin-nav-item" onclick="showPanel('panel-notes',this)">
+        <span class="ni">📝</span> Customer Notes
+      </button>
+
+      <div class="admin-nav-group">Finance</div>
+      <button class="admin-nav-item" onclick="showPanel('panel-missing',this)">
+        <span class="ni">🔗</span> Missing Links
+      </button>
+
+      <div class="admin-nav-group">System</div>
+      <button class="admin-nav-item" onclick="showPanel('panel-snapshots',this)">
+        <span class="ni">📸</span> Snapshots
+      </button>
+      <button class="admin-nav-item danger" onclick="showPanel('panel-danger',this)">
+        <span class="ni">⚠️</span> Danger Zone
+      </button>
+    </nav>
+
+    <main class="admin-main">
+
+      <!-- Catalog -->
+      <div id="panel-catalog" class="admin-panel active">
+        <div class="panel-heading">Catalog</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+          Shopify is the source of truth. Sync updates the catalog and links items to Zoho Books.
+        </p>
+        <button class="btn btn-secondary btn-sm" id="sync-btn" onclick="syncCatalog()" style="margin-bottom:16px">&#8635; Sync from Shopify</button>
+        <div id="catalog-list"><div class="skeleton" style="height:40px"></div></div>
+      </div>
+
+      <!-- Import CSV -->
+      <div id="panel-csv" class="admin-panel">
+        <div class="panel-heading">Import Orders (CSV)</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+          <strong>Columns:</strong> customer_name, item_name, quantity, date (YYYY-MM-DD optional)
+        </p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <label style="font-size:.82rem;color:var(--text-muted);white-space:nowrap">Default date</label>
+          <input type="date" id="csv-default-date"
+            style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.85rem;font-family:inherit">
         </div>
-
-        <!-- CSV panel -->
-        <div id="upload-panel-csv">
-          <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-            <strong>Columns:</strong> sales_order, order_date, customer_name, item_name, description, quantity
-          </p>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <input type="file" id="orders-csv" accept=".csv" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:'DM Sans',sans-serif">
-            <button class="btn btn-primary" onclick="uploadOrders()">Preview &amp; Upload</button>
+        <input type="file" id="csv-file" accept=".csv"
+          style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:.85rem;font-family:inherit;margin-bottom:4px"
+          onchange="parseCsv(event)">
+        <div id="csv-mapping-wrap" style="display:none;margin-top:16px">
+          <h3 style="font-size:.88rem;font-weight:600;margin-bottom:8px">Step 1 — Map item names to catalog</h3>
+          <table class="diff-table"><thead><tr><th>CSV name</th><th>Catalog match</th><th>Confidence</th></tr></thead>
+          <tbody id="csv-mapping-body"></tbody></table>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn btn-primary btn-sm" onclick="confirmMapping()">Confirm mapping →</button>
+            <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Cancel</button>
           </div>
         </div>
-
-        <!-- Voice / Text panel -->
-        <div id="upload-panel-voice" class="hidden">
-          <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px">
-            Speak or type orders. Claude maps them to your Zoho catalog — the original text is always saved as a description safety net.
-          </p>
-          <textarea id="voice-order-text" class="voice-textarea"
-            placeholder="E.g. Villa 83 — 2kg apples, half kg white guava. B-12 — 3 dozen bananas, 1kg Kesar mangoes…"></textarea>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-            <input type="date" id="voice-order-date"
-              style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:'DM Sans',sans-serif">
-            <button class="btn btn-secondary btn-sm" id="voice-mic-btn" onclick="toggleVoiceInput()">🎤 Speak</button>
-            <button class="btn btn-primary"           id="voice-parse-btn" onclick="parseVoiceOrders()">Parse &amp; Preview</button>
+        <div id="csv-diff-wrap" style="display:none;margin-top:16px">
+          <div id="csv-ofd-warning" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:.82rem;color:#92400e;margin-bottom:10px">
+            ⚠️ Some customers already have items <strong>out for delivery</strong> on this date.
           </div>
-          <div id="voice-parse-status"></div>
+          <h3 style="font-size:.88rem;font-weight:600;margin-bottom:8px">Step 2 — Review changes</h3>
+          <table class="diff-table"><thead><tr><th></th><th>Customer</th><th>Item</th><th>Qty</th><th>Date</th><th>Change</th></tr></thead>
+          <tbody id="csv-diff-body"></tbody></table>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn btn-primary btn-sm" id="csv-save-btn" onclick="saveCsvImport()">Save Import</button>
+            <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Cancel</button>
+          </div>
         </div>
-
-        <div id="orders-upload-status"></div>
+        <div id="orders-upload-status" style="margin-top:8px"></div>
       </div>
 
-      <!-- Invoices with no payment link -->
-      <div class="admin-section" style="border:1.5px solid #fde68a">
-        <h2 style="color:#92400e">⚠️ No Payment Link</h2>
-        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px">
-          Invoices where no Razorpay link was created — usually because the customer has no phone number in Zoho.
+      <!-- Voice Orders -->
+      <div id="panel-voice" class="admin-panel">
+        <div class="panel-heading">Voice Orders</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+          Speak or type orders and parse them using AI. Requires the <code>parse-orders</code> edge function.
         </p>
-        <div id="missing-links-list">
-          <div class="skeleton" style="height:40px"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <label style="font-size:.82rem;color:var(--text-muted)">Order date</label>
+          <input type="date" id="voice-order-date"
+            style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.85rem;font-family:inherit">
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="loadMissingLinks()" style="margin-top:8px">Refresh</button>
-      </div>
-
-      <!-- Restore from Snapshot -->
-      <div class="admin-section" style="border:1.5px solid #bfdbfe">
-        <h2 style="color:#1d4ed8">🕐 Restore from Snapshot</h2>
-        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-          Rolls back <strong>final_quantity and status only</strong> for all matching rows.<br>
-          New orders and order details are never affected.
-        </p>
-        <div class="form-row">
-          <select id="snapshot-select" style="flex:1">
-            <option value="">Loading snapshots…</option>
-          </select>
-          <button class="btn btn-primary btn-sm" onclick="restoreSnapshot()">Restore</button>
+        <textarea id="voice-order-text" rows="6" class="voice-textarea"
+          placeholder="Speak or paste orders here — one line per customer…"
+          style="margin-bottom:10px"></textarea>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" id="voice-mic-btn" onclick="toggleVoiceInput()">🎤 Speak</button>
+          <button class="btn btn-primary btn-sm" id="voice-parse-btn" onclick="parseVoiceOrders()">Parse &amp; Preview</button>
         </div>
-        <div id="restore-status"></div>
+        <div id="voice-parse-status"></div>
       </div>
-
-      <!-- Danger zone -->
-      <div class="admin-section" style="border:1.5px solid #fecaca">
-        <h2 style="color:var(--red)">Danger Zone</h2>
-        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px">
-          Reset today's operations status — sets all items back to draft.
-        </p>
-        <button class="btn btn-danger btn-sm" onclick="resetTodayStatus()">Reset Today's Status</button>
-      </div>
-
-    </div>
-
-    <!-- ── RIGHT: configuration ── -->
-    <div class="admin-right">
 
       <!-- Packers -->
-      <div class="admin-section">
-        <div class="form-row">
+      <div id="panel-packers" class="admin-panel">
+        <div class="panel-heading">Packers</div>
+        <div class="form-row" style="margin-bottom:12px">
           <input type="text" id="new-packer-name" placeholder="Packer name" maxlength="60">
           <button class="btn btn-primary btn-sm" onclick="addPacker()">Add</button>
         </div>
@@ -139,85 +223,102 @@
       </div>
 
       <!-- Fruit Assignments -->
-      <div class="admin-section">
-        <h2>Fruit Assignments</h2>
-        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-          Assign which fruits each packer handles
-        </p>
-        <div class="form-row">
+      <div id="panel-assignments" class="admin-panel">
+        <div class="panel-heading">Fruit Assignments</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Assign which packer handles each fruit. Fruit list comes from the catalog.</p>
+        <div class="form-row" style="margin-bottom:12px">
           <select id="assign-packer" style="flex:1"></select>
-          <input type="text" id="assign-fruit" placeholder="Fruit / item name" style="flex:2">
+          <select id="assign-fruit" style="flex:2"><option value="">Select fruit…</option></select>
           <button class="btn btn-primary btn-sm" onclick="addAssignment()">Add</button>
         </div>
         <div id="assignments-list"><div class="skeleton" style="height:40px"></div></div>
       </div>
 
-      <!-- Customer Notes & History -->
-      <div class="admin-section">
-        <h2 style="margin-bottom:8px">Customer Notes &amp; History</h2>
-        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px">
-          Shown on packer cards and used by Somya AI to calibrate tone. One note per customer.
-        </p>
-
-        <!-- Add / update form -->
-        <div class="form-row" style="flex-wrap:wrap;gap:6px;margin-bottom:4px">
-          <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:140px">
-          <input type="text" id="note-text" placeholder="Note" style="flex:3;min-width:180px">
-          <input type="date" id="note-complaint-date" title="Last complaint date" style="flex:1;min-width:130px">
+      <!-- Customer Notes -->
+      <div id="panel-notes" class="admin-panel">
+        <div class="panel-heading">Customer Notes</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Shown on packer cards. One note per customer.</p>
+        <div class="form-row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px">
+          <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:130px">
+          <input type="text" id="note-text" placeholder="Note" style="flex:3;min-width:170px">
+          <input type="date" id="note-complaint-date" title="Last complaint date" style="flex:0 0 auto">
           <button class="btn btn-primary btn-sm" onclick="saveNote()" style="white-space:nowrap">Save</button>
         </div>
         <div id="note-save-status" style="margin-bottom:8px"></div>
-
-        <!-- Read-only recent notes (last 10) -->
         <div class="notes-table-wrap" id="notes-preview">
           <div class="skeleton" style="height:40px;margin:8px"></div>
         </div>
-
-        <!-- Manage all + delete (collapsible) -->
-        <details style="margin-top:8px">
-          <summary style="cursor:pointer;font-size:0.82rem;color:var(--text-muted);user-select:none">Manage all / delete</summary>
+        <details style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:.82rem;color:var(--text-muted);user-select:none">Manage all / delete</summary>
           <div class="notes-table-wrap" id="notes-table-wrap" style="margin-top:8px">
             <div class="skeleton" style="height:40px;margin:8px"></div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="exportNotes()" style="margin-top:8px">Export CSV</button>
-        </details>
-
-        <!-- CSV import (collapsible) -->
-        <details style="margin-top:8px">
-          <summary style="cursor:pointer;font-size:0.82rem;color:var(--text-muted);user-select:none">Import CSV</summary>
-          <div style="margin-top:8px">
-            <div class="form-row">
-              <input type="file" id="note-csv" accept=".csv" style="flex:1;padding:6px;font-size:0.8rem">
-              <button class="btn btn-secondary btn-sm" onclick="importNotesCSV()">Import</button>
-            </div>
-            <p style="font-size:0.75rem;color:var(--text-muted)">
-              Columns: customer_name, note, last_complaint_date (YYYY-MM-DD)
-            </p>
-            <div id="note-import-status"></div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" onclick="exportNotes()">Export CSV</button>
+            <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin:0">
+              Import CSV
+              <input type="file" id="note-csv" accept=".csv" style="display:none" onchange="importNotesCSV()">
+            </label>
           </div>
+          <div id="note-import-status" style="margin-top:6px"></div>
         </details>
       </div>
 
-    </div>
-  </div>
-
-  <!-- ── Orders preview modal ── -->
-  <div id="orders-preview-modal" class="preview-overlay hidden">
-    <div class="preview-modal">
-      <div class="preview-modal-header">
-        <h3>Preview Orders</h3>
-        <span id="preview-stats" style="font-size:0.82rem;color:var(--text-muted)"></span>
-        <button class="btn btn-sm btn-secondary" onclick="closePreview()">✕ Cancel</button>
+      <!-- Missing Links -->
+      <div id="panel-missing" class="admin-panel">
+        <div class="panel-heading">Missing Payment Links</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Invoices from the last 7 days without a Razorpay payment link.</p>
+        <div id="missing-links-list"><div class="skeleton" style="height:40px"></div></div>
       </div>
-      <div class="preview-modal-body" id="preview-modal-body"></div>
-      <div class="preview-modal-footer">
-        <span id="preview-row-count" style="font-size:0.85rem;color:var(--text-muted)"></span>
-        <button class="btn btn-primary" id="preview-confirm-btn" onclick="confirmUpload()">Confirm Upload</button>
+
+      <!-- Snapshots -->
+      <div id="panel-snapshots" class="admin-panel">
+        <div class="panel-heading">Operations Snapshots</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Restore final quantities and statuses from a previous snapshot.</p>
+        <div class="form-row" style="margin-bottom:12px;flex-wrap:wrap">
+          <select id="snapshot-select" style="flex:1;min-width:200px"><option>Loading…</option></select>
+          <button class="btn btn-secondary btn-sm" onclick="restoreSnapshot()">Restore</button>
+        </div>
+        <div id="restore-status"></div>
+      </div>
+
+      <!-- Danger Zone -->
+      <div id="panel-danger" class="admin-panel">
+        <div class="panel-heading" style="color:var(--red)">Danger Zone</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:20px">Reset today’s operations — sets all items back to draft.</p>
+        <button class="btn btn-danger btn-sm" onclick="resetTodayStatus()">Reset Today’s Status</button>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- Preview modal (voice orders) -->
+<div id="orders-preview-modal" class="hidden preview-overlay">
+  <div class="preview-modal">
+    <div class="preview-modal-header">
+      <h3>Preview orders</h3>
+      <span id="preview-stats" style="font-size:.82rem;color:var(--text-muted)"></span>
+    </div>
+    <div id="preview-modal-body" class="preview-modal-body"></div>
+    <div class="preview-modal-footer" id="preview-modal-footer">
+      <span id="preview-row-count" style="font-size:.82rem;color:var(--text-muted)"></span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary btn-sm" onclick="closePreview()">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="preview-confirm-btn" onclick="confirmUpload()">Confirm Upload</button>
       </div>
     </div>
   </div>
 </div>
 
+<script>
+function showPanel(panelId, btn) {
+  document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.admin-nav-item').forEach(b => b.classList.remove('active'));
+  document.getElementById(panelId).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/config.js"></script>
 <script src="js/admin.js"></script>
