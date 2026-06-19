@@ -89,7 +89,7 @@ async function loadCatalog() {
   if (!list) return;
 
   if (error || !data?.length) {
-    list.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted)">No catalog items yet — click Sync from Shopify</p>';
+    list.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted)">No catalog items yet — click Sync from Zoho</p>';
     catalogItems = [];
     populateFruitDropdown();
     return;
@@ -153,7 +153,26 @@ async function syncCatalog() {
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
-    btn.textContent = '↻ Sync from Shopify'; btn.disabled = false;
+    btn.textContent = '↻ Sync from Zoho'; btn.disabled = false;
+  }
+}
+
+async function syncCustomers() {
+  const btn = document.getElementById('sync-customers-btn');
+  if (btn) { btn.textContent = 'Syncing…'; btn.disabled = true; }
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/sync-customers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Sync failed');
+    showToast(data.synced + ' customers synced ✓');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) { btn.textContent = '↻ Sync customers'; btn.disabled = false; }
   }
 }
 
@@ -286,8 +305,13 @@ async function parseVoiceOrders() {
   statusEl.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Parsing…</p>';
 
   try {
-    const { data: contactData } = await sb.from('orders').select('customer_name').limit(500);
-    const contacts = [...new Set((contactData || []).map(r => r.customer_name))];
+    // Load from customers master table (populated by sync-customers)
+    const { data: contactData } = await sb
+      .from('customers')
+      .select('customer_name')
+      .eq('active', true)
+      .limit(1000);
+    const contacts = (contactData || []).map(r => r.customer_name).filter(Boolean);
     const items    = catalogItems.map(i => i.item_name);
 
     const parsed = parseOrders(text, contacts, items, date);
