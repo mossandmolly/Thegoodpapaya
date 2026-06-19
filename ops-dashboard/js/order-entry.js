@@ -9,9 +9,10 @@ let _pendingSubmitRows = null;
   document.getElementById('order-date').value = todayIST();
   setupCombobox();
   try {
-    const [catRes, custRes] = await Promise.all([
+    const [catRes, custRes, socRes] = await Promise.all([
       sb.from('catalog').select('item_name, unit, unit_price').eq('active', true).order('item_name'),
       sb.from('orders').select('customer_name').order('customer_name'),
+      sb.from('societies').select('canonical_name, aliases').eq('active', true).order('canonical_name'),
     ]);
     _items = (catRes.data || []).map(r => ({ name: r.item_name, unit: r.unit || 'kg', unit_price: r.unit_price }));
     const seen = new Set();
@@ -21,7 +22,15 @@ let _pendingSubmitRows = null;
       if (seen.has(k)) return false;
       seen.add(k); return true;
     });
-    document.getElementById('status-line').textContent = `${_customers.length} customers · ${_items.length} catalog items loaded`;
+    if (socRes.data && socRes.data.length) {
+      const canonicals = socRes.data.map(s => s.canonical_name);
+      const aliasMap = {};
+      socRes.data.forEach(s => (s.aliases || []).forEach(a => { aliasMap[a] = s.canonical_name; }));
+      setSocieties(canonicals, aliasMap);
+    }
+    const socCount = socRes.data ? socRes.data.length : 0;
+    document.getElementById('status-line').textContent =
+      _customers.length + ' customers · ' + _items.length + ' catalog items · ' + socCount + ' societies loaded';
   } catch (e) {
     document.getElementById('status-line').textContent = 'Failed to load — check Supabase connection';
     console.error(e);
@@ -58,7 +67,7 @@ function setupSpeech() {
     document.getElementById('raw-input').value = finalTranscript + interim;
   };
   _recognition.onerror = e => {
-    document.getElementById('mic-status').textContent = `Mic error: ${e.error}`;
+    document.getElementById('mic-status').textContent = 'Mic error: ' + e.error;
     _stopRecording();
   };
   _recognition.onend = () => { if (_isRecording) { try { _recognition.start(); } catch (err) { _stopRecording(); } } };
@@ -82,7 +91,7 @@ document.getElementById('parse-btn').addEventListener('click', () => {
   const newRows = parseOrders(raw, _customers, _items.map(i => [i.name, i.unit]), orderDate);
   _rows = _rows.concat(newRows);
   renderRows();
-  showToast(`Parsed ${newRows.length} row${newRows.length !== 1 ? 's' : ''}`);
+  showToast('Parsed ' + newRows.length + ' row' + (newRows.length !== 1 ? 's' : ''));
 });
 
 document.getElementById('clear-input-btn').addEventListener('click', () => { document.getElementById('raw-input').value = ''; });
@@ -95,7 +104,7 @@ function addBlankRow() {
 }
 document.getElementById('add-row-btn').addEventListener('click', addBlankRow);
 document.getElementById('clear-all-btn').addEventListener('click', () => {
-  if (_rows.length && !confirm(`Clear all ${_rows.length} row${_rows.length !== 1 ? 's' : ''}?`)) return;
+  if (_rows.length && !confirm('Clear all ' + _rows.length + ' row' + (_rows.length !== 1 ? 's' : '') + '?')) return;
   _rows = []; renderRows();
 });
 
@@ -127,7 +136,7 @@ function renderRows() {
 
   const warnCount = _rows.filter(r => r.warn).length;
   document.getElementById('summary-text').textContent =
-    `${_rows.length} row${_rows.length !== 1 ? 's' : ''}${warnCount ? ` · ${warnCount} flagged` : ''}`;
+    _rows.length + ' row' + (_rows.length !== 1 ? 's' : '') + (warnCount ? ' · ' + warnCount + ' flagged' : '');
 
   container.innerHTML = '';
   _rows.forEach((r, idx) => {
@@ -199,7 +208,7 @@ function _refreshRowCard(idx) {
 
   const warnCount = _rows.filter(x => x.warn).length;
   document.getElementById('summary-text').textContent =
-    `${_rows.length} row${_rows.length !== 1 ? 's' : ''}${warnCount ? ` · ${warnCount} flagged` : ''}`;
+    _rows.length + ' row' + (_rows.length !== 1 ? 's' : '') + (warnCount ? ' · ' + warnCount + ' flagged' : '');
 }
 
 // ── Combobox ──────────────────────────────────────────
@@ -314,7 +323,7 @@ async function submitWithPhones() {
   if (phoneRows.length > 0) {
     const { error } = await sb.from('customer_phones').insert(phoneRows);
     if (error && error.code !== '23505') { showToast('Could not save phone numbers: ' + error.message, 'error'); return; }
-    showToast(`${phoneRows.length} phone${phoneRows.length !== 1 ? 's' : ''} saved`);
+    showToast(phoneRows.length + ' phone' + (phoneRows.length !== 1 ? 's' : '') + ' saved');
   }
   document.getElementById('phone-prompt').style.display = 'none';
   await doSubmit(_pendingSubmitRows);
@@ -343,7 +352,7 @@ async function doSubmit(toSubmit) {
       if (existingOrder) {
         orderId = existingOrder.sales_id;
       } else {
-        const safeName = customer.replace(/\s+/g, '-');
+        const safeName = customer.split(' ').join('-');
         let salesId = date + '-' + safeName, suffix = 1;
         while (true) {
           const { data: hit } = await sb.from('orders').select('sales_id').eq('sales_id', salesId).maybeSingle();
@@ -380,7 +389,7 @@ async function doSubmit(toSubmit) {
       if (itemErr) throw new Error('Failed to insert items: ' + itemErr.message);
       totalInserted += newItems.length;
     }
-    showToast(`${totalInserted} item${totalInserted !== 1 ? 's' : ''} submitted to ops ✓`);
+    showToast(totalInserted + ' item' + (totalInserted !== 1 ? 's' : '') + ' submitted to ops ✓');
     _rows = []; renderRows();
     document.getElementById('raw-input').value = '';
   } catch (e) {
