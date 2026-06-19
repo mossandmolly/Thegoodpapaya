@@ -9,16 +9,42 @@ const CORS = {
 }
 
 async function getZohoToken(): Promise<string> {
+  const clientId     = Deno.env.get('ZOHO_CLIENT_ID')
+  const clientSecret = Deno.env.get('ZOHO_CLIENT_SECRET')
+  const refreshToken = Deno.env.get('ZOHO_REFRESH_TOKEN')
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('Missing Zoho secrets — set ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN in Supabase')
+  }
   const params = new URLSearchParams({
-    refresh_token: Deno.env.get('ZOHO_REFRESH_TOKEN')!,
-    client_id:     Deno.env.get('ZOHO_CLIENT_ID')!,
-    client_secret: Deno.env.get('ZOHO_CLIENT_SECRET')!,
+    refresh_token: refreshToken,
+    client_id:     clientId,
+    client_secret: clientSecret,
     grant_type:    'refresh_token',
   })
   const res  = await fetch(`${ZOHO_TOKEN_URL}?${params}`, { method: 'POST' })
   const json = await res.json()
   if (!json.access_token) throw new Error('Zoho auth failed: ' + JSON.stringify(json))
   return json.access_token
+}
+
+// Use ZOHO_ORG_ID secret if set; otherwise auto-discover from /organizations.
+// Most accounts have exactly one org, so auto-discovery just works.
+async function getOrgId(token: string): Promise<string> {
+  const envOrgId = Deno.env.get('ZOHO_ORG_ID')?.trim()
+  if (envOrgId) return envOrgId
+
+  const res  = await fetch(`${ZOHO_BASE}/organizations`, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  })
+  const data = await res.json()
+  if (!res.ok || !data.organizations?.length) {
+    throw new Error(
+      'Could not discover Zoho org ID (code ' + res.status + '): ' +
+      (data.message || JSON.stringify(data)) +
+      ' — set ZOHO_ORG_ID secret manually if needed'
+    )
+  }
+  return String(data.organizations[0].organization_id)
 }
 
 // "ALPHONSO MANGO" → "Alphonso Mango"
@@ -34,10 +60,9 @@ Deno.serve(async (req) => {
 
   try {
     const sb    = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const orgId = Deno.env.get('ZOHO_ORG_ID')!
     const token = await getZohoToken()
+    const orgId = await getOrgId(token)
 
-    // Fetch all active items, paginated
     const allItems: any[] = []
     let page = 1
     while (true) {
@@ -68,15 +93,13 @@ Deno.serve(async (req) => {
       synced_at:    new Date().toISOString(),
     })).filter(r => r.item_name)
 
-    // Upsert on zoho_item_id (unique partial index).
-    // item_name may change in Zoho → we update it here too.
     const { error } = await sb
       .from('catalog')
       .upsert(rows, { onConflict: 'zoho_item_id', ignoreDuplicates: false })
     if (error) throw new Error('DB upsert failed: ' + error.message)
 
     return new Response(
-      JSON.stringify({ synced: rows.length }),
+      JSON.stringify({ synced: rows.length, org_id: orgId }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     )
   } catch (e: any) {
