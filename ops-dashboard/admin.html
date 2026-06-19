@@ -106,14 +106,6 @@
         <span class="ni">🛒</span> Catalog
       </button>
 
-      <div class="admin-nav-group">Orders</div>
-      <button class="admin-nav-item" onclick="showPanel('panel-csv',this)">
-        <span class="ni">📄</span> Import CSV
-      </button>
-      <button class="admin-nav-item" onclick="showPanel('panel-voice',this)">
-        <span class="ni">🎤</span> Voice Orders
-      </button>
-
       <div class="admin-nav-group">Packers</div>
       <button class="admin-nav-item" onclick="showPanel('panel-packers',this)">
         <span class="ni">👤</span> Packers
@@ -147,69 +139,13 @@
       <div id="panel-catalog" class="admin-panel active">
         <div class="panel-heading">Catalog</div>
         <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
-          Shopify is the source of truth. Sync updates the catalog and links items to Zoho Books.
+          Zoho Books is the source of truth. Sync pulls active items and customers into the local database.
         </p>
-        <button class="btn btn-secondary btn-sm" id="sync-btn" onclick="syncCatalog()" style="margin-bottom:16px">&#8635; Sync from Shopify</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+          <button class="btn btn-secondary btn-sm" id="sync-btn" onclick="syncCatalog()">&#8635; Sync catalog from Zoho</button>
+          <button class="btn btn-secondary btn-sm" id="sync-customers-btn" onclick="syncCustomers()">&#8635; Sync customers from Zoho</button>
+        </div>
         <div id="catalog-list"><div class="skeleton" style="height:40px"></div></div>
-      </div>
-
-      <!-- Import CSV -->
-      <div id="panel-csv" class="admin-panel">
-        <div class="panel-heading">Import Orders (CSV)</div>
-        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
-          <strong>Columns:</strong> customer_name, item_name, quantity, date (YYYY-MM-DD optional)
-        </p>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-          <label style="font-size:.82rem;color:var(--text-muted);white-space:nowrap">Default date</label>
-          <input type="date" id="csv-default-date"
-            style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.85rem;font-family:inherit">
-        </div>
-        <input type="file" id="csv-file" accept=".csv"
-          style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:.85rem;font-family:inherit;margin-bottom:4px"
-          onchange="parseCsv(event)">
-        <div id="csv-mapping-wrap" style="display:none;margin-top:16px">
-          <h3 style="font-size:.88rem;font-weight:600;margin-bottom:8px">Step 1 — Map item names to catalog</h3>
-          <table class="diff-table"><thead><tr><th>CSV name</th><th>Catalog match</th><th>Confidence</th></tr></thead>
-          <tbody id="csv-mapping-body"></tbody></table>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-primary btn-sm" onclick="confirmMapping()">Confirm mapping →</button>
-            <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Cancel</button>
-          </div>
-        </div>
-        <div id="csv-diff-wrap" style="display:none;margin-top:16px">
-          <div id="csv-ofd-warning" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:.82rem;color:#92400e;margin-bottom:10px">
-            ⚠️ Some customers already have items <strong>out for delivery</strong> on this date.
-          </div>
-          <h3 style="font-size:.88rem;font-weight:600;margin-bottom:8px">Step 2 — Review changes</h3>
-          <table class="diff-table"><thead><tr><th></th><th>Customer</th><th>Item</th><th>Qty</th><th>Date</th><th>Change</th></tr></thead>
-          <tbody id="csv-diff-body"></tbody></table>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-primary btn-sm" id="csv-save-btn" onclick="saveCsvImport()">Save Import</button>
-            <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Cancel</button>
-          </div>
-        </div>
-        <div id="orders-upload-status" style="margin-top:8px"></div>
-      </div>
-
-      <!-- Voice Orders -->
-      <div id="panel-voice" class="admin-panel">
-        <div class="panel-heading">Voice Orders</div>
-        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
-          Speak or paste order text — one line per customer. Parsed locally using your catalog, then previewed before saving.
-        </p>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-          <label style="font-size:.82rem;color:var(--text-muted)">Order date</label>
-          <input type="date" id="voice-order-date"
-            style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.85rem;font-family:inherit">
-        </div>
-        <textarea id="voice-order-text" rows="6" class="voice-textarea"
-          placeholder="Speak or paste orders here — one line per customer…"
-          style="margin-bottom:10px"></textarea>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-secondary btn-sm" id="voice-mic-btn" onclick="toggleVoiceInput()">🎤 Speak</button>
-          <button class="btn btn-primary btn-sm" id="voice-parse-btn" onclick="parseVoiceOrders()">Parse &amp; Preview</button>
-        </div>
-        <div id="voice-parse-status"></div>
       </div>
 
       <!-- Packers -->
@@ -290,24 +226,6 @@
       </div>
 
     </main>
-  </div>
-</div>
-
-<!-- Preview modal -->
-<div id="orders-preview-modal" class="hidden preview-overlay">
-  <div class="preview-modal">
-    <div class="preview-modal-header">
-      <h3>Preview orders</h3>
-      <span id="preview-stats" style="font-size:.82rem;color:var(--text-muted)"></span>
-    </div>
-    <div id="preview-modal-body" class="preview-modal-body"></div>
-    <div class="preview-modal-footer" id="preview-modal-footer">
-      <span id="preview-row-count" style="font-size:.82rem;color:var(--text-muted)"></span>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-secondary btn-sm" onclick="closePreview()">Cancel</button>
-        <button class="btn btn-primary btn-sm" id="preview-confirm-btn" onclick="confirmUpload()">Confirm Upload</button>
-      </div>
-    </div>
   </div>
 </div>
 
