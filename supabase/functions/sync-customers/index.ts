@@ -83,19 +83,32 @@ Deno.serve(async (req) => {
     const orgId     = await getOrgId(token);
     const contacts  = await fetchAllContacts(token, orgId);
 
+    const now = new Date().toISOString();
     let synced = 0;
     for (const c of contacts) {
       const customerName = cleanCustomerName(c.contact_name as string);
       if (!customerName) continue;
 
-      const { error } = await supabase.from('customers').upsert({
-        customer_name:    customerName,
-        zoho_contact_id:  c.contact_id,
-        active:           true,
-        synced_at:        new Date().toISOString(),
-      }, { onConflict: 'customer_name' });
+      // UPDATE existing row first; if nothing matched, INSERT new row.
+      // Avoids any ON CONFLICT / constraint-name ambiguity.
+      const { data: updated, error: updateErr } = await supabase
+        .from('customers')
+        .update({ zoho_contact_id: c.contact_id, active: true, synced_at: now })
+        .eq('customer_name', customerName)
+        .select('customer_name');
 
-      if (error) throw new Error(`Customer upsert failed for "${customerName}": ${error.message}`);
+      if (updateErr) throw new Error(`Customer update failed for "${customerName}": ${updateErr.message}`);
+
+      if (!updated || updated.length === 0) {
+        const { error: insertErr } = await supabase.from('customers').insert({
+          customer_name:   customerName,
+          zoho_contact_id: c.contact_id,
+          active:          true,
+          synced_at:       now,
+        });
+        if (insertErr) throw new Error(`Customer insert failed for "${customerName}": ${insertErr.message}`);
+      }
+
       synced++;
     }
 
