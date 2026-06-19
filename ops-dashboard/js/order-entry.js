@@ -90,7 +90,7 @@ document.getElementById('clear-input-btn').addEventListener('click', () => { doc
 // ── Row management ───────────────────────────────────────
 function addBlankRow() {
   const orderDate = document.getElementById('order-date').value || todayIST();
-  _rows.push({ orderDate, customer:'', item:'', description:'', quantity:'', salesOrderId:'', warn:false, warnReason:null, isNewCustomer:false });
+  _rows.push({ orderDate, customer: '', item: '', description: '', quantity: '', salesOrderId: '', warn: false, warnReason: null, isNewCustomer: false });
   renderRows();
 }
 document.getElementById('add-row-btn').addEventListener('click', addBlankRow);
@@ -98,215 +98,294 @@ document.getElementById('clear-all-btn').addEventListener('click', () => {
   if (_rows.length && !confirm(`Clear all ${_rows.length} row${_rows.length !== 1 ? 's' : ''}?`)) return;
   _rows = []; renderRows();
 });
+
 function updateRow(idx, field, value) {
   if (!_rows[idx]) return;
   _rows[idx][field] = value;
   if (field === 'customer') {
-    _rows[idx].salesOrderId = _rows[idx].orderDate + value.replace(/\s+/g,'');
+    _rows[idx].salesOrderId = _rows[idx].orderDate + value.replace(/\s+/g, '');
     _rows[idx].isNewCustomer = !_customers.some(c => c.toLowerCase() === value.toLowerCase());
   }
 }
-function deleteRow(idx) { _rows.splice(idx,1); renderRows(); }
-function escH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function deleteRow(idx) { _rows.splice(idx, 1); renderRows(); }
+function escH(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
+// ── Render rows (compact single-line layout) ────────────
 function renderRows() {
-  const container = document.getElementById('rows-container');
+  const container   = document.getElementById('rows-container');
   const resultsWrap = document.getElementById('results-section');
-  const emptyState = document.getElementById('empty-state');
-  if (!_rows.length) { resultsWrap.style.display='none'; emptyState.style.display='block'; return; }
-  resultsWrap.style.display='block'; emptyState.style.display='none';
-  document.getElementById('phone-prompt').style.display='none';
-  const warnCount = _rows.filter(r=>r.warn).length;
-  document.getElementById('summary-text').textContent = `${_rows.length} row${_rows.length!==1?'s':''}${warnCount?` · ${warnCount} flagged`:''}`;
-  container.innerHTML='';
-  _rows.forEach((r,idx) => {
-    const div = document.createElement('div');
-    div.className = `oe-row-card${r.warn?' is-warn':''}${r.isNewCustomer?' is-new-customer':''}`;
-    div.id = `oe-row-${idx}`;
-    const tags = [r.isNewCustomer?'<span class="oe-tag oe-tag-new">New customer</span>':'', r.warn&&!r.isNewCustomer?'<span class="oe-tag oe-tag-warn">Review</span>':''].filter(Boolean).join('');
-    const cat = _items.find(i=>i.name.toLowerCase()===(r.item||'').toLowerCase());
-    const priceHint = cat?`<div class="oe-price-hint">₹${parseFloat(cat.unit_price||0).toFixed(0)} / ${cat.unit}</div>`:'';
-    div.innerHTML=`
-      <div class="oe-row-meta"><div class="oe-row-tags">${tags}</div><button class="oe-row-delete" data-del="${idx}">✕</button></div>
-      <div class="oe-field-grid">
-        <div><span class="oe-field-label">Customer</span><input class="oe-field-input" type="text" value="${escH(r.customer)}" data-idx="${idx}" data-field="customer" autocomplete="off"></div>
-        <div><span class="oe-field-label">Item</span><input class="oe-field-input" type="text" value="${escH(r.item)}" data-idx="${idx}" data-field="item" autocomplete="off">${priceHint}</div>
-      </div>
-      <div class="oe-field-grid">
-        <div><span class="oe-field-label">Quantity</span><input class="oe-field-input" type="text" value="${escH(r.quantity)}" data-idx="${idx}" data-field="quantity" placeholder="e.g. 1.5"></div>
-        <div><span class="oe-field-label">Date</span><input class="oe-field-input" type="date" value="${escH(r.orderDate)}" data-idx="${idx}" data-field="orderDate"></div>
-      </div>
-      <div class="oe-field-grid full"><div><span class="oe-field-label">Description / notes</span><input class="oe-field-input" type="text" value="${escH(r.description)}" data-idx="${idx}" data-field="description" placeholder="Optional"></div></div>
-      ${r.warnReason?`<div class="oe-warn-reason">⚠ ${escH(r.warnReason)}</div>`:''}
-    `;
-    container.appendChild(div);
+  const emptyState  = document.getElementById('empty-state');
+
+  if (!_rows.length) {
+    resultsWrap.style.display = 'none';
+    emptyState.style.display  = 'block';
+    return;
+  }
+  resultsWrap.style.display = 'block';
+  emptyState.style.display  = 'none';
+  document.getElementById('phone-prompt').style.display = 'none';
+
+  const warnCount = _rows.filter(r => r.warn).length;
+  document.getElementById('summary-text').textContent =
+    `${_rows.length} row${_rows.length !== 1 ? 's' : ''}${warnCount ? ` · ${warnCount} flagged` : ''}`;
+
+  container.innerHTML = '';
+  _rows.forEach((r, idx) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'oe-row-wrap' + (r.warn ? ' is-warn' : '') + (r.isNewCustomer ? ' is-new-customer' : '');
+    wrap.id = 'oe-row-' + idx;
+
+    const newTag  = r.isNewCustomer ? '<span class="oe-tag-inline" style="background:#dcfce7;color:#15803d">New</span>' : '';
+    const warnTag = r.warn && !r.isNewCustomer ? '<span class="oe-tag-inline" style="background:#fef3c7;color:#92400e">⚠</span>' : '';
+    const subText = r.warnReason ? '<div class="oe-row-subtext">⚠ ' + escH(r.warnReason) + '</div>' : '';
+
+    wrap.innerHTML =
+      '<div class="oe-row-flex">' +
+        '<button class="oe-row-delete" data-del="' + idx + '">✕</button>' +
+        '<input class="oe-il oe-customer" type="text" value="' + escH(r.customer) + '" data-idx="' + idx + '" data-field="customer" placeholder="Customer" autocomplete="off">' +
+        '<input class="oe-il oe-item" type="text" value="' + escH(r.item) + '" data-idx="' + idx + '" data-field="item" placeholder="Item" autocomplete="off">' +
+        '<input class="oe-il oe-qty" type="text" value="' + escH(r.quantity) + '" data-idx="' + idx + '" data-field="quantity" placeholder="Qty">' +
+        '<input class="oe-il oe-date" type="date" value="' + escH(r.orderDate) + '" data-idx="' + idx + '" data-field="orderDate">' +
+        newTag + warnTag +
+      '</div>' +
+      subText;
+
+    container.appendChild(wrap);
   });
-  container.querySelectorAll('[data-del]').forEach(btn=>btn.addEventListener('click',()=>deleteRow(parseInt(btn.dataset.del))));
-  container.querySelectorAll('.oe-field-input').forEach(input=>{
-    input.addEventListener('change',e=>{ updateRow(parseInt(e.target.dataset.idx),e.target.dataset.field,e.target.value); _refreshRowCard(parseInt(e.target.dataset.idx)); });
-    if(input.dataset.field==='customer') attachCombobox(input,()=>_customers);
-    if(input.dataset.field==='item') attachCombobox(input,()=>_items.map(i=>i.name));
+
+  container.querySelectorAll('[data-del]').forEach(btn =>
+    btn.addEventListener('click', () => deleteRow(parseInt(btn.dataset.del)))
+  );
+  container.querySelectorAll('.oe-il').forEach(input => {
+    input.addEventListener('change', e => {
+      updateRow(parseInt(e.target.dataset.idx), e.target.dataset.field, e.target.value);
+      _refreshRowCard(parseInt(e.target.dataset.idx));
+    });
+    if (input.dataset.field === 'customer') attachCombobox(input, () => _customers);
+    if (input.dataset.field === 'item')     attachCombobox(input, () => _items.map(i => i.name));
   });
 }
 
 function _refreshRowCard(idx) {
-  const r=_rows[idx]; if(!r) return;
-  const div=document.getElementById(`oe-row-${idx}`); if(!div) return;
-  div.className=`oe-row-card${r.warn?' is-warn':''}${r.isNewCustomer?' is-new-customer':''}`;
-  const tagsDiv=div.querySelector('.oe-row-tags');
-  if(tagsDiv) tagsDiv.innerHTML=[r.isNewCustomer?'<span class="oe-tag oe-tag-new">New customer</span>':'',r.warn&&!r.isNewCustomer?'<span class="oe-tag oe-tag-warn">Review</span>':''].filter(Boolean).join('');
-  const itemInput=div.querySelector('[data-field="item"]');
-  if(itemInput){
-    const cat=_items.find(i=>i.name.toLowerCase()===(r.item||'').toLowerCase());
-    let hint=itemInput.nextElementSibling;
-    if(cat){if(!hint||!hint.classList.contains('oe-price-hint')){hint=document.createElement('div');hint.className='oe-price-hint';itemInput.insertAdjacentElement('afterend',hint);}hint.textContent=`₹${parseFloat(cat.unit_price||0).toFixed(0)} / ${cat.unit}`;}
-    else if(hint&&hint.classList.contains('oe-price-hint')) hint.remove();
+  const r    = _rows[idx]; if (!r) return;
+  const wrap = document.getElementById('oe-row-' + idx); if (!wrap) return;
+
+  wrap.className = 'oe-row-wrap' + (r.warn ? ' is-warn' : '') + (r.isNewCustomer ? ' is-new-customer' : '');
+
+  const flex = wrap.querySelector('.oe-row-flex');
+  flex.querySelectorAll('.oe-tag-inline').forEach(t => t.remove());
+  if (r.isNewCustomer) {
+    const t = document.createElement('span');
+    t.className = 'oe-tag-inline';
+    t.setAttribute('style', 'background:#dcfce7;color:#15803d');
+    t.textContent = 'New';
+    flex.appendChild(t);
   }
-  let warnDiv=div.querySelector('.oe-warn-reason');
-  if(r.warnReason){if(!warnDiv){warnDiv=document.createElement('div');warnDiv.className='oe-warn-reason';div.appendChild(warnDiv);}warnDiv.textContent=`⚠ ${r.warnReason}`;}
-  else if(warnDiv) warnDiv.remove();
-  document.getElementById('summary-text').textContent=`${_rows.length} row${_rows.length!==1?'s':''}${_rows.filter(x=>x.warn).length?` · ${_rows.filter(x=>x.warn).length} flagged`:''}`;
+  if (r.warn && !r.isNewCustomer) {
+    const t = document.createElement('span');
+    t.className = 'oe-tag-inline';
+    t.setAttribute('style', 'background:#fef3c7;color:#92400e');
+    t.textContent = '⚠';
+    flex.appendChild(t);
+  }
+
+  let sub = wrap.querySelector('.oe-row-subtext');
+  if (r.warnReason) {
+    if (!sub) { sub = document.createElement('div'); sub.className = 'oe-row-subtext'; wrap.appendChild(sub); }
+    sub.textContent = '⚠ ' + r.warnReason;
+  } else if (sub) {
+    sub.remove();
+  }
+
+  const warnCount = _rows.filter(x => x.warn).length;
+  document.getElementById('summary-text').textContent =
+    `${_rows.length} row${_rows.length !== 1 ? 's' : ''}${warnCount ? ` · ${warnCount} flagged` : ''}`;
 }
 
 // ── Combobox ──────────────────────────────────────────
-let _cbDropdown=null,_cbActiveInput=null,_cbGetOpts=null;
-function setupCombobox(){
-  _cbDropdown=document.getElementById('oe-cb-dropdown');
-  _cbDropdown.addEventListener('mousedown',e=>{
+let _cbDropdown = null, _cbActiveInput = null, _cbGetOpts = null;
+function setupCombobox() {
+  _cbDropdown = document.getElementById('oe-cb-dropdown');
+  _cbDropdown.addEventListener('mousedown', e => {
     e.preventDefault();
-    const item=e.target.closest('.oe-cb-item'); if(!item||!_cbActiveInput) return;
-    _cbActiveInput.value=item.dataset.value;
-    _cbActiveInput.dispatchEvent(new Event('change',{bubbles:true})); _cbClose();
+    const item = e.target.closest('.oe-cb-item'); if (!item || !_cbActiveInput) return;
+    _cbActiveInput.value = item.dataset.value;
+    _cbActiveInput.dispatchEvent(new Event('change', { bubbles: true })); _cbClose();
   });
-  document.addEventListener('mousedown',e=>{if(_cbDropdown&&!_cbDropdown.contains(e.target)&&e.target!==_cbActiveInput)_cbClose();});
-  document.addEventListener('scroll',()=>_cbClose(),true);
+  document.addEventListener('mousedown', e => { if (_cbDropdown && !_cbDropdown.contains(e.target) && e.target !== _cbActiveInput) _cbClose(); });
+  document.addEventListener('scroll', () => _cbClose(), true);
 }
-function _cbOpen(input,getOpts){_cbActiveInput=input;_cbGetOpts=getOpts;_cbRender();}
-function _cbRender(){
-  if(!_cbActiveInput||!_cbDropdown) return;
-  const q=(_cbActiveInput.value||'').toLowerCase();
-  const opts=(_cbGetOpts?_cbGetOpts():[]).filter(o=>!q||o.toLowerCase().includes(q)).slice(0,28);
-  if(!opts.length){_cbClose();return;}
-  _cbDropdown.innerHTML=opts.map(o=>{
-    const i=q?o.toLowerCase().indexOf(q):-1;
-    const hl=i>=0?escH(o.slice(0,i))+'<strong>'+escH(o.slice(i,i+q.length))+'</strong>'+escH(o.slice(i+q.length)):escH(o);
-    return `<div class="oe-cb-item" data-value="${escH(o)}">${hl}</div>`;
+function _cbOpen(input, getOpts) { _cbActiveInput = input; _cbGetOpts = getOpts; _cbRender(); }
+function _cbRender() {
+  if (!_cbActiveInput || !_cbDropdown) return;
+  const q    = (_cbActiveInput.value || '').toLowerCase();
+  const opts = (_cbGetOpts ? _cbGetOpts() : []).filter(o => !q || o.toLowerCase().includes(q)).slice(0, 28);
+  if (!opts.length) { _cbClose(); return; }
+  _cbDropdown.innerHTML = opts.map(o => {
+    const i  = q ? o.toLowerCase().indexOf(q) : -1;
+    const hl = i >= 0
+      ? escH(o.slice(0, i)) + '<strong>' + escH(o.slice(i, i + q.length)) + '</strong>' + escH(o.slice(i + q.length))
+      : escH(o);
+    return '<div class="oe-cb-item" data-value="' + escH(o) + '">' + hl + '</div>';
   }).join('');
-  const r=_cbActiveInput.getBoundingClientRect();
-  Object.assign(_cbDropdown.style,{display:'block',left:r.left+window.scrollX+'px',top:r.bottom+window.scrollY+2+'px',width:Math.max(r.width,200)+'px'});
+  const r = _cbActiveInput.getBoundingClientRect();
+  Object.assign(_cbDropdown.style, {
+    display: 'block',
+    left:    r.left + window.scrollX + 'px',
+    top:     r.bottom + window.scrollY + 2 + 'px',
+    width:   Math.max(r.width, 200) + 'px',
+  });
 }
-function _cbClose(){if(_cbDropdown)_cbDropdown.style.display='none';_cbActiveInput=null;}
-function attachCombobox(input,getOpts){
-  input.addEventListener('focus',()=>_cbOpen(input,getOpts));
-  input.addEventListener('input',()=>_cbActiveInput===input?_cbRender():_cbOpen(input,getOpts));
-  input.addEventListener('blur',()=>setTimeout(()=>{if(_cbActiveInput===input)_cbClose();},160));
-  input.addEventListener('keydown',e=>{if(e.key==='Escape'||e.key==='Tab')_cbClose();});
+function _cbClose() { if (_cbDropdown) _cbDropdown.style.display = 'none'; _cbActiveInput = null; }
+function attachCombobox(input, getOpts) {
+  input.addEventListener('focus',   () => _cbOpen(input, getOpts));
+  input.addEventListener('input',   () => _cbActiveInput === input ? _cbRender() : _cbOpen(input, getOpts));
+  input.addEventListener('blur',    () => setTimeout(() => { if (_cbActiveInput === input) _cbClose(); }, 160));
+  input.addEventListener('keydown', e => { if (e.key === 'Escape' || e.key === 'Tab') _cbClose(); });
 }
 
 // ── Submit flow ──────────────────────────────────────────
 document.getElementById('submit-btn').addEventListener('click', submitOrders);
+
 async function submitOrders() {
-  const toSubmit=_rows.filter(r=>r.customer.trim()&&r.item.trim()&&String(r.quantity).trim());
-  if(!toSubmit.length){showToast('Each row needs a customer, item, and quantity','error');return;}
-  const btn=document.getElementById('submit-btn');
-  btn.disabled=true;btn.textContent='Checking…';
-  try{await checkPhonesThenSubmit(toSubmit);}finally{btn.disabled=false;btn.textContent='Submit to ops →';}
+  const toSubmit = _rows.filter(r => r.customer.trim() && r.item.trim() && String(r.quantity).trim());
+  if (!toSubmit.length) { showToast('Each row needs a customer, item, and quantity', 'error'); return; }
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try { await checkPhonesThenSubmit(toSubmit); } finally { btn.disabled = false; btn.textContent = 'Submit to ops →'; }
 }
-async function checkPhonesThenSubmit(toSubmit){
-  const uniqueCustomers=[...new Set(toSubmit.map(r=>r.customer.trim()))];
-  const{data:phoneData}=await sb.from('customer_phones').select('customer_name').in('customer_name',uniqueCustomers);
-  const hasPhone=new Set((phoneData||[]).map(r=>r.customer_name.toLowerCase()));
-  const needPhone=uniqueCustomers.filter(c=>!hasPhone.has(c.toLowerCase()));
-  if(needPhone.length>0){_pendingSubmitRows=toSubmit;showPhonePrompt(needPhone);return;}
+
+async function checkPhonesThenSubmit(toSubmit) {
+  const uniqueCustomers = [...new Set(toSubmit.map(r => r.customer.trim()))];
+  const { data: phoneData } = await sb.from('customer_phones').select('customer_name').in('customer_name', uniqueCustomers);
+  const hasPhone  = new Set((phoneData || []).map(r => r.customer_name.toLowerCase()));
+  const needPhone = uniqueCustomers.filter(c => !hasPhone.has(c.toLowerCase()));
+  if (needPhone.length > 0) { _pendingSubmitRows = toSubmit; showPhonePrompt(needPhone); return; }
   await doSubmit(toSubmit);
 }
-function showPhonePrompt(customers){
-  const tbody=document.getElementById('phone-table-body');tbody.innerHTML='';
-  customers.forEach(name=>{
-    const slug=name.toLowerCase().replace(/[^a-z0-9]/g,'-');
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td class="oe-phone-name">${escH(name)}</td><td><input class="oe-field-input oe-phone-input" type="tel" id="ph-${escH(slug)}" data-customer="${escH(name)}" placeholder="+91 XXXXX XXXXX" autocomplete="tel"></td><td><button class="btn-sm-mic" data-mic-for="ph-${escH(slug)}">● Speak</button></td>`;
+
+function showPhonePrompt(customers) {
+  const tbody = document.getElementById('phone-table-body'); tbody.innerHTML = '';
+  customers.forEach(name => {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const tr   = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="oe-phone-name">' + escH(name) + '</td>' +
+      '<td><input class="oe-phone-input" type="tel" id="ph-' + escH(slug) + '" data-customer="' + escH(name) + '" placeholder="+91 XXXXX XXXXX" autocomplete="tel"></td>' +
+      '<td><button class="btn-sm-mic" data-mic-for="ph-' + escH(slug) + '">● Speak</button></td>';
     tbody.appendChild(tr);
   });
-  tbody.querySelectorAll('[data-mic-for]').forEach(btn=>btn.addEventListener('click',()=>speakPhone(btn.dataset.micFor,btn)));
-  const prompt=document.getElementById('phone-prompt');prompt.style.display='block';
-  prompt.scrollIntoView({behavior:'smooth',block:'nearest'});
+  tbody.querySelectorAll('[data-mic-for]').forEach(btn => btn.addEventListener('click', () => speakPhone(btn.dataset.micFor, btn)));
+  const prompt = document.getElementById('phone-prompt');
+  prompt.style.display = 'block';
+  prompt.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   tbody.querySelector('input')?.focus();
 }
-function speakPhone(inputId,btn){
-  const input=document.getElementById(inputId);if(!input)return;
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){showToast('Speech not supported','error');return;}
-  const r=new SR();r.lang='en-IN';r.continuous=false;r.interimResults=false;
-  btn.textContent='■ Stop';btn.classList.add('recording');
-  r.onresult=e=>{input.value=_normalizePhone(e.results[0][0].transcript);};
-  r.onerror=()=>{btn.textContent='● Speak';btn.classList.remove('recording');};
-  r.onend=()=>{btn.textContent='● Speak';btn.classList.remove('recording');};
+
+function speakPhone(inputId, btn) {
+  const input = document.getElementById(inputId); if (!input) return;
+  const SR    = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { showToast('Speech not supported', 'error'); return; }
+  const r = new SR(); r.lang = 'en-IN'; r.continuous = false; r.interimResults = false;
+  btn.textContent = '■ Stop'; btn.classList.add('recording');
+  r.onresult = e => { input.value = _normalizePhone(e.results[0][0].transcript); };
+  r.onerror  = () => { btn.textContent = '● Speak'; btn.classList.remove('recording'); };
+  r.onend    = () => { btn.textContent = '● Speak'; btn.classList.remove('recording'); };
   r.start();
 }
-function _normalizePhone(raw){
-  const words={zero:'0',one:'1',two:'2',three:'3',four:'4',five:'5',six:'6',seven:'7',eight:'8',nine:'9'};
-  let s=raw.toLowerCase();
-  Object.entries(words).forEach(([w,d])=>{s=s.replace(new RegExp('\\b'+w+'\\b','g'),d);});
-  s=s.replace(/[^\d+]/g,'');
-  if(/^\d{10}$/.test(s))s='+91'+s;
+
+function _normalizePhone(raw) {
+  const words = { zero:'0', one:'1', two:'2', three:'3', four:'4', five:'5', six:'6', seven:'7', eight:'8', nine:'9' };
+  let s = raw.toLowerCase();
+  Object.entries(words).forEach(([w, d]) => { s = s.replace(new RegExp('\\b' + w + '\\b', 'g'), d); });
+  s = s.replace(/[^\d+]/g, '');
+  if (/^\d{10}$/.test(s)) s = '+91' + s;
   return s;
 }
-async function submitWithPhones(){
-  const inputs=document.querySelectorAll('#phone-table-body .oe-phone-input');
-  const phoneRows=[];
-  inputs.forEach(input=>{
-    const customer_name=input.dataset.customer;
-    const phone_number=_normalizePhone(input.value.trim());
-    if(phone_number.length>=10)phoneRows.push({customer_name,phone_number,label:'primary'});
+
+async function submitWithPhones() {
+  const inputs    = document.querySelectorAll('#phone-table-body .oe-phone-input');
+  const phoneRows = [];
+  inputs.forEach(input => {
+    const customer_name = input.dataset.customer;
+    const phone_number  = _normalizePhone(input.value.trim());
+    if (phone_number.length >= 10) phoneRows.push({ customer_name, phone_number, label: 'primary' });
   });
-  if(phoneRows.length>0){
-    const{error}=await sb.from('customer_phones').insert(phoneRows);
-    if(error&&error.code!=='23505'){showToast('Could not save phone numbers: '+error.message,'error');return;}
-    showToast(`${phoneRows.length} phone${phoneRows.length!==1?'s':''} saved`);
+  if (phoneRows.length > 0) {
+    const { error } = await sb.from('customer_phones').insert(phoneRows);
+    if (error && error.code !== '23505') { showToast('Could not save phone numbers: ' + error.message, 'error'); return; }
+    showToast(`${phoneRows.length} phone${phoneRows.length !== 1 ? 's' : ''} saved`);
   }
-  document.getElementById('phone-prompt').style.display='none';
+  document.getElementById('phone-prompt').style.display = 'none';
   await doSubmit(_pendingSubmitRows);
-  _pendingSubmitRows=null;
+  _pendingSubmitRows = null;
 }
-async function skipPhones(){
-  document.getElementById('phone-prompt').style.display='none';
+
+async function skipPhones() {
+  document.getElementById('phone-prompt').style.display = 'none';
   await doSubmit(_pendingSubmitRows);
-  _pendingSubmitRows=null;
+  _pendingSubmitRows = null;
 }
-async function doSubmit(toSubmit){
-  const btn=document.getElementById('submit-btn');btn.disabled=true;btn.textContent='Submitting…';
-  try{
-    const groups={};
-    for(const row of toSubmit){
-      const key=`${row.customer.trim()}|${row.orderDate}`;
-      if(!groups[key])groups[key]={customer:row.customer.trim(),date:row.orderDate,items:[]};
+
+async function doSubmit(toSubmit) {
+  const btn = document.getElementById('submit-btn'); btn.disabled = true; btn.textContent = 'Submitting…';
+  try {
+    const groups = {};
+    for (const row of toSubmit) {
+      const key = row.customer.trim() + '|' + row.orderDate;
+      if (!groups[key]) groups[key] = { customer: row.customer.trim(), date: row.orderDate, items: [] };
       groups[key].items.push(row);
     }
-    let totalInserted=0;
-    for(const{customer,date,items}of Object.values(groups)){
+    let totalInserted = 0;
+    for (const { customer, date, items } of Object.values(groups)) {
       let orderId;
-      const{data:existingOrder}=await sb.from('orders').select('sales_id').eq('order_date',date).eq('customer_name',customer).maybeSingle();
-      if(existingOrder){orderId=existingOrder.sales_id;}
-      else{
-        const safeName=customer.replace(/\s+/g,'-');let salesId=`${date}-${safeName}`,suffix=1;
-        while(true){const{data:hit}=await sb.from('orders').select('sales_id').eq('sales_id',salesId).maybeSingle();if(!hit)break;salesId=`${date}-${safeName}-${++suffix}`;}
-        const community=customer.match(/^(.+?)\s+[\w-]+$/)?.[1]||customer;
-        const{error:orderErr}=await sb.from('orders').insert({sales_id:salesId,customer_name:customer,community,payment_method:'cod',status:'open',payment_status:'due_today',order_date:date,cart:[],total:0});
-        if(orderErr)throw new Error(`Failed to create order: ${orderErr.message}`);
-        orderId=salesId;
-        if(!_customers.some(c=>c.toLowerCase()===customer.toLowerCase()))_customers.push(customer);
+      const { data: existingOrder } = await sb.from('orders').select('sales_id').eq('order_date', date).eq('customer_name', customer).maybeSingle();
+      if (existingOrder) {
+        orderId = existingOrder.sales_id;
+      } else {
+        const safeName = customer.replace(/\s+/g, '-');
+        let salesId = date + '-' + safeName, suffix = 1;
+        while (true) {
+          const { data: hit } = await sb.from('orders').select('sales_id').eq('sales_id', salesId).maybeSingle();
+          if (!hit) break;
+          salesId = date + '-' + safeName + '-' + (++suffix);
+        }
+        const community = customer.match(/^(.+?)\s+[\w-]+$/)?.[1] || customer;
+        const { error: orderErr } = await sb.from('orders').insert({
+          sales_id: salesId, customer_name: customer, community,
+          payment_method: 'cod', status: 'open', payment_status: 'due_today',
+          order_date: date, cart: [], total: 0,
+        });
+        if (orderErr) throw new Error('Failed to create order: ' + orderErr.message);
+        orderId = salesId;
+        if (!_customers.some(c => c.toLowerCase() === customer.toLowerCase())) _customers.push(customer);
       }
-      const newItems=items.map(row=>{
-        const cat=_items.find(i=>i.name.toLowerCase()===row.item.trim().toLowerCase());
-        return{order_id:orderId,order_date:date,customer_name:customer,community:customer.match(/^(.+?)\s+[\w-]+$/)?.[1]||customer,item_name:cat?cat.name:row.item.trim(),description:row.description||null,requested_qty:parseFloat(row.quantity)||0,unit_price:cat?.unit_price??null,final_qty:null,status:'open'};
+      const newItems = items.map(row => {
+        const cat = _items.find(i => i.name.toLowerCase() === row.item.trim().toLowerCase());
+        const community = row.customer.match(/^(.+?)\s+[\w-]+$/)?.[1] || row.customer.trim();
+        return {
+          order_id:      orderId,
+          order_date:    date,
+          customer_name: customer,
+          community,
+          item_name:     cat ? cat.name : row.item.trim(),
+          description:   row.description || null,
+          requested_qty: parseFloat(row.quantity) || 0,
+          unit_price:    cat ? cat.unit_price : null,
+          final_qty:     null,
+          status:        'open',
+        };
       });
-      const{error:itemErr}=await sb.from('order_items').insert(newItems);
-      if(itemErr)throw new Error(`Failed to insert items: ${itemErr.message}`);
-      totalInserted+=newItems.length;
+      const { error: itemErr } = await sb.from('order_items').insert(newItems);
+      if (itemErr) throw new Error('Failed to insert items: ' + itemErr.message);
+      totalInserted += newItems.length;
     }
-    showToast(`${totalInserted} item${totalInserted!==1?'s':''} submitted to ops ✓`);
-    _rows=[];renderRows();document.getElementById('raw-input').value='';
-  }catch(e){showToast(e.message,'error');console.error(e);}
-  finally{btn.disabled=false;btn.textContent='Submit to ops →';}
+    showToast(`${totalInserted} item${totalInserted !== 1 ? 's' : ''} submitted to ops ✓`);
+    _rows = []; renderRows();
+    document.getElementById('raw-input').value = '';
+  } catch (e) {
+    showToast(e.message, 'error'); console.error(e);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Submit to ops →';
+  }
 }
