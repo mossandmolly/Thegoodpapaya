@@ -2,6 +2,7 @@
 let _items     = [];   // [{ name, unit, unit_price }]
 let _customers = [];   // string[]
 let _rows      = [];   // parsed/manual rows
+let _pendingSubmitRows = null;   // held while phone prompt is open
 
 // ── Init ───────────────────────────────────────────────────────
 (async function init() {
@@ -39,7 +40,7 @@ let _rows      = [];   // parsed/manual rows
   setupSpeech();
 })();
 
-// ── Speech recognition ─────────────────────────────────────────
+// ── Speech recognition (main textarea) ──────────────────────────────────
 let _recognition = null;
 let _isRecording = false;
 
@@ -82,7 +83,8 @@ function setupSpeech() {
   };
 
   _recognition.onerror = e => {
-    document.getElementById('mic-status').textContent = `Mic error: ${e.error} — try again or paste text instead.`;
+    document.getElementById('mic-status').textContent =
+      `Mic error: ${e.error} — try again or paste text instead.`;
     _stopRecording();
   };
 
@@ -113,10 +115,10 @@ document.getElementById('parse-btn').addEventListener('click', () => {
   if (!raw) { showToast('Nothing to parse — speak or paste text first.', 'error'); return; }
   if (_isRecording) _stopRecording();
 
-  const orderDate   = document.getElementById('order-date').value || todayIST();
-  const itemPairs   = _items.map(i => [i.name, i.unit]);
-  const newRows     = parseOrders(raw, _customers, itemPairs, orderDate);
-  _rows             = _rows.concat(newRows);
+  const orderDate = document.getElementById('order-date').value || todayIST();
+  const itemPairs = _items.map(i => [i.name, i.unit]);
+  const newRows   = parseOrders(raw, _customers, itemPairs, orderDate);
+  _rows           = _rows.concat(newRows);
   renderRows();
   showToast(`Parsed ${newRows.length} row${newRows.length !== 1 ? 's' : ''}`);
 });
@@ -163,9 +165,9 @@ function escH(s) {
 }
 
 function renderRows() {
-  const container    = document.getElementById('rows-container');
-  const resultsWrap  = document.getElementById('results-section');
-  const emptyState   = document.getElementById('empty-state');
+  const container   = document.getElementById('rows-container');
+  const resultsWrap = document.getElementById('results-section');
+  const emptyState  = document.getElementById('empty-state');
 
   if (!_rows.length) {
     resultsWrap.style.display = 'none';
@@ -174,6 +176,7 @@ function renderRows() {
   }
   resultsWrap.style.display = 'block';
   emptyState.style.display  = 'none';
+  document.getElementById('phone-prompt').style.display = 'none';
 
   const warnCount = _rows.filter(r => r.warn).length;
   document.getElementById('summary-text').textContent =
@@ -182,16 +185,16 @@ function renderRows() {
   container.innerHTML = '';
 
   _rows.forEach((r, idx) => {
-    const div       = document.createElement('div');
-    div.className   = `oe-row-card${r.warn ? ' is-warn' : ''}${r.isNewCustomer ? ' is-new-customer' : ''}`;
-    div.id          = `oe-row-${idx}`;
+    const div     = document.createElement('div');
+    div.className = `oe-row-card${r.warn ? ' is-warn' : ''}${r.isNewCustomer ? ' is-new-customer' : ''}`;
+    div.id        = `oe-row-${idx}`;
 
     const tags = [
       r.isNewCustomer ? '<span class="oe-tag oe-tag-new">New customer</span>' : '',
       r.warn && !r.isNewCustomer ? '<span class="oe-tag oe-tag-warn">Review</span>' : '',
     ].filter(Boolean).join('');
 
-    const cat      = _items.find(i => i.name.toLowerCase() === (r.item || '').toLowerCase());
+    const cat       = _items.find(i => i.name.toLowerCase() === (r.item || '').toLowerCase());
     const priceHint = cat
       ? `<div class="oe-price-hint">₹${parseFloat(cat.unit_price || 0).toFixed(0)} / ${cat.unit}</div>`
       : '';
@@ -235,31 +238,24 @@ function renderRows() {
       </div>
       ${r.warnReason ? `<div class="oe-warn-reason">⚠ ${escH(r.warnReason)}</div>` : ''}
     `;
-
     container.appendChild(div);
   });
 
-  // Delete buttons
   container.querySelectorAll('[data-del]').forEach(btn => {
     btn.addEventListener('click', () => deleteRow(parseInt(btn.dataset.del)));
   });
 
-  // Input change → update state (no full re-render, just update tags/hint inline)
   container.querySelectorAll('.oe-field-input').forEach(input => {
     input.addEventListener('change', e => {
-      const idx   = parseInt(e.target.dataset.idx);
-      const field = e.target.dataset.field;
-      updateRow(idx, field, e.target.value);
-      _refreshRowCard(idx);
+      updateRow(parseInt(e.target.dataset.idx), e.target.dataset.field, e.target.value);
+      _refreshRowCard(parseInt(e.target.dataset.idx));
     });
-
     const field = input.dataset.field;
     if (field === 'customer') attachCombobox(input, () => _customers);
     if (field === 'item')     attachCombobox(input, () => _items.map(i => i.name));
   });
 }
 
-// Lightweight refresh of a single card without full re-render (preserves focus)
 function _refreshRowCard(idx) {
   const r   = _rows[idx];
   if (!r) return;
@@ -274,11 +270,10 @@ function _refreshRowCard(idx) {
     r.warn && !r.isNewCustomer ? '<span class="oe-tag oe-tag-warn">Review</span>' : '',
   ].filter(Boolean).join('');
 
-  // Update price hint on the item column
   const itemInput = div.querySelector('[data-field="item"]');
   if (itemInput) {
-    const cat = _items.find(i => i.name.toLowerCase() === (r.item || '').toLowerCase());
-    let hint  = itemInput.nextElementSibling;
+    const cat  = _items.find(i => i.name.toLowerCase() === (r.item || '').toLowerCase());
+    let   hint = itemInput.nextElementSibling;
     if (cat) {
       if (!hint || !hint.classList.contains('oe-price-hint')) {
         hint = document.createElement('div');
@@ -291,7 +286,6 @@ function _refreshRowCard(idx) {
     }
   }
 
-  // Warn reason
   let warnDiv = div.querySelector('.oe-warn-reason');
   if (r.warnReason) {
     if (!warnDiv) { warnDiv = document.createElement('div'); warnDiv.className = 'oe-warn-reason'; div.appendChild(warnDiv); }
@@ -306,13 +300,12 @@ function _refreshRowCard(idx) {
 }
 
 // ── Combobox ────────────────────────────────────────────────────
-let _cbDropdown   = null;
+let _cbDropdown    = null;
 let _cbActiveInput = null;
-let _cbGetOpts    = null;
+let _cbGetOpts     = null;
 
 function setupCombobox() {
   _cbDropdown = document.getElementById('oe-cb-dropdown');
-
   _cbDropdown.addEventListener('mousedown', e => {
     e.preventDefault();
     const item = e.target.closest('.oe-cb-item');
@@ -321,25 +314,19 @@ function setupCombobox() {
     _cbActiveInput.dispatchEvent(new Event('change', { bubbles: true }));
     _cbClose();
   });
-
   document.addEventListener('mousedown', e => {
     if (_cbDropdown && !_cbDropdown.contains(e.target) && e.target !== _cbActiveInput) _cbClose();
   });
   document.addEventListener('scroll', () => _cbClose(), true);
 }
 
-function _cbOpen(input, getOpts) {
-  _cbActiveInput = input;
-  _cbGetOpts     = getOpts;
-  _cbRender();
-}
+function _cbOpen(input, getOpts) { _cbActiveInput = input; _cbGetOpts = getOpts; _cbRender(); }
 
 function _cbRender() {
   if (!_cbActiveInput || !_cbDropdown) return;
-  const q     = (_cbActiveInput.value || '').toLowerCase();
-  const opts  = (_cbGetOpts ? _cbGetOpts() : []).filter(o => !q || o.toLowerCase().includes(q)).slice(0, 28);
+  const q    = (_cbActiveInput.value || '').toLowerCase();
+  const opts = (_cbGetOpts ? _cbGetOpts() : []).filter(o => !q || o.toLowerCase().includes(q)).slice(0, 28);
   if (!opts.length) { _cbClose(); return; }
-
   _cbDropdown.innerHTML = opts.map(o => {
     const i  = q ? o.toLowerCase().indexOf(q) : -1;
     const hl = i >= 0
@@ -347,7 +334,6 @@ function _cbRender() {
       : escH(o);
     return `<div class="oe-cb-item" data-value="${escH(o)}">${hl}</div>`;
   }).join('');
-
   const r = _cbActiveInput.getBoundingClientRect();
   Object.assign(_cbDropdown.style, {
     display: 'block',
@@ -369,7 +355,7 @@ function attachCombobox(input, getOpts) {
   input.addEventListener('keydown', e   => { if (e.key === 'Escape' || e.key === 'Tab') _cbClose(); });
 }
 
-// ── Submit ──────────────────────────────────────────────────────
+// ── Submit flow ─────────────────────────────────────────────────────
 document.getElementById('submit-btn').addEventListener('click', submitOrders);
 
 async function submitOrders() {
@@ -381,10 +367,160 @@ async function submitOrders() {
 
   const btn = document.getElementById('submit-btn');
   btn.disabled    = true;
+  btn.textContent = 'Checking…';
+
+  try {
+    await checkPhonesThenSubmit(toSubmit);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Submit to ops →';
+  }
+}
+
+async function checkPhonesThenSubmit(toSubmit) {
+  // Get unique customer names in this batch
+  const uniqueCustomers = [...new Set(toSubmit.map(r => r.customer.trim()))];
+
+  // Which of these already have a phone on file?
+  const { data: phoneData } = await sb
+    .from('customer_phones')
+    .select('customer_name')
+    .in('customer_name', uniqueCustomers);
+
+  const hasPhone = new Set((phoneData || []).map(r => r.customer_name.toLowerCase()));
+  const needPhone = uniqueCustomers.filter(c => !hasPhone.has(c.toLowerCase()));
+
+  if (needPhone.length > 0) {
+    // Show phone prompt and pause — resume in submitWithPhones() or skipPhones()
+    _pendingSubmitRows = toSubmit;
+    showPhonePrompt(needPhone);
+    return;
+  }
+
+  await doSubmit(toSubmit);
+}
+
+// ── Phone prompt ────────────────────────────────────────────────────
+
+function showPhonePrompt(customers) {
+  const tbody = document.getElementById('phone-table-body');
+  tbody.innerHTML = '';
+
+  customers.forEach(name => {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const tr   = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="oe-phone-name">${escH(name)}</td>
+      <td>
+        <input class="oe-field-input oe-phone-input" type="tel"
+          id="ph-${escH(slug)}" data-customer="${escH(name)}"
+          placeholder="+91 XXXXX XXXXX" autocomplete="tel">
+      </td>
+      <td>
+        <button class="btn-sm-mic" data-mic-for="ph-${escH(slug)}">● Speak</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Wire up per-row mic buttons
+  tbody.querySelectorAll('[data-mic-for]').forEach(btn => {
+    btn.addEventListener('click', () => speakPhone(btn.dataset.micFor, btn));
+  });
+
+  const prompt = document.getElementById('phone-prompt');
+  prompt.style.display = 'block';
+  prompt.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  tbody.querySelector('input')?.focus();
+}
+
+// Activate speech recognition for a single phone input
+function speakPhone(inputId, btn) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { showToast('Speech not supported — type the number', 'error'); return; }
+
+  const r   = new SR();
+  r.lang           = 'en-IN';
+  r.continuous     = false;
+  r.interimResults = false;
+
+  btn.textContent = '■ Stop';
+  btn.classList.add('recording');
+
+  r.onresult = e => {
+    input.value = _normalizePhone(e.results[0][0].transcript);
+  };
+  r.onerror = () => {
+    btn.textContent = '● Speak';
+    btn.classList.remove('recording');
+  };
+  r.onend = () => {
+    btn.textContent = '● Speak';
+    btn.classList.remove('recording');
+  };
+
+  r.start();
+}
+
+// Convert spoken phone ("nine eight seven six...") to +91XXXXXXXXXX
+function _normalizePhone(raw) {
+  const words = { zero:'0',one:'1',two:'2',three:'3',four:'4',
+                  five:'5',six:'6',seven:'7',eight:'8',nine:'9' };
+  let s = raw.toLowerCase();
+  Object.entries(words).forEach(([w, d]) => {
+    s = s.replace(new RegExp('\\b' + w + '\\b', 'g'), d);
+  });
+  s = s.replace(/[^\d+]/g, '');
+  if (/^\d{10}$/.test(s)) s = '+91' + s;
+  return s;
+}
+
+async function submitWithPhones() {
+  // Collect entered phone numbers
+  const inputs    = document.querySelectorAll('#phone-table-body .oe-phone-input');
+  const phoneRows = [];
+
+  inputs.forEach(input => {
+    const customer_name = input.dataset.customer;
+    const phone_number  = _normalizePhone(input.value.trim());
+    if (phone_number.length >= 10) {
+      phoneRows.push({ customer_name, phone_number, label: 'primary' });
+    }
+  });
+
+  if (phoneRows.length > 0) {
+    const { error } = await sb.from('customer_phones').insert(phoneRows);
+    if (error) {
+      // Ignore duplicate-phone errors (someone already on file under another name)
+      if (error.code !== '23505') {
+        showToast('Could not save phone numbers: ' + error.message, 'error');
+        return;
+      }
+    }
+    showToast(`${phoneRows.length} phone${phoneRows.length !== 1 ? 's' : ''} saved`);
+  }
+
+  document.getElementById('phone-prompt').style.display = 'none';
+  await doSubmit(_pendingSubmitRows);
+  _pendingSubmitRows = null;
+}
+
+async function skipPhones() {
+  document.getElementById('phone-prompt').style.display = 'none';
+  await doSubmit(_pendingSubmitRows);
+  _pendingSubmitRows = null;
+}
+
+// ── Core insert ─────────────────────────────────────────────────────
+async function doSubmit(toSubmit) {
+  const btn = document.getElementById('submit-btn');
+  btn.disabled    = true;
   btn.textContent = 'Submitting…';
 
   try {
-    // Group by customer + date
     const groups = {};
     for (const row of toSubmit) {
       const key = `${row.customer.trim()}|${row.orderDate}`;
@@ -395,7 +531,6 @@ async function submitOrders() {
     let totalInserted = 0;
 
     for (const { customer, date, items } of Object.values(groups)) {
-      // Find existing order for this customer+date, or create one
       let orderId;
       const { data: existingOrder } = await sb
         .from('orders')
@@ -408,8 +543,8 @@ async function submitOrders() {
         orderId = existingOrder.sales_id;
       } else {
         const safeName = customer.replace(/\s+/g, '-');
-        let salesId    = `${date}-${safeName}`;
-        let suffix     = 1;
+        let salesId = `${date}-${safeName}`;
+        let suffix  = 1;
         while (true) {
           const { data: hit } = await sb.from('orders').select('sales_id').eq('sales_id', salesId).maybeSingle();
           if (!hit) break;
@@ -438,7 +573,6 @@ async function submitOrders() {
         }
       }
 
-      // Insert order_items
       const newItems = items.map(row => {
         const cat = _items.find(i => i.name.toLowerCase() === row.item.trim().toLowerCase());
         return {
@@ -461,9 +595,6 @@ async function submitOrders() {
     }
 
     showToast(`${totalInserted} item${totalInserted !== 1 ? 's' : ''} submitted to ops ✓`);
-    document.getElementById('status-line').textContent =
-      `${_customers.length} customers · ${_items.length} catalog items loaded`;
-
     _rows = [];
     renderRows();
     document.getElementById('raw-input').value = '';

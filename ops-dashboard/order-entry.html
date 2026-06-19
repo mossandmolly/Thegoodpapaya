@@ -75,12 +75,7 @@
     }
     .oe-row-card.is-warn { background: #fffbeb; border-color: #fcd34d; }
     .oe-row-card.is-new-customer { border-left: 3px solid #16a34a; }
-    .oe-row-meta {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 8px;
-    }
+    .oe-row-meta { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
     .oe-row-tags { display: flex; gap: 5px; flex-wrap: wrap; min-height: 20px; }
     .oe-tag { font-size: 0.68rem; font-weight: 600; padding: 2px 7px; border-radius: 5px; display: inline-block; }
     .oe-tag-new { background: #dcfce7; color: #15803d; }
@@ -105,6 +100,53 @@
     .oe-row-delete:hover { color: #ef4444; }
     .oe-empty-state { text-align: center; padding: 32px 16px; color: #9ca3af; font-size: 0.88rem; line-height: 1.8; }
     .oe-submit-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    /* Phone prompt */
+    .oe-phone-prompt {
+      background: #fffbeb;
+      border: 1.5px solid #fcd34d;
+      border-radius: 10px;
+      padding: 14px;
+      margin-top: 14px;
+    }
+    .oe-phone-prompt h3 {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #92400e;
+      margin: 0 0 6px;
+    }
+    .oe-phone-prompt p {
+      font-size: 0.83rem;
+      color: #92400e;
+      margin: 0 0 12px;
+      line-height: 1.5;
+    }
+    .oe-phone-table { width: 100%; border-collapse: collapse; }
+    .oe-phone-table th {
+      font-size: 0.66rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #9ca3af;
+      padding: 4px 6px;
+      text-align: left;
+      font-weight: 600;
+    }
+    .oe-phone-table td { padding: 5px 6px; vertical-align: middle; }
+    .oe-phone-name { font-weight: 500; font-size: 0.88rem; white-space: nowrap; }
+    .oe-phone-input { font-size: 0.88rem; letter-spacing: 0.04em; }
+    .btn-sm-mic {
+      font-size: 0.76rem;
+      padding: 5px 9px;
+      background: #eaf3de;
+      color: #3b6d11;
+      border: 1px solid #c7e3a8;
+      border-radius: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-sm-mic.recording { background: #faece7; color: #993c1d; border-color: #f3bba8; }
+    /* Combobox */
     .oe-cb-dropdown {
       position: absolute;
       background: #fff;
@@ -175,10 +217,30 @@ Ahad 12601 mango half kg strawberry 2 boxes"></textarea>
     <div class="oe-submit-row">
       <button id="submit-btn" class="btn btn-primary" type="button">Submit to ops →</button>
     </div>
+
+    <!-- Phone collection: shown before submit for customers without a number on file -->
+    <div id="phone-prompt" class="oe-phone-prompt" style="display:none">
+      <h3>⚠ Phone numbers needed</h3>
+      <p>These customers don’t have a mobile number on file. Speak or paste each one below — or skip to submit without.</p>
+      <table class="oe-phone-table">
+        <thead>
+          <tr>
+            <th style="width:40%">Customer</th>
+            <th>Mobile number</th>
+            <th style="width:80px"></th>
+          </tr>
+        </thead>
+        <tbody id="phone-table-body"></tbody>
+      </table>
+      <div class="oe-btn-row" style="margin-top:14px">
+        <button class="btn btn-primary" onclick="submitWithPhones()">Save &amp; submit →</button>
+        <button class="btn btn-secondary" onclick="skipPhones()">Skip — submit anyway</button>
+      </div>
+    </div>
   </div>
 
   <div id="empty-state" class="oe-empty-state">
-    No orders yet — speak or paste text above, then tap "Parse orders".<br>
+    No orders yet — speak or paste text above, then tap “Parse orders”.<br>
     Or <button class="btn btn-secondary btn-sm" onclick="addBlankRow()" style="margin-left:4px">add a row manually</button>.
   </div>
 
