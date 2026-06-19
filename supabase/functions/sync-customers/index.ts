@@ -29,7 +29,7 @@ async function getZohoToken(): Promise<string> {
 
 // Use ZOHO_ORG_ID secret if set; otherwise auto-discover from /organizations.
 async function getOrgId(token: string): Promise<string> {
-  const envOrgId = Deno.env.get('ZOHO_ORG_ID')?.trim()
+  const envOrgId = Deno.env.get('ZOHO_ORGANIZATION_ID')?.trim()
   if (envOrgId) return envOrgId
 
   const res  = await fetch(`${ZOHO_BASE}/organizations`, {
