@@ -195,7 +195,7 @@
       <div id="panel-voice" class="admin-panel">
         <div class="panel-heading">Voice Orders</div>
         <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
-          Speak or type orders and parse them using AI. Requires the <code>parse-orders</code> edge function.
+          Speak or paste order text — one line per customer. Parsed locally using your catalog, then previewed before saving.
         </p>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <label style="font-size:.82rem;color:var(--text-muted)">Order date</label>
@@ -285,15 +285,15 @@
       <!-- Danger Zone -->
       <div id="panel-danger" class="admin-panel">
         <div class="panel-heading" style="color:var(--red)">Danger Zone</div>
-        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:20px">Reset today’s operations — sets all items back to draft.</p>
-        <button class="btn btn-danger btn-sm" onclick="resetTodayStatus()">Reset Today’s Status</button>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:20px">Reset today's operations — sets all items back to draft.</p>
+        <button class="btn btn-danger btn-sm" onclick="resetTodayStatus()">Reset Today's Status</button>
       </div>
 
     </main>
   </div>
 </div>
 
-<!-- Preview modal (voice orders) -->
+<!-- Preview modal -->
 <div id="orders-preview-modal" class="hidden preview-overlay">
   <div class="preview-modal">
     <div class="preview-modal-header">
@@ -321,6 +321,7 @@ function showPanel(panelId, btn) {
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/config.js"></script>
+<script src="js/order-parser.js"></script>
 <script src="js/admin.js"></script>
 </body>
 </html>
