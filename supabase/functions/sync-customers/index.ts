@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
         zoho_contact_id:  c.contact_id,
         active:           true,
         synced_at:        new Date().toISOString(),
-      }, { onConflict: 'zoho_contact_id' });
+      }, { onConflict: 'customer_name' });
 
       if (error) throw new Error(`Customer upsert failed for "${customerName}": ${error.message}`);
       synced++;
