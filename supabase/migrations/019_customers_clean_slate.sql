@@ -28,13 +28,37 @@ CREATE POLICY customers_anon_read ON public.customers
 CREATE POLICY customers_anon_insert ON public.customers
   FOR INSERT TO anon WITH CHECK (true);
 
--- 5. Restore customer_notes FK
+-- 5. Seed from ALL sources before re-adding FKs, so no orphan risk
+INSERT INTO public.customers (customer_name)
+  SELECT DISTINCT customer_name FROM public.orders
+  WHERE customer_name IS NOT NULL
+ON CONFLICT (customer_name) DO NOTHING;
+
+INSERT INTO public.customers (customer_name)
+  SELECT DISTINCT customer_name FROM public.customer_notes
+  WHERE customer_name IS NOT NULL
+ON CONFLICT (customer_name) DO NOTHING;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'customer_phones'
+  ) THEN
+    INSERT INTO public.customers (customer_name)
+      SELECT DISTINCT customer_name FROM public.customer_phones
+      WHERE customer_name IS NOT NULL
+    ON CONFLICT (customer_name) DO NOTHING;
+  END IF;
+END $$;
+
+-- 6. Restore customer_notes FK (all names now guaranteed to exist)
 ALTER TABLE customer_notes
   ADD CONSTRAINT customer_notes_customer_name_fkey
   FOREIGN KEY (customer_name) REFERENCES public.customers(customer_name)
   ON UPDATE CASCADE ON DELETE CASCADE;
 
--- 6. Restore customer_phones FK if that table still exists
+-- 7. Restore customer_phones FK if that table still exists
 DO $$
 BEGIN
   IF EXISTS (
@@ -47,12 +71,6 @@ BEGIN
       ON UPDATE CASCADE ON DELETE CASCADE;
   END IF;
 END $$;
-
--- 7. Seed from existing orders so order history stays linked
-INSERT INTO public.customers (customer_name)
-  SELECT DISTINCT customer_name FROM public.orders
-  WHERE customer_name IS NOT NULL
-ON CONFLICT (customer_name) DO NOTHING;
 
 -- 8. Trigger: auto-create customer row on every order insert
 CREATE OR REPLACE FUNCTION orders_ensure_customer()
