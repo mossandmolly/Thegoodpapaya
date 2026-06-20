@@ -2,8 +2,11 @@
 // Same rules: society/door detection, item-anchor scanning, multiword
 // collapsing, number-word normalization, pc->kg conversion, stop words,
 // new-customer flagging. Runs entirely client-side, no dependencies.
+//
+// Call setSocieties(canonicals, aliasMap) after loading from Supabase
+// to override the built-in defaults below.
 
-const CANONICAL_SOCIETIES = [
+let CANONICAL_SOCIETIES = [
   "77degree", "80trees", "ahad", "akme", "ascentia", "assetz", "bhuvi",
   "dsr", "dsrparkway", "espana", "ferns", "iksha", "iris", "ivy", "jade",
   "kethana", "krishvigavakshi", "lakefront", "lotus", "meda", "pristine",
@@ -13,7 +16,7 @@ const CANONICAL_SOCIETIES = [
   "vajram", "vars", "villa", "wing", "dhavala", "palmera",
 ];
 
-const SOC_ALIASES = {
+let SOC_ALIASES = {
   "77": "77degree", "77-degree": "77degree", "80tree": "80trees",
   "akmi": "akme", "essentia": "ascentia", "feens": "ferns",
   "krishvagavakshi": "krishvigavakshi", "krishvi": "krishvigavakshi",
@@ -80,7 +83,9 @@ const PC_TO_KG = {
   "dragon red": 0.5, plum: 0.05,
 };
 
-// ── Tokenization ───────────────────────────────────────────────
+// ---------------------------------------------------------------------
+// Tokenization
+// ---------------------------------------------------------------------
 
 function pretokenize(line) {
   const tokens = line.trim().split(/\s+/);
@@ -136,7 +141,9 @@ function normalizeTokens(tokens) {
   return out;
 }
 
-// ── Fuzzy matching ─────────────────────────────────────────────
+// ---------------------------------------------------------------------
+// Rule-based fuzzy matching
+// ---------------------------------------------------------------------
 
 function ruleMatch(spoken, candidates, minScore = 12) {
   const sl = spoken.toLowerCase().trim();
@@ -182,7 +189,9 @@ function splitGluedSociety(word) {
   return [null, null];
 }
 
-// ── Item resolution ────────────────────────────────────────────
+// ---------------------------------------------------------------------
+// Item-name resolution
+// ---------------------------------------------------------------------
 
 function buildItemMap(items) {
   const m = {};
@@ -259,7 +268,9 @@ function isDoorEnd(words, j) {
   return false;
 }
 
-// ── pc -> kg conversion ────────────────────────────────────────
+// ---------------------------------------------------------------------
+// pc -> kg conversion
+// ---------------------------------------------------------------------
 
 function resolveConversion(itemName) {
   const low = itemName.toLowerCase();
@@ -272,7 +283,9 @@ function resolveConversion(itemName) {
   return null;
 }
 
-// ── Main per-line parse ────────────────────────────────────────
+// ---------------------------------------------------------------------
+// Main per-line parse
+// ---------------------------------------------------------------------
 
 function parseLine(line, contacts, itemMap, items) {
   let words = normalizeTokens(pretokenize(line));
@@ -292,7 +305,7 @@ function parseLine(line, contacts, itemMap, items) {
   if (words[0].toLowerCase() === "uber" && words.length > 1 && words[1].toLowerCase() === "phase") {
     let phaseNum = "1", consumed = 2;
     if (words.length > 2 && ["1", "2"].includes(words[2])) { phaseNum = words[2]; consumed = 3; }
-    soc = `uberphase${phaseNum}`; socConfident = true; socTokens = consumed; gluedRemainder = null;
+    soc = "uberphase" + phaseNum; socConfident = true; socTokens = consumed; gluedRemainder = null;
   }
 
   if (!soc && words.length > 1) {
@@ -361,7 +374,7 @@ function parseLine(line, contacts, itemMap, items) {
       if (factor !== null) {
         finalQty = String(Math.round(parseFloat(qty) * factor * 10000) / 10000);
       } else {
-        descParts.push(`${qty} pieces`);
+        descParts.push(qty + " pieces");
         finalQty = qty;
         warn = true;
         warnReasons.push("no kg conversion on file for this item in pieces");
@@ -380,7 +393,9 @@ function parseLine(line, contacts, itemMap, items) {
   return { customer, isNew, socConfident, items: parsedItems };
 }
 
-// ── Public API ─────────────────────────────────────────────────
+// ---------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------
 
 function parseOrders(rawText, contacts, items, orderDate) {
   orderDate = orderDate || new Date().toISOString().slice(0, 10);
@@ -403,12 +418,12 @@ function parseOrders(rawText, contacts, items, orderDate) {
     }
 
     const customer = parsed.customer;
-    const salesOrderId = orderDate + customer.replace(/\s+/g, "");
+    const salesOrderId = orderDate + customer.split(" ").join("");
     for (const it of parsed.items) {
       const warn = it.warn || parsed.isNew || !parsed.socConfident;
       const reasons = [];
       if (it.warnReason) reasons.push(it.warnReason);
-      if (parsed.isNew) reasons.push("new customer (not found in contacts list)");
+      if (parsed.isNew) reasons.push("new customer (not found in contacts master list)");
       if (!parsed.socConfident) reasons.push("society name guessed via fuzzy match — verify");
       rows.push({
         orderDate, customer, item: it.item, description: it.description,
@@ -418,4 +433,12 @@ function parseOrders(rawText, contacts, items, orderDate) {
     }
   }
   return rows;
+}
+
+// Override the built-in society list at runtime (e.g. after loading from Supabase).
+// canonicals: string[] of lowercase canonical names
+// aliasMap: { spoken_form: canonical_name, ... }
+function setSocieties(canonicals, aliasMap) {
+  CANONICAL_SOCIETIES = canonicals.map(s => s.toLowerCase());
+  SOC_ALIASES = aliasMap || {};
 }

@@ -4,6 +4,14 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
+// Auth guard — redirect to login if not signed in
+// login.html is exempt
+if (!window.location.pathname.endsWith('login.html')) {
+  sb.auth.getSession().then(({ data }) => {
+    if (!data.session) window.location.replace('login.html');
+  });
+}
+
 // Today's date in IST
 function todayIST() {
   return new Date(Date.now() + 330 * 60 * 1000).toISOString().substring(0, 10);
@@ -11,6 +19,11 @@ function todayIST() {
 
 function formatDate(d) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+async function signOut() {
+  await sb.auth.signOut();
+  window.location.replace('login.html');
 }
 
 function showToast(msg, type = 'success') {

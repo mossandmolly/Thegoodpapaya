@@ -8,139 +8,59 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <style>
-    .admin-shell {
-      display: flex;
-      min-height: calc(100vh - 56px);
+    .admin-shell{display:flex;min-height:calc(100vh - 56px)}
+    .admin-nav{
+      width:210px;flex-shrink:0;background:white;
+      border-right:1px solid var(--border);padding:12px 0 24px;
+      position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;
     }
-
-    /* ── Left sidebar ── */
-    .admin-nav {
-      width: 210px;
-      flex-shrink: 0;
-      background: white;
-      border-right: 1px solid var(--border);
-      padding: 12px 0 24px;
-      position: sticky;
-      top: 56px;
-      height: calc(100vh - 56px);
-      overflow-y: auto;
+    .admin-nav-group{
+      font-size:.68rem;font-weight:600;color:var(--text-muted);
+      text-transform:uppercase;letter-spacing:.07em;padding:14px 16px 4px;
     }
-    .admin-nav-group {
-      font-size: 0.68rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      padding: 14px 16px 4px;
+    .admin-nav-item{
+      display:flex;align-items:center;gap:9px;width:100%;
+      padding:9px 16px;border:none;border-left:3px solid transparent;
+      background:none;font-family:'DM Sans',sans-serif;font-size:.875rem;
+      color:var(--text);text-align:left;cursor:pointer;
+      transition:background .1s,color .1s,border-color .1s;
     }
-    .admin-nav-item {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      width: 100%;
-      padding: 9px 16px;
-      border: none;
-      border-left: 3px solid transparent;
-      background: none;
-      font-family: 'DM Sans', sans-serif;
-      font-size: 0.875rem;
-      color: var(--text);
-      text-align: left;
-      cursor: pointer;
-      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    .admin-nav-item:hover{background:var(--bg)}
+    .admin-nav-item.active{
+      background:#fff4ed;border-left-color:var(--brand);
+      color:var(--brand);font-weight:600;
     }
-    .admin-nav-item:hover { background: var(--bg); }
-    .admin-nav-item.active {
-      background: #fff4ed;
-      border-left-color: var(--brand);
-      color: var(--brand);
-      font-weight: 600;
-    }
-    .admin-nav-item .ni { width: 18px; text-align: center; flex-shrink: 0; }
-    .admin-nav-item.danger { color: var(--red); }
-    .admin-nav-item.danger:hover { background: #fef2f2; }
-    .admin-nav-item.danger.active {
-      background: #fef2f2;
-      border-left-color: var(--red);
-      color: var(--red);
-    }
-
-    /* ── Main panel ── */
-    .admin-main {
-      flex: 1;
-      padding: 24px;
-      min-width: 0;
-      max-width: 860px;
-    }
-    .admin-panel { display: none; }
-    .admin-panel.active { display: block; }
-    .panel-heading {
-      font-size: 1.1rem;
-      font-weight: 600;
-      margin-bottom: 18px;
-      color: var(--text);
-    }
-
-    /* ── Diff table ── */
-    .diff-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.83rem;
-    }
-    .diff-table th {
-      background: var(--bg);
-      padding: 7px 10px;
-      text-align: left;
-      font-size: 0.72rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--text-muted);
-      border-bottom: 1px solid var(--border);
-    }
-    .diff-table td {
-      padding: 7px 10px;
-      border-bottom: 1px solid #f0f0f0;
-      vertical-align: middle;
-    }
-    .diff-row-new td    { background: #f0fdf4; }
-    .diff-row-removed td { background: #fef2f2; text-decoration: line-through; opacity: 0.65; }
-    .diff-row-dup td    { background: #fafafa; color: var(--text-muted); }
-    .diff-row-ofd td    { background: #eff6ff; }
-
-    /* ── Mobile: horizontal tab strip ── */
-    @media (max-width: 640px) {
-      .admin-shell { flex-direction: column; }
-      .admin-nav {
-        width: 100%;
-        height: auto;
-        position: static;
-        display: flex;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        padding: 0;
-        border-right: none;
-        border-bottom: 2px solid var(--border);
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
+    .admin-nav-item .ni{width:18px;text-align:center;flex-shrink:0}
+    .admin-nav-item.danger{color:var(--red)}
+    .admin-nav-item.danger:hover{background:#fef2f2}
+    .admin-nav-item.danger.active{background:#fef2f2;border-left-color:var(--red);color:var(--red)}
+    .admin-main{flex:1;padding:24px;min-width:0;max-width:860px}
+    .admin-panel{display:none}
+    .admin-panel.active{display:block}
+    .panel-heading{font-size:1.1rem;font-weight:600;margin-bottom:18px;color:var(--text)}
+    .diff-table{width:100%;border-collapse:collapse;font-size:.83rem}
+    .diff-table th{background:var(--bg);padding:7px 10px;text-align:left;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);border-bottom:1px solid var(--border)}
+    .diff-table td{padding:7px 10px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
+    .diff-row-new td{background:#f0fdf4}
+    .diff-row-removed td{background:#fef2f2;text-decoration:line-through;opacity:.65}
+    .diff-row-dup td{background:#fafafa;color:var(--text-muted)}
+    @media(max-width:640px){
+      .admin-shell{flex-direction:column}
+      .admin-nav{
+        width:100%;height:auto;position:static;
+        display:flex;flex-wrap:nowrap;overflow-x:auto;
+        padding:0;border-right:none;border-bottom:2px solid var(--border);
+        -webkit-overflow-scrolling:touch;scrollbar-width:none;
       }
-      .admin-nav::-webkit-scrollbar { display: none; }
-      .admin-nav-group { display: none; }
-      .admin-nav-item {
-        flex-shrink: 0;
-        border-left: none;
-        border-bottom: 3px solid transparent;
-        padding: 12px 14px;
-        white-space: nowrap;
-        font-size: 0.82rem;
+      .admin-nav::-webkit-scrollbar{display:none}
+      .admin-nav-group{display:none}
+      .admin-nav-item{
+        flex-shrink:0;border-left:none;border-bottom:3px solid transparent;
+        padding:12px 14px;white-space:nowrap;font-size:.82rem;
       }
-      .admin-nav-item.active {
-        border-left: none;
-        border-bottom-color: var(--brand);
-        background: none;
-      }
-      .admin-nav-item.danger.active { border-bottom-color: var(--red); background: none; }
-      .admin-main { padding: 16px; }
+      .admin-nav-item.active{border-left:none;border-bottom-color:var(--brand);background:none}
+      .admin-nav-item.danger.active{border-bottom-color:var(--red);background:none}
+      .admin-main{padding:16px}
     }
   </style>
 </head>
@@ -162,17 +82,17 @@
 
 <!-- Password gate -->
 <div class="password-screen" id="password-screen">
-  <div style="background:white;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.10);padding:32px 28px;width:100%;max-width:320px;text-align:center">
+  <div style="background:white;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.10);padding:32px 28px;width:100%;max-width:320px;text-align:center">
     <div style="font-size:2rem;margin-bottom:8px">🔒</div>
     <h2 style="font-size:1.1rem;margin-bottom:4px">Admin Access</h2>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:20px">Enter your admin password</p>
+    <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:20px">Enter your admin password</p>
     <input type="password" id="admin-password" placeholder="Password"
-      style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:0.95rem;font-family:'DM Sans',sans-serif;text-align:center;letter-spacing:0.1em;margin-bottom:12px">
+      style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:.95rem;font-family:'DM Sans',sans-serif;text-align:center;letter-spacing:.1em;margin-bottom:12px">
     <button onclick="checkPassword()"
-      style="width:100%;padding:12px;background:var(--brand);color:white;border:none;border-radius:8px;font-size:0.95rem;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer">
+      style="width:100%;padding:12px;background:var(--brand);color:white;border:none;border-radius:8px;font-size:.95rem;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer">
       Unlock
     </button>
-    <p id="pw-error" style="color:var(--red);font-size:0.82rem;margin-top:10px;display:none">Wrong password</p>
+    <p id="pw-error" style="color:var(--red);font-size:.82rem;margin-top:10px;display:none">Wrong password</p>
   </div>
 </div>
 
@@ -180,101 +100,52 @@
 <div id="admin-content" class="hidden">
   <div class="admin-shell">
 
-    <!-- ── Left nav ── -->
     <nav class="admin-nav">
       <div class="admin-nav-group">Catalog</div>
-      <button class="admin-nav-item active" onclick="showPanel('panel-catalog', this)">
+      <button class="admin-nav-item active" onclick="showPanel('panel-catalog',this)">
         <span class="ni">🛒</span> Catalog
       </button>
 
-      <div class="admin-nav-group">Orders</div>
-      <button class="admin-nav-item" onclick="showPanel('panel-csv', this)">
-        <span class="ni">📄</span> Import CSV
-      </button>
-
       <div class="admin-nav-group">Packers</div>
-      <button class="admin-nav-item" onclick="showPanel('panel-packers', this)">
+      <button class="admin-nav-item" onclick="showPanel('panel-packers',this)">
         <span class="ni">👤</span> Packers
       </button>
-      <button class="admin-nav-item" onclick="showPanel('panel-assignments', this)">
+      <button class="admin-nav-item" onclick="showPanel('panel-assignments',this)">
         <span class="ni">🍊</span> Fruit Assignments
       </button>
 
       <div class="admin-nav-group">Customers</div>
-      <button class="admin-nav-item" onclick="showPanel('panel-notes', this)">
+      <button class="admin-nav-item" onclick="showPanel('panel-notes',this)">
         <span class="ni">📝</span> Customer Notes
       </button>
 
+      <div class="admin-nav-group">Finance</div>
+      <button class="admin-nav-item" onclick="showPanel('panel-missing',this)">
+        <span class="ni">🔗</span> Missing Links
+      </button>
+
       <div class="admin-nav-group">System</div>
-      <button class="admin-nav-item danger" onclick="showPanel('panel-danger', this)">
+      <button class="admin-nav-item" onclick="showPanel('panel-snapshots',this)">
+        <span class="ni">📸</span> Snapshots
+      </button>
+      <button class="admin-nav-item danger" onclick="showPanel('panel-danger',this)">
         <span class="ni">⚠️</span> Danger Zone
       </button>
     </nav>
 
-    <!-- ── Main content ── -->
     <main class="admin-main">
 
       <!-- Catalog -->
       <div id="panel-catalog" class="admin-panel active">
         <div class="panel-heading">Catalog</div>
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:14px">
-          Shopify is the source of truth for item names and prices.
-          Sync updates the catalog and links items to Zoho Books.
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+          Zoho Books is the source of truth. Sync pulls active items and customers into the local database.
         </p>
-        <button class="btn btn-secondary btn-sm" id="sync-btn" onclick="syncCatalog()"
-          style="margin-bottom:16px">&#8635; Sync from Shopify</button>
-        <div id="catalog-list">
-          <div class="skeleton" style="height:40px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+          <button class="btn btn-secondary btn-sm" id="sync-btn" onclick="syncCatalog()">&#8635; Sync catalog from Zoho</button>
+          <button class="btn btn-secondary btn-sm" id="sync-customers-btn" onclick="syncCustomers()">&#8635; Sync customers from Zoho</button>
         </div>
-      </div>
-
-      <!-- Import CSV -->
-      <div id="panel-csv" class="admin-panel">
-        <div class="panel-heading">Import Orders (CSV)</div>
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:14px">
-          <strong>Columns:</strong> customer_name, item_name, quantity, date (YYYY-MM-DD optional)
-        </p>
-
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-          <label style="font-size:0.82rem;color:var(--text-muted);white-space:nowrap">Default date</label>
-          <input type="date" id="csv-default-date"
-            style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:inherit">
-        </div>
-
-        <input type="file" id="csv-file" accept=".csv"
-          style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:0.85rem;font-family:inherit;margin-bottom:4px"
-          onchange="parseCsv(event)">
-
-        <!-- Step 1: name mapping -->
-        <div id="csv-mapping-wrap" style="display:none;margin-top:16px">
-          <h3 style="font-size:0.88rem;font-weight:600;margin-bottom:8px">Step 1 — Map item names to catalog</h3>
-          <table class="diff-table">
-            <thead><tr><th>CSV name</th><th>Catalog match</th><th>Confidence</th></tr></thead>
-            <tbody id="csv-mapping-body"></tbody>
-          </table>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-primary btn-sm" onclick="confirmMapping()">Confirm mapping →</button>
-            <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Cancel</button>
-          </div>
-        </div>
-
-        <!-- Step 2: diff preview -->
-        <div id="csv-diff-wrap" style="display:none;margin-top:16px">
-          <div id="csv-ofd-warning" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:0.82rem;color:#92400e;margin-bottom:10px">
-            ⚠️ Some customers already have items <strong>out for delivery</strong> on this date.
-          </div>
-          <h3 style="font-size:0.88rem;font-weight:600;margin-bottom:8px">Step 2 — Review changes</h3>
-          <table class="diff-table">
-            <thead><tr><th></th><th>Customer</th><th>Item</th><th>Qty</th><th>Date</th><th>Change</th></tr></thead>
-            <tbody id="csv-diff-body"></tbody>
-          </table>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-primary btn-sm" id="csv-save-btn" onclick="saveCsvImport()">Save Import</button>
-            <button class="btn btn-secondary btn-sm" onclick="clearCsvImport()">Cancel</button>
-          </div>
-        </div>
-
-        <div id="orders-upload-status" style="margin-top:8px"></div>
+        <div id="catalog-list"><div class="skeleton" style="height:40px"></div></div>
       </div>
 
       <!-- Packers -->
@@ -290,9 +161,7 @@
       <!-- Fruit Assignments -->
       <div id="panel-assignments" class="admin-panel">
         <div class="panel-heading">Fruit Assignments</div>
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:14px">
-          Assign which packer handles each fruit. Fruit list comes from the catalog.
-        </p>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Assign which packer handles each fruit. Fruit list comes from the catalog.</p>
         <div class="form-row" style="margin-bottom:12px">
           <select id="assign-packer" style="flex:1"></select>
           <select id="assign-fruit" style="flex:2"><option value="">Select fruit…</option></select>
@@ -304,33 +173,56 @@
       <!-- Customer Notes -->
       <div id="panel-notes" class="admin-panel">
         <div class="panel-heading">Customer Notes</div>
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:14px">
-          Shown on packer cards. One note per customer.
-        </p>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Shown on packer cards. One note per customer.</p>
         <div class="form-row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px">
-          <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:140px">
-          <input type="text" id="note-text" placeholder="Note" style="flex:3;min-width:180px">
+          <input type="text" id="note-customer" placeholder="Customer name" style="flex:2;min-width:130px">
+          <input type="text" id="note-text" placeholder="Note" style="flex:3;min-width:170px">
+          <input type="date" id="note-complaint-date" title="Last complaint date" style="flex:0 0 auto">
           <button class="btn btn-primary btn-sm" onclick="saveNote()" style="white-space:nowrap">Save</button>
         </div>
         <div id="note-save-status" style="margin-bottom:8px"></div>
-        <div class="notes-table-wrap" id="notes-list">
+        <div class="notes-table-wrap" id="notes-preview">
           <div class="skeleton" style="height:40px;margin:8px"></div>
         </div>
         <details style="margin-top:10px">
-          <summary style="cursor:pointer;font-size:0.82rem;color:var(--text-muted);user-select:none">Manage all / delete</summary>
+          <summary style="cursor:pointer;font-size:.82rem;color:var(--text-muted);user-select:none">Manage all / delete</summary>
           <div class="notes-table-wrap" id="notes-table-wrap" style="margin-top:8px">
             <div class="skeleton" style="height:40px;margin:8px"></div>
           </div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" onclick="exportNotes()">Export CSV</button>
+            <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin:0">
+              Import CSV
+              <input type="file" id="note-csv" accept=".csv" style="display:none" onchange="importNotesCSV()">
+            </label>
+          </div>
+          <div id="note-import-status" style="margin-top:6px"></div>
         </details>
+      </div>
+
+      <!-- Missing Links -->
+      <div id="panel-missing" class="admin-panel">
+        <div class="panel-heading">Missing Payment Links</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Invoices from the last 7 days without a Razorpay payment link.</p>
+        <div id="missing-links-list"><div class="skeleton" style="height:40px"></div></div>
+      </div>
+
+      <!-- Snapshots -->
+      <div id="panel-snapshots" class="admin-panel">
+        <div class="panel-heading">Operations Snapshots</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Restore final quantities and statuses from a previous snapshot.</p>
+        <div class="form-row" style="margin-bottom:12px;flex-wrap:wrap">
+          <select id="snapshot-select" style="flex:1;min-width:200px"><option>Loading…</option></select>
+          <button class="btn btn-secondary btn-sm" onclick="restoreSnapshot()">Restore</button>
+        </div>
+        <div id="restore-status"></div>
       </div>
 
       <!-- Danger Zone -->
       <div id="panel-danger" class="admin-panel">
         <div class="panel-heading" style="color:var(--red)">Danger Zone</div>
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:20px">
-          Reset today’s operations — sets all items back to open.
-        </p>
-        <button class="btn btn-danger btn-sm" onclick="resetTodayStatus()">Reset Today’s Status</button>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:20px">Reset today's operations — sets all items back to draft.</p>
+        <button class="btn btn-danger btn-sm" onclick="resetTodayStatus()">Reset Today's Status</button>
       </div>
 
     </main>
@@ -347,6 +239,7 @@ function showPanel(panelId, btn) {
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/config.js"></script>
+<script src="js/order-parser.js"></script>
 <script src="js/admin.js"></script>
 </body>
 </html>
