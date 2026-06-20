@@ -67,18 +67,16 @@ ALTER TABLE public.customer_notes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY customer_notes_anon_read ON public.customer_notes
   FOR SELECT TO anon USING (true);
 
--- ── 5. Re-add FK on operations if it exists ──────────────────────────────────
+-- ── 5. Re-add FK on operations if it exists (EXECUTE avoids parse-time error) ──
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'operations' AND column_name = 'customer_name'
   ) THEN
-    ALTER TABLE public.operations DROP CONSTRAINT IF EXISTS operations_customer_name_fkey;
-    ALTER TABLE public.operations
-      ADD CONSTRAINT operations_customer_name_fkey
-      FOREIGN KEY (customer_name) REFERENCES public.customers(customer_name)
-      ON UPDATE CASCADE;
+    EXECUTE 'ALTER TABLE public.operations DROP CONSTRAINT IF EXISTS operations_customer_name_fkey';
+    EXECUTE 'ALTER TABLE public.operations ADD CONSTRAINT operations_customer_name_fkey
+             FOREIGN KEY (customer_name) REFERENCES public.customers(customer_name) ON UPDATE CASCADE';
   END IF;
 END $$;
 
@@ -93,20 +91,26 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS orders_ensure_customer ON public.orders;
-CREATE TRIGGER orders_ensure_customer
-  AFTER INSERT ON public.orders
-  FOR EACH ROW EXECUTE FUNCTION orders_ensure_customer();
-
--- ── 7. Clear all operational data for a fresh start ──────────────────────────
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='order_items')
-    THEN TRUNCATE public.order_items CASCADE; END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='orders')
-    THEN TRUNCATE public.orders CASCADE; END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='operations')
-    THEN TRUNCATE public.operations CASCADE; END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='catalog')
-    THEN TRUNCATE public.catalog CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='orders') THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS orders_ensure_customer ON public.orders';
+    EXECUTE $t$
+      CREATE TRIGGER orders_ensure_customer
+        AFTER INSERT ON public.orders
+        FOR EACH ROW EXECUTE FUNCTION orders_ensure_customer()
+    $t$;
+  END IF;
+END $$;
+
+-- ── 7. Clear all operational data (EXECUTE avoids parse-time errors) ──────────
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['order_items','orders','operations','catalog'] LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=t) THEN
+      EXECUTE 'TRUNCATE public.' || quote_ident(t) || ' CASCADE';
+    END IF;
+  END LOOP;
 END $$;
