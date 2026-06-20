@@ -1,15 +1,20 @@
--- Migration 019: Drop and recreate customers table from scratch.
--- Previous migrations left conflicting constraints; this is a clean slate.
+-- Migration 019: Clean slate — drop and recreate customers + dependents.
+-- No data is preserved. Fresh start.
+-- Going forward:
+--   customers       ← sync-customers (Zoho) + orders_ensure_customer trigger
+--   catalog         ← sync-catalog (Zoho)
+--   orders          ← order-entry.html (staff entry)
+--   customer_phones ← customer phone registration (invoice portal)
+--   operations      ← auto-created from orders (packing/delivery workflow)
 
--- 1. Drop FKs that reference customers
-ALTER TABLE customer_notes  DROP CONSTRAINT IF EXISTS customer_notes_customer_name_fkey;
-ALTER TABLE customer_phones DROP CONSTRAINT IF EXISTS customer_phones_customer_name_fkey;
-ALTER TABLE customer_phones DROP CONSTRAINT IF EXISTS customer_phones_new_customer_name_fkey;
+-- ── 1. Drop customers and its direct child tables ────────────────────────────
+--    CASCADE automatically removes any FK constraints pointing at customers
+--    from other tables (operations, etc.) — those tables themselves survive.
+DROP TABLE IF EXISTS public.customer_notes  CASCADE;
+DROP TABLE IF EXISTS public.customer_phones CASCADE;
+DROP TABLE IF EXISTS public.customers       CASCADE;
 
--- 2. Drop the old customers table (CASCADE removes leftover indexes/constraints)
-DROP TABLE IF EXISTS public.customers CASCADE;
-
--- 3. Clean new customers table
+-- ── 2. Fresh customers table ──────────────────────────────────────────────────
 CREATE TABLE public.customers (
   id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   customer_name    text        NOT NULL UNIQUE,
@@ -19,7 +24,6 @@ CREATE TABLE public.customers (
   created_at       timestamptz NOT NULL DEFAULT now()
 );
 
--- 4. RLS — anon can read all, service role has full access (bypasses RLS)
 ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY customers_anon_read ON public.customers
@@ -28,51 +32,59 @@ CREATE POLICY customers_anon_read ON public.customers
 CREATE POLICY customers_anon_insert ON public.customers
   FOR INSERT TO anon WITH CHECK (true);
 
--- 5. Seed from ALL sources before re-adding FKs, so no orphan risk
-INSERT INTO public.customers (customer_name)
-  SELECT DISTINCT customer_name FROM public.orders
-  WHERE customer_name IS NOT NULL
-ON CONFLICT (customer_name) DO NOTHING;
+-- ── 3. Fresh customer_phones table ───────────────────────────────────────────
+CREATE TABLE public.customer_phones (
+  customer_name text        NOT NULL REFERENCES public.customers(customer_name)
+                            ON UPDATE CASCADE ON DELETE CASCADE,
+  phone_number  text        NOT NULL,
+  label         text        NOT NULL DEFAULT 'primary',
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (customer_name, phone_number)
+);
 
-INSERT INTO public.customers (customer_name)
-  SELECT DISTINCT customer_name FROM public.customer_notes
-  WHERE customer_name IS NOT NULL
-ON CONFLICT (customer_name) DO NOTHING;
+CREATE UNIQUE INDEX idx_customer_phones_phone ON public.customer_phones(phone_number);
+CREATE INDEX        idx_customer_phones_name  ON public.customer_phones(customer_name);
 
+ALTER TABLE public.customer_phones ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY customer_phones_anon_read ON public.customer_phones
+  FOR SELECT TO anon USING (true);
+
+-- ── 4. Fresh customer_notes table ────────────────────────────────────────────
+CREATE TABLE public.customer_notes (
+  id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_name text        NOT NULL REFERENCES public.customers(customer_name)
+                            ON UPDATE CASCADE ON DELETE CASCADE,
+  note          text        NOT NULL,
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_customer_notes_customer ON public.customer_notes(customer_name);
+
+ALTER TABLE public.customer_notes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY customer_notes_anon_read ON public.customer_notes
+  FOR SELECT TO anon USING (true);
+
+-- ── 5. Re-add FK on operations (CASCADE dropped it in step 1) ────────────────
+--    operations table structure is preserved; just reconnect the FK.
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'customer_phones'
+    WHERE table_schema = 'public' AND table_name = 'operations'
   ) THEN
-    INSERT INTO public.customers (customer_name)
-      SELECT DISTINCT customer_name FROM public.customer_phones
-      WHERE customer_name IS NOT NULL
-    ON CONFLICT (customer_name) DO NOTHING;
-  END IF;
-END $$;
-
--- 6. Restore customer_notes FK (all names now guaranteed to exist)
-ALTER TABLE customer_notes
-  ADD CONSTRAINT customer_notes_customer_name_fkey
-  FOREIGN KEY (customer_name) REFERENCES public.customers(customer_name)
-  ON UPDATE CASCADE ON DELETE CASCADE;
-
--- 7. Restore customer_phones FK if that table still exists
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'customer_phones'
-  ) THEN
-    ALTER TABLE customer_phones
-      ADD CONSTRAINT customer_phones_customer_name_fkey
+    ALTER TABLE public.operations
+      DROP CONSTRAINT IF EXISTS operations_customer_name_fkey;
+    ALTER TABLE public.operations
+      ADD CONSTRAINT operations_customer_name_fkey
       FOREIGN KEY (customer_name) REFERENCES public.customers(customer_name)
-      ON UPDATE CASCADE ON DELETE CASCADE;
+      ON UPDATE CASCADE;
   END IF;
 END $$;
 
--- 8. Trigger: auto-create customer row on every order insert
+-- ── 6. Trigger: auto-create customer on every order insert ────────────────────
 CREATE OR REPLACE FUNCTION orders_ensure_customer()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
@@ -87,3 +99,9 @@ DROP TRIGGER IF EXISTS orders_ensure_customer ON public.orders;
 CREATE TRIGGER orders_ensure_customer
   AFTER INSERT ON public.orders
   FOR EACH ROW EXECUTE FUNCTION orders_ensure_customer();
+
+-- ── 7. Clear all operational data for a fresh start ──────────────────────────
+TRUNCATE public.order_items CASCADE;
+TRUNCATE public.orders      CASCADE;
+TRUNCATE public.operations  CASCADE;
+TRUNCATE public.catalog     CASCADE;
