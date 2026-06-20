@@ -67,16 +67,14 @@ ALTER TABLE public.customer_notes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY customer_notes_anon_read ON public.customer_notes
   FOR SELECT TO anon USING (true);
 
--- ── 5. Re-add FK on operations (CASCADE dropped it in step 1) ────────────────
---    operations table structure is preserved; just reconnect the FK.
+-- ── 5. Re-add FK on operations if it exists ──────────────────────────────────
 DO $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'operations'
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'operations' AND column_name = 'customer_name'
   ) THEN
-    ALTER TABLE public.operations
-      DROP CONSTRAINT IF EXISTS operations_customer_name_fkey;
+    ALTER TABLE public.operations DROP CONSTRAINT IF EXISTS operations_customer_name_fkey;
     ALTER TABLE public.operations
       ADD CONSTRAINT operations_customer_name_fkey
       FOREIGN KEY (customer_name) REFERENCES public.customers(customer_name)
@@ -101,7 +99,14 @@ CREATE TRIGGER orders_ensure_customer
   FOR EACH ROW EXECUTE FUNCTION orders_ensure_customer();
 
 -- ── 7. Clear all operational data for a fresh start ──────────────────────────
-TRUNCATE public.order_items CASCADE;
-TRUNCATE public.orders      CASCADE;
-TRUNCATE public.operations  CASCADE;
-TRUNCATE public.catalog     CASCADE;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='order_items')
+    THEN TRUNCATE public.order_items CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='orders')
+    THEN TRUNCATE public.orders CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='operations')
+    THEN TRUNCATE public.operations CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='catalog')
+    THEN TRUNCATE public.catalog CASCADE; END IF;
+END $$;
