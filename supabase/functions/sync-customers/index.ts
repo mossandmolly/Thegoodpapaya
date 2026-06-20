@@ -1,6 +1,5 @@
 // Supabase Edge Function — sync-customers
 // Pulls active customer contacts from Zoho Books → customers table.
-// POST {} to trigger manually from admin panel.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -83,48 +82,28 @@ Deno.serve(async (req) => {
     const orgId    = await getOrgId(token);
     const contacts = await fetchAllContacts(token, orgId);
 
-    // Deduplicate by cleaned name — Zoho may have slight name variations
-    // that collapse to the same string after cleaning.
-    const nameToZohoId = new Map<string, string>();
+    // Deduplicate by cleaned name before touching the DB
+    const seen = new Map<string, string>();
     for (const c of contacts) {
       const name = cleanCustomerName(c.contact_name as string);
-      if (name && !nameToZohoId.has(name)) nameToZohoId.set(name, c.contact_id);
+      if (name && !seen.has(name)) seen.set(name, c.contact_id);
     }
 
-    const allNames = [...nameToZohoId.keys()];
-    const now      = new Date().toISOString();
+    const rows = [...seen.entries()].map(([customer_name, zoho_contact_id]) => ({
+      customer_name,
+      zoho_contact_id,
+      active:    true,
+      synced_at: new Date().toISOString(),
+    }));
 
-    // Fetch which of these names already exist in the DB.
-    const { data: existing, error: fetchErr } = await supabase
+    const { error } = await supabase
       .from('customers')
-      .select('customer_name')
-      .in('customer_name', allNames);
-    if (fetchErr) throw new Error(`Failed to fetch existing customers: ${fetchErr.message}`);
+      .upsert(rows, { onConflict: 'customer_name' });
 
-    const existingSet = new Set((existing || []).map((r: any) => r.customer_name));
-
-    // UPDATE existing rows (no insert, so no unique-constraint risk)
-    for (const [name, zohoId] of nameToZohoId) {
-      if (!existingSet.has(name)) continue;
-      const { error } = await supabase
-        .from('customers')
-        .update({ zoho_contact_id: zohoId, active: true, synced_at: now })
-        .eq('customer_name', name);
-      if (error) throw new Error(`Update failed for "${name}": ${error.message}`);
-    }
-
-    // INSERT new rows (names not yet in DB, deduplicated, so no duplicate risk)
-    const newRows = allNames
-      .filter(name => !existingSet.has(name))
-      .map(name => ({ customer_name: name, zoho_contact_id: nameToZohoId.get(name), active: true, synced_at: now }));
-
-    if (newRows.length) {
-      const { error } = await supabase.from('customers').insert(newRows);
-      if (error) throw new Error(`Batch insert failed: ${error.message}`);
-    }
+    if (error) throw new Error(`Sync failed: ${error.message}`);
 
     return new Response(
-      JSON.stringify({ synced: allNames.length, updated: existingSet.size, inserted: newRows.length, org_id: orgId }),
+      JSON.stringify({ synced: rows.length, org_id: orgId }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     );
   } catch (err: any) {
