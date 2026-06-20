@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
 
     const { error } = await supabase
       .from('customers')
-      .upsert(rows, { onConflict: 'customer_name' });
+      .upsert(rows, { onConflict: 'customer_name', ignoreDuplicates: true });
 
     if (error) throw new Error(`Sync failed: ${error.message}`);
 
