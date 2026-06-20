@@ -28,6 +28,17 @@ function cleanCustomerName(raw: string): string {
     .replace(/\S+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 }
 
+// How many chars in the original already match the cleaned (proper-cased) version.
+// Higher = already closer to correct casing = preferred when names collide.
+function casingScore(original: string, cleaned: string): number {
+  let score = 0;
+  const len = Math.min(original.length, cleaned.length);
+  for (let i = 0; i < len; i++) {
+    if (original[i] === cleaned[i]) score++;
+  }
+  return score;
+}
+
 async function zohoToken(): Promise<string> {
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
@@ -82,23 +93,27 @@ Deno.serve(async (req) => {
     const orgId    = await getOrgId(token);
     const contacts = await fetchAllContacts(token, orgId);
 
-    // Deduplicate by cleaned name before touching the DB
-    const seen = new Map<string, string>();
+    // Deduplicate: when two Zoho contacts clean to the same name,
+    // keep the one whose original name is already closest to proper casing.
+    const seen = new Map<string, { zohoId: string; score: number }>();
     for (const c of contacts) {
-      const name = cleanCustomerName(c.contact_name as string);
-      if (name && !seen.has(name)) seen.set(name, c.contact_id);
+      const name  = cleanCustomerName(c.contact_name as string);
+      if (!name) continue;
+      const score = casingScore(c.contact_name as string, name);
+      const prev  = seen.get(name);
+      if (!prev || score > prev.score) seen.set(name, { zohoId: c.contact_id, score });
     }
 
-    const rows = [...seen.entries()].map(([customer_name, zoho_contact_id]) => ({
+    const rows = [...seen.entries()].map(([customer_name, { zohoId }]) => ({
       customer_name,
-      zoho_contact_id,
-      active:    true,
-      synced_at: new Date().toISOString(),
+      zoho_contact_id: zohoId,
+      active:          true,
+      synced_at:       new Date().toISOString(),
     }));
 
     const { error } = await supabase
       .from('customers')
-      .upsert(rows, { onConflict: 'customer_name', ignoreDuplicates: true });
+      .upsert(rows, { onConflict: 'customer_name' });
 
     if (error) throw new Error(`Sync failed: ${error.message}`);
 
