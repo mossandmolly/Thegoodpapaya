@@ -1,4 +1,4 @@
-name: Sync Claude branch → shopify-theme
+name: Sync Claude branch → Pages
 
 on:
   push:
