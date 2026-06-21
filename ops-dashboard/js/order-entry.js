@@ -1,13 +1,14 @@
-// ── State ──────────────────────────────────────────────
+// ── State ───────────────────────────────────────────────
 let _items     = [];
 let _customers = [];
 let _rows      = [];
 let _pendingSubmitRows = null;
 
-// ── Init ───────────────────────────────────────────────
+// ── Init ────────────────────────────────────────────────
 (async function init() {
   document.getElementById('order-date').value = todayIST();
   setupCombobox();
+  addBlankRow(); // show one empty row immediately
   try {
     const [catRes, custRes, socRes] = await Promise.all([
       sb.from('catalog').select('item_name, unit, unit_price').eq('active', true).order('item_name'),
@@ -22,30 +23,28 @@ let _pendingSubmitRows = null;
       if (seen.has(k)) return false;
       seen.add(k); return true;
     });
-    if (socRes.data && socRes.data.length) {
+    if (socRes.data?.length) {
       const canonicals = socRes.data.map(s => s.canonical_name);
       const aliasMap = {};
       socRes.data.forEach(s => (s.aliases || []).forEach(a => { aliasMap[a] = s.canonical_name; }));
       setSocieties(canonicals, aliasMap);
     }
-    const socCount = socRes.data ? socRes.data.length : 0;
-    document.getElementById('status-line').textContent =
-      _customers.length + ' customers · ' + _items.length + ' catalog items · ' + socCount + ' societies loaded';
+    const el = document.getElementById('status-line');
+    if (el) el.textContent = _customers.length + ' customers · ' + _items.length + ' items loaded';
   } catch (e) {
-    document.getElementById('status-line').textContent = 'Failed to load — check Supabase connection';
     console.error(e);
   }
   setupSpeech();
 })();
 
-// ── Speech ─────────────────────────────────────────────
+// ── Speech ───────────────────────────────────────────────
 let _recognition = null, _isRecording = false;
 
 function setupSpeech() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const SR     = window.SpeechRecognition || window.webkitSpeechRecognition;
   const micBtn = document.getElementById('mic-btn');
   if (!SR) {
-    document.getElementById('mic-status').textContent = 'Speech input not supported on this browser — paste text instead.';
+    document.getElementById('mic-status').textContent = 'Speech not supported — paste text instead.';
     micBtn.disabled = true; return;
   }
   _recognition = new SR();
@@ -54,8 +53,8 @@ function setupSpeech() {
   _recognition.onstart = () => {
     _isRecording = true;
     finalTranscript = document.getElementById('raw-input').value;
-    if (finalTranscript && !finalTranscript.endsWith('\n') && !finalTranscript.endsWith(' ')) finalTranscript += ' ';
-    micBtn.classList.add('recording'); micBtn.textContent = '■ Stop';
+    if (finalTranscript && !finalTranscript.endsWith(' ')) finalTranscript += ' ';
+    micBtn.classList.add('recording'); micBtn.textContent = '■';
     document.getElementById('mic-status').textContent = 'Listening…';
   };
   _recognition.onresult = e => {
@@ -70,52 +69,57 @@ function setupSpeech() {
     document.getElementById('mic-status').textContent = 'Mic error: ' + e.error;
     _stopRecording();
   };
-  _recognition.onend = () => { if (_isRecording) { try { _recognition.start(); } catch (err) { _stopRecording(); } } };
-  micBtn.addEventListener('click', () => { if (_isRecording) _stopRecording(); else { try { _recognition.start(); } catch(e){} } });
+  _recognition.onend = () => { if (_isRecording) { try { _recognition.start(); } catch (_) { _stopRecording(); } } };
+  micBtn.addEventListener('click', () => {
+    if (_isRecording) _stopRecording(); else { try { _recognition.start(); } catch (_) {} }
+  });
 }
 
 function _stopRecording() {
   _isRecording = false;
-  if (_recognition) { try { _recognition.stop(); } catch(e){} }
+  if (_recognition) { try { _recognition.stop(); } catch (_) {} }
   const micBtn = document.getElementById('mic-btn');
-  micBtn.classList.remove('recording'); micBtn.textContent = '● Speak';
+  micBtn.classList.remove('recording'); micBtn.textContent = '●';
   document.getElementById('mic-status').textContent = '';
 }
 
-// ── Parse (spoken/typed text) ──────────────────────────
+// ── Parse (typed / spoken text) ─────────────────────────
 document.getElementById('parse-btn').addEventListener('click', () => {
   const raw = document.getElementById('raw-input').value.trim();
   if (!raw) { showToast('Nothing to parse', 'error'); return; }
   if (_isRecording) _stopRecording();
   const orderDate = document.getElementById('order-date').value || todayIST();
-  const newRows = parseOrders(raw, _customers, _items.map(i => [i.name, i.unit]), orderDate);
+  const newRows   = parseOrders(raw, _customers, _items.map(i => [i.name, i.unit]), orderDate);
+  if (!newRows.length) { showToast('Could not extract any orders', 'error'); return; }
+  // Remove the single blank placeholder row if it's the only thing in the table
+  if (_rows.length === 1 && !_rows[0].customer && !_rows[0].item) _rows = [];
   _rows = _rows.concat(newRows);
   renderRows();
+  document.getElementById('raw-input').value = '';
   showToast('Parsed ' + newRows.length + ' row' + (newRows.length !== 1 ? 's' : ''));
 });
 
-// ── Paste table (Excel / Google Sheets → TSV) ──────────
-// Tab characters signal a structured table paste — skip NLP, parse columns directly.
-// Format: Customer [tab] Item [tab] Qty [tab] Date(optional)
-// Header row auto-detected (skipped if 3rd column is non-numeric).
+// ── Paste table (Excel / Sheets → TSV) ──────────────────
+// Tab characters signal structured table; skip NLP and parse columns directly.
+// Expected columns: Customer · Item · Qty · Date (optional)
 document.getElementById('raw-input').addEventListener('paste', e => {
   const text = (e.clipboardData || window.clipboardData).getData('text');
-  if (!text.includes('\t')) return; // no tabs → regular text paste, do nothing special
+  if (!text.includes('\t')) return; // no tabs → regular text, let it paste normally
 
   e.preventDefault();
   const defaultDate = document.getElementById('order-date').value || todayIST();
-  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-  const lines  = text.split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.trim());
+  const dateRe      = /^\d{4}-\d{2}-\d{2}$/;
+  const lines       = text.split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.trim());
   if (!lines.length) return;
 
-  // Skip header row if 3rd column (qty) is non-numeric
+  // Auto-skip header row if 3rd column (qty) is non-numeric
   let startIdx = 0;
   const firstCols = lines[0].split('\t');
   if (firstCols.length >= 3 && isNaN(parseFloat(firstCols[2]))) startIdx = 1;
 
   const newRows = [];
   for (let i = startIdx; i < lines.length; i++) {
-    const cols     = lines[i].split('\t').map(c => c.trim());
+    const cols    = lines[i].split('\t').map(c => c.trim());
     if (cols.length < 3) continue;
     const customer = cols[0];
     const itemRaw  = cols[1];
@@ -132,147 +136,135 @@ document.getElementById('raw-input').addEventListener('paste', e => {
       description:   '',
       quantity:      qty,
       warn:          !cat,
-      warnReason:    !cat ? 'Item "' + itemRaw + '" not found in catalog — check spelling' : null,
+      warnReason:    !cat ? '"' + itemRaw + '" not in catalog — check spelling' : null,
       isNewCustomer: !_customers.some(c => c.toLowerCase() === customer.toLowerCase()),
     });
   }
 
   if (!newRows.length) { showToast('No valid rows in pasted table', 'error'); return; }
+  if (_rows.length === 1 && !_rows[0].customer && !_rows[0].item) _rows = [];
   _rows = _rows.concat(newRows);
   renderRows();
   showToast('Added ' + newRows.length + ' row' + (newRows.length !== 1 ? 's' : '') + ' from table');
 });
 
-document.getElementById('clear-input-btn').addEventListener('click', () => { document.getElementById('raw-input').value = ''; });
+document.getElementById('clear-input-btn').addEventListener('click', () => {
+  document.getElementById('raw-input').value = '';
+});
 
 // ── Row management ───────────────────────────────────────
-function addBlankRow() {
+function addBlankRow(focusField = 'customer') {
   const orderDate = document.getElementById('order-date').value || todayIST();
-  _rows.push({ orderDate, customer: '', item: '', description: '', quantity: '', salesOrderId: '', warn: false, warnReason: null, isNewCustomer: false });
+  _rows.push({ orderDate, customer: '', item: '', description: '', quantity: '', warn: false, warnReason: null, isNewCustomer: false });
   renderRows();
+  _focusRowField(_rows.length - 1, focusField);
 }
-document.getElementById('add-row-btn').addEventListener('click', addBlankRow);
-document.getElementById('clear-all-btn').addEventListener('click', () => {
-  if (_rows.length && !confirm('Clear all ' + _rows.length + ' row' + (_rows.length !== 1 ? 's' : '') + '?')) return;
-  _rows = []; renderRows();
-});
+
+function addSameCustomerRow() {
+  const orderDate    = document.getElementById('order-date').value || todayIST();
+  const lastCustomer = _rows.length ? _rows[_rows.length - 1].customer : '';
+  _rows.push({
+    orderDate, customer: lastCustomer, item: '', description: '', quantity: '',
+    warn: false, warnReason: null,
+    isNewCustomer: lastCustomer ? !_customers.some(c => c.toLowerCase() === lastCustomer.toLowerCase()) : false,
+  });
+  renderRows();
+  _focusRowField(_rows.length - 1, 'item');
+}
+
+function _focusRowField(idx, field) {
+  setTimeout(() => {
+    const tr = document.getElementById('oe-row-' + idx);
+    if (tr) tr.querySelector('[data-field="' + field + '"]')?.focus();
+  }, 30);
+}
 
 function updateRow(idx, field, value) {
   if (!_rows[idx]) return;
   _rows[idx][field] = value;
+  if (field === 'item') {
+    const cat = _items.find(i => i.name.toLowerCase() === value.toLowerCase());
+    _rows[idx].warn       = !!value && !cat;
+    _rows[idx].warnReason = (!!value && !cat) ? '"' + value + '" not in catalog' : null;
+  }
   if (field === 'customer') {
-    _rows[idx].salesOrderId = _rows[idx].orderDate + value.replace(/\s+/g, '');
-    _rows[idx].isNewCustomer = !_customers.some(c => c.toLowerCase() === value.toLowerCase());
+    _rows[idx].isNewCustomer = !!value && !_customers.some(c => c.toLowerCase() === value.toLowerCase());
   }
 }
-function deleteRow(idx) { _rows.splice(idx, 1); renderRows(); }
-function escH(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-// ── Render rows (compact single-line layout) ────────────
+function deleteRow(idx) {
+  _rows.splice(idx, 1);
+  if (!_rows.length) addBlankRow(); else renderRows();
+}
+
+function escH(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Render rows (table) ──────────────────────────────────
 function renderRows() {
-  const container   = document.getElementById('rows-container');
-  const resultsWrap = document.getElementById('results-section');
-  const emptyState  = document.getElementById('empty-state');
+  const tbody = document.getElementById('rows-container');
+  tbody.innerHTML = '';
 
-  if (!_rows.length) {
-    resultsWrap.style.display = 'none';
-    emptyState.style.display  = 'block';
-    return;
-  }
-  resultsWrap.style.display = 'block';
-  emptyState.style.display  = 'none';
-  document.getElementById('phone-prompt').style.display = 'none';
-
-  const warnCount = _rows.filter(r => r.warn).length;
-  document.getElementById('summary-text').textContent =
-    _rows.length + ' row' + (_rows.length !== 1 ? 's' : '') + (warnCount ? ' · ' + warnCount + ' flagged' : '');
-
-  container.innerHTML = '';
   _rows.forEach((r, idx) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'oe-row-wrap' + (r.warn ? ' is-warn' : '') + (r.isNewCustomer ? ' is-new-customer' : '');
-    wrap.id = 'oe-row-' + idx;
+    const tr = document.createElement('tr');
+    tr.className = 'oe-tr' + (r.isNewCustomer ? ' is-new' : '') + (r.warn ? ' is-warn' : '');
+    tr.id = 'oe-row-' + idx;
 
-    const newTag  = r.isNewCustomer ? '<span class="oe-tag-inline" style="background:#dcfce7;color:#15803d">New</span>' : '';
-    const warnTag = r.warn && !r.isNewCustomer ? '<span class="oe-tag-inline" style="background:#fef3c7;color:#92400e">⚠</span>' : '';
-    const subText = r.warnReason ? '<div class="oe-row-subtext">⚠ ' + escH(r.warnReason) + '</div>' : '';
+    const warnTitle = r.warnReason ? ' title="' + escH(r.warnReason) + '"' : '';
 
-    wrap.innerHTML =
-      '<div class="oe-row-flex">' +
-        '<button class="oe-row-delete" data-del="' + idx + '">✕</button>' +
-        '<input class="oe-il oe-customer" type="text" value="' + escH(r.customer) + '" data-idx="' + idx + '" data-field="customer" placeholder="Customer" autocomplete="off">' +
-        '<input class="oe-il oe-item" type="text" value="' + escH(r.item) + '" data-idx="' + idx + '" data-field="item" placeholder="Item" autocomplete="off">' +
-        '<input class="oe-il oe-qty" type="text" value="' + escH(r.quantity) + '" data-idx="' + idx + '" data-field="quantity" placeholder="Qty">' +
-        '<input class="oe-il oe-date" type="date" value="' + escH(r.orderDate) + '" data-idx="' + idx + '" data-field="orderDate">' +
-        newTag + warnTag +
-      '</div>' +
-      subText;
+    tr.innerHTML =
+      '<td><input class="oe-in oe-in-date" type="date" value="' + escH(r.orderDate) + '" data-idx="' + idx + '" data-field="orderDate"></td>' +
+      '<td><input class="oe-in" type="text" value="' + escH(r.customer) + '" data-idx="' + idx + '" data-field="customer" placeholder="Customer" autocomplete="off"></td>' +
+      '<td><input class="oe-in" type="text" value="' + escH(r.item) + '" data-idx="' + idx + '" data-field="item" placeholder="Item" autocomplete="off"' + warnTitle + '></td>' +
+      '<td><input class="oe-in oe-in-qty" type="text" value="' + escH(r.quantity) + '" data-idx="' + idx + '" data-field="quantity" placeholder="0"></td>' +
+      '<td><input class="oe-in" type="text" value="' + escH(r.description) + '" data-idx="' + idx + '" data-field="description" placeholder="Note…"></td>' +
+      '<td><button class="oe-del" data-del="' + idx + '" title="Remove">✕</button></td>';
 
-    container.appendChild(wrap);
+    tbody.appendChild(tr);
   });
 
-  container.querySelectorAll('[data-del]').forEach(btn =>
+  tbody.querySelectorAll('[data-del]').forEach(btn =>
     btn.addEventListener('click', () => deleteRow(parseInt(btn.dataset.del)))
   );
-  container.querySelectorAll('.oe-il').forEach(input => {
+  tbody.querySelectorAll('.oe-in').forEach(input => {
     input.addEventListener('change', e => {
       updateRow(parseInt(e.target.dataset.idx), e.target.dataset.field, e.target.value);
-      _refreshRowCard(parseInt(e.target.dataset.idx));
+      _refreshRow(parseInt(e.target.dataset.idx));
     });
     if (input.dataset.field === 'customer') attachCombobox(input, () => _customers);
     if (input.dataset.field === 'item')     attachCombobox(input, () => _items.map(i => i.name));
   });
 }
 
-function _refreshRowCard(idx) {
-  const r    = _rows[idx]; if (!r) return;
-  const wrap = document.getElementById('oe-row-' + idx); if (!wrap) return;
-
-  wrap.className = 'oe-row-wrap' + (r.warn ? ' is-warn' : '') + (r.isNewCustomer ? ' is-new-customer' : '');
-
-  const flex = wrap.querySelector('.oe-row-flex');
-  flex.querySelectorAll('.oe-tag-inline').forEach(t => t.remove());
-  if (r.isNewCustomer) {
-    const t = document.createElement('span');
-    t.className = 'oe-tag-inline';
-    t.setAttribute('style', 'background:#dcfce7;color:#15803d');
-    t.textContent = 'New';
-    flex.appendChild(t);
+function _refreshRow(idx) {
+  const r  = _rows[idx]; if (!r) return;
+  const tr = document.getElementById('oe-row-' + idx); if (!tr) return;
+  tr.className = 'oe-tr' + (r.isNewCustomer ? ' is-new' : '') + (r.warn ? ' is-warn' : '');
+  const itemInput = tr.querySelector('[data-field="item"]');
+  if (itemInput) {
+    itemInput.title = r.warnReason || '';
   }
-  if (r.warn && !r.isNewCustomer) {
-    const t = document.createElement('span');
-    t.className = 'oe-tag-inline';
-    t.setAttribute('style', 'background:#fef3c7;color:#92400e');
-    t.textContent = '⚠';
-    flex.appendChild(t);
-  }
-
-  let sub = wrap.querySelector('.oe-row-subtext');
-  if (r.warnReason) {
-    if (!sub) { sub = document.createElement('div'); sub.className = 'oe-row-subtext'; wrap.appendChild(sub); }
-    sub.textContent = '⚠ ' + r.warnReason;
-  } else if (sub) {
-    sub.remove();
-  }
-
-  const warnCount = _rows.filter(x => x.warn).length;
-  document.getElementById('summary-text').textContent =
-    _rows.length + ' row' + (_rows.length !== 1 ? 's' : '') + (warnCount ? ' · ' + warnCount + ' flagged' : '');
 }
 
-// ── Combobox ──────────────────────────────────────────
+// ── Combobox ─────────────────────────────────────────────
 let _cbDropdown = null, _cbActiveInput = null, _cbGetOpts = null;
+
 function setupCombobox() {
   _cbDropdown = document.getElementById('oe-cb-dropdown');
   _cbDropdown.addEventListener('mousedown', e => {
     e.preventDefault();
     const item = e.target.closest('.oe-cb-item'); if (!item || !_cbActiveInput) return;
     _cbActiveInput.value = item.dataset.value;
-    _cbActiveInput.dispatchEvent(new Event('change', { bubbles: true })); _cbClose();
+    _cbActiveInput.dispatchEvent(new Event('change', { bubbles: true }));
+    _cbClose();
   });
-  document.addEventListener('mousedown', e => { if (_cbDropdown && !_cbDropdown.contains(e.target) && e.target !== _cbActiveInput) _cbClose(); });
+  document.addEventListener('mousedown', e => {
+    if (_cbDropdown && !_cbDropdown.contains(e.target) && e.target !== _cbActiveInput) _cbClose();
+  });
   document.addEventListener('scroll', () => _cbClose(), true);
 }
+
 function _cbOpen(input, getOpts) { _cbActiveInput = input; _cbGetOpts = getOpts; _cbRender(); }
 function _cbRender() {
   if (!_cbActiveInput || !_cbDropdown) return;
@@ -290,7 +282,7 @@ function _cbRender() {
   Object.assign(_cbDropdown.style, {
     display: 'block',
     left:    r.left + window.scrollX + 'px',
-    top:     r.bottom + window.scrollY + 2 + 'px',
+    top:     r.bottom + window.scrollY + 4 + 'px',
     width:   Math.max(r.width, 200) + 'px',
   });
 }
@@ -307,10 +299,10 @@ document.getElementById('submit-btn').addEventListener('click', submitOrders);
 
 async function submitOrders() {
   const toSubmit = _rows.filter(r => r.customer.trim() && r.item.trim() && String(r.quantity).trim());
-  if (!toSubmit.length) { showToast('Each row needs a customer, item, and quantity', 'error'); return; }
+  if (!toSubmit.length) { showToast('Fill in at least one complete row', 'error'); return; }
   const btn = document.getElementById('submit-btn');
   btn.disabled = true; btn.textContent = 'Checking…';
-  try { await checkPhonesThenSubmit(toSubmit); } finally { btn.disabled = false; btn.textContent = 'Submit to ops →'; }
+  try { await checkPhonesThenSubmit(toSubmit); } finally { btn.disabled = false; btn.textContent = 'Submit →'; }
 }
 
 async function checkPhonesThenSubmit(toSubmit) {
@@ -323,7 +315,8 @@ async function checkPhonesThenSubmit(toSubmit) {
 }
 
 function showPhonePrompt(customers) {
-  const tbody = document.getElementById('phone-table-body'); tbody.innerHTML = '';
+  const tbody = document.getElementById('phone-table-body');
+  tbody.innerHTML = '';
   customers.forEach(name => {
     const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
     const tr   = document.createElement('tr');
@@ -333,7 +326,9 @@ function showPhonePrompt(customers) {
       '<td><button class="btn-sm-mic" data-mic-for="ph-' + escH(slug) + '">● Speak</button></td>';
     tbody.appendChild(tr);
   });
-  tbody.querySelectorAll('[data-mic-for]').forEach(btn => btn.addEventListener('click', () => speakPhone(btn.dataset.micFor, btn)));
+  tbody.querySelectorAll('[data-mic-for]').forEach(btn =>
+    btn.addEventListener('click', () => speakPhone(btn.dataset.micFor, btn))
+  );
   const prompt = document.getElementById('phone-prompt');
   prompt.style.display = 'block';
   prompt.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -353,7 +348,7 @@ function speakPhone(inputId, btn) {
 }
 
 function _normalizePhone(raw) {
-  const words = { zero:'0', one:'1', two:'2', three:'3', four:'4', five:'5', six:'6', seven:'7', eight:'8', nine:'9' };
+  const words = { zero:'0',one:'1',two:'2',three:'3',four:'4',five:'5',six:'6',seven:'7',eight:'8',nine:'9' };
   let s = raw.toLowerCase();
   Object.entries(words).forEach(([w, d]) => { s = s.replace(new RegExp('\\b' + w + '\\b', 'g'), d); });
   s = s.replace(/[^\d+]/g, '');
@@ -371,7 +366,7 @@ async function submitWithPhones() {
   });
   if (phoneRows.length > 0) {
     const { error } = await sb.from('customer_phones').upsert(phoneRows, { onConflict: 'customer_name,phone_number' });
-    if (error) { showToast('Could not save phone numbers: ' + error.message, 'error'); return; }
+    if (error) { showToast('Could not save phones: ' + error.message, 'error'); return; }
     showToast(phoneRows.length + ' phone' + (phoneRows.length !== 1 ? 's' : '') + ' saved');
   }
   document.getElementById('phone-prompt').style.display = 'none';
@@ -386,22 +381,20 @@ async function skipPhones() {
 }
 
 async function doSubmit(toSubmit, allowMissingPhones = false) {
-  const btn = document.getElementById('submit-btn'); btn.disabled = true; btn.textContent = 'Submitting…';
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
   try {
-    const records = toSubmit.map(row => ({
-      customer_name:      row.customer.trim(),
-      invoice_date:       row.orderDate,
-      item_name:          (function() {
-        const cat = _items.find(i => i.name.toLowerCase() === row.item.trim().toLowerCase());
-        return cat ? cat.name : row.item.trim();
-      })(),
-      description:        row.description || null,
-      requested_quantity: parseFloat(row.quantity) || 0,
-      unit_price:         (function() {
-        const cat = _items.find(i => i.name.toLowerCase() === row.item.trim().toLowerCase());
-        return cat ? cat.unit_price : null;
-      })(),
-    }));
+    const records = toSubmit.map(row => {
+      const cat = _items.find(i => i.name.toLowerCase() === row.item.trim().toLowerCase());
+      return {
+        customer_name:      row.customer.trim(),
+        invoice_date:       row.orderDate,
+        item_name:          cat ? cat.name : row.item.trim(),
+        description:        row.description || null,
+        requested_quantity: parseFloat(row.quantity) || 0,
+        unit_price:         cat ? cat.unit_price : null,
+      };
+    });
 
     const res = await fetch(SUPABASE_URL + '/functions/v1/add-orders', {
       method:  'POST',
@@ -411,19 +404,22 @@ async function doSubmit(toSubmit, allowMissingPhones = false) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Submit failed');
 
+    const n       = data.inserted || 0;
     const heldMsg = data.held > 0 ? ' (' + data.held + ' held as duplicate)' : '';
-    showToast((data.inserted || 0) + ' item' + ((data.inserted || 0) !== 1 ? 's' : '') + ' submitted' + heldMsg + ' ✓');
+    showToast(n + ' item' + (n !== 1 ? 's' : '') + ' submitted' + heldMsg + ' ✓');
 
     toSubmit.forEach(row => {
       const c = row.customer.trim();
       if (c && !_customers.some(x => x.toLowerCase() === c.toLowerCase())) _customers.push(c);
     });
 
-    _rows = []; renderRows();
+    // Reset to one blank row
+    _rows = [];
+    addBlankRow();
     document.getElementById('raw-input').value = '';
   } catch (e) {
     showToast(e.message, 'error'); console.error(e);
   } finally {
-    btn.disabled = false; btn.textContent = 'Submit to ops →';
+    btn.disabled = false; btn.textContent = 'Submit →';
   }
 }

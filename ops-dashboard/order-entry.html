@@ -8,64 +8,161 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <style>
-    .oe-input-card{background:var(--surface,#fff);border:1px solid var(--border,#e5e7eb);border-radius:10px;padding:14px;margin-bottom:14px}
-    .oe-input-card h3{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted,#6b7280);margin:0 0 10px}
-    .oe-top-bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
-    .oe-top-bar input[type="date"]{border:1px solid var(--border,#e5e7eb);border-radius:6px;padding:6px 10px;font-family:inherit;font-size:.88rem;background:var(--bg,#f9fafb);color:var(--text,#111)}
-    .oe-textarea{width:100%;min-height:90px;border:1px solid var(--border,#e5e7eb);border-radius:8px;padding:10px 12px;font-size:.92rem;font-family:inherit;resize:vertical;background:var(--bg,#f9fafb);color:var(--text,#111)}
-    .oe-textarea:focus{outline:none;border-color:#9ca3af}
-    .oe-btn-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
-    .mic-status{font-size:.76rem;color:var(--text-muted,#6b7280);margin-top:5px;min-height:16px}
-    .btn-mic{background:#eaf3de;color:#3b6d11;border-color:#c7e3a8}
-    .btn-mic.recording{background:#faece7;color:#993c1d;border-color:#f3bba8}
-    .oe-summary-bar{display:flex;justify-content:space-between;align-items:center;padding:4px 2px 8px;font-size:.84rem;color:var(--text-muted,#6b7280);flex-wrap:wrap;gap:6px}
+    main{padding:12px 16px 72px}
 
-    /* ── Compact single-line rows ── */
-    .oe-row-wrap{border:1px solid var(--border,#e5e7eb);border-radius:7px;margin-bottom:3px;background:#fff;overflow:hidden}
-    .oe-row-wrap.is-warn{background:#fffbeb;border-color:#fcd34d}
-    .oe-row-wrap.is-new-customer{border-left:3px solid #16a34a}
-    .oe-row-flex{display:flex;align-items:center;gap:0;padding:0 6px}
-    .oe-row-delete{background:none;border:none;color:#d1d5db;font-size:.8rem;padding:0 5px 0 0;cursor:pointer;flex-shrink:0;line-height:1}
-    .oe-row-delete:hover{color:#ef4444}
-    .oe-il{border:none;border-right:1px solid #f0f0f0;padding:7px 7px;font-size:.86rem;font-family:inherit;background:transparent;color:var(--text,#111);min-width:0}
-    .oe-il:last-of-type{border-right:none}
-    .oe-il:focus{outline:none;background:#f9fafb}
-    .oe-il::placeholder{color:#d1d5db}
-    .oe-customer{flex:2}
-    .oe-item{flex:2}
-    .oe-qty{flex:0 0 58px}
-    .oe-date{flex:0 0 118px;font-size:.78rem;color:var(--text-muted,#6b7280)}
-    .oe-tag-inline{font-size:.62rem;font-weight:700;padding:1px 5px;border-radius:3px;white-space:nowrap;flex-shrink:0;margin-left:4px}
-    .oe-row-subtext{font-size:.72rem;color:#92400e;padding:2px 10px 4px 28px;line-height:1.3}
-    /* ── End compact rows ── */
+    /* ── Capture card ───────────────────────────── */
+    .oe-card{
+      background:#fff;border:1px solid var(--border);
+      border-radius:10px;padding:10px 12px;margin-bottom:10px;
+    }
+    .oe-top{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+    .oe-date-pick{
+      border:1px solid var(--border);border-radius:6px;
+      padding:5px 8px;font-family:inherit;font-size:.83rem;
+      background:var(--bg);color:var(--text);
+    }
+    .oe-mic{
+      width:30px;height:30px;border-radius:50%;
+      border:1.5px solid var(--border);background:#fff;
+      cursor:pointer;font-size:.65rem;color:var(--text-muted);
+      display:flex;align-items:center;justify-content:center;
+      flex-shrink:0;transition:background .1s,border-color .1s;
+    }
+    .oe-mic.recording{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+    .oe-mic-hint{font-size:.72rem;color:#9ca3af;flex:1;line-height:1.2}
+    .oe-textarea{
+      width:100%;height:54px;border:1px solid var(--border);
+      border-radius:7px;padding:8px 10px;font-size:.88rem;
+      font-family:inherit;resize:none;background:var(--bg);
+      color:var(--text);box-sizing:border-box;
+    }
+    .oe-textarea:focus{outline:none;border-color:#9ca3af;background:#fff}
+    .oe-textarea::placeholder{color:#c8cfd8}
+    .oe-card-actions{
+      display:flex;justify-content:space-between;
+      align-items:center;margin-top:7px;
+    }
+    .oe-ghost{
+      border:none;background:none;font-family:inherit;
+      font-size:.78rem;color:#9ca3af;cursor:pointer;padding:2px 0;
+    }
+    .oe-ghost:hover{color:var(--text-muted)}
+    .oe-parse{
+      border:1.5px solid var(--border);background:#fff;
+      font-family:inherit;font-size:.82rem;font-weight:500;
+      color:var(--text);cursor:pointer;padding:5px 13px;
+      border-radius:6px;transition:border-color .1s,background .1s;
+    }
+    .oe-parse:hover{border-color:#9ca3af;background:var(--bg)}
 
-    .oe-empty-state{text-align:center;padding:28px 16px;color:#9ca3af;font-size:.88rem;line-height:1.8}
-    .oe-submit-row{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
-    .oe-phone-prompt{background:#fffbeb;border:1.5px solid #fcd34d;border-radius:10px;padding:14px;margin-top:14px}
-    .oe-phone-prompt h3{font-size:.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#92400e;margin:0 0 6px}
-    .oe-phone-prompt p{font-size:.83rem;color:#92400e;margin:0 0 12px;line-height:1.5}
+    /* ── Order table ────────────────────────────── */
+    .oe-table-wrap{
+      background:#fff;border:1px solid var(--border);
+      border-radius:10px;overflow:hidden;overflow-x:auto;
+    }
+    .oe-grid{
+      width:100%;border-collapse:collapse;
+      table-layout:fixed;min-width:540px;
+    }
+    .col-date{width:108px}
+    .col-cust{width:22%}
+    .col-item{width:22%}
+    .col-qty {width:62px}
+    /* col-desc: auto */
+    .col-del {width:28px}
+
+    .oe-grid thead th{
+      font-size:.62rem;font-weight:600;text-transform:uppercase;
+      letter-spacing:.07em;color:#b0b8c4;
+      padding:9px 7px 7px;text-align:left;
+      border-bottom:1.5px solid #f0f0f0;
+    }
+    .oe-grid thead th:first-child{padding-left:12px}
+
+    .oe-tr{border-bottom:1px solid #f5f5f5;transition:background .07s}
+    .oe-tr:last-child{border-bottom:none}
+    .oe-tr:hover{background:#fafafa}
+    .oe-tr:hover .oe-del{opacity:1}
+
+    /* left accent: new customer = green, unknown item = amber */
+    .oe-tr.is-new  > td:first-child{box-shadow:inset 3px 0 0 #16a34a}
+    .oe-tr.is-warn > td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
+
+    .oe-tr td{padding:2px 3px;vertical-align:middle}
+    .oe-tr td:first-child{padding-left:8px}
+    .oe-tr td:last-child {padding-right:4px}
+
+    .oe-in{
+      width:100%;border:none;background:transparent;
+      padding:7px 5px;font-size:.875rem;font-family:inherit;
+      color:var(--text);border-radius:5px;
+    }
+    .oe-in:focus{outline:none;background:#f0f6ff}
+    .oe-in::placeholder{color:#d1d5db}
+    .oe-in-qty{text-align:right}
+    .oe-in-date{font-size:.8rem;color:var(--text-muted)}
+
+    .oe-del{
+      border:none;background:none;color:#d1d5db;cursor:pointer;
+      padding:3px 5px;font-size:.72rem;opacity:0;
+      transition:color .1s,opacity .1s;line-height:1;
+    }
+    .oe-del:hover{color:#ef4444}
+
+    /* ── Table footer ───────────────────────────── */
+    .oe-footer{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:8px 12px 9px;border-top:1px solid #f0f0f0;gap:8px;
+    }
+    .oe-add-btns{display:flex;gap:14px;flex-wrap:wrap}
+    .oe-add{
+      border:none;background:none;font-family:inherit;
+      font-size:.82rem;color:var(--brand);cursor:pointer;padding:0;
+    }
+    .oe-add:hover{text-decoration:underline}
+
+    /* ── Phone prompt ───────────────────────────── */
+    .oe-phone-prompt{
+      background:#fffbeb;border:1.5px solid #fcd34d;
+      border-radius:10px;padding:14px;margin-top:10px;
+    }
+    .oe-phone-prompt h3{
+      font-size:.72rem;font-weight:600;text-transform:uppercase;
+      letter-spacing:.05em;color:#92400e;margin:0 0 5px;
+    }
+    .oe-phone-prompt p{font-size:.82rem;color:#92400e;margin:0 0 10px;line-height:1.5}
     .oe-phone-table{width:100%;border-collapse:collapse}
-    .oe-phone-table th{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;padding:4px 6px;text-align:left;font-weight:600}
-    .oe-phone-table td{padding:5px 6px;vertical-align:middle}
-    .oe-phone-name{font-weight:500;font-size:.88rem;white-space:nowrap}
-    .oe-phone-input{width:100%;border:1px solid var(--border,#e5e7eb);border-radius:6px;padding:6px 8px;font-size:.88rem;font-family:inherit;background:var(--bg,#f9fafb);color:var(--text,#111)}
+    .oe-phone-table th{
+      font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;
+      color:#9ca3af;padding:3px 6px;text-align:left;font-weight:600;
+    }
+    .oe-phone-table td{padding:4px 6px;vertical-align:middle}
+    .oe-phone-name{font-weight:500;font-size:.875rem;white-space:nowrap}
+    .oe-phone-input{
+      width:100%;border:1px solid var(--border);border-radius:6px;
+      padding:6px 8px;font-size:.875rem;font-family:inherit;
+      background:var(--bg);color:var(--text);letter-spacing:.04em;
+    }
     .oe-phone-input:focus{outline:none;border-color:#9ca3af;background:#fff}
-    .oe-phone-input{letter-spacing:.04em}
-    .btn-sm-mic{font-size:.76rem;padding:5px 9px;background:#eaf3de;color:#3b6d11;border:1px solid #c7e3a8;border-radius:6px;cursor:pointer;white-space:nowrap}
+    .btn-sm-mic{
+      font-size:.75rem;padding:5px 9px;background:#eaf3de;color:#3b6d11;
+      border:1px solid #c7e3a8;border-radius:6px;cursor:pointer;white-space:nowrap;
+    }
     .btn-sm-mic.recording{background:#faece7;color:#993c1d;border-color:#f3bba8}
-    .oe-cb-dropdown{position:absolute;background:#fff;border:1px solid #d1d5db;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:9999;max-height:220px;overflow-y:auto;display:none}
+    .oe-phone-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+
+    /* ── Combobox ───────────────────────────────── */
+    .oe-cb-dropdown{
+      position:fixed;background:#fff;border:1px solid #d1d5db;
+      border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);
+      z-index:9999;max-height:220px;overflow-y:auto;display:none;
+    }
     .oe-cb-item{padding:8px 12px;cursor:pointer;font-size:.86rem}
     .oe-cb-item:hover{background:#f3f4f6}
     .oe-cb-item strong{color:#059669}
 
-    /* column header row */
-    .oe-col-header{display:flex;align-items:center;gap:0;padding:0 6px;font-size:.62rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;margin-bottom:2px}
-    .oe-col-header span{padding:0 7px}
-    .oe-col-del{flex:0 0 18px}
-    .oe-col-cust{flex:2}
-    .oe-col-item{flex:2}
-    .oe-col-qty{flex:0 0 58px}
-    .oe-col-date{flex:0 0 118px}
+    /* hidden status anchor for JS */
+    #status-line{display:none}
   </style>
 </head>
 <body>
@@ -82,62 +179,73 @@
     </nav>
   </div>
 </header>
-<div class="section-header" style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px">
-  <div><h2>Order Entry</h2><p class="count" id="status-line">Loading catalog and customers…</p></div>
-</div>
-<main style="padding:12px 16px">
-  <div class="oe-input-card">
-    <h3>Speak or type orders</h3>
-    <div class="oe-top-bar">
-      <input type="date" id="order-date">
-      <button id="mic-btn" class="btn btn-mic" type="button">● Speak</button>
+
+<span id="status-line"></span>
+
+<main>
+  <!-- ── Voice / text capture ── -->
+  <div class="oe-card">
+    <div class="oe-top">
+      <input type="date" id="order-date" class="oe-date-pick">
+      <button id="mic-btn" class="oe-mic" type="button" title="Speak">●</button>
+      <span id="mic-status" class="oe-mic-hint"></span>
     </div>
     <textarea id="raw-input" class="oe-textarea"
-      placeholder="Speak or paste order text here…
-e.g. Villa 23 guava 1 kg, Ahad 12601 mango half kg strawberry 2 boxes"></textarea>
-    <div class="mic-status" id="mic-status"></div>
-    <div class="oe-btn-row">
-      <button id="parse-btn" class="btn btn-primary" type="button">Parse orders</button>
-      <button id="clear-input-btn" class="btn btn-secondary" type="button">Clear text</button>
+      placeholder="Speak, type, or paste a table copied from Excel / Sheets…"></textarea>
+    <div class="oe-card-actions">
+      <button id="clear-input-btn" class="oe-ghost" type="button">✕ clear</button>
+      <button id="parse-btn" class="oe-parse" type="button">Parse →</button>
     </div>
   </div>
-  <div id="results-section" style="display:none">
-    <div class="oe-summary-bar">
-      <span id="summary-text"></span>
-      <div style="display:flex;gap:6px">
-        <button id="add-row-btn" class="btn btn-secondary btn-sm" type="button">+ Add row</button>
-        <button id="clear-all-btn" class="btn btn-secondary btn-sm" style="color:var(--red,#dc2626)" type="button">Clear all</button>
+
+  <!-- ── Order table ── -->
+  <div class="oe-table-wrap">
+    <table class="oe-grid">
+      <colgroup>
+        <col class="col-date">
+        <col class="col-cust">
+        <col class="col-item">
+        <col class="col-qty">
+        <col><!-- desc auto -->
+        <col class="col-del">
+      </colgroup>
+      <thead>
+        <tr>
+          <th style="padding-left:14px">Date</th>
+          <th>Customer</th>
+          <th>Item</th>
+          <th style="text-align:right">Qty</th>
+          <th>Description</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="rows-container"></tbody>
+    </table>
+
+    <div class="oe-footer">
+      <div class="oe-add-btns">
+        <button class="oe-add" type="button" onclick="addSameCustomerRow()">+ same customer</button>
+        <button class="oe-add" type="button" onclick="addBlankRow()" style="color:var(--text-muted)">+ new customer</button>
       </div>
-    </div>
-    <div class="oe-col-header">
-      <span class="oe-col-del"></span>
-      <span class="oe-col-cust">Customer</span>
-      <span class="oe-col-item">Item</span>
-      <span class="oe-col-qty">Qty</span>
-      <span class="oe-col-date">Date</span>
-    </div>
-    <div id="rows-container"></div>
-    <div class="oe-submit-row">
-      <button id="submit-btn" class="btn btn-primary" type="button">Submit to ops →</button>
-    </div>
-    <div id="phone-prompt" class="oe-phone-prompt" style="display:none">
-      <h3>⚠ Phone numbers needed</h3>
-      <p>These customers don't have a mobile number on file. Speak or paste each one below — or skip to submit without.</p>
-      <table class="oe-phone-table">
-        <thead><tr><th style="width:40%">Customer</th><th>Mobile number</th><th style="width:80px"></th></tr></thead>
-        <tbody id="phone-table-body"></tbody>
-      </table>
-      <div class="oe-btn-row" style="margin-top:14px">
-        <button class="btn btn-primary" onclick="submitWithPhones()">Save &amp; submit →</button>
-        <button class="btn btn-secondary" onclick="skipPhones()">Skip — submit anyway</button>
-      </div>
+      <button id="submit-btn" class="btn btn-primary btn-sm" type="button">Submit →</button>
     </div>
   </div>
-  <div id="empty-state" class="oe-empty-state">
-    No orders yet — speak or paste text above, then tap "Parse orders".<br>
-    Or <button class="btn btn-secondary btn-sm" onclick="addBlankRow()" style="margin-left:4px">add a row manually</button>.
+
+  <!-- ── Phone prompt ── -->
+  <div id="phone-prompt" class="oe-phone-prompt" style="display:none">
+    <h3>Phone numbers needed</h3>
+    <p>These customers don't have a mobile number on file. Add one below, or skip to submit without.</p>
+    <table class="oe-phone-table">
+      <thead><tr><th style="width:38%">Customer</th><th>Mobile</th><th style="width:76px"></th></tr></thead>
+      <tbody id="phone-table-body"></tbody>
+    </table>
+    <div class="oe-phone-actions">
+      <button class="btn btn-primary btn-sm" onclick="submitWithPhones()">Save &amp; submit →</button>
+      <button class="btn btn-secondary btn-sm" onclick="skipPhones()">Skip</button>
+    </div>
   </div>
 </main>
+
 <div id="oe-cb-dropdown" class="oe-cb-dropdown"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/config.js"></script>
