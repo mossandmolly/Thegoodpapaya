@@ -21,11 +21,12 @@ CREATE POLICY "customers_read" ON public.customers
 CREATE POLICY "customers_write" ON public.customers
   FOR ALL USING (true) WITH CHECK (true);
 
--- ── customer_phones ───────────────────────────────────────────────────────────
-DROP POLICY IF EXISTS customer_phones_anon_read   ON public.customer_phones;
-
-CREATE POLICY "customer_phones_read" ON public.customer_phones
-  FOR SELECT USING (true);
-
-CREATE POLICY "customer_phones_write" ON public.customer_phones
-  FOR ALL USING (true) WITH CHECK (true);
+-- ── customer_phones (only if it exists) ──────────────────────────────────────
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema='public' AND table_name='customer_phones') THEN
+    EXECUTE 'DROP POLICY IF EXISTS customer_phones_anon_read ON public.customer_phones';
+    EXECUTE 'CREATE POLICY customer_phones_read ON public.customer_phones FOR SELECT USING (true)';
+    EXECUTE 'CREATE POLICY customer_phones_write ON public.customer_phones FOR ALL USING (true) WITH CHECK (true)';
+  END IF;
+END $$;
