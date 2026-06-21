@@ -70,9 +70,21 @@ CREATE TRIGGER orders_ensure_customer
   AFTER INSERT ON public.orders
   FOR EACH ROW EXECUTE FUNCTION orders_ensure_customer();
 
--- ── 5. Add unit_price to operations if missing ────────────────────────────────
-ALTER TABLE public.operations
-  ADD COLUMN IF NOT EXISTS unit_price numeric(10,2);
+-- ── 5. Add unit_price to operations if the table exists ──────────────────────
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'operations'
+  ) THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'operations' AND column_name = 'unit_price'
+    ) THEN
+      ALTER TABLE public.operations ADD COLUMN unit_price numeric(10,2);
+    END IF;
+  END IF;
+END $$;
 
 -- ── 6. Add sales_order_id to invoice_line_items ───────────────────────────────
 -- No FK constraint — Zoho-synced invoices may not have a matching orders row.
