@@ -1,0 +1,27 @@
+name: Sync Claude branch → shopify-theme
+
+on:
+  push:
+    branches:
+      - 'claude/**'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: shopify-theme
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge Claude branch into shopify-theme
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin ${{ github.ref_name }}
+          git merge origin/${{ github.ref_name }} --no-edit -X theirs
+          git push origin shopify-theme
