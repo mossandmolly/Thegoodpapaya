@@ -281,8 +281,8 @@ function _cbRender() {
   const r = _cbActiveInput.getBoundingClientRect();
   Object.assign(_cbDropdown.style, {
     display: 'block',
-    left:    r.left + window.scrollX + 'px',
-    top:     r.bottom + window.scrollY + 4 + 'px',
+    left:    r.left + 'px',
+    top:     r.bottom + 4 + 'px',
     width:   Math.max(r.width, 200) + 'px',
   });
 }

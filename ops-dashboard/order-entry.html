@@ -116,19 +116,21 @@
     }
     .oe-del:hover{color:#ef4444}
 
-    /* ── Table footer — looks like a bottom row ── */
+    /* ── Table footer — Notion-style bottom row ── */
     .oe-footer{
       display:flex;align-items:center;justify-content:space-between;
-      padding:6px 10px 7px;
+      padding:0 10px;height:36px;
       border-top:1px solid rgba(0,0,0,0.06);gap:8px;
+      transition:background .07s;cursor:default;
     }
-    .oe-add-btns{display:flex;gap:16px;flex-wrap:wrap}
+    .oe-footer:hover{background:#f7f6f3}
+    .oe-add-btns{display:flex;gap:16px;flex-wrap:wrap;height:100%;align-items:center}
     .oe-add{
       border:none;background:none;font-family:inherit;
-      font-size:.8rem;color:rgba(55,53,47,.4);cursor:pointer;padding:0;
+      font-size:.8rem;color:rgba(55,53,47,.38);cursor:pointer;padding:0;
       transition:color .1s;
     }
-    .oe-add:hover{color:rgba(55,53,47,.7)}
+    .oe-add:hover{color:rgba(55,53,47,.72)}
 
     /* ── Phone prompt ───────────────────────────── */
     .oe-phone-prompt{
