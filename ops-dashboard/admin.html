@@ -255,21 +255,16 @@
 </div>
 
 <script>
-let _invRefreshTimer = null;
-
 function showPanel(panelId, btn) {
   document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.admin-nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById(panelId).classList.add('active');
   btn.classList.add('active');
-
-  if (_invRefreshTimer) { clearInterval(_invRefreshTimer); _invRefreshTimer = null; }
   if (panelId === 'panel-invoices') {
     if (!document.getElementById('inv-date').value) {
       document.getElementById('inv-date').value = todayIST ? todayIST() : new Date().toISOString().split('T')[0];
     }
     loadInvoiceStatus();
-    _invRefreshTimer = setInterval(loadInvoiceStatus, 8000);
   }
 }
 </script>
