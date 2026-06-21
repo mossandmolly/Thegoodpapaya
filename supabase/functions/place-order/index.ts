@@ -142,6 +142,7 @@ Deno.serve(async (req) => {
       community:      community.trim(),
       contact_name:   contact_name || null,
       phone:          normalPhone,
+      order_date:     today,
       source:         'website',
       payment_method: method,
       notes:          notes || null,

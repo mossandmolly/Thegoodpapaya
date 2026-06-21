@@ -195,6 +195,7 @@ Deno.serve(async (req) => {
           customer_name:  name,
           community:      r.community ?? null,
           phone:          phone ? phone.replace('+91', '') : null,
+          order_date:     uploadDate,
           source:         'csv',
           payment_method: 'cod',
           invoice_date:   uploadDate,

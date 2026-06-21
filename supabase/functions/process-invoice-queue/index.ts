@@ -1,8 +1,13 @@
 // Supabase Edge Function — process-invoice-queue
 //
-// Called by pg_cron (every 30 seconds or on demand).
-// Picks up to 10 'queued' invoice_queue entries, processes them in parallel.
-// Fast-path orders (no prior Zoho invoice) are processed before slow-path ones.
+// Called on-demand (by queue-invoices) or by pg_cron.
+// Each run:
+//   1. Recovers stale 'processing' rows stuck >5 min (reset to 'queued')
+//   2. Picks up to 10 'queued' items with retry_count < 3
+//   3. Fast-path orders (no prior Zoho invoice) processed first
+//   4. Processes batch in parallel
+//   5. On success → 'done'
+//      On failure → retry_count++; if <3 → 'queued' again; if 3 → 'failed'
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -15,6 +20,9 @@ function env(key: string) {
   if (!val) throw new Error(`Missing env: ${key}`);
   return val;
 }
+
+const MAX_RETRIES = 3;
+const STALE_MINUTES = 5;
 
 // ── Zoho OAuth ────────────────────────────────────────────────────────────────
 async function getZohoToken(): Promise<string> {
@@ -50,7 +58,7 @@ async function getOrCreateContact(
     zohoUrl(`/contacts?contact_name=${encodeURIComponent(name)}`, orgId),
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
   );
-  const sd = await search.json();
+  const sd  = await search.json();
   const hit = sd.contacts?.find((c: any) => c.contact_name.toLowerCase() === name.toLowerCase());
   if (hit) return hit.contact_id;
 
@@ -115,9 +123,9 @@ async function createZohoInvoice(
   const data = await res.json();
   if (data.code !== 0) throw new Error(`Create invoice failed: ${data.message}`);
   return {
-    invoice_id:    data.invoice.invoice_id,
+    invoice_id:     data.invoice.invoice_id,
     invoice_number: data.invoice.invoice_number,
-    invoice_total: parseFloat(data.invoice.total ?? '0'),
+    invoice_total:  parseFloat(data.invoice.total ?? '0'),
   };
 }
 
@@ -137,9 +145,7 @@ async function applyPayment(
 // ── Process a single order ────────────────────────────────────────────────────
 async function processOrder(
   supabase: ReturnType<typeof createClient>,
-  token: string,
-  orgId: string,
-  salesOrderId: string,
+  token: string, orgId: string, salesOrderId: string,
 ): Promise<void> {
   const [{ data: order }, { data: items }] = await Promise.all([
     supabase.from('orders').select('*').eq('sales_order_id', salesOrderId).single(),
@@ -177,12 +183,11 @@ async function processOrder(
     await deleteZohoInvoice(order.zoho_invoice_id, token, orgId);
   }
 
-  const invoiceDate = order.invoice_date ?? new Date().toISOString().split('T')[0];
+  const invoiceDate = order.invoice_date ?? order.order_date ?? new Date().toISOString().split('T')[0];
   const { invoice_id, invoice_number, invoice_total } = await createZohoInvoice(
     contactId, salesOrderId, invoiceDate, lineItems, token, orgId,
   );
 
-  // Reapply prior payments to new invoice
   for (const p of priorPayments) {
     await applyPayment(invoice_id, p.payment_id, p.amount_applied, token, orgId);
   }
@@ -204,11 +209,20 @@ async function processOrder(
 Deno.serve(async (_req) => {
   const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
-  // Pick up to 10 queued items; join orders to know which are slow-path
+  // ── 1. Recover stale 'processing' rows ────────────────────────
+  const staleThreshold = new Date(Date.now() - STALE_MINUTES * 60 * 1000).toISOString();
+  await supabase
+    .from('invoice_queue')
+    .update({ status: 'queued' })
+    .eq('status', 'processing')
+    .lt('last_attempted_at', staleThreshold);
+
+  // ── 2. Pick up to 10 queued items (retry_count < MAX_RETRIES) ─
   const { data: queueItems } = await supabase
     .from('invoice_queue')
-    .select('sales_order_id, orders(zoho_invoice_id)')
+    .select('sales_order_id, retry_count, orders(zoho_invoice_id)')
     .eq('status', 'queued')
+    .lt('retry_count', MAX_RETRIES)
     .order('created_at')
     .limit(10);
 
@@ -219,30 +233,32 @@ Deno.serve(async (_req) => {
     );
   }
 
-  // Fast path (no existing invoice) first, slow path last
+  // Fast-path (no existing invoice) first, slow-path last
   const sorted = [...queueItems].sort((a: any, b: any) =>
     (a.orders?.zoho_invoice_id ? 1 : 0) - (b.orders?.zoho_invoice_id ? 1 : 0),
   );
   const ids = sorted.map((q: any) => q.sales_order_id as string);
 
-  // Mark batch as processing
+  // ── 3. Mark batch as processing ───────────────────────────────
+  const now = new Date().toISOString();
   await Promise.all([
-    supabase.from('invoice_queue').update({ status: 'processing' }).in('sales_order_id', ids),
-    supabase.from('orders').update({ invoice_status: 'processing' }).in('sales_order_id', ids),
+    supabase.from('invoice_queue')
+      .update({ status: 'processing', last_attempted_at: now })
+      .in('sales_order_id', ids),
+    supabase.from('orders')
+      .update({ invoice_status: 'processing' })
+      .in('sales_order_id', ids),
   ]);
 
-  // Single OAuth token for the whole batch
+  // ── 4. Single Zoho token for the whole batch ──────────────────
   let token: string;
   try { token = await getZohoToken(); }
   catch (e: any) {
-    await supabase.from('invoice_queue')
-      .update({ status: 'failed', error_message: e.message })
-      .in('sales_order_id', ids);
-    await supabase.from('orders')
-      .update({ invoice_status: 'failed' })
-      .in('sales_order_id', ids);
+    // Token failure → reset all to queued (not a per-order failure)
+    await supabase.from('invoice_queue').update({ status: 'queued' }).in('sales_order_id', ids);
+    await supabase.from('orders').update({ invoice_status: 'queued' }).in('sales_order_id', ids);
     return new Response(
-      JSON.stringify({ error: e.message }),
+      JSON.stringify({ error: `Zoho token failed: ${e.message}` }),
       { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }
@@ -252,20 +268,28 @@ Deno.serve(async (_req) => {
     ids.map(id => processOrder(supabase, token, orgId, id)),
   );
 
-  // Update queue and orders based on results
+  // ── 5. Update queue based on results ─────────────────────────
+  const retryCounts = Object.fromEntries(
+    queueItems.map((q: any) => [q.sales_order_id, q.retry_count as number]),
+  );
+
   await Promise.all(results.map(async (result, i) => {
     const id = ids[i];
     if (result.status === 'fulfilled') {
       await supabase.from('invoice_queue').update({ status: 'done' }).eq('sales_order_id', id);
     } else {
-      const msg = (result as PromiseRejectedResult).reason?.message ?? 'Unknown error';
+      const msg      = (result as PromiseRejectedResult).reason?.message ?? 'Unknown error';
+      const attempts = (retryCounts[id] ?? 0) + 1;
+      const nextStatus = attempts >= MAX_RETRIES ? 'failed' : 'queued';
       await Promise.all([
-        supabase.from('invoice_queue')
-          .update({ status: 'failed', error_message: msg })
-          .eq('sales_order_id', id),
-        supabase.from('orders')
-          .update({ invoice_status: 'failed' })
-          .eq('sales_order_id', id),
+        supabase.from('invoice_queue').update({
+          status:        nextStatus,
+          error_message: msg,
+          retry_count:   attempts,
+        }).eq('sales_order_id', id),
+        supabase.from('orders').update({
+          invoice_status: nextStatus === 'failed' ? 'failed' : 'queued',
+        }).eq('sales_order_id', id),
       ]);
     }
   }));

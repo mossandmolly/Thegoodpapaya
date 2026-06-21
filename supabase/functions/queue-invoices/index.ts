@@ -53,6 +53,15 @@ Deno.serve(async (req) => {
       .in('sales_order_id', sales_order_ids)
       .in('invoice_status', ['pending', 'failed']);
 
+    // Kick off the processor in the background — no cron needed.
+    // fire-and-forget: don't await, don't block the response.
+    const processorUrl = env('SUPABASE_URL').replace('/rest/v1', '') +
+      '/functions/v1/process-invoice-queue';
+    fetch(processorUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env('SUPABASE_SERVICE_ROLE_KEY')}` },
+    }).catch(() => {/* ignore */});
+
     return new Response(
       JSON.stringify({ queued: sales_order_ids.length }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },

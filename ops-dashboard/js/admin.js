@@ -837,6 +837,157 @@ async function resetTodayStatus() {
   showToast('All items reset to draft ✓');
 }
 
+// ── Invoice Status Panel ───────────────────────────────────────
+let _invPendingIds = [];
+
+async function loadInvoiceStatus() {
+  const dateEl = document.getElementById('inv-date');
+  const date   = dateEl ? dateEl.value : todayIST();
+  if (!date) return;
+
+  const wrap = document.getElementById('inv-table-wrap');
+  const sumEl = document.getElementById('inv-summary');
+  if (!wrap) return;
+
+  // Query orders for this date, embed invoice_queue row via FK relationship
+  const { data: orders, error } = await sb
+    .from('orders')
+    .select('sales_order_id, customer_name, invoice_status, invoice_number, zoho_invoice_id, invoice_total, order_date, invoice_queue(status, error_message, retry_count, updated_at)')
+    .eq('order_date', date)
+    .order('customer_name');
+
+  if (error) {
+    wrap.innerHTML = '<p style="font-size:.82rem;color:var(--red)">' + error.message + '</p>';
+    return;
+  }
+
+  if (!orders || !orders.length) {
+    wrap.innerHTML = '<p style="font-size:.85rem;color:var(--text-muted)">No orders for ' + date + '</p>';
+    if (sumEl) sumEl.innerHTML = '';
+    const queueBtn = document.getElementById('inv-queue-all-btn');
+    if (queueBtn) queueBtn.style.display = 'none';
+    return;
+  }
+
+  // Count statuses
+  const counts = { pending: 0, queued: 0, processing: 0, done: 0, failed: 0 };
+  _invPendingIds = [];
+  orders.forEach(o => {
+    const s = o.invoice_status || 'pending';
+    counts[s] = (counts[s] || 0) + 1;
+    if (s === 'pending' || s === 'failed') _invPendingIds.push(o.sales_order_id);
+  });
+
+  // Summary chips
+  if (sumEl) {
+    const chipDef = [
+      { key: 'done',       label: 'done',       cls: 'inv-done' },
+      { key: 'processing', label: 'processing',  cls: 'inv-processing' },
+      { key: 'queued',     label: 'queued',      cls: 'inv-queued' },
+      { key: 'failed',     label: 'failed',      cls: 'inv-failed' },
+      { key: 'pending',    label: 'pending',     cls: 'inv-pending' },
+    ];
+    sumEl.innerHTML = chipDef
+      .filter(c => counts[c.key] > 0)
+      .map(c => '<span class="sum-chip inv-badge ' + c.cls + '"><span class="inv-dot"></span>' + counts[c.key] + ' ' + c.label + '</span>')
+      .join('');
+  }
+
+  // Queue button: show if any pending or failed
+  const queueBtn = document.getElementById('inv-queue-all-btn');
+  if (queueBtn) {
+    const actionable = _invPendingIds.length;
+    queueBtn.style.display = actionable ? 'inline-flex' : 'none';
+    queueBtn.textContent   = 'Queue ' + actionable + ' pending';
+  }
+
+  // Table
+  let rows = '';
+  orders.forEach(o => {
+    const status   = o.invoice_status || 'pending';
+    const qRow     = Array.isArray(o.invoice_queue) ? o.invoice_queue[0] : o.invoice_queue;
+    const retries  = qRow ? qRow.retry_count : 0;
+    const errMsg   = qRow ? qRow.error_message : null;
+    const updatedAt = qRow ? new Date(qRow.updated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+    const badgeLabel = { pending: 'pending', queued: 'queued', processing: 'processing…', done: '✓ done', failed: '✗ failed' }[status] || status;
+    const badge = '<span class="inv-badge inv-' + status + '"><span class="inv-dot"></span>' + badgeLabel + '</span>';
+
+    const invoiceCell = o.zoho_invoice_id
+      ? '<a href="https://books.zoho.in/app#/invoices/' + o.zoho_invoice_id + '" target="_blank" rel="noopener" style="color:var(--brand);font-size:.82rem">' + escapeHtml(o.invoice_number || o.zoho_invoice_id) + ' ↗</a>'
+      : '<span style="color:var(--text-muted)">—</span>';
+
+    const totalCell = o.invoice_total != null
+      ? '₹' + Number(o.invoice_total).toLocaleString('en-IN')
+      : '—';
+
+    const errorCell = errMsg
+      ? '<span style="font-size:.72rem;color:var(--red)" title="' + escapeAttr(errMsg) + '">' + escapeHtml(errMsg.substring(0, 50)) + (errMsg.length > 50 ? '…' : '') + '</span>'
+      : '—';
+
+    const retryBadge = retries > 0
+      ? '<span style="font-size:.7rem;color:var(--text-muted);margin-left:4px">' + retries + '/3</span>'
+      : '';
+
+    const actionCell = (status === 'failed' || status === 'pending')
+      ? '<button class="btn btn-sm btn-secondary" onclick="retryInvoice(\'' + escapeAttr(o.sales_order_id) + '\')">Retry</button>'
+      : '';
+
+    rows += '<tr>' +
+      '<td style="font-weight:500;white-space:nowrap">' + escapeHtml(o.customer_name) + '</td>' +
+      '<td>' + badge + retryBadge + '</td>' +
+      '<td>' + invoiceCell + '</td>' +
+      '<td style="font-size:.82rem;color:var(--text-muted)">' + totalCell + '</td>' +
+      '<td>' + errorCell + '</td>' +
+      '<td style="font-size:.72rem;color:var(--text-muted);white-space:nowrap">' + updatedAt + '</td>' +
+      '<td>' + actionCell + '</td>' +
+      '</tr>';
+  });
+
+  wrap.innerHTML =
+    '<table class="diff-table" style="min-width:560px">' +
+    '<thead><tr><th>Customer</th><th>Status</th><th>Invoice</th><th>Total</th><th>Error</th><th>Updated</th><th></th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table>';
+}
+
+async function queueAllPending() {
+  if (!_invPendingIds.length) return;
+  const btn = document.getElementById('inv-queue-all-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Queuing…'; }
+
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/queue-invoices', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON },
+      body:    JSON.stringify({ sales_order_ids: _invPendingIds }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Queue failed');
+    showToast(data.queued + ' orders queued — processing started');
+    await loadInvoiceStatus();
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; }
+  }
+}
+
+async function retryInvoice(salesOrderId) {
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/queue-invoices', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON },
+      body:    JSON.stringify({ sales_order_ids: [salesOrderId] }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Retry failed');
+    showToast('Retrying ' + salesOrderId);
+    await loadInvoiceStatus();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
 // ── Fuzzy matching helpers ─────────────────────────────────────
 function normalise(s) {
   return (s || '').toLowerCase().replace(/ +/g, ' ').trim();

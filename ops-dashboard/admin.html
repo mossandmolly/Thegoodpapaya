@@ -44,6 +44,16 @@
     .diff-row-new td{background:#f0fdf4}
     .diff-row-removed td{background:#fef2f2;text-decoration:line-through;opacity:.65}
     .diff-row-dup td{background:#fafafa;color:var(--text-muted)}
+    .inv-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:.72rem;font-weight:600;letter-spacing:.02em}
+    .inv-pending  {background:#f1f5f9;color:#64748b}
+    .inv-queued   {background:#dbeafe;color:#1d4ed8}
+    .inv-processing{background:#fef3c7;color:#d97706}
+    .inv-done     {background:#dcfce7;color:#15803d}
+    .inv-failed   {background:#fee2e2;color:#dc2626}
+    .inv-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+    .inv-processing .inv-dot{animation:pulse .8s ease-in-out infinite alternate}
+    @keyframes pulse{to{opacity:.3}}
+    .sum-chip{padding:4px 12px;border-radius:20px;font-size:.78rem;font-weight:600}
     @media(max-width:640px){
       .admin-shell{flex-direction:column}
       .admin-nav{
@@ -120,6 +130,9 @@
       </button>
 
       <div class="admin-nav-group">Finance</div>
+      <button class="admin-nav-item" onclick="showPanel('panel-invoices',this)">
+        <span class="ni">🧾</span> Invoices
+      </button>
       <button class="admin-nav-item" onclick="showPanel('panel-missing',this)">
         <span class="ni">🔗</span> Missing Links
       </button>
@@ -200,6 +213,18 @@
         </details>
       </div>
 
+      <!-- Invoices -->
+      <div id="panel-invoices" class="admin-panel">
+        <div class="panel-heading">Invoice Status</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <input type="date" id="inv-date" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.875rem;font-family:'DM Sans',sans-serif">
+          <button class="btn btn-secondary btn-sm" onclick="loadInvoiceStatus()">&#8635; Refresh</button>
+          <button class="btn btn-primary btn-sm" id="inv-queue-all-btn" onclick="queueAllPending()" style="display:none">Queue pending</button>
+        </div>
+        <div id="inv-summary" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+        <div id="inv-table-wrap"><div class="skeleton" style="height:60px"></div></div>
+      </div>
+
       <!-- Missing Links -->
       <div id="panel-missing" class="admin-panel">
         <div class="panel-heading">Missing Payment Links</div>
@@ -230,11 +255,22 @@
 </div>
 
 <script>
+let _invRefreshTimer = null;
+
 function showPanel(panelId, btn) {
   document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.admin-nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById(panelId).classList.add('active');
   btn.classList.add('active');
+
+  if (_invRefreshTimer) { clearInterval(_invRefreshTimer); _invRefreshTimer = null; }
+  if (panelId === 'panel-invoices') {
+    if (!document.getElementById('inv-date').value) {
+      document.getElementById('inv-date').value = todayIST ? todayIST() : new Date().toISOString().split('T')[0];
+    }
+    loadInvoiceStatus();
+    _invRefreshTimer = setInterval(loadInvoiceStatus, 8000);
+  }
 }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
