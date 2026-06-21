@@ -1,17 +1,19 @@
 // Supabase Edge Function — generate-invoice
 //
-// Input:  { order_ids: string[], checker?: string }
-// Output: { invoices: [{ order_id, zoho_invoice_id, zoho_invoice_number, zoho_url }] }
+// Input:  { sales_order_id: string }
+// Output: { invoice_id, invoice_number, sales_order_id }
 //
-// For each order_id:
-//   1. Load order_items (exclude REMOVED, include NOBILL at zero rate)
-//   2. Get/create Zoho contact by customer_name
-//   3. Create Zoho Books invoice
-//   4. Update orders + order_items in Supabase
+// Fast path (no prior Zoho invoice):  create only (~600ms)
+// Slow path (prior invoice exists):   fetch payments → unapply → delete → create → reapply (~2-3s)
+//
+// Reads line items from operations (not order_items).
+// Sets cf_requested_quantity custom field per line item.
+// Updates orders.invoice_status, zoho_invoice_id, invoice_number, invoice_total, balance_due.
+// Does NOT reset amount_paid — cumulative across regenerations.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-//   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORG_ID
+//   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORGANIZATION_ID
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -27,8 +29,8 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// ── Zoho OAuth: get a fresh access token from the refresh token ─────────────
-async function getZohoAccessToken(): Promise<string> {
+// ── Zoho OAuth ────────────────────────────────────────────────────────────────
+async function getZohoToken(): Promise<string> {
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -44,79 +46,121 @@ async function getZohoAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-// ── Find or create a Zoho contact by name ────────────────────────────────────
+function zohoUrl(path: string, orgId: string): string {
+  const sep = path.includes('?') ? '&' : '?';
+  return `https://www.zohoapis.in/books/v3${path}${sep}organization_id=${orgId}`;
+}
+
+function zohoHeaders(token: string): HeadersInit {
+  return { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' };
+}
+
+// ── Find or create a Zoho contact ────────────────────────────────────────────
 async function getOrCreateContact(
-  name: string,
-  phone: string | null,
-  token: string,
-  orgId: string,
+  name: string, phone: string | null, token: string, orgId: string,
 ): Promise<string> {
-  // Search by name
   const search = await fetch(
-    `https://www.zohoapis.in/books/v3/contacts?organization_id=${orgId}&contact_name=${encodeURIComponent(name)}`,
-    { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+    zohoUrl(`/contacts?contact_name=${encodeURIComponent(name)}`, orgId),
+    { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
   );
-  const searchData = await search.json();
-  const existing = searchData?.contacts?.find(
-    (c: any) => c.contact_name.toLowerCase() === name.toLowerCase()
+  const sd = await search.json();
+  const existing = sd.contacts?.find(
+    (c: any) => c.contact_name.toLowerCase() === name.toLowerCase(),
   );
   if (existing) return existing.contact_id;
 
-  // Create new contact
   const body: any = { contact_name: name, contact_type: 'customer' };
   if (phone) body.contact_persons = [{ phone }];
-
-  const create = await fetch(
-    `https://www.zohoapis.in/books/v3/contacts?organization_id=${orgId}`,
-    {
-      method:  'POST',
-      headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ JSONString: JSON.stringify(body) }),
-    }
-  );
-  const createData = await create.json();
-  if (createData.code !== 0) throw new Error(`Zoho create contact failed: ${createData.message}`);
-  return createData.contact.contact_id;
+  const create = await fetch(zohoUrl('/contacts', orgId), {
+    method: 'POST',
+    headers: zohoHeaders(token),
+    body: JSON.stringify({ JSONString: JSON.stringify(body) }),
+  });
+  const cd = await create.json();
+  if (cd.code !== 0) throw new Error(`Zoho create contact failed: ${cd.message}`);
+  return cd.contact.contact_id;
 }
 
-// ── Create a Zoho Books invoice ───────────────────────────────────────────────
+// ── Payments applied to a Zoho invoice ───────────────────────────────────────
+async function fetchAppliedPayments(
+  invoiceId: string, token: string, orgId: string,
+): Promise<Array<{ payment_id: string; amount_applied: number }>> {
+  const res  = await fetch(zohoUrl(`/invoices/${invoiceId}/payments`, orgId), {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+  const data = await res.json();
+  return (data.payments ?? []).map((p: any) => ({
+    payment_id:     p.payment_id as string,
+    amount_applied: parseFloat(p.amount_applied ?? p.amount ?? 0),
+  }));
+}
+
+async function unapplyPayment(
+  invoiceId: string, paymentId: string, token: string, orgId: string,
+): Promise<void> {
+  await fetch(zohoUrl(`/invoices/${invoiceId}/payments/${paymentId}`, orgId), {
+    method: 'DELETE',
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+}
+
+async function deleteZohoInvoice(invoiceId: string, token: string, orgId: string): Promise<void> {
+  const res  = await fetch(zohoUrl(`/invoices/${invoiceId}`, orgId), {
+    method: 'DELETE',
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+  const data = await res.json();
+  if (data.code !== 0) throw new Error(`Zoho delete invoice failed: ${data.message}`);
+}
+
+// ── Create Zoho Books invoice ─────────────────────────────────────────────────
 async function createZohoInvoice(
   contactId: string,
-  lineItems: Array<{ name: string; qty: number; rate: number; description?: string }>,
-  salesId: string,
+  salesOrderId: string,
   date: string,
+  lineItems: Array<{ name: string; requested_qty: number; qty: number; rate: number; description?: string }>,
   token: string,
   orgId: string,
-): Promise<{ invoice_id: string; invoice_number: string; invoice_url: string }> {
-  const invoiceBody = {
-    customer_id:    contactId,
-    invoice_number: salesId,  // use sales_id as invoice reference
+): Promise<{ invoice_id: string; invoice_number: string; invoice_total: number }> {
+  const body = {
+    customer_id:      contactId,
+    reference_number: salesOrderId,
     date,
     line_items: lineItems.map(i => ({
       name:        i.name,
       description: i.description || '',
       quantity:    i.qty,
       rate:        i.rate,
+      custom_fields: [{ api_name: 'cf_requested_quantity', value: i.requested_qty }],
     })),
   };
-
-  const res = await fetch(
-    `https://www.zohoapis.in/books/v3/invoices?organization_id=${orgId}`,
-    {
-      method:  'POST',
-      headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ JSONString: JSON.stringify(invoiceBody) }),
-    }
-  );
+  const res  = await fetch(zohoUrl('/invoices', orgId), {
+    method: 'POST',
+    headers: zohoHeaders(token),
+    body: JSON.stringify({ JSONString: JSON.stringify(body) }),
+  });
   const data = await res.json();
-  if (data.code !== 0) throw new Error(`Zoho invoice creation failed: ${data.message}`);
-
-  const inv = data.invoice;
+  if (data.code !== 0) throw new Error(`Zoho create invoice failed: ${data.message}`);
+  const inv  = data.invoice;
   return {
-    invoice_id:     inv.invoice_id,
+    invoice_id:    inv.invoice_id,
     invoice_number: inv.invoice_number,
-    invoice_url:    `https://books.zoho.in/app#/invoices/${inv.invoice_id}`,
+    invoice_total: parseFloat(inv.total ?? '0'),
   };
+}
+
+async function applyPaymentToInvoice(
+  invoiceId: string, paymentId: string, amount: number, token: string, orgId: string,
+): Promise<void> {
+  const res  = await fetch(zohoUrl(`/invoices/${invoiceId}/payments`, orgId), {
+    method: 'POST',
+    headers: zohoHeaders(token),
+    body: JSON.stringify({
+      JSONString: JSON.stringify({ payments: [{ payment_id: paymentId, amount_applied: amount }] }),
+    }),
+  });
+  const data = await res.json();
+  if (data.code !== 0) console.warn(`Payment reapply warning: ${data.message}`);
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -124,97 +168,84 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { order_ids, checker } = await req.json();
-    if (!Array.isArray(order_ids) || !order_ids.length) throw new Error('No order_ids provided');
+    const { sales_order_id } = await req.json();
+    if (!sales_order_id) throw new Error('Missing sales_order_id');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
-    const token    = await getZohoAccessToken();
-    const orgId    = env('ZOHO_ORG_ID');
+    const token    = await getZohoToken();
+    const orgId    = env('ZOHO_ORGANIZATION_ID');
 
-    const results = [];
+    // Load order header and operations line items in parallel
+    const [{ data: order, error: orderErr }, { data: items, error: itemsErr }] = await Promise.all([
+      supabase.from('orders').select('*').eq('sales_order_id', sales_order_id).single(),
+      supabase.from('operations').select('*').eq('sales_order_id', sales_order_id).neq('status', 'removed'),
+    ]);
+    if (orderErr || !order) throw new Error(`Order ${sales_order_id} not found`);
+    if (itemsErr) throw new Error(itemsErr.message);
+    if (!items?.length) throw new Error(`No operations items for ${sales_order_id}`);
 
-    for (const orderId of order_ids) {
-      // Load order header
-      const { data: order, error: orderErr } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('sales_id', orderId)
-        .single();
-      if (orderErr || !order) throw new Error(`Order ${orderId} not found`);
-
-      // Load active order_items (exclude REMOVED)
-      const { data: items, error: itemsErr } = await supabase
-        .from('order_items')
-        .select('*')
-        .eq('order_id', orderId)
-        .neq('item_status', 'REMOVED');
-      if (itemsErr) throw new Error(itemsErr.message);
-      if (!items?.length) throw new Error(`No items for order ${orderId}`);
-
-      // Validate all items have final_qty unless NOBILL
-      const missing = items.filter(i => i.item_status !== 'NOBILL' && !i.final_qty);
-      if (missing.length) {
-        throw new Error(`${order.customer_name}: missing final qty for ${missing.map((i: any) => i.item_name).join(', ')}`);
-      }
-
-      // Build line items
-      const lineItems = items.map((i: any) => ({
-        name:        i.item_name,
-        qty:         i.item_status === 'NOBILL' ? (i.final_qty ?? i.requested_qty ?? 0) : (i.final_qty ?? 0),
-        rate:        i.item_status === 'NOBILL' ? 0 : (i.unit_price ?? 0),
-        description: i.description || undefined,
-      }));
-
-      // Get or create Zoho contact
-      const contactId = await getOrCreateContact(
-        order.customer_name,
-        order.phone ? `+91${order.phone}` : null,
-        token,
-        orgId,
-      );
-
-      // Create invoice (delete existing first if re-generating)
-      if (order.zoho_invoice_id) {
-        await fetch(
-          `https://www.zohoapis.in/books/v3/invoices/${order.zoho_invoice_id}?organization_id=${orgId}`,
-          { method: 'DELETE', headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-        );
-      }
-
-      const orderDate = order.order_date || order.created_at?.split('T')[0] || new Date().toISOString().split('T')[0];
-      const inv = await createZohoInvoice(contactId, lineItems, orderId, orderDate, token, orgId);
-
-      // Update order in Supabase
-      await supabase.from('orders').update({
-        zoho_invoice_id:     inv.invoice_id,
-        zoho_invoice_number: inv.invoice_number,
-        zoho_invoice_url:    inv.invoice_url,
-        status:              'invoice_generated',
-      }).eq('sales_id', orderId);
-
-      // Mark all items as invoice_generated
-      await supabase.from('order_items').update({
-        status: 'invoice_generated',
-      }).eq('order_id', orderId).neq('item_status', 'REMOVED');
-
-      results.push({
-        order_id:            orderId,
-        customer:            order.customer_name,
-        zoho_invoice_id:     inv.invoice_id,
-        zoho_invoice_number: inv.invoice_number,
-        zoho_url:            inv.invoice_url,
-      });
+    const missing = items.filter((i: any) => i.status !== 'nobill' && !i.final_quantity);
+    if (missing.length) {
+      throw new Error(`Missing final qty: ${missing.map((i: any) => i.item_name).join(', ')}`);
     }
 
+    const lineItems = items.map((i: any) => ({
+      name:          i.item_name,
+      requested_qty: i.requested_quantity ?? 0,
+      qty:           i.status === 'nobill'
+        ? (i.final_quantity ?? i.requested_quantity ?? 0)
+        : (i.final_quantity ?? 0),
+      rate:          i.status === 'nobill' ? 0 : (i.unit_price ?? 0),
+      description:   i.description || undefined,
+    }));
+
+    const contactId = await getOrCreateContact(
+      order.customer_name,
+      order.phone ? `+91${order.phone.replace(/^\+91/, '')}` : null,
+      token, orgId,
+    );
+
+    // Slow path: existing invoice — unapply payments, delete, recreate, reapply
+    let priorPayments: Array<{ payment_id: string; amount_applied: number }> = [];
+    if (order.zoho_invoice_id) {
+      priorPayments = await fetchAppliedPayments(order.zoho_invoice_id, token, orgId);
+      await Promise.all(
+        priorPayments.map(p => unapplyPayment(order.zoho_invoice_id, p.payment_id, token, orgId)),
+      );
+      await deleteZohoInvoice(order.zoho_invoice_id, token, orgId);
+    }
+
+    const invoiceDate = order.invoice_date ?? new Date().toISOString().split('T')[0];
+    const { invoice_id, invoice_number, invoice_total } = await createZohoInvoice(
+      contactId, sales_order_id, invoiceDate, lineItems, token, orgId,
+    );
+
+    // Reapply prior payments to new invoice
+    for (const p of priorPayments) {
+      await applyPaymentToInvoice(invoice_id, p.payment_id, p.amount_applied, token, orgId);
+    }
+
+    const amountPaid = order.amount_paid ?? 0;
+    const balanceDue = Math.max(0, invoice_total - amountPaid);
+
+    await supabase.from('orders').update({
+      zoho_invoice_id: invoice_id,
+      invoice_number,
+      invoice_date:    invoiceDate,
+      invoice_total,
+      balance_due:     balanceDue,
+      invoice_status:  'done',
+    }).eq('sales_order_id', sales_order_id);
+
     return new Response(
-      JSON.stringify({ invoices: results }),
-      { headers: { ...CORS, 'Content-Type': 'application/json' } }
+      JSON.stringify({ invoice_id, invoice_number, sales_order_id }),
+      { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
   } catch (err: any) {
     return new Response(
       JSON.stringify({ error: err.message }),
-      { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
+      { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
   }
 });
