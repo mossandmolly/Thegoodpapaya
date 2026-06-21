@@ -11,8 +11,8 @@ let _pendingSubmitRows = null;
   addBlankRow(); // show one empty row immediately
   try {
     const [catRes, custRes, socRes] = await Promise.all([
-      sb.from('catalog').select('item_name, unit, unit_price').eq('active', true).order('item_name'),
-      sb.from('customers').select('customer_name').eq('active', true).order('customer_name'),
+      sb.from('catalog').select('item_name, unit, unit_price').order('item_name'),
+      sb.from('customers').select('customer_name').order('customer_name'),
       sb.from('societies').select('canonical_name, aliases').eq('active', true).order('canonical_name'),
     ]);
     _items = (catRes.data || []).map(r => ({ name: r.item_name, unit: r.unit || 'kg', unit_price: r.unit_price }));
