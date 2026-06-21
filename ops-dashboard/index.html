@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Packer View — Good Papaya Ops</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header>
+  <div class="header-content">
+    <h1>Good Papaya Ops</h1>
+    <nav>
+      <a href="index.html" class="active">Packer</a>
+      <a href="checker.html">Checker</a>
+      <a href="order-entry.html">Order Entry</a>
+      <a href="admin.html">Admin</a>
+      <a href="somya.html">Somya AI</a>
+    <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
+    </nav>
+  </div>
+</header>
+
+<div class="packer-filter">
+  <p class="filter-label">Who are you?</p>
+  <div class="packer-chips" id="packer-chips">
+    <div class="skeleton" style="width:80px;height:32px;border-radius:20px"></div>
+    <div class="skeleton" style="width:90px;height:32px;border-radius:20px"></div>
+    <div class="skeleton" style="width:70px;height:32px;border-radius:20px"></div>
+  </div>
+</div>
+
+<div class="packer-filter" style="padding-top:8px;padding-bottom:10px;border-bottom:1px solid var(--border)" id="status-filter-bar">
+  <div class="packer-chips">
+    <button class="chip selected" id="sf-all"        onclick="selectStatusFilter('all')">All</button>
+    <button class="chip"          id="sf-draft"      onclick="selectStatusFilter('draft')">Draft</button>
+    <button class="chip"          id="sf-packed"     onclick="selectStatusFilter('packed')">Packed</button>
+    <button class="chip"          id="sf-final"      onclick="selectStatusFilter('final')">Final</button>
+    <button class="chip"          id="sf-deviations" onclick="selectStatusFilter('deviations')">⚠️ Deviations</button>
+  </div>
+</div>
+
+<div class="summary-bar hidden" id="summary-bar">
+  <span>Total: <strong id="sum-total">0</strong></span>
+  <span>Done: <strong id="sum-done">0</strong></span>
+  <span>Pending: <strong id="sum-pending">0</strong></span>
+</div>
+
+<div class="section-header hidden" id="section-header">
+  <h2 id="section-date"></h2>
+  <p class="count" id="section-count"></p>
+</div>
+
+<main>
+  <div class="empty-state" id="empty-state">
+    <div style="font-size:2.5rem">🥭</div>
+    <p>Select your name to see today's items</p>
+  </div>
+  <div id="cards-container" class="cards-container hidden"></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/packer.js"></script>
+</body>
+</html>

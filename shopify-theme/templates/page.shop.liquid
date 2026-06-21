@@ -1,0 +1,197 @@
+{% comment %} Product catalog page {% endcomment %}
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@800&display=swap');
+
+.cat-header {
+  grid-column: 1/-1;
+  padding: 20px 2px 6px;
+  font-family: 'Syne', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--green);
+  letter-spacing: -.03em;
+  text-transform: uppercase;
+}
+.cat-header:first-child { padding-top: 4px; }
+
+/* Sheet overlay */
+#sheet-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.45); z-index: 1000;
+}
+#sheet-overlay.show { display: block; }
+
+/* Bottom sheet */
+#sheet {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: #fff; border-radius: 20px 20px 0 0;
+  padding: 0 1rem 1.5rem;
+  z-index: 1001;
+  transform: translateY(100%);
+  transition: transform .28s cubic-bezier(.32,.72,0,1);
+  max-height: 88vh; overflow-y: auto;
+}
+#sheet.open { transform: translateY(0); }
+.sheet-handle {
+  width: 36px; height: 4px; background: #ddd;
+  border-radius: 2px; margin: 10px auto 0;
+}
+.sheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .9rem 0 .75rem;
+}
+.sheet-title { font-weight: 700; font-size: 1.05rem; }
+.sheet-close {
+  background: none; border: none; cursor: pointer;
+  font-size: 1.1rem; color: var(--muted); padding: .2rem .5rem; line-height: 1;
+}
+
+/* Mode toggle */
+.mode-row { display: flex; gap: .5rem; margin-bottom: 1rem; }
+.mode-btn {
+  flex: 1; padding: .5rem;
+  border: 1.5px solid var(--border); border-radius: 8px;
+  background: none; cursor: pointer;
+  font-weight: 600; font-size: .88rem; color: var(--muted);
+  transition: all .15s;
+}
+.mode-btn.active {
+  border-color: var(--green); background: var(--green-pale); color: var(--green);
+}
+
+/* Stepper */
+.sheet-stepper {
+  display: flex; align-items: center; justify-content: center;
+  gap: 1.25rem; margin-bottom: 1rem;
+}
+.step-btn {
+  width: 42px; height: 42px;
+  border: 1.5px solid var(--green); border-radius: 50%;
+  background: none; cursor: pointer;
+  font-size: 1.4rem; font-weight: 700; color: var(--green);
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+}
+.step-btn:active { background: var(--green-pale); }
+.step-val {
+  font-size: 1.5rem; font-weight: 800;
+  min-width: 72px; text-align: center; color: var(--text);
+}
+
+/* Pills */
+.pills-label {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted); margin-bottom: .45rem;
+}
+.pills-row { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1rem; }
+.pill-btn {
+  padding: .28rem .75rem;
+  border: 1.5px solid var(--border); border-radius: 99px;
+  background: none; cursor: pointer;
+  font-size: .8rem; font-weight: 600; color: var(--muted);
+  transition: all .12s;
+}
+.pill-btn.active {
+  border-color: var(--green); background: var(--green-pale); color: var(--green);
+}
+
+/* Notes */
+.sheet-notes {
+  width: 100%; padding: .55rem .75rem;
+  border: 1.5px solid var(--border); border-radius: 8px;
+  font-family: inherit; font-size: .88rem; resize: none; outline: none;
+  margin-bottom: 1rem;
+}
+.sheet-notes:focus { border-color: var(--green-light); }
+
+/* Sheet footer */
+.sheet-footer {
+  display: flex; align-items: center; gap: .75rem;
+}
+.sheet-subtotal {
+  font-size: 1.25rem; font-weight: 800; color: var(--green); white-space: nowrap;
+}
+
+/* Card summary (after adding) */
+.card-summary {
+  display: flex; align-items: center; gap: .35rem;
+  padding: .38rem .45rem; background: var(--green-pale); border-radius: 7px;
+}
+.card-summary-text {
+  flex: 1; font-size: .7rem; font-weight: 600;
+  color: #1e4d38; line-height: 1.35; overflow: hidden;
+}
+.card-edit-btn {
+  padding: .18rem .48rem;
+  border: 1px solid var(--green); border-radius: 5px;
+  background: #fff; color: var(--green);
+  font-size: .7rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+  flex-shrink: 0;
+}
+</style>
+
+<div class="shop-header">
+  <h1>Fresh Fruits</h1>
+  <p class="shop-sub">Delivered fresh to your door · Order by midnight for next-day delivery</p>
+</div>
+
+<div id="product-grid" class="product-grid">
+  <div class="product-skeleton"></div>
+  <div class="product-skeleton"></div>
+  <div class="product-skeleton"></div>
+  <div class="product-skeleton"></div>
+  <div class="product-skeleton"></div>
+  <div class="product-skeleton"></div>
+</div>
+
+<div id="shop-empty" class="empty-state" style="display:none">
+  <p>No products available right now.</p>
+</div>
+
+<!-- Bottom sheet overlay -->
+<div id="sheet-overlay" onclick="closeSheet()"></div>
+
+<!-- Bottom sheet -->
+<div id="sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <span id="sheet-title" class="sheet-title"></span>
+    <button class="sheet-close" onclick="closeSheet()">✕</button>
+  </div>
+
+  <div id="sheet-mode-row" class="mode-row" style="display:none">
+    <button class="mode-btn active" id="mode-weight" onclick="selectMode('weight')">By Weight</button>
+    <button class="mode-btn" id="mode-box" onclick="selectMode('box')">By Box</button>
+  </div>
+
+  <div class="sheet-stepper">
+    <button class="step-btn" onclick="sheetStep(-1)">−</button>
+    <span id="sheet-step-val" class="step-val">1 kg</span>
+    <button class="step-btn" onclick="sheetStep(1)">+</button>
+  </div>
+
+  <div id="sheet-pills-row" style="display:none">
+    <div class="pills-label">Quality</div>
+    <div id="sheet-pills" class="pills-row"></div>
+  </div>
+
+  <textarea id="sheet-notes" class="sheet-notes" rows="2"
+    placeholder="Special instructions (e.g. firm, ripe, no bruising)"></textarea>
+
+  <div class="sheet-footer">
+    <span id="sheet-subtotal" class="sheet-subtotal">₹0</span>
+    <button id="sheet-add-btn" class="btn btn-primary"
+      style="flex:1" onclick="addFromSheet()">Add to Cart</button>
+  </div>
+</div>
+
+<!-- Sticky cart bar -->
+<div id="cart-bar" class="cart-bar hidden">
+  <div class="cart-bar-inner">
+    <span id="cart-bar-count"></span>
+    <span id="cart-bar-total"></span>
+    <a href="/pages/checkout" class="btn btn-primary"
+      style="width:auto;padding:.55rem 1.25rem">Checkout →</a>
+  </div>
+</div>
+
+<script src="{{ 'shop.js' | asset_url }}" defer></script>

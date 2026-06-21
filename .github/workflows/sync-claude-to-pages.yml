@@ -23,5 +23,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin ${{ github.ref_name }}
-          git merge origin/${{ github.ref_name }} --no-edit -X theirs
+          git merge origin/${{ github.ref_name }} --no-edit -X theirs --allow-unrelated-histories
           git push origin shopify-theme

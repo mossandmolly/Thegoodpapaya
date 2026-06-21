@@ -1,0 +1,22 @@
+{
+  "name": "thegoodpapaya-sync",
+  "version": "1.0.0",
+  "description": "Zoho → Supabase invoice sync + Razorpay payment link generation",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.43.0",
+    "axios": "^1.6.8",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

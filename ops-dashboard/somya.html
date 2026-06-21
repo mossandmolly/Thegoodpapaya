@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Somya AI — Good Papaya Ops</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .somya-wrap {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* ── Lookup panel ── */
+    .lookup-panel {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .lookup-panel h2 {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+    }
+    .lookup-row {
+      display: flex;
+      gap: 8px;
+    }
+    .lookup-row input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .lookup-row input:focus { outline: none; border-color: var(--brand); }
+
+    .customer-info {
+      margin-top: 14px;
+      padding: 12px 14px;
+      background: #f1f8f1;
+      border-radius: 8px;
+      border: 1px solid #c8e6c9;
+      font-size: 0.85rem;
+    }
+    .customer-info .ci-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--green);
+      margin-bottom: 8px;
+    }
+    .invoice-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 0;
+      border-top: 1px solid #e0f0e0;
+      font-size: 0.82rem;
+      gap: 8px;
+    }
+    .invoice-row:first-of-type { border-top: none; }
+    .inv-item { flex: 1; font-weight: 500; color: var(--text); }
+    .inv-qty { color: var(--text-muted); white-space: nowrap; }
+    .inv-qty .qty-short { color: var(--red); font-weight: 600; }
+    .inv-status {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+    .status-paid   { background: #e8f5e9; color: var(--green); }
+    .status-unpaid { background: #fef3c7; color: #92400e; }
+    .status-partial { background: #fff3e0; color: #e65100; }
+
+    /* ── Situation panel ── */
+    .situation-panel {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .situation-panel h2 {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+    }
+    .scenario-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 12px;
+    }
+    .scenario-chip {
+      padding: 5px 13px;
+      border-radius: 16px;
+      border: 1.5px solid var(--border);
+      background: white;
+      font-size: 0.8rem;
+      font-family: 'DM Sans', sans-serif;
+      cursor: pointer;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .scenario-chip:active { transform: scale(0.96); }
+    .scenario-chip.active {
+      background: var(--brand);
+      border-color: var(--brand);
+      color: white;
+      font-weight: 500;
+    }
+
+    textarea#situation {
+      width: 100%;
+      min-height: 100px;
+      padding: 12px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-family: 'DM Sans', sans-serif;
+      resize: vertical;
+      line-height: 1.5;
+      transition: border-color 0.15s;
+    }
+    textarea#situation:focus { outline: none; border-color: var(--brand); }
+
+    .ask-btn {
+      width: 100%;
+      margin-top: 12px;
+      padding: 13px;
+      background: var(--brand);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .ask-btn:hover { background: var(--brand-dark); }
+    .ask-btn:active { transform: scale(0.98); }
+    .ask-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2.5px solid rgba(255,255,255,0.4);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Response panel ── */
+    .response-panel {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .response-panel h2 {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 14px;
+    }
+    .whatsapp-bubble {
+      background: #dcf8c6;
+      border-radius: 12px 12px 4px 12px;
+      padding: 12px 16px;
+      font-size: 0.92rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      color: #1a1a1a;
+      margin-bottom: 14px;
+      position: relative;
+    }
+    .response-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-copy {
+      flex: 1;
+      padding: 10px;
+      background: #25d366;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-copy:hover { background: #1fb356; }
+    .btn-copy:active { transform: scale(0.97); }
+    .btn-regen {
+      padding: 10px 16px;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 500;
+      cursor: pointer;
+      color: var(--text);
+    }
+    .btn-regen:hover { border-color: var(--brand); color: var(--brand); }
+
+    /* ── Empty response state ── */
+    .response-empty {
+      text-align: center;
+      padding: 32px 20px;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    .response-empty .emoji { font-size: 2rem; margin-bottom: 8px; }
+
+    /* ── Loading skeleton for response ── */
+    .response-skeleton .skeleton { height: 16px; margin-bottom: 10px; }
+    .response-skeleton .skeleton:last-child { width: 60%; }
+
+    /* ── Mic button ── */
+    .textarea-wrap { position: relative; }
+    .mic-btn {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: none;
+      background: var(--bg);
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }
+    .mic-btn:hover { background: var(--border); color: var(--text); }
+    .mic-btn.recording {
+      background: #fee2e2;
+      color: var(--red);
+      animation: mic-pulse 1.2s ease-in-out infinite;
+    }
+    .mic-btn.unsupported { opacity: 0.3; cursor: not-allowed; }
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.4); }
+      50%       { box-shadow: 0 0 0 8px rgba(220,38,38,0); }
+    }
+    textarea#situation { padding-bottom: 48px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-content">
+    <h1>Good Papaya Ops</h1>
+    <nav>
+      <a href="index.html">Packer</a>
+      <a href="checker.html">Checker</a>
+      <a href="order-entry.html">Order Entry</a>
+      <a href="admin.html">Admin</a>
+      <a href="somya.html" class="active">Somya AI</a>
+    <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
+    </nav>
+  </div>
+</header>
+
+<div class="somya-wrap">
+
+  <!-- Customer lookup -->
+  <div class="lookup-panel">
+    <h2>Customer lookup (optional)</h2>
+    <div class="lookup-row">
+      <input type="text" id="customer-input" placeholder="Villa name or mobile number…" autocomplete="off"
+        onkeydown="if(event.key==='Enter') lookupCustomer()">
+      <button class="btn btn-secondary btn-sm" onclick="lookupCustomer()">Look up</button>
+    </div>
+    <div id="customer-info"></div>
+  </div>
+
+  <!-- Situation input -->
+  <div class="situation-panel">
+    <h2>What's the situation?</h2>
+
+    <div class="scenario-chips">
+      <button class="scenario-chip" onclick="selectScenario(this, 'quantity')">📦 Quantity / wrong item</button>
+      <button class="scenario-chip" onclick="selectScenario(this, 'refund')">💰 Refund request</button>
+      <button class="scenario-chip" onclick="selectScenario(this, 'escalation')">🔥 Escalation</button>
+      <button class="scenario-chip" onclick="selectScenario(this, 'payment')">🧾 Payment query</button>
+    </div>
+
+    <div class="textarea-wrap">
+      <textarea id="situation" placeholder="Describe what the customer is saying or asking…"></textarea>
+      <button class="mic-btn" id="mic-btn" onclick="toggleMic()" title="Speak your situation">🎤</button>
+    </div>
+
+    <button class="ask-btn" id="ask-btn" onclick="askSomya()">
+      <span id="ask-btn-text">Ask Somya AI</span>
+    </button>
+  </div>
+
+  <!-- Response -->
+  <div class="response-panel" id="response-panel">
+    <h2>Suggested reply</h2>
+    <div id="response-content">
+      <div class="response-empty">
+        <div class="emoji">🤖</div>
+        <p>Describe the situation above and Somya AI will suggest what to say on WhatsApp.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/somya.js"></script>
+</body>
+</html>

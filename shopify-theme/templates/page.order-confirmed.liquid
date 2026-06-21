@@ -1,0 +1,121 @@
+{% comment %} Post-payment / post-COD confirmation page {% endcomment %}
+<div style="max-width:480px;margin:0 auto;padding:3rem 1rem 4rem;text-align:center">
+
+  <div style="font-size:3.5rem;margin-bottom:.75rem" id="confirm-icon">🎉</div>
+  <h1 style="color:var(--green);margin-bottom:.5rem" id="confirm-heading">Order confirmed!</h1>
+  <p style="color:var(--muted);margin-bottom:2rem;font-size:.95rem" id="confirm-msg">
+    Thank you for your order. Your fresh fruits will be delivered tomorrow morning.
+  </p>
+
+  <!-- Order summary card (populated by JS) -->
+  <div class="card" id="order-card"
+    style="display:none;text-align:left;padding:1.1rem 1.25rem;margin-bottom:1.25rem">
+
+    <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;
+      letter-spacing:.07em;color:var(--muted);margin-bottom:.85rem">
+      Order summary
+    </div>
+
+    <div style="display:flex;justify-content:space-between;
+      font-size:.82rem;margin-bottom:.65rem">
+      <span style="color:var(--muted)">Reference</span>
+      <strong id="o-ref" style="font-family:monospace;letter-spacing:.05em"></strong>
+    </div>
+
+    <div id="o-items" style="margin-bottom:.65rem"></div>
+
+    <div style="display:flex;justify-content:space-between;
+      padding-top:.65rem;border-top:1px solid var(--border);
+      font-weight:700;font-size:.95rem">
+      <span>Total</span>
+      <span id="o-total" style="color:var(--green)"></span>
+    </div>
+
+    <div id="o-method" style="margin-top:.55rem;font-size:.8rem;color:var(--muted)"></div>
+  </div>
+
+  <!-- COD note -->
+  <div id="cod-note" style="display:none;background:#fffbeb;border:1px solid #fcd34d;
+    border-radius:9px;padding:.8rem 1rem;font-size:.85rem;color:#78350f;
+    text-align:left;margin-bottom:1.5rem;line-height:1.55">
+    Your order details have been sent to us on WhatsApp.
+    We'll call you to confirm before we dispatch. Keep your phone handy!
+  </div>
+
+  <!-- Online payment note -->
+  <div id="online-note" style="display:none;background:#f0fdf4;border:1px solid #86efac;
+    border-radius:9px;padding:.8rem 1rem;font-size:.85rem;color:#166534;
+    text-align:left;margin-bottom:1.5rem;line-height:1.55">
+    Payment received. You'll get an SMS from Razorpay as confirmation.
+    Fresh fruits will be with you tomorrow morning!
+  </div>
+
+  <a href="/" class="btn btn-outline"
+    style="display:inline-flex;width:auto;padding:.65rem 1.75rem">
+    Order again
+  </a>
+</div>
+
+<script>
+(function () {
+  var raw = localStorage.getItem('gp_last_order');
+  if (!raw) return;
+
+  var o;
+  try { o = JSON.parse(raw); } catch (e) { return; }
+
+  var isCOD = o.method === 'cod';
+
+  // Update heading / message
+  document.getElementById('confirm-heading').textContent =
+    isCOD ? 'Order placed!' : 'Payment confirmed!';
+  document.getElementById('confirm-icon').textContent = isCOD ? '📦' : '✅';
+  document.getElementById('confirm-msg').textContent = isCOD
+    ? 'We\'ve received your order and will call to confirm before delivery.'
+    : 'Thank you! Your fresh fruits will be delivered tomorrow morning.';
+
+  // Show method-specific note
+  document.getElementById(isCOD ? 'cod-note' : 'online-note').style.display = 'block';
+
+  // Populate order card
+  var customerDisplay = (o.community && o.door)
+    ? o.community + ' ' + o.door
+    : (o.name || '');
+
+  document.getElementById('order-card').style.display = 'block';
+  document.getElementById('o-ref').textContent   = o.ref || '—';
+  document.getElementById('o-total').textContent = '₹' + parseFloat(o.total).toFixed(0);
+  document.getElementById('o-method').textContent =
+    (isCOD ? 'Cash on Delivery' : 'Paid online via Razorpay') +
+    (customerDisplay ? '  ·  ' + customerDisplay : '');
+
+  function fmtQty(item) {
+    var qty = parseFloat(item.quantity);
+    if (isNaN(qty)) return '?';
+    if (item.mode === 'weight') {
+      return qty >= 1 ? qty + ' kg' : Math.round(qty * 1000) + 'g';
+    }
+    var unit = item.unit || 'box';
+    return qty === 1 ? '1 ' + unit : qty + ' ' + unit + 's';
+  }
+
+  function lineTotal(item) {
+    var p = parseFloat(item.price), q = parseFloat(item.quantity);
+    return isNaN(p) || isNaN(q) ? 0 : p * q;
+  }
+
+  var itemsHtml = (o.cart || []).map(function (i) {
+    var line = lineTotal(i);
+    var pills = i.pills && i.pills.length ? ' <span style="color:var(--muted)">· ' + i.pills.join(', ') + '</span>' : '';
+    return '<div style="display:flex;justify-content:space-between;font-size:.85rem;' +
+      'padding:.28rem 0;border-bottom:1px solid #f3f4f0">' +
+      '<span>' + (i.title || '?') + ' × ' + fmtQty(i) + pills + '</span>' +
+      '<span>₹' + line.toFixed(0) + '</span>' +
+      '</div>';
+  }).join('');
+  document.getElementById('o-items').innerHTML = itemsHtml;
+
+  // Keep for only one load
+  localStorage.removeItem('gp_last_order');
+})();
+</script>

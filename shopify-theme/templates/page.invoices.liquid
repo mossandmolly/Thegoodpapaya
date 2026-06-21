@@ -1,0 +1,61 @@
+{% comment %}
+  Page template for /pages/invoices
+  Shopify: Online Store → Pages → Add page → Template = page.invoices
+  Set shop metafields (namespace: thegoodpapaya):
+    supabase_url      = your Supabase project URL
+    supabase_anon_key = your Supabase anon/public key
+{% endcomment %}
+
+<div id="app">
+
+  {% comment %} ── Initial skeleton ──────────────────────────────── {% endcomment %}
+  <div id="loading-section" style="padding:3rem 0">
+    <div class="skeleton" style="width:50%;margin:0 auto 1rem"></div>
+    <div class="skeleton" style="width:35%;margin:0 auto"></div>
+  </div>
+
+  {% comment %} ── Phone entry ───────────────────────────────────── {% endcomment %}
+  <div id="auth-section" class="auth-wrap" style="display:none">
+    <div class="auth-card card">
+      <div class="auth-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+      </div>
+      <h2>View your invoices</h2>
+      <p>Enter your mobile number to see your orders and pay</p>
+      <div class="form-group">
+        <label for="phone-input">Mobile number</label>
+        <div class="phone-input-wrap">
+          <span class="phone-prefix">+91</span>
+          <input id="phone-input" type="tel" placeholder="98765 43210"
+                 autocomplete="tel" inputmode="numeric">
+        </div>
+      </div>
+      <button class="btn btn-primary" id="view-btn">View my invoices</button>
+      <p class="error-msg" id="phone-error"></p>
+    </div>
+  </div>
+
+  {% comment %} ── Invoices view ─────────────────────────────────── {% endcomment %}
+  <div id="invoices-section" style="display:none">
+    <div class="invoices-header">
+      <div>
+        <h1>Invoices</h1>
+        <p class="invoices-sub">Hello, <strong id="welcome-name"></strong></p>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="logout-btn">Change number</button>
+    </div>
+    <div id="invoices-list"></div>
+    <div id="pagination"></div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+  var SUPABASE_URL  = {{ shop.metafields.thegoodpapaya.supabase_url | json }};
+  var SUPABASE_ANON = {{ shop.metafields.thegoodpapaya.supabase_anon_key | json }};
+</script>
+{{ 'invoices.js' | asset_url | script_tag }}
