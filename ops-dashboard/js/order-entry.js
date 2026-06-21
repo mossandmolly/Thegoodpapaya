@@ -321,8 +321,8 @@ async function submitWithPhones() {
     if (phone_number.length >= 10) phoneRows.push({ customer_name, phone_number, label: 'primary' });
   });
   if (phoneRows.length > 0) {
-    const { error } = await sb.from('customer_phones').insert(phoneRows);
-    if (error && error.code !== '23505') { showToast('Could not save phone numbers: ' + error.message, 'error'); return; }
+    const { error } = await sb.from('customer_phones').upsert(phoneRows, { onConflict: 'customer_name,phone_number' });
+    if (error) { showToast('Could not save phone numbers: ' + error.message, 'error'); return; }
     showToast(phoneRows.length + ' phone' + (phoneRows.length !== 1 ? 's' : '') + ' saved');
   }
   document.getElementById('phone-prompt').style.display = 'none';
@@ -332,64 +332,44 @@ async function submitWithPhones() {
 
 async function skipPhones() {
   document.getElementById('phone-prompt').style.display = 'none';
-  await doSubmit(_pendingSubmitRows);
+  await doSubmit(_pendingSubmitRows, true);
   _pendingSubmitRows = null;
 }
 
-async function doSubmit(toSubmit) {
+async function doSubmit(toSubmit, allowMissingPhones = false) {
   const btn = document.getElementById('submit-btn'); btn.disabled = true; btn.textContent = 'Submitting…';
   try {
-    const groups = {};
-    for (const row of toSubmit) {
-      const key = row.customer.trim() + '|' + row.orderDate;
-      if (!groups[key]) groups[key] = { customer: row.customer.trim(), date: row.orderDate, items: [] };
-      groups[key].items.push(row);
-    }
-    let totalInserted = 0;
-    for (const { customer, date, items } of Object.values(groups)) {
-      let orderId;
-      const { data: existingOrder } = await sb.from('orders').select('sales_id').eq('order_date', date).eq('customer_name', customer).maybeSingle();
-      if (existingOrder) {
-        orderId = existingOrder.sales_id;
-      } else {
-        const safeName = customer.split(' ').join('-');
-        let salesId = date + '-' + safeName, suffix = 1;
-        while (true) {
-          const { data: hit } = await sb.from('orders').select('sales_id').eq('sales_id', salesId).maybeSingle();
-          if (!hit) break;
-          salesId = date + '-' + safeName + '-' + (++suffix);
-        }
-        const community = customer.match(/^(.+?)\s+[\w-]+$/)?.[1] || customer;
-        const { error: orderErr } = await sb.from('orders').insert({
-          sales_id: salesId, customer_name: customer, community,
-          payment_method: 'cod', status: 'open', payment_status: 'due_today',
-          order_date: date, cart: [], total: 0,
-        });
-        if (orderErr) throw new Error('Failed to create order: ' + orderErr.message);
-        orderId = salesId;
-        if (!_customers.some(c => c.toLowerCase() === customer.toLowerCase())) _customers.push(customer);
-      }
-      const newItems = items.map(row => {
+    const records = toSubmit.map(row => ({
+      customer_name:      row.customer.trim(),
+      invoice_date:       row.orderDate,
+      item_name:          (function() {
         const cat = _items.find(i => i.name.toLowerCase() === row.item.trim().toLowerCase());
-        const community = row.customer.match(/^(.+?)\s+[\w-]+$/)?.[1] || row.customer.trim();
-        return {
-          order_id:      orderId,
-          order_date:    date,
-          customer_name: customer,
-          community,
-          item_name:     cat ? cat.name : row.item.trim(),
-          description:   row.description || null,
-          requested_qty: parseFloat(row.quantity) || 0,
-          unit_price:    cat ? cat.unit_price : null,
-          final_qty:     null,
-          status:        'open',
-        };
-      });
-      const { error: itemErr } = await sb.from('order_items').insert(newItems);
-      if (itemErr) throw new Error('Failed to insert items: ' + itemErr.message);
-      totalInserted += newItems.length;
-    }
-    showToast(totalInserted + ' item' + (totalInserted !== 1 ? 's' : '') + ' submitted to ops ✓');
+        return cat ? cat.name : row.item.trim();
+      })(),
+      description:        row.description || null,
+      requested_quantity: parseFloat(row.quantity) || 0,
+      unit_price:         (function() {
+        const cat = _items.find(i => i.name.toLowerCase() === row.item.trim().toLowerCase());
+        return cat ? cat.unit_price : null;
+      })(),
+    }));
+
+    const res = await fetch(SUPABASE_URL + '/functions/v1/add-orders', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON },
+      body:    JSON.stringify({ records, allowMissingPhones }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Submit failed');
+
+    const heldMsg = data.held > 0 ? ' (' + data.held + ' held as duplicate)' : '';
+    showToast((data.inserted || 0) + ' item' + ((data.inserted || 0) !== 1 ? 's' : '') + ' submitted' + heldMsg + ' ✓');
+
+    toSubmit.forEach(row => {
+      const c = row.customer.trim();
+      if (c && !_customers.some(x => x.toLowerCase() === c.toLowerCase())) _customers.push(c);
+    });
+
     _rows = []; renderRows();
     document.getElementById('raw-input').value = '';
   } catch (e) {

@@ -186,10 +186,6 @@ async function deleteCatalogItem(id, name) {
 
 // ── Load everything ────────────────────────────────────────────
 async function loadAll() {
-  const d1 = document.getElementById('voice-order-date');
-  if (d1 && !d1.value) d1.value = todayIST();
-  const d2 = document.getElementById('csv-default-date');
-  if (d2 && !d2.value) d2.value = todayIST();
   await Promise.all([loadCatalog(), loadSocieties(), loadPackers(), loadAssignments(), loadNotes(), loadSnapshots(), loadMissingLinks()]);
 }
 
@@ -234,256 +230,6 @@ async function loadMissingLinks() {
   }
 }
 
-// ── Voice input ────────────────────────────────────────────────
-let _recognition = null;
-let _isRecording  = false;
-
-function toggleVoiceInput() {
-  if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-    showToast('Voice input not supported — use Chrome on Android', 'error');
-    return;
-  }
-  _isRecording ? stopVoiceInput() : startVoiceInput();
-}
-
-function startVoiceInput() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  _recognition = new SR();
-  _recognition.continuous     = true;
-  _recognition.interimResults = true;
-  _recognition.lang           = 'en-IN';
-
-  const textarea = document.getElementById('voice-order-text');
-  const btn      = document.getElementById('voice-mic-btn');
-  let base       = textarea.value;
-
-  _recognition.onstart = () => {
-    _isRecording = true;
-    btn.textContent = '⏹ Stop';
-    btn.classList.add('btn-recording');
-  };
-
-  _recognition.onresult = e => {
-    let final = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) final += e.results[i][0].transcript;
-    }
-    if (final) {
-      base += (base.trim() ? ' ' : '') + final.trim();
-      textarea.value = base;
-    }
-  };
-
-  _recognition.onend = () => {
-    _isRecording = false;
-    btn.textContent = '🎤 Speak';
-    btn.classList.remove('btn-recording');
-    _recognition = null;
-  };
-
-  _recognition.start();
-}
-
-function stopVoiceInput() {
-  if (_recognition) { _recognition.stop(); _recognition = null; }
-  _isRecording = false;
-}
-
-// ── Parse & preview voice/text orders (client-side) ───────────
-async function parseVoiceOrders() {
-  if (_isRecording) stopVoiceInput();
-
-  const text     = document.getElementById('voice-order-text').value.trim();
-  const date     = document.getElementById('voice-order-date').value || todayIST();
-  const statusEl = document.getElementById('voice-parse-status');
-  const btn      = document.getElementById('voice-parse-btn');
-
-  if (!text) { showToast('Enter or speak some orders first', 'error'); return; }
-
-  btn.disabled    = true;
-  btn.textContent = 'Parsing…';
-  statusEl.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Parsing…</p>';
-
-  try {
-    // Load from customers master table (populated by sync-customers)
-    const { data: contactData } = await sb
-      .from('customers')
-      .select('customer_name')
-      .eq('active', true)
-      .limit(1000);
-    const contacts = (contactData || []).map(r => r.customer_name).filter(Boolean);
-    const items    = catalogItems.map(i => i.item_name);
-
-    const parsed = parseOrders(text, contacts, items, date);
-    if (!parsed.length) throw new Error('No orders could be extracted from that text');
-
-    const orders = parsed.map(r => ({
-      customer_name:      r.customer,
-      item_name:          r.item,
-      description:        r.description || null,
-      requested_quantity: r.quantity,
-      invoice_date:       r.orderDate || date,
-      _confidence:        r.warn ? 'low' : 'high',
-      _match_note:        r.warnReason || null,
-    }));
-
-    statusEl.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);margin-top:8px">Parsed ' + orders.length + ' order' + (orders.length !== 1 ? 's' : '') + ' — review and confirm</p>';
-    showPreview(orders, 'voice');
-  } catch (e) {
-    statusEl.innerHTML = '<p style="font-size:0.82rem;color:var(--red);margin-top:8px">Error: ' + e.message + '</p>';
-  } finally {
-    btn.disabled    = false;
-    btn.textContent = 'Parse & Preview';
-  }
-}
-
-// ── Preview modal ──────────────────────────────────────────────
-let _previewOrders  = [];
-let _previewDeleted = new Set();
-
-function showPreview(orders, source) {
-  _previewOrders  = orders;
-  _previewDeleted = new Set();
-
-  const hasLow = source === 'voice' && orders.some(o => o._confidence === 'low');
-  let statsText = orders.length + ' row' + (orders.length !== 1 ? 's' : '');
-  if (hasLow) statsText += ' · ⚠️ review red rows';
-  document.getElementById('preview-stats').textContent = statsText;
-
-  document.getElementById('preview-modal-body').innerHTML = buildPreviewTable(orders, source);
-  updatePreviewCount();
-  document.getElementById('orders-preview-modal').classList.remove('hidden');
-}
-
-function buildPreviewTable(orders, source) {
-  const showConf = source === 'voice';
-  let rows = '';
-  orders.forEach((o, idx) => {
-    const conf     = o._confidence || 'high';
-    const rowClass = conf === 'low' ? 'conf-low' : conf === 'medium' ? 'conf-medium' : '';
-    const badge    = showConf ? '<span class="conf-badge conf-' + conf + '">' + conf + '</span>' : '';
-    const note     = showConf && o._match_note
-      ? '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px">' + escapeHtml(o._match_note) + '</div>'
-      : '';
-    const descText = o.description || '';
-    const descCell = descText
-      ? '<span style="font-size:0.75rem;color:var(--text-muted)">' + escapeHtml(descText.substring(0, 48)) + (descText.length > 48 ? '…' : '') + '</span>'
-      : '—';
-    rows +=
-      '<tr class="' + rowClass + '" id="preview-row-' + idx + '">' +
-      '<td style="text-align:center;width:36px"><button class="btn btn-sm btn-danger" onclick="deletePreviewRow(' + idx + ')" title="Remove">×</button></td>' +
-      '<td style="font-weight:500;white-space:nowrap">' + escapeHtml(o.customer_name) + '</td>' +
-      '<td>' + escapeHtml(o.item_name) + badge + note + '</td>' +
-      '<td><input type="number" class="preview-qty-input" value="' + o.requested_quantity + '" min="0" step="0.01" onchange="updatePreviewQty(' + idx + ', this.value)"></td>' +
-      '<td style="color:var(--text-muted);white-space:nowrap;font-size:0.8rem">' + (o.invoice_date || '') + '</td>' +
-      '<td style="max-width:180px">' + descCell + '</td>' +
-      '</tr>';
-  });
-  return '<table class="preview-table"><thead><tr><th></th><th>Customer</th><th>Item</th><th>Qty</th><th>Date</th><th>Description</th></tr></thead><tbody>' + rows + '</tbody></table>';
-}
-
-function deletePreviewRow(idx) {
-  _previewDeleted.add(idx);
-  const row = document.getElementById('preview-row-' + idx);
-  if (row) row.classList.add('preview-deleted');
-  updatePreviewCount();
-}
-
-function updatePreviewQty(idx, val) {
-  _previewOrders[idx].requested_quantity = parseFloat(val) || 0;
-}
-
-function updatePreviewCount() {
-  const active = _previewOrders.length - _previewDeleted.size;
-  document.getElementById('preview-row-count').textContent =
-    active + ' of ' + _previewOrders.length + ' rows will be saved';
-}
-
-function closePreview() {
-  document.getElementById('orders-preview-modal').classList.add('hidden');
-}
-
-// ── Confirm save from preview (direct DB write) ────────────────
-async function confirmUpload() {
-  const toUpload = _previewOrders
-    .filter((_, idx) => !_previewDeleted.has(idx))
-    .filter(o => o.customer_name && o.item_name && o.requested_quantity > 0);
-
-  if (!toUpload.length) { showToast('No rows to save', 'error'); return; }
-
-  const btn = document.getElementById('preview-confirm-btn');
-  btn.disabled    = true;
-  btn.textContent = 'Saving…';
-
-  try {
-    const byCustomer = {};
-    toUpload.forEach(row => {
-      const key = row.customer_name + '|' + row.invoice_date;
-      if (!byCustomer[key]) byCustomer[key] = { customer_name: row.customer_name, date: row.invoice_date, items: [] };
-      byCustomer[key].items.push(row);
-    });
-
-    let inserted = 0;
-    for (const { customer_name, date: orderDate, items } of Object.values(byCustomer)) {
-      let orderId;
-      const { data: existingOrder } = await sb
-        .from('orders').select('sales_id')
-        .eq('order_date', orderDate).eq('customer_name', customer_name).maybeSingle();
-
-      if (existingOrder) {
-        orderId = existingOrder.sales_id;
-      } else {
-        const safeName = customer_name.split(' ').join('-');
-        let salesId = orderDate + '-' + safeName;
-        let suffix  = 1;
-        while (true) {
-          const { data: hit } = await sb.from('orders').select('sales_id').eq('sales_id', salesId).maybeSingle();
-          if (!hit) break;
-          salesId = orderDate + '-' + safeName + '-' + (++suffix);
-        }
-        const parts   = customer_name.split(' ');
-        const community = parts.length > 1 ? parts.slice(0, -1).join(' ') : customer_name;
-        await sb.from('orders').insert({
-          sales_id: salesId, customer_name, community,
-          payment_method: 'cod', status: 'placed',
-          order_date: orderDate, cart: [], total: 0,
-        });
-        orderId = salesId;
-      }
-
-      const newItems = items.map(row => {
-        const cat = catalogItems.find(c => c.item_name === row.item_name);
-        const parts = row.customer_name.split(' ');
-        return {
-          order_id:      orderId,
-          order_date:    orderDate,
-          customer_name: row.customer_name,
-          community:     parts.length > 1 ? parts.slice(0, -1).join(' ') : row.customer_name,
-          item_name:     row.item_name,
-          description:   row.description || null,
-          requested_qty: row.requested_quantity,
-          unit_price:    cat ? cat.unit_price : null,
-          final_qty:     null,
-          status:        'open',
-        };
-      });
-
-      const { error } = await sb.from('order_items').insert(newItems);
-      if (error) throw new Error(error.message);
-      inserted += newItems.length;
-    }
-
-    closePreview();
-    const statusEl = document.getElementById('voice-parse-status');
-    if (statusEl) statusEl.innerHTML = '<p style="font-size:0.82rem;color:var(--green);margin-top:8px">✓ ' + inserted + ' item' + (inserted !== 1 ? 's' : '') + ' saved</p>';
-    showToast(inserted + ' items saved ✓');
-  } catch (e) {
-    showToast(e.message, 'error');
-  } finally {
-    btn.disabled    = false;
-    btn.textContent = 'Confirm Upload';
-  }
-}
 
 // ── Packers ────────────────────────────────────────────────────
 async function loadPackers() {
@@ -988,299 +734,137 @@ async function retryInvoice(salesOrderId) {
   }
 }
 
-// ── Fuzzy matching helpers ─────────────────────────────────────
-function normalise(s) {
-  return (s || '').toLowerCase().replace(/ +/g, ' ').trim();
-}
 
-function findCatalogMatch(csvName) {
-  const n = normalise(csvName);
-  const exact = catalogItems.find(i => normalise(i.item_name) === n);
-  if (exact) return { catalogName: exact.item_name, confidence: 'exact' };
-  const partial = catalogItems.find(i => {
-    const cn = normalise(i.item_name);
-    return cn.includes(n) || n.includes(cn);
-  });
-  if (partial) return { catalogName: partial.item_name, confidence: 'fuzzy' };
-  return { catalogName: '', confidence: 'none' };
-}
+// ── Held Items ─────────────────────────────────────────────────
+async function loadHeldItems() {
+  const listEl = document.getElementById('held-items-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="skeleton" style="height:40px"></div>';
 
-// ── CSV Import (direct DB write) ───────────────────────────────
-let csvRows        = [];
-let csvNameMapping = {};
-let _parsedCsvRows = [];
+  const { data, error } = await sb
+    .from('operations')
+    .select('id, sales_order_id, invoice_date, customer_name, item_name, requested_quantity')
+    .eq('status', 'held')
+    .order('invoice_date', { ascending: false })
+    .order('customer_name');
 
-function getDefaultDate() {
-  const d = document.getElementById('csv-default-date');
-  return (d && d.value) ? d.value : todayIST();
-}
-
-async function parseCsv(event) {
-  const file = event.target.files ? event.target.files[0] : null;
-  if (!file) return;
-
-  const text  = await file.text();
-  const lines = text.split('\n').map(l => l.endsWith('\r') ? l.slice(0, -1) : l).filter(l => l.trim());
-  if (!lines.length) { showToast('Empty file', 'error'); return; }
-
-  let startIdx = 0;
-  const firstCols = lines[0].split(',').map(c => c.trim());
-  if (isNaN(parseFloat(firstCols[2]))) startIdx = 1;
-
-  const defaultDate = getDefaultDate();
-  const parsed = [];
-  const dateRe = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
-
-  for (let i = startIdx; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.trim());
-    if (cols.length < 3) continue;
-    const customer_name = cols[0];
-    const item_name     = cols[1];
-    const qtyStr        = cols[2];
-    const dateStr       = cols[3] || '';
-    const qty  = parseFloat(qtyStr);
-    const date = dateStr && dateRe.test(dateStr) ? dateStr : defaultDate;
-    if (!customer_name || !item_name || isNaN(qty) || qty <= 0) continue;
-    parsed.push({ customer_name, item_name, qty, date });
+  if (error) {
+    listEl.innerHTML = '<p style="font-size:.82rem;color:var(--red)">' + error.message + '</p>';
+    return;
   }
 
-  if (!parsed.length) { showToast('No valid rows found', 'error'); return; }
-
-  _parsedCsvRows = parsed;
-  const uniqueCsvNames = [...new Set(parsed.map(r => r.item_name))];
-  csvNameMapping = {};
-  uniqueCsvNames.forEach(name => { csvNameMapping[name] = findCatalogMatch(name).catalogName; });
-  showMappingStep(uniqueCsvNames);
-}
-
-function showMappingStep(uniqueCsvNames) {
-  const tbody = document.getElementById('csv-mapping-body');
-  tbody.innerHTML = '';
-
-  uniqueCsvNames.forEach(csvName => {
-    const match      = findCatalogMatch(csvName);
-    const confidence = match.confidence;
-    const tr         = document.createElement('tr');
-
-    const confLabel = confidence === 'exact'
-      ? '<span style="color:var(--green);font-size:.75rem">✓ exact</span>'
-      : confidence === 'fuzzy'
-        ? '<span style="color:#d97706;font-size:.75rem">~ fuzzy</span>'
-        : '<span style="color:var(--red);font-size:.75rem">✗ no match</span>';
-
-    const sel = document.createElement('select');
-    sel.style.cssText = 'width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:.85rem';
-    sel.innerHTML = '<option value="">— not in catalog —</option>';
-    catalogItems.filter(i => i.active).forEach(ci => {
-      const opt = document.createElement('option');
-      opt.value = ci.item_name;
-      opt.textContent = ci.item_name + '  (₹' + parseFloat(ci.unit_price).toFixed(0) + '/' + ci.unit + ')';
-      if (ci.item_name === match.catalogName) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    sel.addEventListener('change', () => { csvNameMapping[csvName] = sel.value; });
-
-    tr.innerHTML = '<td style="font-weight:500">' + escapeHtml(csvName) + '</td><td></td><td>' + confLabel + '</td>';
-    tr.cells[1].appendChild(sel);
-    tbody.appendChild(tr);
-  });
-
-  document.getElementById('csv-mapping-wrap').style.display = 'block';
-  document.getElementById('csv-diff-wrap').style.display    = 'none';
-}
-
-async function confirmMapping() {
-  const unmapped = Object.keys(csvNameMapping).filter(k => !csvNameMapping[k]);
-  if (unmapped.length) {
-    if (!confirm('These items have no catalog match and will be skipped:\n\n' + unmapped.join('\n') + '\n\nContinue?')) return;
+  if (!data || !data.length) {
+    listEl.innerHTML = '<p style="font-size:.85rem;color:var(--text-muted)">No held items ✓</p>';
+    return;
   }
 
-  const parsed = _parsedCsvRows
-    .map(r => Object.assign({}, r, { item_name: csvNameMapping[r.item_name] || r.item_name }))
-    .filter(r => csvNameMapping[r.item_name] !== '');
-
-  document.getElementById('csv-mapping-wrap').style.display = 'none';
-
-  const dates = [...new Set(parsed.map(r => r.date))];
-  const names = [...new Set(parsed.map(r => r.customer_name))];
-
-  const { data: existing } = await sb
-    .from('order_items')
-    .select('id, order_id, customer_name, item_name, requested_qty, status, item_status, order_date')
-    .in('order_date', dates)
-    .in('customer_name', names);
-
-  const existingMap = {};
-  (existing || []).forEach(e => {
-    existingMap[e.customer_name + '|' + e.item_name + '|' + e.order_date] = e;
+  let rows = '';
+  data.forEach(item => {
+    rows +=
+      '<tr>' +
+      '<td style="color:var(--text-muted);font-size:.82rem;white-space:nowrap">' + item.invoice_date + '</td>' +
+      '<td style="font-weight:500;white-space:nowrap">' + escapeHtml(item.customer_name) + '</td>' +
+      '<td>' + escapeHtml(item.item_name) + '</td>' +
+      '<td style="text-align:right">' + item.requested_quantity + '</td>' +
+      '<td style="white-space:nowrap">' +
+        '<button class="btn btn-sm btn-success" style="margin-right:4px" onclick="approveHeld(\'' + escapeAttr(item.id) + '\')">Approve</button>' +
+        '<button class="btn btn-sm btn-danger" onclick="dismissHeld(\'' + escapeAttr(item.id) + '\')">Dismiss</button>' +
+      '</td>' +
+      '</tr>';
   });
 
-  const { data: ofdItems } = await sb
-    .from('order_items')
-    .select('customer_name, order_date')
-    .in('order_date', dates)
-    .in('customer_name', names)
-    .eq('status', 'ofd');
-
-  const ofdKeys = new Set((ofdItems || []).map(o => o.customer_name + '|' + o.order_date));
-
-  csvRows = [];
-  parsed.forEach(row => {
-    const key    = row.customer_name + '|' + row.item_name + '|' + row.date;
-    const old    = existingMap[key];
-    const ofdKey = row.customer_name + '|' + row.date;
-    if (old) {
-      if (Math.abs(parseFloat(old.requested_qty) - row.qty) < 0.001) {
-        csvRows.push(Object.assign({}, row, { _state: 'dup', _existingId: old.id, _include: false }));
-      } else {
-        csvRows.push(Object.assign({}, row, { _state: 'changed', _existingId: old.id, _include: true, _oldQty: old.requested_qty, _ofd: ofdKeys.has(ofdKey) }));
-      }
-    } else {
-      csvRows.push(Object.assign({}, row, { _state: 'new', _include: true, _ofd: ofdKeys.has(ofdKey) }));
-    }
-  });
-
-  const displayRows = [];
-  csvRows.forEach(row => {
-    if (row._state === 'changed') {
-      const old = (existing || []).find(e =>
-        e.customer_name === row.customer_name && e.item_name === row.item_name && String(e.order_date) === row.date
-      );
-      if (old) displayRows.push(Object.assign({}, old, { _state: 'removed', _include: false, date: row.date, _displayQty: old.requested_qty }));
-    }
-    displayRows.push(row);
-  });
-
-  renderDiffTable(displayRows);
-  if (ofdKeys.size > 0) document.getElementById('csv-ofd-warning').style.display = 'block';
-  document.getElementById('csv-diff-wrap').style.display = 'block';
-  window._csvDisplayRows = displayRows;
+  listEl.innerHTML =
+    '<table class="diff-table">' +
+    '<thead><tr><th>Date</th><th>Customer</th><th>Item</th><th>Qty</th><th>Actions</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table>';
 }
 
-function renderDiffTable(displayRows) {
-  const tbody = document.getElementById('csv-diff-body');
-  tbody.innerHTML = '';
-  displayRows.forEach((row, idx) => {
-    const tr = document.createElement('tr');
-    tr.className = row._state === 'new' || row._state === 'changed' ? 'diff-row-new'
-      : row._state === 'removed' ? 'diff-row-removed' : 'diff-row-dup';
-
-    const canToggle  = row._state !== 'removed';
-    const isIncluded = row._include !== false;
-    const qtyDisplay = row._displayQty !== undefined ? row._displayQty : (row.qty !== undefined ? row.qty : (row.requested_qty !== undefined ? row.requested_qty : '—'));
-    const labels = { new: '+ New', removed: '× Replaced', dup: '= Duplicate' };
-    const statusLabel = row._state === 'changed'
-      ? '↳ ' + (row._oldQty || '?') + ' → ' + row.qty
-      : (labels[row._state] || row._state);
-
-    tr.innerHTML =
-      '<td>' + (canToggle ? '<input type="checkbox" ' + (isIncluded ? 'checked' : '') + ' onchange="toggleCsvRow(' + idx + ', this.checked)">' : '') + '</td>' +
-      '<td>' + escapeHtml(row.customer_name) + '</td>' +
-      '<td>' + escapeHtml(row.item_name) + '</td>' +
-      '<td>' + qtyDisplay + '</td>' +
-      '<td>' + (row.date || row.order_date || '') + '</td>' +
-      '<td style="font-size:0.78rem;white-space:nowrap">' + statusLabel + (row._ofd ? ' <span style="color:#1d4ed8">· OFD!</span>' : '') + '</td>';
-    tbody.appendChild(tr);
-  });
+async function approveHeld(id) {
+  const { error } = await sb.from('operations').update({ status: 'draft' }).eq('id', id);
+  if (error) { showToast('Failed to approve', 'error'); return; }
+  showToast('Item approved ✓');
+  await loadHeldItems();
 }
 
-function toggleCsvRow(idx, checked) {
-  if (window._csvDisplayRows && window._csvDisplayRows[idx]) window._csvDisplayRows[idx]._include = checked;
+async function dismissHeld(id) {
+  const { error } = await sb.from('operations').delete().eq('id', id);
+  if (error) { showToast('Failed to dismiss', 'error'); return; }
+  showToast('Item dismissed');
+  await loadHeldItems();
 }
 
-function clearCsvImport() {
-  csvRows = []; _parsedCsvRows = []; csvNameMapping = {}; window._csvDisplayRows = [];
-  document.getElementById('csv-mapping-wrap').style.display = 'none';
-  document.getElementById('csv-diff-wrap').style.display    = 'none';
-  document.getElementById('csv-ofd-warning').style.display  = 'none';
-  document.getElementById('csv-diff-body').innerHTML        = '';
-  document.getElementById('csv-mapping-body').innerHTML     = '';
-  const f = document.getElementById('csv-file');
-  if (f) f.value = '';
-}
+// ── Today's Orders ─────────────────────────────────────────────
+async function loadTodayOrders() {
+  const dateEl = document.getElementById('orders-date');
+  const date   = dateEl ? dateEl.value : todayIST();
+  if (!date) return;
 
-async function saveCsvImport() {
-  const toSave = (window._csvDisplayRows || []).filter(r => r._include && r._state !== 'removed');
-  if (!toSave.length) { showToast('Nothing to save', 'error'); return; }
+  const listEl = document.getElementById('orders-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="skeleton" style="height:40px"></div>';
 
-  const ofdRows = toSave.filter(r => r._ofd);
-  if (ofdRows.length) {
-    if (!confirm('⚠️ ' + ofdRows.length + ' customer(s) have OFD orders on the same date. Save anyway?\n\n' +
-      ofdRows.map(r => r.customer_name + ' - ' + r.item_name).join('\n'))) return;
+  const { data: orders, error } = await sb
+    .from('orders')
+    .select('sales_order_id, customer_name, source, invoice_status, zoho_invoice_id, invoice_number, invoice_total, razorpay_link_id')
+    .eq('order_date', date)
+    .order('customer_name');
+
+  if (error) {
+    listEl.innerHTML = '<p style="font-size:.82rem;color:var(--red)">' + error.message + '</p>';
+    return;
   }
 
-  const btn = document.getElementById('csv-save-btn');
-  btn.textContent = 'Saving…'; btn.disabled = true;
+  if (!orders || !orders.length) {
+    listEl.innerHTML = '<p style="font-size:.85rem;color:var(--text-muted)">No orders for ' + date + '</p>';
+    return;
+  }
+
+  let rows = '';
+  orders.forEach(o => {
+    const status = o.invoice_status || 'pending';
+    const badgeLabel = { pending: 'pending', queued: 'queued', processing: 'processing…', done: '✓ done', failed: '✗ failed' }[status] || status;
+    const badge = '<span class="inv-badge inv-' + status + '"><span class="inv-dot"></span>' + badgeLabel + '</span>';
+
+    const invoiceCell = o.zoho_invoice_id
+      ? '<a href="https://books.zoho.in/app#/invoices/' + o.zoho_invoice_id + '" target="_blank" rel="noopener" style="color:var(--brand);font-size:.82rem">' + escapeHtml(o.invoice_number || o.zoho_invoice_id) + ' ↗</a>'
+      : '<span style="color:var(--text-muted)">—</span>';
+
+    const totalCell = o.invoice_total != null
+      ? '₹' + Number(o.invoice_total).toLocaleString('en-IN')
+      : '—';
+
+    rows +=
+      '<tr>' +
+      '<td style="font-weight:500;white-space:nowrap">' + escapeHtml(o.customer_name) + '</td>' +
+      '<td style="color:var(--text-muted);font-size:.8rem">' + escapeHtml(o.source || '') + '</td>' +
+      '<td>' + badge + '</td>' +
+      '<td>' + invoiceCell + '</td>' +
+      '<td style="font-size:.82rem">' + totalCell + '</td>' +
+      '<td><button class="btn btn-sm btn-danger" onclick="cancelOrder(\'' + escapeAttr(o.sales_order_id) + '\')">Cancel</button></td>' +
+      '</tr>';
+  });
+
+  listEl.innerHTML =
+    '<div style="overflow-x:auto"><table class="diff-table" style="min-width:520px">' +
+    '<thead><tr><th>Customer</th><th>Source</th><th>Invoice</th><th>Inv #</th><th>Total</th><th></th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table></div>';
+}
+
+async function cancelOrder(salesOrderId) {
+  if (!confirm('Cancel order for ' + salesOrderId + '?\n\nThis will delete the Zoho invoice, cancel the Razorpay link, and remove all operations and order records.\n\nThis cannot be undone.')) return;
 
   try {
-    for (const row of toSave.filter(r => r._state === 'changed' && r._existingId)) {
-      await sb.from('order_items').update({
-        item_status: 'REMOVED',
-        description: 'Replaced: weight changed from ' + row._oldQty + ' to ' + row.qty,
-      }).eq('id', row._existingId);
-    }
-
-    const byCustomer = {};
-    toSave.forEach(row => {
-      const key = row.customer_name + '|' + row.date;
-      if (!byCustomer[key]) byCustomer[key] = { customer_name: row.customer_name, date: row.date, items: [] };
-      byCustomer[key].items.push(row);
+    const res = await fetch(SUPABASE_URL + '/functions/v1/cancel-order', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON },
+      body:    JSON.stringify({ sales_order_id: salesOrderId }),
     });
-
-    for (const { customer_name, date, items } of Object.values(byCustomer)) {
-      let orderId;
-      const { data: existingOrder } = await sb
-        .from('orders').select('sales_id')
-        .eq('order_date', date).eq('customer_name', customer_name).maybeSingle();
-
-      if (existingOrder) {
-        orderId = existingOrder.sales_id;
-      } else {
-        const safeName = customer_name.split(' ').join('-');
-        let salesId = date + '-' + safeName;
-        let suffix  = 1;
-        while (true) {
-          const { data: hit } = await sb.from('orders').select('sales_id').eq('sales_id', salesId).maybeSingle();
-          if (!hit) break;
-          salesId = date + '-' + safeName + '-' + (++suffix);
-        }
-        const parts = customer_name.split(' ');
-        await sb.from('orders').insert({
-          sales_id: salesId, customer_name,
-          community: parts.length > 1 ? parts.slice(0, -1).join(' ') : customer_name,
-          payment_method: 'cod', status: 'placed',
-          order_date: date, cart: [], total: 0,
-        });
-        orderId = salesId;
-      }
-
-      const newItems = items.map(row => {
-        const cat   = catalogItems.find(c => c.item_name === row.item_name);
-        const parts = row.customer_name.split(' ');
-        return {
-          order_id:      orderId,
-          order_date:    date,
-          customer_name,
-          community:     parts.length > 1 ? parts.slice(0, -1).join(' ') : customer_name,
-          item_name:     row.item_name,
-          description:   row._state === 'changed' ? 'Weight changed from ' + row._oldQty + ' to ' + row.qty : null,
-          requested_qty: row.qty,
-          unit_price:    cat ? cat.unit_price : null,
-          final_qty:     null,
-          status:        'open',
-        };
-      });
-
-      const { error } = await sb.from('order_items').insert(newItems);
-      if (error) throw new Error(error.message);
-    }
-
-    showToast(toSave.length + ' item' + (toSave.length !== 1 ? 's' : '') + ' imported ✓');
-    clearCsvImport();
-  } catch (err) {
-    showToast(err.message, 'error');
-  } finally {
-    btn.textContent = 'Save Import'; btn.disabled = false;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Cancel failed');
+    showToast('Order cancelled ✓');
+    await loadTodayOrders();
+  } catch (e) {
+    showToast(e.message, 'error');
   }
 }
 

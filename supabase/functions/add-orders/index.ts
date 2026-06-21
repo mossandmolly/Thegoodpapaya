@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { records, phones = {}, newCustomers = [], newItems = [] } = await req.json();
+    const { records, phones = {}, newCustomers = [], newItems = [], allowMissingPhones = false } = await req.json();
 
     if (!records?.length) {
       return new Response(
@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
       else phoneMap.set(key, phone);
     }
 
-    if (missing.length) {
+    if (missing.length && !allowMissingPhones) {
       return new Response(
         JSON.stringify({ missingPhones: missing }),
         { headers: { ...CORS, 'Content-Type': 'application/json' } },

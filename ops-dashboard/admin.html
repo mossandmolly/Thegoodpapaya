@@ -129,6 +129,14 @@
         <span class="ni">📝</span> Customer Notes
       </button>
 
+      <div class="admin-nav-group">Orders</div>
+      <button class="admin-nav-item" onclick="showPanel('panel-held',this)">
+        <span class="ni">🔒</span> Held Items
+      </button>
+      <button class="admin-nav-item" onclick="showPanel('panel-orders',this)">
+        <span class="ni">📦</span> Today's Orders
+      </button>
+
       <div class="admin-nav-group">Finance</div>
       <button class="admin-nav-item" onclick="showPanel('panel-invoices',this)">
         <span class="ni">🧾</span> Invoices
@@ -213,6 +221,23 @@
         </details>
       </div>
 
+      <!-- Held Items -->
+      <div id="panel-held" class="admin-panel">
+        <div class="panel-heading">Held Items</div>
+        <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">Duplicate submissions held for review. Approve to add to ops, or dismiss to discard.</p>
+        <div id="held-items-list"><div class="skeleton" style="height:40px"></div></div>
+      </div>
+
+      <!-- Today's Orders -->
+      <div id="panel-orders" class="admin-panel">
+        <div class="panel-heading">Today's Orders</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <input type="date" id="orders-date" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.875rem;font-family:'DM Sans',sans-serif">
+          <button class="btn btn-secondary btn-sm" onclick="loadTodayOrders()">&#8635; Refresh</button>
+        </div>
+        <div id="orders-list"><div class="skeleton" style="height:60px"></div></div>
+      </div>
+
       <!-- Invoices -->
       <div id="panel-invoices" class="admin-panel">
         <div class="panel-heading">Invoice Status</div>
@@ -260,11 +285,15 @@ function showPanel(panelId, btn) {
   document.querySelectorAll('.admin-nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById(panelId).classList.add('active');
   btn.classList.add('active');
+  const today = todayIST ? todayIST() : new Date().toISOString().split('T')[0];
   if (panelId === 'panel-invoices') {
-    if (!document.getElementById('inv-date').value) {
-      document.getElementById('inv-date').value = todayIST ? todayIST() : new Date().toISOString().split('T')[0];
-    }
+    if (!document.getElementById('inv-date').value) document.getElementById('inv-date').value = today;
     loadInvoiceStatus();
+  }
+  if (panelId === 'panel-held') loadHeldItems();
+  if (panelId === 'panel-orders') {
+    if (!document.getElementById('orders-date').value) document.getElementById('orders-date').value = today;
+    loadTodayOrders();
   }
 }
 </script>

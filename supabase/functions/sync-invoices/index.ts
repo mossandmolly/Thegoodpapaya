@@ -311,6 +311,7 @@ async function processInvoice(summary: any) {
       payment_link:       paymentLink,
       payment_link_id:    paymentLinkId,
       payment_status:     paymentStatus,
+      sales_order_id:     detail.reference_number || null,
       pdf_url:            `https://inventory.zoho.in/app#/invoices/${zohoInvoiceId}`,
     };
   });
