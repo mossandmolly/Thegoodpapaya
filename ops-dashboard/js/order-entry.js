@@ -82,7 +82,7 @@ function _stopRecording() {
   document.getElementById('mic-status').textContent = '';
 }
 
-// ── Parse ─────────────────────────────────────────────
+// ── Parse (spoken/typed text) ──────────────────────────
 document.getElementById('parse-btn').addEventListener('click', () => {
   const raw = document.getElementById('raw-input').value.trim();
   if (!raw) { showToast('Nothing to parse', 'error'); return; }
@@ -92,6 +92,55 @@ document.getElementById('parse-btn').addEventListener('click', () => {
   _rows = _rows.concat(newRows);
   renderRows();
   showToast('Parsed ' + newRows.length + ' row' + (newRows.length !== 1 ? 's' : ''));
+});
+
+// ── Paste table (Excel / Google Sheets → TSV) ──────────
+// Tab characters signal a structured table paste — skip NLP, parse columns directly.
+// Format: Customer [tab] Item [tab] Qty [tab] Date(optional)
+// Header row auto-detected (skipped if 3rd column is non-numeric).
+document.getElementById('raw-input').addEventListener('paste', e => {
+  const text = (e.clipboardData || window.clipboardData).getData('text');
+  if (!text.includes('\t')) return; // no tabs → regular text paste, do nothing special
+
+  e.preventDefault();
+  const defaultDate = document.getElementById('order-date').value || todayIST();
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const lines  = text.split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.trim());
+  if (!lines.length) return;
+
+  // Skip header row if 3rd column (qty) is non-numeric
+  let startIdx = 0;
+  const firstCols = lines[0].split('\t');
+  if (firstCols.length >= 3 && isNaN(parseFloat(firstCols[2]))) startIdx = 1;
+
+  const newRows = [];
+  for (let i = startIdx; i < lines.length; i++) {
+    const cols     = lines[i].split('\t').map(c => c.trim());
+    if (cols.length < 3) continue;
+    const customer = cols[0];
+    const itemRaw  = cols[1];
+    const qty      = parseFloat(cols[2]);
+    const dateRaw  = cols[3] || '';
+    if (!customer || !itemRaw || isNaN(qty) || qty <= 0) continue;
+
+    const date = dateRaw && dateRe.test(dateRaw) ? dateRaw : defaultDate;
+    const cat  = _items.find(it => it.name.toLowerCase() === itemRaw.toLowerCase());
+    newRows.push({
+      orderDate:     date,
+      customer,
+      item:          cat ? cat.name : itemRaw,
+      description:   '',
+      quantity:      qty,
+      warn:          !cat,
+      warnReason:    !cat ? 'Item "' + itemRaw + '" not found in catalog — check spelling' : null,
+      isNewCustomer: !_customers.some(c => c.toLowerCase() === customer.toLowerCase()),
+    });
+  }
+
+  if (!newRows.length) { showToast('No valid rows in pasted table', 'error'); return; }
+  _rows = _rows.concat(newRows);
+  renderRows();
+  showToast('Added ' + newRows.length + ' row' + (newRows.length !== 1 ? 's' : '') + ' from table');
 });
 
 document.getElementById('clear-input-btn').addEventListener('click', () => { document.getElementById('raw-input').value = ''; });
