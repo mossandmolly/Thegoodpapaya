@@ -1,8 +1,8 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let activeFruit = null;
-let fruits = [];          // distinct fruit names from inventory + lots
-let inventory = [];       // fruit_inventory rows
-let lots = [];            // packing_lots rows
+let fruits = [];
+let inventory = [];
+let lots = [];
 let activeDate = todayIST();
 
 // ── Boot ───────────────────────────────────────────────────────────────────
@@ -47,17 +47,12 @@ function selectFruit(name) {
 function renderFruitTabs() {
   const container = document.getElementById('fruit-tabs');
   container.innerHTML = fruits.map(f =>
-    `<button class="chip${f === activeFruit ? ' selected' : ''}" onclick="selectFruit('${esc(f)}')">${esc(f)}</button>`
+    `<button class="chip${f === activeFruit ? ' selected' : ''}" onclick="selectFruit('${esc(f)}')"> ${esc(f)}</button>`
   ).join('');
 }
 
-// ── Render all panels for activeFruit ────────────────────────────────────
 function renderAll() {
-  if (!activeFruit) {
-    document.getElementById('main-panel').innerHTML =
-      '<p style="padding:24px;color:var(--text-muted)">Add a fruit below to get started.</p>';
-    return;
-  }
+  if (!activeFruit) return;
   renderStockPanel();
   renderLotsPanel();
   renderSummary();
@@ -68,7 +63,7 @@ function renderStockPanel() {
   const rows = inventory.filter(r => r.fruit_name === activeFruit);
   const byType = (t) => rows.filter(r => r.entry_type === t).reduce((s, r) => s + +r.quantity, 0);
 
-  const opening  = byType('opening');
+  const opening   = byType('opening');
   const purchased = byType('purchase');
   const writeoff  = byType('writeoff');
 
@@ -135,7 +130,6 @@ async function deleteInventory(id) {
 function renderLotsPanel() {
   const fruitLots = lots.filter(r => r.fruit_name === activeFruit);
 
-  // Compute running total packed
   let running = 0;
   const rows = fruitLots.map(r => {
     running += +r.packed_in_lot;
@@ -233,27 +227,21 @@ async function deleteLot(id) {
 
 // ── Summary ───────────────────────────────────────────────────────────────
 function renderSummary() {
-  // Per-fruit summary across ALL fruits
   const allFruits = fruits.length ? fruits : (activeFruit ? [activeFruit] : []);
 
   const rows = allFruits.map(fruit => {
     const inv  = inventory.filter(r => r.fruit_name === fruit);
     const fl   = lots.filter(r => r.fruit_name === fruit);
 
-    const opening   = inv.filter(r => r.entry_type === 'opening') .reduce((s,r) => s + +r.quantity, 0);
-    const purchased = inv.filter(r => r.entry_type === 'purchase').reduce((s,r) => s + +r.quantity, 0);
-    const writeoff  = inv.filter(r => r.entry_type === 'writeoff').reduce((s,r) => s + +r.quantity, 0);
+    const opening    = inv.filter(r => r.entry_type === 'opening') .reduce((s,r) => s + +r.quantity, 0);
+    const purchased  = inv.filter(r => r.entry_type === 'purchase').reduce((s,r) => s + +r.quantity, 0);
+    const writeoff   = inv.filter(r => r.entry_type === 'writeoff').reduce((s,r) => s + +r.quantity, 0);
+    const totalLotSize  = fl.reduce((s,r) => s + +r.lot_size,      0);
+    const totalPacked   = fl.reduce((s,r) => s + +r.packed_in_lot, 0);
+    const totalReturned = fl.reduce((s,r) => s + +r.returned_qty,  0);
 
-    const totalLotSize = fl.reduce((s,r) => s + +r.lot_size,      0);
-    const totalPacked  = fl.reduce((s,r) => s + +r.packed_in_lot, 0);
-    const totalReturned= fl.reduce((s,r) => s + +r.returned_qty,  0);
-
-    const available = opening + purchased;
-    const leftover  = available - totalPacked - writeoff - totalReturned;
-    const missing   = Math.max(0, totalLotSize - totalPacked - totalReturned);
-
-    const leftoverClass = leftover < 0 ? ' bad' : '';
-    const missingClass  = missing  > 0 ? ' bad' : '';
+    const leftover = opening + purchased - totalPacked - writeoff - totalReturned;
+    const missing  = Math.max(0, totalLotSize - totalPacked - totalReturned);
 
     return `
     <tr class="${fruit === activeFruit ? 'active-fruit-row' : ''}">
@@ -265,8 +253,8 @@ function renderSummary() {
       <td class="num">${totalLotSize.toFixed(2)}</td>
       <td class="num">${totalPacked.toFixed(2)}</td>
       <td class="num">${totalReturned.toFixed(2)}</td>
-      <td class="num${leftoverClass}">${leftover.toFixed(2)}</td>
-      <td class="num${missingClass}">${missing > 0 ? missing.toFixed(2) : '✓'}</td>
+      <td class="num${leftover < 0 ? ' bad' : ''}">${leftover.toFixed(2)}</td>
+      <td class="num${missing > 0 ? ' bad' : ''}">${missing > 0 ? missing.toFixed(2) : '✓'}</td>
     </tr>`;
   });
 
@@ -296,7 +284,6 @@ async function addNewFruit() {
   if (fruits.map(f=>f.toLowerCase()).includes(name.toLowerCase())) {
     showToast('Fruit already exists', 'error'); return;
   }
-  // Add a placeholder opening stock entry of 0 to register the fruit
   const { error } = await sb.from('fruit_inventory').insert({
     fruit_name: name, entry_type: 'opening', quantity: 0,
     notes: 'Fruit registered', entry_date: activeDate,

@@ -26,7 +26,7 @@ create table if not exists packing_lots (
 alter table fruit_inventory enable row level security;
 alter table packing_lots    enable row level security;
 
-create policy "auth read fruit_inventory"  on fruit_inventory for select using (auth.role() = 'authenticated');
+create policy "auth read fruit_inventory"   on fruit_inventory for select using (auth.role() = 'authenticated');
 create policy "auth insert fruit_inventory" on fruit_inventory for insert with check (auth.role() = 'authenticated');
 create policy "auth update fruit_inventory" on fruit_inventory for update using (auth.role() = 'authenticated');
 create policy "auth delete fruit_inventory" on fruit_inventory for delete using (auth.role() = 'authenticated');
