@@ -9,170 +9,62 @@
   <link rel="stylesheet" href="css/style.css">
   <style>
     main{padding:12px 16px 72px}
-
-    /* ── Capture card ───────────────────────────── */
-    .oe-card{
-      background:#fff;border:1px solid var(--border);
-      border-radius:10px;padding:10px 12px;margin-bottom:10px;
-    }
+    .oe-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;}
     .oe-top{display:flex;align-items:center;gap:8px;margin-bottom:7px}
-    .oe-date-pick{
-      border:1px solid var(--border);border-radius:6px;
-      padding:5px 8px;font-family:inherit;font-size:.83rem;
-      background:var(--bg);color:var(--text);
-    }
-    .oe-mic{
-      width:30px;height:30px;border-radius:50%;
-      border:1.5px solid var(--border);background:#fff;
-      cursor:pointer;font-size:.65rem;color:var(--text-muted);
-      display:flex;align-items:center;justify-content:center;
-      flex-shrink:0;transition:background .1s,border-color .1s;
-    }
+    .oe-date-pick{border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-family:inherit;font-size:.83rem;background:var(--bg);color:var(--text);}
+    .oe-mic{width:30px;height:30px;border-radius:50%;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:.65rem;color:var(--text-muted);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .1s,border-color .1s;}
     .oe-mic.recording{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
     .oe-mic-hint{font-size:.72rem;color:#9ca3af;flex:1;line-height:1.2}
-    .oe-textarea{
-      width:100%;height:54px;border:1px solid var(--border);
-      border-radius:7px;padding:8px 10px;font-size:.88rem;
-      font-family:inherit;resize:none;background:var(--bg);
-      color:var(--text);box-sizing:border-box;
-    }
+    .oe-textarea{width:100%;height:54px;border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:.88rem;font-family:inherit;resize:none;background:var(--bg);color:var(--text);box-sizing:border-box;}
     .oe-textarea:focus{outline:none;border-color:#9ca3af;background:#fff}
     .oe-textarea::placeholder{color:#c8cfd8}
-    .oe-card-actions{
-      display:flex;justify-content:space-between;
-      align-items:center;margin-top:7px;
-    }
-    .oe-ghost{
-      border:none;background:none;font-family:inherit;
-      font-size:.78rem;color:#9ca3af;cursor:pointer;padding:2px 0;
-    }
+    .oe-card-actions{display:flex;justify-content:space-between;align-items:center;margin-top:7px;}
+    .oe-ghost{border:none;background:none;font-family:inherit;font-size:.78rem;color:#9ca3af;cursor:pointer;padding:2px 0;}
     .oe-ghost:hover{color:var(--text-muted)}
-    .oe-parse{
-      border:1.5px solid var(--border);background:#fff;
-      font-family:inherit;font-size:.82rem;font-weight:500;
-      color:var(--text);cursor:pointer;padding:5px 13px;
-      border-radius:6px;transition:border-color .1s,background .1s;
-    }
+    .oe-parse{border:1.5px solid var(--border);background:#fff;font-family:inherit;font-size:.82rem;font-weight:500;color:var(--text);cursor:pointer;padding:5px 13px;border-radius:6px;transition:border-color .1s,background .1s;}
     .oe-parse:hover{border-color:#9ca3af;background:var(--bg)}
-
-    /* ── Order table ────────────────────────────── */
-    .oe-table-wrap{
-      background:#fff;border:1px solid rgba(0,0,0,0.09);
-      border-radius:6px;overflow:hidden;overflow-x:auto;
-    }
-    .oe-grid{
-      width:100%;border-collapse:collapse;
-      table-layout:fixed;min-width:540px;
-    }
-    .col-date{width:108px}
-    .col-cust{width:22%}
-    .col-item{width:22%}
-    .col-qty {width:58px}
-    /* col-desc: auto */
-    .col-del {width:26px}
-
-    .oe-grid thead th{
-      font-size:.68rem;font-weight:500;
-      color:rgba(55,53,47,.5);letter-spacing:.02em;
-      background:#fbfbfa;
-      padding:8px 10px;text-align:left;
-      border-bottom:1px solid rgba(0,0,0,0.08);
-      border-right:1px solid rgba(0,0,0,0.06);
-    }
+    .oe-table-wrap{background:#fff;border:1px solid rgba(0,0,0,0.09);border-radius:6px;overflow:hidden;overflow-x:auto;}
+    .oe-grid{width:100%;border-collapse:collapse;table-layout:fixed;min-width:540px;}
+    .col-date{width:108px}.col-cust{width:22%}.col-item{width:22%}.col-qty{width:58px}.col-del{width:26px}
+    .oe-grid thead th{font-size:.68rem;font-weight:500;color:rgba(55,53,47,.5);letter-spacing:.02em;background:#fbfbfa;padding:8px 10px;text-align:left;border-bottom:1px solid rgba(0,0,0,0.08);border-right:1px solid rgba(0,0,0,0.06);}
     .oe-grid thead th:last-child{border-right:none}
-
     .oe-tr{border-bottom:1px solid rgba(0,0,0,0.05);transition:background .07s}
     .oe-tr:last-child{border-bottom:none}
     .oe-tr:hover{background:#f7f6f3}
     .oe-tr:hover .oe-del{opacity:1}
-
-    /* left accent: new customer = green, unknown item = amber */
-    .oe-tr.is-new  > td:first-child{box-shadow:inset 3px 0 0 #16a34a}
+    .oe-tr.is-new > td:first-child{box-shadow:inset 3px 0 0 #16a34a}
     .oe-tr.is-warn > td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
-
-    .oe-tr td{
-      padding:0 10px;height:36px;vertical-align:middle;
-      border-right:1px solid rgba(0,0,0,0.05);
-    }
+    .oe-tr td{padding:0 10px;height:36px;vertical-align:middle;border-right:1px solid rgba(0,0,0,0.05);}
     .oe-tr td:last-child{border-right:none;padding:0 4px}
-
-    .oe-in{
-      width:100%;border:none;background:transparent;
-      padding:0;font-size:.875rem;font-family:inherit;
-      color:var(--text);line-height:1;
-    }
+    .oe-in{width:100%;border:none;background:transparent;padding:0;font-size:.875rem;font-family:inherit;color:var(--text);line-height:1;}
     .oe-in:focus{outline:none}
     .oe-in::placeholder{color:#c4c9d0}
     .oe-in-qty{text-align:right}
     .oe-in-date{font-size:.8rem;color:var(--text-muted)}
-
-    /* cell focus ring lives on the td, not the input */
     .oe-tr td:focus-within{background:#f0f6ff}
-
-    .oe-del{
-      border:none;background:none;color:#c4c9d0;cursor:pointer;
-      padding:2px 4px;font-size:.68rem;opacity:0;
-      transition:color .1s,opacity .1s;line-height:1;display:block;
-    }
+    .oe-del{border:none;background:none;color:#c4c9d0;cursor:pointer;padding:2px 4px;font-size:.68rem;opacity:0;transition:color .1s,opacity .1s;line-height:1;display:block;}
     .oe-del:hover{color:#ef4444}
-
-    /* ── Table footer — Notion-style bottom row ── */
-    .oe-footer{
-      display:flex;align-items:center;justify-content:space-between;
-      padding:0 10px;height:36px;
-      border-top:1px solid rgba(0,0,0,0.06);gap:8px;
-      transition:background .07s;cursor:default;
-    }
+    .oe-footer{display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:36px;border-top:1px solid rgba(0,0,0,0.06);gap:8px;transition:background .07s;cursor:default;}
     .oe-footer:hover{background:#f7f6f3}
     .oe-add-btns{display:flex;gap:16px;flex-wrap:wrap;height:100%;align-items:center}
-    .oe-add{
-      border:none;background:none;font-family:inherit;
-      font-size:.8rem;color:rgba(55,53,47,.38);cursor:pointer;padding:0;
-      transition:color .1s;
-    }
+    .oe-add{border:none;background:none;font-family:inherit;font-size:.8rem;color:rgba(55,53,47,.38);cursor:pointer;padding:0;transition:color .1s;}
     .oe-add:hover{color:rgba(55,53,47,.72)}
-
-    /* ── Phone prompt ───────────────────────────── */
-    .oe-phone-prompt{
-      background:#fffbeb;border:1.5px solid #fcd34d;
-      border-radius:10px;padding:14px;margin-top:10px;
-    }
-    .oe-phone-prompt h3{
-      font-size:.72rem;font-weight:600;text-transform:uppercase;
-      letter-spacing:.05em;color:#92400e;margin:0 0 5px;
-    }
+    .oe-phone-prompt{background:#fffbeb;border:1.5px solid #fcd34d;border-radius:10px;padding:14px;margin-top:10px;}
+    .oe-phone-prompt h3{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#92400e;margin:0 0 5px;}
     .oe-phone-prompt p{font-size:.82rem;color:#92400e;margin:0 0 10px;line-height:1.5}
     .oe-phone-table{width:100%;border-collapse:collapse}
-    .oe-phone-table th{
-      font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;
-      color:#9ca3af;padding:3px 6px;text-align:left;font-weight:600;
-    }
+    .oe-phone-table th{font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;padding:3px 6px;text-align:left;font-weight:600;}
     .oe-phone-table td{padding:4px 6px;vertical-align:middle}
     .oe-phone-name{font-weight:500;font-size:.875rem;white-space:nowrap}
-    .oe-phone-input{
-      width:100%;border:1px solid var(--border);border-radius:6px;
-      padding:6px 8px;font-size:.875rem;font-family:inherit;
-      background:var(--bg);color:var(--text);letter-spacing:.04em;
-    }
+    .oe-phone-input{width:100%;border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:.875rem;font-family:inherit;background:var(--bg);color:var(--text);letter-spacing:.04em;}
     .oe-phone-input:focus{outline:none;border-color:#9ca3af;background:#fff}
-    .btn-sm-mic{
-      font-size:.75rem;padding:5px 9px;background:#eaf3de;color:#3b6d11;
-      border:1px solid #c7e3a8;border-radius:6px;cursor:pointer;white-space:nowrap;
-    }
+    .btn-sm-mic{font-size:.75rem;padding:5px 9px;background:#eaf3de;color:#3b6d11;border:1px solid #c7e3a8;border-radius:6px;cursor:pointer;white-space:nowrap;}
     .btn-sm-mic.recording{background:#faece7;color:#993c1d;border-color:#f3bba8}
     .oe-phone-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-
-    /* ── Combobox ───────────────────────────────── */
-    .oe-cb-dropdown{
-      position:fixed;background:#fff;border:1px solid #d1d5db;
-      border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);
-      z-index:9999;max-height:220px;overflow-y:auto;display:none;
-    }
+    .oe-cb-dropdown{position:fixed;background:#fff;border:1px solid #d1d5db;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:9999;max-height:220px;overflow-y:auto;display:none;}
     .oe-cb-item{padding:8px 12px;cursor:pointer;font-size:.86rem}
     .oe-cb-item:hover{background:#f3f4f6}
     .oe-cb-item strong{color:#059669}
-
-    /* hidden status anchor for JS */
     #status-line{display:none}
   </style>
 </head>
@@ -183,6 +75,7 @@
     <nav>
       <a href="index.html">Packer</a>
       <a href="checker.html">Checker</a>
+      <a href="dispatch.html">Dispatch</a>
       <a href="order-entry.html" class="active">Order Entry</a>
       <a href="parser.html">Parser</a>
       <a href="admin.html">Admin</a>
@@ -195,7 +88,6 @@
 <span id="status-line"></span>
 
 <main>
-  <!-- ── Voice / text capture ── -->
   <div class="oe-card">
     <div class="oe-top">
       <input type="date" id="order-date" class="oe-date-pick">
@@ -210,7 +102,6 @@
     </div>
   </div>
 
-  <!-- ── Order table ── -->
   <div class="oe-table-wrap">
     <table class="oe-grid">
       <colgroup>
@@ -218,7 +109,7 @@
         <col class="col-cust">
         <col class="col-item">
         <col class="col-qty">
-        <col><!-- desc auto -->
+        <col>
         <col class="col-del">
       </colgroup>
       <thead>
@@ -233,7 +124,6 @@
       </thead>
       <tbody id="rows-container"></tbody>
     </table>
-
     <div class="oe-footer">
       <div class="oe-add-btns">
         <button class="oe-add" type="button" onclick="addSameCustomerRow()">+ same customer</button>
@@ -243,7 +133,6 @@
     </div>
   </div>
 
-  <!-- ── Phone prompt ── -->
   <div id="phone-prompt" class="oe-phone-prompt" style="display:none">
     <h3>Phone numbers needed</h3>
     <p>These customers don't have a mobile number on file. Add one below, or skip to submit without.</p>

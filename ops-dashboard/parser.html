@@ -60,6 +60,7 @@
     <nav>
       <a href="index.html">Packer</a>
       <a href="checker.html">Checker</a>
+      <a href="dispatch.html">Dispatch</a>
       <a href="order-entry.html">Order Entry</a>
       <a href="parser.html" class="active">Parser</a>
       <a href="admin.html">Admin</a>
@@ -149,12 +150,9 @@ parseBtn.addEventListener('click', async () => {
   try {
     const b64s = await Promise.all(imageFiles.map(toB64));
     const images = b64s.map((data, i) => ({ data, media_type: imageFiles[i].type }));
-
     statusBar.innerHTML = '<span class="spinner"></span>Parsing with AI…';
-
     const session = await sb.auth.getSession();
     const token = session.data.session?.access_token;
-
     const resp = await fetch(EDGE_URL, {
       method: 'POST',
       headers: {
@@ -164,11 +162,9 @@ parseBtn.addEventListener('click', async () => {
       },
       body: JSON.stringify({ images, date: TODAY })
     });
-
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Edge function error ' + resp.status);
     render(data);
-
   } catch(e) {
     statusBar.textContent = '❌ ' + e.message;
     statusBar.className = 'status-bar error';
