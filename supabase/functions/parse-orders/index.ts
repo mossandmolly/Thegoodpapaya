@@ -1,6 +1,6 @@
-// Supabase Edge Function — parse natural language / voice orders into structured line items
-// Called by admin.js with: { text, date? }
-// Returns: { orders, zohoItemCount }
+// Supabase Edge Function — parse WhatsApp screenshot images OR voice/text orders
+// POST { images: [{data, media_type}], date? }  → image mode
+// POST { text, date? }                          → text mode
 
 function env(key: string, fallback?: string): string {
   return Deno.env.get(key) ?? fallback ?? '';
@@ -12,7 +12,78 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
 };
 
-const PARSE_SYSTEM = `You are an order entry assistant for The Good Papaya, a fresh fruit and vegetable delivery service in India.
+const ITEM_NAMES = [
+  "Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple",
+  "Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon",
+  "Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla",
+  "Washington apple","Dragon red","Green apple","Plum","Robusta banana",
+  "Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium",
+  "Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan",
+  "Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes",
+  "Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango",
+  "Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic",
+  "Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic",
+  "Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange",
+  "Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun",
+  "Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango",
+  "Jamun flash","Rockit apple","Peach","Strawberry","Coconut","Custard apple"
+];
+
+const PC_TO_KG: Record<string,number> = {
+  "apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,
+  "green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,
+  "guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,
+  "yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,
+  "pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,
+  "pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,
+  "mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,
+  "alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,
+  "sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50
+};
+
+function todayIST(): string {
+  return new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function buildImageSystemPrompt(today: string): string {
+  return `You are an order parser for Good Papaya, a fresh produce delivery business in Bengaluru. Parse WhatsApp group screenshots into structured order rows.
+
+TODAY: ${today}
+
+CANONICAL ITEM NAMES — match input to EXACTLY one of these:
+${ITEM_NAMES.join(', ')}
+
+PIECE TO KG CONVERSIONS:
+${Object.entries(PC_TO_KG).map(([k,v]) => `${k}=${v}kg/pc`).join(', ')}
+
+ALIASES:
+mini orange/mini orange sweet/sweet orange → Mandarin orange
+yellaki/yellakki/yalakki/yalaki/elaichi banana/elachi banana/banana → Yelakki banana
+langda/langdaa/langra → Langra mango
+kesar → Kesar mango, alphonso → Alphonso mango, dasheri → Dasheri mango, badami → Badami mango
+beganpalli/baganpalli/pedanpally → Banganapalli mango
+cherry sweet/cherry → Cherry Indian
+jamun big/jamun small → Jamun (qualifier to description)
+grapes → Green grapes, litchi → Lychee, sweet lime → Mosambi, rocket apple → Rockit apple
+watermelon medium/small/large → Watermelon (qualifier to description)
+
+RULES:
+1. customer_name = bold/colored sender name at top of each bubble including flat/door number
+2. IGNORE lines with: complaint, photo, delivery, replacement, dry, not fresh, late, sorry, refund, missing, damaged, cancel, wrong, issue, feedback, 👍, 🙏
+3. IGNORE non-order messages
+4. item_name = ONLY base fruit name from canonical list, no qualifiers
+5. description = qualifier words only (big, small, medium, large, sweet, organic, raw etc.)
+6. Quantity: stated in kg/g → convert to kg (500g=0.5). Plain number or Npc → multiply by kg/pc if in table, add "assumed N pieces" to description. No qty → use 1, flag it.
+7. sales_order = ${today}-CustomerNameNoSpaces
+8. final_quantity and status = always empty string
+9. plain "mango" with no variety = flag, use item_name "Mango"
+10. plain "grapes" = Green grapes
+
+Respond ONLY with valid JSON, no markdown:
+{"rows":[{"order_date":"${today}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
+}
+
+const TEXT_PARSE_SYSTEM = `You are an order entry assistant for The Good Papaya, a fresh fruit and vegetable delivery service in India.
 
 You will receive:
 1. A list of active products from the Zoho catalog (use this as the definitive source of item names)
@@ -52,25 +123,14 @@ async function fetchZohoItems(): Promise<{ name: string; unit: string }[]> {
   const clientSecret = env('ZOHO_CLIENT_SECRET');
   const refreshToken = env('ZOHO_REFRESH_TOKEN');
   const orgId        = env('ZOHO_ORG_ID');
-
   if (!clientId || !clientSecret || !refreshToken || !orgId) return [];
-
   const tokenRes = await fetch('https://accounts.zoho.in/oauth/v2/token', {
-    method:  'POST',
+    method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body:    new URLSearchParams({
-      grant_type:    'refresh_token',
-      client_id:     clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-    }).toString(),
+    body: new URLSearchParams({ grant_type:'refresh_token', client_id:clientId, client_secret:clientSecret, refresh_token:refreshToken }).toString(),
   });
   const tokenData = await tokenRes.json();
-  if (!tokenData.access_token) {
-    console.error('Zoho token error:', JSON.stringify(tokenData));
-    return [];
-  }
-
+  if (!tokenData.access_token) return [];
   const itemsRes = await fetch(
     `https://www.zohoapis.in/books/v3/items?organization_id=${orgId}&status=active&per_page=200`,
     { headers: { Authorization: `Zoho-oauthtoken ${tokenData.access_token}` } }
@@ -79,49 +139,64 @@ async function fetchZohoItems(): Promise<{ name: string; unit: string }[]> {
   return (itemsData.items ?? []).map((i: any) => ({ name: i.name, unit: i.unit ?? '' }));
 }
 
-function todayIST(): string {
-  return new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { text, date } = await req.json();
+    const body = await req.json();
+    const today = body.date || todayIST();
+    const ANTHROPIC_API_KEY = env('ANTHROPIC_API_KEY');
 
+    // ── IMAGE MODE ──────────────────────────────────────────────────────────
+    if (body.images && Array.isArray(body.images) && body.images.length > 0) {
+      const imageBlocks = body.images.map((img: any) => ({
+        type: "image",
+        source: { type: "base64", media_type: img.media_type || "image/jpeg", data: img.data }
+      }));
+
+      const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 2000,
+          system: buildImageSystemPrompt(today),
+          messages: [{ role: 'user', content: [...imageBlocks, { type: 'text', text: 'Parse all orders from these screenshots. Return only JSON.' }] }]
+        }),
+      });
+
+      const aiData = await anthropicRes.json();
+      if (!anthropicRes.ok) throw new Error(aiData?.error?.message ?? `Anthropic error ${anthropicRes.status}`);
+
+      const raw = aiData.content?.[0]?.text ?? '{}';
+      let parsed: any;
+      try { parsed = JSON.parse(raw); }
+      catch (_) { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : { rows: [], flags: [] }; }
+
+      return new Response(JSON.stringify(parsed), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+
+    // ── TEXT MODE (existing behaviour) ──────────────────────────────────────
+    const { text } = body;
     if (!text?.trim()) {
-      return new Response(
-        JSON.stringify({ error: 'text is required' }),
-        { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
-      );
+      return new Response(JSON.stringify({ error: 'text or images required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
-    // Fetch Zoho items (gracefully skip if credentials not configured)
     let zohoItems: { name: string; unit: string }[] = [];
-    try {
-      zohoItems = await fetchZohoItems();
-    } catch (e: any) {
-      console.error('Zoho fetch failed:', e.message);
-    }
+    try { zohoItems = await fetchZohoItems(); } catch (e: any) { console.error('Zoho fetch failed:', e.message); }
 
     const catalogSection = zohoItems.length
       ? `Active product catalog (${zohoItems.length} items):\n${zohoItems.map(i => `- ${i.name}${i.unit ? ` (${i.unit})` : ''}`).join('\n')}`
       : 'No product catalog available — use your best judgment for item names.';
 
-    const userMsg = `${catalogSection}\n\nOrder text to parse:\n"${text.trim()}"`;
-
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method:  'POST',
-      headers: {
-        'x-api-key':         env('ANTHROPIC_API_KEY'),
-        'anthropic-version': '2023-06-01',
-        'content-type':      'application/json',
-      },
+      method: 'POST',
+      headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model:      'claude-sonnet-4-6',
+        model: 'claude-sonnet-4-6',
         max_tokens: 2048,
-        system:     PARSE_SYSTEM,
-        messages:   [{ role: 'user', content: userMsg }],
+        system: TEXT_PARSE_SYSTEM,
+        messages: [{ role: 'user', content: `${catalogSection}\n\nOrder text to parse:\n"${text.trim()}"` }],
       }),
     });
 
@@ -130,37 +205,23 @@ Deno.serve(async (req) => {
 
     const raw = aiData.content?.[0]?.text ?? '{}';
     let parsed: any;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (_) {
-      const match = raw.match(/\{[\s\S]*\}/);
-      parsed = match ? JSON.parse(match[0]) : { orders: [] };
-    }
+    try { parsed = JSON.parse(raw); }
+    catch (_) { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : { orders: [] }; }
 
-    const today   = date || todayIST();
     const batchId = `VOICE-${today}-${Date.now()}`;
-
     const orders = (parsed.orders ?? []).map((o: any) => ({
-      sales_order_id:     batchId,
-      invoice_date:       today,
-      customer_name:      (o.customer_name ?? 'Unknown').trim(),
-      item_name:          (o.item_name ?? '').trim(),
+      sales_order_id: batchId, invoice_date: today,
+      customer_name: (o.customer_name ?? 'Unknown').trim(),
+      item_name: (o.item_name ?? '').trim(),
       requested_quantity: parseFloat(o.requested_quantity) || 1,
-      description:        text.trim(),
-      status:             'draft',
-      _confidence:        o.matched_confidence ?? 'high',
-      _match_note:        o.match_note ?? '',
+      description: text.trim(), status: 'draft',
+      _confidence: o.matched_confidence ?? 'high',
+      _match_note: o.match_note ?? '',
     }));
 
-    return new Response(
-      JSON.stringify({ orders, zohoItemCount: zohoItems.length }),
-      { headers: { ...CORS, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({ orders, zohoItemCount: zohoItems.length }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
 
   } catch (err: any) {
-    return new Response(
-      JSON.stringify({ error: err.message }),
-      { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } });
   }
 });
