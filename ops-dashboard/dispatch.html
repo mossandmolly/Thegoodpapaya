@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Dispatch / Organiser — Good Papaya Ops</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* ── Dispatch-specific styles ── */
+    .dispatch-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 16px 16px 60px;
+    }
+
+    .panel {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      background: var(--brand);
+      color: white;
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 12px 16px;
+    }
+
+    /* ── Totals chips ── */
+    .totals-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .total-chip {
+      border-radius: 20px;
+      padding: 5px 12px;
+      font-size: 0.82rem;
+      border: 1.5px solid;
+    }
+    .total-chip.opening  { border-color: #2196f3; color: #1565c0; background: #e3f2fd; }
+    .total-chip.purchase { border-color: var(--green); color: var(--green); background: #e8f5e9; }
+    .total-chip.writeoff { border-color: var(--red);  color: var(--red);   background: #fdecea; }
+
+    /* ── Data table ── */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    .data-table th {
+      background: #f9f9f9;
+      padding: 8px 10px;
+      text-align: left;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .data-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: #fafafa; }
+    .data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .data-table .bad { color: var(--red); font-weight: 600; }
+    .data-table .empty { color: var(--text-muted); text-align: center; padding: 20px; }
+    .active-fruit-row td { background: #fff8f5; }
+    .total-packed { color: var(--green); font-weight: 600; }
+
+    /* ── Badge ── */
+    .badge {
+      display: inline-block;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .badge-opening  { background: #e3f2fd; color: #1565c0; }
+    .badge-purchase { background: #e8f5e9; color: var(--green); }
+    .badge-writeoff { background: #fdecea; color: var(--red); }
+
+    /* ── Add form ── */
+    .add-form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 16px;
+      background: #fafafa;
+      border-top: 1px solid var(--border);
+    }
+    .add-form input, .add-form select {
+      flex: 1;
+      min-width: 120px;
+      padding: 8px 10px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.85rem;
+      background: white;
+      color: var(--text);
+    }
+    .add-form input:focus, .add-form select:focus {
+      outline: none;
+      border-color: var(--brand);
+    }
+    .btn-primary {
+      padding: 8px 18px;
+      background: var(--brand);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-primary:active { background: var(--brand-dark); transform: scale(0.97); }
+    .btn-icon {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 2px 5px;
+      border-radius: 4px;
+      opacity: 0.6;
+      transition: opacity 0.15s;
+    }
+    .btn-icon:hover { opacity: 1; }
+
+    /* ── Top toolbar ── */
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .toolbar label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .toolbar input[type="date"] {
+      padding: 6px 10px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.85rem;
+    }
+    .new-fruit-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-left: auto;
+    }
+    .new-fruit-row input {
+      padding: 6px 10px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.85rem;
+      width: 140px;
+    }
+
+    /* ── Fruit tab bar ── */
+    .fruit-tab-bar {
+      background: white;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      position: sticky;
+      top: 56px;
+      z-index: 98;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .fruit-tab-bar .packer-chips { flex-wrap: nowrap; }
+
+    /* ── Summary ── */
+    .summary-table { font-size: 0.8rem; }
+    .summary-table th { font-size: 0.7rem; }
+    .hint {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      padding: 10px 16px 14px;
+    }
+
+    @media (max-width: 600px) {
+      .add-form input, .add-form select { min-width: 100px; }
+      .data-table { font-size: 0.78rem; }
+      .summary-table { font-size: 0.72rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-content">
+    <h1>Good Papaya Ops</h1>
+    <nav>
+      <a href="index.html">Packer</a>
+      <a href="checker.html">Checker</a>
+      <a href="dispatch.html" class="active">Dispatch</a>
+      <a href="order-entry.html">Order Entry</a>
+      <a href="parser.html">Parser</a>
+      <a href="admin.html">Admin</a>
+      <a href="somya.html">Somya AI</a>
+      <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
+    </nav>
+  </div>
+</header>
+
+<!-- Fruit tab bar -->
+<div class="fruit-tab-bar">
+  <div class="packer-chips" id="fruit-tabs">
+    <span style="color:var(--text-muted);font-size:0.82rem">No fruits yet — add one below</span>
+  </div>
+</div>
+
+<div class="dispatch-wrap">
+
+  <!-- Toolbar: date selector + new fruit -->
+  <div class="toolbar">
+    <label>Date:
+      <input type="date" id="active-date" onchange="setDate(this.value)">
+    </label>
+    <div class="new-fruit-row">
+      <input type="text" id="new-fruit-name" placeholder="Fruit name (e.g. Apple)">
+      <button class="btn-primary" onclick="addNewFruit()">+ Add Fruit</button>
+    </div>
+  </div>
+
+  <!-- Dynamic panels rendered by JS -->
+  <div id="stock-panel" class="panel"></div>
+  <div id="lots-panel"  class="panel"></div>
+  <div id="summary-panel" class="panel"></div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/dispatch.js"></script>
+</body>
+</html>
