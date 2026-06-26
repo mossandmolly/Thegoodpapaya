@@ -1,214 +1,351 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Order Parser — Good Papaya Ops</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
-  <style>
-    .parser-wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
-    .drop-zone {
-      border: 2px dashed var(--border); border-radius: var(--radius);
-      padding: 32px 20px; text-align: center; cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-      margin-bottom: 12px; position: relative; background: var(--card-bg);
-    }
-    .drop-zone:hover, .drop-zone.drag { border-color: var(--brand); background: #fff5f0; }
-    .drop-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
-    .drop-icon { font-size: 2rem; margin-bottom: 8px; }
-    .drop-label { font-size: 1rem; font-weight: 600; color: var(--text); display: block; margin-bottom: 4px; }
-    .drop-sub { font-size: 0.8rem; color: var(--text-muted); }
-    .previews { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    .preview-thumb { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; border: 1.5px solid var(--border); }
-    .status-bar { font-size: 0.85rem; color: var(--text-muted); text-align: center; min-height: 20px; margin-bottom: 12px; }
-    .status-bar.loading { color: var(--brand); }
-    .status-bar.error { color: var(--red); }
-    .btn-parse {
-      width: 100%; padding: 14px; border-radius: var(--radius);
-      border: none; background: var(--brand); color: white;
-      font-size: 1rem; font-weight: 600; cursor: pointer;
-      font-family: "DM Sans", sans-serif; margin-bottom: 10px;
-      transition: background 0.15s, transform 0.1s;
-    }
-    .btn-parse:hover { background: var(--brand-dark); }
-    .btn-parse:active { transform: scale(0.98); }
-    .btn-parse:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-sec {
-      width: 100%; padding: 11px; border-radius: var(--radius);
-      border: 1.5px solid var(--border); background: white;
-      color: var(--text); font-size: 0.9rem; cursor: pointer;
-      font-family: "DM Sans", sans-serif; margin-bottom: 8px;
-    }
-    .btn-sec:hover { background: var(--bg); }
-    .section-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 16px 0 6px; }
-    .flags-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; font-size: 0.82rem; color: #92400e; line-height: 1.8; white-space: pre-wrap; }
-    .flags-ok { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 8px; padding: 10px 14px; font-size: 0.82rem; color: var(--green); }
-    .tsv-box { background: #f9f9f9; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: monospace; font-size: 11px; color: var(--text); overflow-x: auto; white-space: pre; line-height: 1.6; max-height: 300px; overflow-y: auto; margin-bottom: 10px; }
-    .row-count { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px; }
-    .hidden { display: none; }
-    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Good Papaya · Order Parser</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8;min-height:100vh;padding:20px 16px 48px}
+.logo{font-size:20px;font-weight:700;color:#7ecb82;margin-bottom:20px}.logo span{color:#e8f0e8;font-weight:300}
+.tabs{display:flex;gap:8px;margin-bottom:20px}
+.tab{padding:8px 16px;border-radius:20px;border:1.5px solid #2e4d30;background:transparent;color:#4a6e4c;font-size:13px;cursor:pointer;font-family:inherit}
+.tab.active{background:#7ecb82;color:#0e1a0f;border-color:#7ecb82;font-weight:600}
+.panel{display:none}.panel.active{display:block}
+.drop-zone{border:1.5px dashed #2e4d30;border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:12px;position:relative;background:#131f14}
+.drop-zone:hover,.drop-zone.drag{border-color:#7ecb82}
+.drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.drop-label{font-size:15px;font-weight:600;color:#7ecb82;display:block;margin-bottom:4px}
+.drop-sub{font-size:12px;color:#4a6e4c}
+.previews{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.preview-thumb{width:60px;height:60px;border-radius:8px;object-fit:cover;border:1.5px solid #2e4d30}
+.status-bar{font-size:13px;color:#4a6e4c;text-align:center;min-height:20px;margin-bottom:12px;padding:8px;background:#0a120a;border-radius:8px;word-break:break-all}
+.status-bar.loading{color:#7ecb82}.status-bar.error{color:#e07070;background:#1a0a0a}
+.btn-parse{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#7ecb82;color:#0e1a0f;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
+.btn-parse:disabled{opacity:0.4;cursor:not-allowed}
+.btn-sec{display:block;width:100%;padding:11px;border-radius:10px;border:1.5px solid #2e4d30;background:transparent;color:#7ecb82;font-size:13px;cursor:pointer;margin-bottom:8px;font-family:inherit}
+.section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#4a6e4c;margin:16px 0 6px}
+.flags-box{background:#1a1a0e;border:1px solid #4a4a20;border-radius:8px;padding:10px 14px;font-size:12px;color:#c8b060;line-height:1.8;white-space:pre-wrap}
+.flags-ok{background:#0a1a0a;border:1px solid #2a4a2a;border-radius:8px;padding:10px 14px;font-size:12px;color:#7ecb82}
+.tsv-box{background:#0a120a;border:1px solid #1e301e;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#9abf9c;overflow-x:auto;white-space:pre;line-height:1.6;max-height:300px;overflow-y:auto;margin-bottom:10px}
+.hidden{display:none}
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid #2e4d30;border-top-color:#7ecb82;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.config-section{background:#0a120a;border:1px solid #1e301e;border-radius:10px;padding:14px;margin-bottom:16px}
+.config-section h3{font-size:13px;font-weight:600;color:#7ecb82;margin-bottom:10px}
+.config-list{list-style:none}
+.config-list li{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid #1a2a1a;color:#9abf9c}
+.config-list li:last-child{border-bottom:none}
+.config-list li span{color:#4a6e4c;font-size:11px;margin-left:8px;flex-shrink:0}
+.del-btn{background:none;border:none;color:#e07070;cursor:pointer;font-size:14px;padding:0 4px}
+.add-row{display:flex;gap:8px;margin-top:10px}
+.add-row input{flex:1;background:#131f14;border:1px solid #2e4d30;border-radius:8px;padding:8px 10px;color:#e8f0e8;font-size:12px;font-family:inherit}
+.add-row input::placeholder{color:#4a6e4c}
+.add-row button{background:#7ecb82;color:#0e1a0f;border:none;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;white-space:nowrap}
+.rules-list{font-size:12px;color:#9abf9c;line-height:2;list-style:none}
+.rules-list li{padding:3px 0;border-bottom:1px solid #1a2a1a}
+.badge{display:inline-block;background:#1a2e1a;border-radius:4px;padding:1px 6px;font-size:10px;color:#7ecb82;margin-right:4px}
+.skip-count{font-size:12px;color:#4a6e4c;margin-bottom:8px;padding:6px 10px;background:#0a120a;border-radius:6px}
+</style>
 </head>
 <body>
+<div class="logo">good<span>papaya</span> · parser</div>
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
+  <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
+</div>
 
-<header>
-  <div class="header-content">
-    <h1>Good Papaya Ops</h1>
-    <nav>
-      <a href="index.html">Packer</a>
-      <a href="checker.html">Checker</a>
-      <a href="dispatch.html">Dispatch</a>
-      <a href="order-entry.html">Order Entry</a>
-      <a href="parser.html" class="active">Parser</a>
-      <a href="admin.html">Admin</a>
-      <a href="somya.html">Somya AI</a>
-      <a href="#" onclick="signOut()" style="color:rgba(255,255,255,0.7);font-size:0.8rem">Sign out</a>
-    </nav>
+<div class="panel active" id="panel-parser">
+  <div class="drop-zone" id="dz">
+    <input type="file" id="fi" accept="image/*" multiple>
+    <span class="drop-label">📸 Upload WhatsApp screenshots</span>
+    <div class="drop-sub">Tap to select · multiple images OK · duplicates auto-skipped</div>
   </div>
-</header>
-
-<div class="parser-wrap">
-  <div class="drop-zone" id="dropZone">
-    <input type="file" id="fileInput" accept="image/*" multiple>
-    <div class="drop-icon">📸</div>
-    <span class="drop-label">Upload WhatsApp screenshots</span>
-    <div class="drop-sub">Tap to select · Multiple images OK</div>
-  </div>
-
-  <div class="previews" id="previews"></div>
-  <div class="status-bar" id="statusBar">Upload screenshots to begin</div>
-  <button class="btn-parse" id="parseBtn" disabled>Parse orders</button>
-
-  <div id="resultsWrap" class="hidden">
+  <div class="previews" id="pv"></div>
+  <div class="status-bar" id="sb">Upload screenshots to begin</div>
+  <button class="btn-parse" id="pb" disabled>Parse orders</button>
+  <div id="rw" class="hidden">
     <div class="section-label">Flags</div>
-    <div id="flagsBox"></div>
-    <div class="section-label">Parsed rows <span id="rowCount" style="font-weight:600;color:var(--text)"></span></div>
-    <div class="tsv-box" id="tsvBox"></div>
-    <button class="btn-sec" id="copyBtn">📋 Copy TSV</button>
-    <button class="btn-sec" id="clearBtn">🔄 Clear & start over</button>
+    <div id="fb"></div>
+    <div class="section-label">Parsed rows <span id="rc"></span></div>
+    <div id="sc" class="skip-count hidden"></div>
+    <div class="tsv-box" id="tb"></div>
+    <button class="btn-sec" id="cb">📋 Copy TSV</button>
+    <button class="btn-sec" id="clrday" style="color:#e07070;border-color:#4a2a2a">🗑 Clear today's memory</button>
+    <button class="btn-sec" id="xb">🔄 Clear images</button>
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<script src="js/config.js"></script>
+<div class="panel" id="panel-config">
+  <div class="config-section">
+    <h3>📋 Parser Rules</h3>
+    <ul class="rules-list">
+      <li><span class="badge">columns</span>order_date · customer_name · item_name · description · quantity · final_quantity(blank) · status(blank) · sales_order</li>
+      <li><span class="badge">customer</span>Society + door only — strip Indian names. "Shalu Villa 54"→"Villa 54"</li>
+      <li><span class="badge">sales order</span>Date + name no spaces. e.g. 2026-06-26-Villa54</li>
+      <li><span class="badge">item name</span>Base fruit from canonical list only, no qualifiers</li>
+      <li><span class="badge">description</span>ALL qualifiers — ripe, sweet, medium, organic, ready to eat, semi-ripe, not very ripe, long, small, big, assumed N pieces, if available, delivery notes, complaints</li>
+      <li><span class="badge">qty: g/kg</span>Convert to decimal — 500g=0.5, half kg=0.5</li>
+      <li><span class="badge">qty: pieces</span>Multiply by kg/pc → add "assumed N pieces" to description</li>
+      <li><span class="badge">qty: unknown</span>No conversion rule → raw count + flag</li>
+      <li><span class="badge">qty: none</span>No quantity → 1 + flag</li>
+      <li><span class="badge">ignore</span>👍 reacted messages, payments, deleted messages, system messages</li>
+      <li><span class="badge">keep</span>Complaints and delivery notes → put in description field</li>
+      <li><span class="badge">duplicates</span>Same customer+item+qty already parsed today → skipped</li>
+      <li><span class="badge">societies</span>Auto-detected — no list needed</li>
+    </ul>
+  </div>
+  <div class="config-section">
+    <h3>🍎 Canonical Fruit List</h3>
+    <ul class="config-list" id="fruit-list"></ul>
+    <div class="add-row">
+      <input type="text" id="new-fruit" placeholder="Add fruit e.g. Dragonfruit yellow">
+      <button onclick="addFruit()">Add</button>
+    </div>
+  </div>
+  <div class="config-section">
+    <h3>⚖️ Piece → KG Conversions</h3>
+    <ul class="config-list" id="pkg-list"></ul>
+    <div class="add-row">
+      <input type="text" id="new-pkg-fruit" placeholder="Fruit name e.g. Lychee" style="flex:2">
+      <input type="number" id="new-pkg-val" placeholder="kg/pc e.g. 0.05" step="0.01" style="flex:1">
+      <button onclick="addPkg()">Add</button>
+    </div>
+  </div>
+  <div class="config-section">
+    <h3>🔁 Aliases</h3>
+    <ul class="config-list" id="alias-list"></ul>
+    <div class="add-row">
+      <input type="text" id="new-alias-from" placeholder="What customer types">
+      <input type="text" id="new-alias-to" placeholder="Canonical name">
+      <button onclick="addAlias()">Add</button>
+    </div>
+  </div>
+</div>
+
 <script>
-const TODAY = new Date(Date.now() + 330*60*1000).toISOString().split('T')[0];
-const EDGE_URL = 'https://fykqprogzqcfzrgwlrem.supabase.co/functions/v1/parse-orders';
+const DEFAULT_FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan"];
+const DEFAULT_PKG={"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50};
+const DEFAULT_ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orange","sweet orange":"Mandarin orange","yellaki":"Yelakki banana","yellakki":"Yelakki banana","yalakki":"Yelakki banana","yalaki":"Yelakki banana","elaichi banana":"Yelakki banana","elachi banana":"Yelakki banana","banana":"Yelakki banana","y banana":"Yelakki banana","y bananas":"Yelakki banana","langda":"Langra mango","langdaa":"Langra mango","langra":"Langra mango","langa":"Langra mango","kesar":"Kesar mango","alphonso":"Alphonso mango","dasheri":"Dasheri mango","dussehri":"Dasheri mango","badami":"Badami mango","beganpalli":"Banganapalli mango","baganpalli":"Banganapalli mango","pedanpally":"Banganapalli mango","banganphalli":"Banganapalli mango","baiganphali":"Banganapalli mango","bagganpalli":"Banganapalli mango","cherry sweet":"Cherry Indian","cherry":"Cherry Indian","grapes":"Green grapes","litchi":"Lychee","lichi":"Lychee","sweet lime":"Mosambi","rocket apple":"Rockit apple","rock apple":"Rockit apple","rambuttan":"Rambutan","rambutten":"Rambutan","rambhutan":"Rambutan","rambuthan":"Rambutan","imanpasad":"Imampasand mango","imampasad":"Imampasand mango","thai guava":"Guava white","white guava":"Guava white","dragon fruit red":"Dragon red","dragonfruit red":"Dragon red"};
 
-let imageFiles = [];
-const fileInput  = document.getElementById('fileInput');
-const dropZone   = document.getElementById('dropZone');
-const previews   = document.getElementById('previews');
-const parseBtn   = document.getElementById('parseBtn');
-const statusBar  = document.getElementById('statusBar');
-const resultsWrap= document.getElementById('resultsWrap');
-const flagsBox   = document.getElementById('flagsBox');
-const tsvBox     = document.getElementById('tsvBox');
-const rowCount   = document.getElementById('rowCount');
-const copyBtn    = document.getElementById('copyBtn');
-const clearBtn   = document.getElementById('clearBtn');
+function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
+function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
-dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag'); addFiles([...e.dataTransfer.files]); });
-fileInput.addEventListener('change', () => addFiles([...fileInput.files]));
+let FRUITS=load('gp_fruits',DEFAULT_FRUITS);
+let PKG=load('gp_pkg',DEFAULT_PKG);
+let ALIASES=load('gp_aliases',DEFAULT_ALIASES);
 
-function addFiles(files) {
-  files.filter(f => f.type.startsWith('image/')).forEach(f => {
-    imageFiles.push(f);
-    const img = document.createElement('img');
-    img.src = URL.createObjectURL(f);
-    img.className = 'preview-thumb';
-    previews.appendChild(img);
+const TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
+
+// ── Duplicate memory ──────────────────────────────────────────────────────
+function memKey(){return 'gp_parsed_'+TODAY;}
+function getMemory(){return load(memKey(),[]);}
+function saveMemory(rows){save(memKey(),rows);}
+function rowKey(r){return [r.customer_name,r.item_name,String(r.quantity)].join('|').toLowerCase();}
+function isDuplicate(r){return getMemory().some(k=>k===rowKey(r));}
+function addToMemory(rows){
+  const existing=getMemory();
+  const keys=new Set(existing);
+  rows.forEach(r=>keys.add(rowKey(r)));
+  saveMemory([...keys]);
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','config'][i]===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  if(name==='config')renderConfig();
+}
+
+function renderConfig(){
+  document.getElementById('fruit-list').innerHTML=FRUITS.map((f,i)=>`<li>${f}<button class="del-btn" onclick="delFruit(${i})">✕</button></li>`).join('');
+  document.getElementById('pkg-list').innerHTML=Object.entries(PKG).map(([k,v])=>`<li>${k}<span>${v} kg/pc</span><button class="del-btn" onclick="delPkg('${k}')">✕</button></li>`).join('');
+  document.getElementById('alias-list').innerHTML=Object.entries(ALIASES).map(([k,v])=>`<li>${k}<span>→ ${v}</span><button class="del-btn" onclick="delAlias('${k}')">✕</button></li>`).join('');
+}
+
+function addFruit(){const v=document.getElementById('new-fruit').value.trim();if(!v)return;FRUITS.push(v);save('gp_fruits',FRUITS);document.getElementById('new-fruit').value='';renderConfig();}
+function delFruit(i){FRUITS.splice(i,1);save('gp_fruits',FRUITS);renderConfig();}
+function addPkg(){const f=document.getElementById('new-pkg-fruit').value.trim().toLowerCase();const v=parseFloat(document.getElementById('new-pkg-val').value);if(!f||isNaN(v))return;PKG[f]=v;save('gp_pkg',PKG);document.getElementById('new-pkg-fruit').value='';document.getElementById('new-pkg-val').value='';renderConfig();}
+function delPkg(k){delete PKG[k];save('gp_pkg',PKG);renderConfig();}
+function addAlias(){const f=document.getElementById('new-alias-from').value.trim().toLowerCase();const t=document.getElementById('new-alias-to').value.trim();if(!f||!t)return;ALIASES[f]=t;save('gp_aliases',ALIASES);document.getElementById('new-alias-from').value='';document.getElementById('new-alias-to').value='';renderConfig();}
+function delAlias(k){delete ALIASES[k];save('gp_aliases',ALIASES);renderConfig();}
+
+let imgs=[];
+const dz=document.getElementById('dz'),fi=document.getElementById('fi'),pv=document.getElementById('pv');
+const pb=document.getElementById('pb'),sb=document.getElementById('sb'),rw=document.getElementById('rw');
+const fb=document.getElementById('fb'),tb=document.getElementById('tb'),rc=document.getElementById('rc');
+const cb=document.getElementById('cb'),xb=document.getElementById('xb'),sc=document.getElementById('sc');
+
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');add([...e.dataTransfer.files])});
+fi.addEventListener('change',()=>add([...fi.files]));
+
+function add(files){
+  files.filter(f=>f.type.startsWith('image/')).forEach(f=>{
+    imgs.push(f);
+    const img=document.createElement('img');
+    img.src=URL.createObjectURL(f);img.className='preview-thumb';pv.appendChild(img);
   });
-  if (imageFiles.length) {
-    parseBtn.disabled = false;
-    statusBar.textContent = imageFiles.length + ' image(s) ready';
-    statusBar.className = 'status-bar';
+  if(imgs.length){pb.disabled=false;set(imgs.length+' image(s) ready');}
+}
+
+function set(msg,cls){
+  sb.innerHTML=(cls==='loading'?'<span class="spinner"></span>':'')+msg;
+  sb.className='status-bar'+(cls?' '+cls:'');
+}
+
+function compress(file){
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const MAX=1000,c=document.createElement('canvas');
+      let w=img.width,h=img.height;
+      if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+      if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
+      c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+      res(c.toDataURL('image/jpeg',0.65).split(',')[1]);
+    };
+    img.onerror=rej;img.src=URL.createObjectURL(file);
+  });
+}
+
+function parseJson(raw){
+  const m=raw.match(/\{[\s\S]*\}/);
+  if(!m)throw new Error('No JSON: '+raw.slice(0,150));
+  try{return JSON.parse(m[0]);}
+  catch(e){
+    try{return JSON.parse(m[0].replace(/,(\s*[}\]])/g,'$1').replace(/[\x00-\x1F\x7F]/g,' '));}
+    catch(e2){throw new Error('JSON parse failed: '+e.message);}
   }
 }
 
-function toB64(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result.split(',')[1]);
-    r.onerror = rej;
-    r.readAsDataURL(file);
-  });
-}
+pb.addEventListener('click',async()=>{
+  if(!imgs.length)return;
+  pb.disabled=true;rw.classList.add('hidden');
+  set('Compressing '+imgs.length+' images…','loading');
 
-parseBtn.addEventListener('click', async () => {
-  if (!imageFiles.length) return;
-  parseBtn.disabled = true;
-  resultsWrap.classList.add('hidden');
-  statusBar.innerHTML = '<span class="spinner"></span>Uploading images…';
-  statusBar.className = 'status-bar loading';
+  const aliasLines=Object.entries(ALIASES).map(([k,v])=>k+'→'+v).join(', ');
+  const pkgLines=Object.entries(PKG).map(([k,v])=>k+'='+v+'kg/pc').join(', ');
 
-  try {
-    const b64s = await Promise.all(imageFiles.map(toB64));
-    const images = b64s.map((data, i) => ({ data, media_type: imageFiles[i].type }));
-    statusBar.innerHTML = '<span class="spinner"></span>Parsing with AI…';
-    const session = await sb.auth.getSession();
-    const token = session.data.session?.access_token;
-    const resp = await fetch(EDGE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'apikey': SUPABASE_ANON
-      },
-      body: JSON.stringify({ images, date: TODAY })
+  const SYS=`You are an order parser for Good Papaya, a fresh produce delivery business in Bengaluru.
+
+TODAY: ${TODAY}
+
+CANONICAL ITEMS: ${FRUITS.join(', ')}
+
+KG/PC CONVERSIONS: ${pkgLines}
+
+ALIASES: ${aliasLines}
+
+RULES:
+1. customer_name = society+door ONLY, strip all Indian first/last names. Examples: "Shalu Villa 54"→"Villa 54", "Femina Iksha G1301"→"Iksha G1301", "Nandhini Muthukrishnan Dhavala C602"→"Dhavala C602"
+2. IGNORE ONLY: 👍 reacted messages, payment confirmations, UPI receipts, deleted messages, system messages (member added/removed)
+3. KEEP complaints and delivery notes — put them in the description field e.g. "not very ripe", "door delivery", "if available", "only if sweet"
+4. item_name = canonical name only, no qualifiers
+5. description = ALL qualifiers AND delivery notes AND complaints AND conditions. Examples: "ripe", "sweet", "medium", "organic", "ready to eat", "semi-ripe", "not very ripe", "long", "small", "if available", "assumed 3 pieces", "door pe rakh dena"
+6. Quantity rules:
+   - g or gm or gms or kg stated → convert to kg decimal (500g=0.5, 300gm=0.3, half kg=0.5, 1/2kg=0.5)
+   - plain number or Npc or N pieces → multiply by kg/pc if fruit in conversion table → add "assumed N pieces" to description
+   - fruit NOT in conversion table with plain count → keep raw count as quantity, flag, add "assumed N pieces" to description  
+   - Rambutan with piece count → keep raw count, flag (no conversion yet)
+   - no quantity stated → use 1, flag
+7. sales_order = ${TODAY}-CustomerNameNoSpaces (use stripped name)
+8. final_quantity and status = always empty string ""
+9. Plain "mango" with no variety → item_name="Mango", flag for manual variety entry
+10. Plain "grapes" → Green grapes
+
+CRITICAL: Every order line must have description populated if there are ANY qualifiers, notes, conditions or piece assumptions. Do not leave description blank if the customer said anything beyond just the fruit name and weight.
+
+Return ONLY valid compact JSON, no markdown:
+{"rows":[{"order_date":"${TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
+
+  try{
+    const b64s=await Promise.all(imgs.map(compress));
+    const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
+    const BATCH=4;
+    const batches=[];
+    for(let i=0;i<blocks.length;i+=BATCH)batches.push(blocks.slice(i,i+BATCH));
+
+    let allRows=[],allFlags=[];
+
+    async function callAPI(batch){
+      const resp=await fetch('/.netlify/functions/parse',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:4000,system:SYS,
+          messages:[{role:'user',content:[...batch,{type:'text',text:'Parse all orders. Return only valid compact JSON.'}]}]
+        })
+      });
+      const txt=await resp.text();
+      let data;
+      try{data=JSON.parse(txt);}catch(e){throw new Error('HTTP '+resp.status+': '+txt.slice(0,150));}
+      if(data.error)throw new Error(JSON.stringify(data.error));
+      if(!data.content?.length)throw new Error('No content: '+data.stop_reason);
+      return parseJson(data.content.map(x=>x.text||'').join(''));
+    }
+
+    async function processBatch(batch,label){
+      try{set('Parsing '+label+'…','loading');return await callAPI(batch);}
+      catch(e){
+        if(batch.length<=1)throw new Error(label+' failed: '+e.message);
+        set('Splitting '+label+', retrying…','loading');
+        const mid=Math.ceil(batch.length/2);
+        const a=await processBatch(batch.slice(0,mid),label+'a');
+        const b=await processBatch(batch.slice(mid),label+'b');
+        return{rows:[...(a.rows||[]),...(b.rows||[])],flags:[...(a.flags||[]),...(b.flags||[])]};
+      }
+    }
+
+    for(let i=0;i<batches.length;i++){
+      const p=await processBatch(batches[i],`batch ${i+1}/${batches.length}`);
+      allRows=allRows.concat(p.rows||[]);
+      allFlags=allFlags.concat(p.flags||[]);
+    }
+
+    // Deduplicate against today's memory
+    const skipped=[];
+    const newRows=allRows.filter(r=>{
+      if(isDuplicate(r)){skipped.push(r.customer_name+' – '+r.item_name);return false;}
+      return true;
     });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Edge function error ' + resp.status);
-    render(data);
-  } catch(e) {
-    statusBar.textContent = '❌ ' + e.message;
-    statusBar.className = 'status-bar error';
-    parseBtn.disabled = false;
+    addToMemory(newRows);
+
+    render({rows:newRows,flags:allFlags,skipped});
+  }catch(e){
+    set('❌ '+e.message,'error');
+    pb.disabled=false;
   }
 });
 
-function render(parsed) {
-  const { rows = [], flags = [] } = parsed;
-  if (flags.length) {
-    flagsBox.className = 'flags-box';
-    flagsBox.textContent = flags.join('\n');
+function render(p){
+  const{rows=[],flags=[],skipped=[]}=p;
+  if(flags.length){fb.className='flags-box';fb.textContent=flags.join('\n');}
+  else{fb.className='flags-ok';fb.textContent='All rows parsed cleanly ✓';}
+
+  if(skipped.length){
+    sc.className='skip-count';
+    sc.textContent='⏭ Skipped '+skipped.length+' duplicate(s) already parsed today: '+skipped.join(', ');
   } else {
-    flagsBox.className = 'flags-ok';
-    flagsBox.textContent = 'All rows parsed cleanly ✓';
+    sc.className='skip-count hidden';
   }
-  const header = 'order_date\tcustomer_name\titem_name\tdescription\tquantity\tfinal_quantity\tstatus\tsales_order';
-  const lines = rows.map(r =>
-    [r.order_date, r.customer_name, r.item_name, r.description||'', r.quantity, '', '', r.sales_order].join('\t')
-  );
-  tsvBox.textContent = [header, ...lines].join('\n');
-  rowCount.textContent = '— ' + rows.length + ' row' + (rows.length !== 1 ? 's' : '');
-  resultsWrap.classList.remove('hidden');
-  statusBar.textContent = 'Done — ' + rows.length + ' rows parsed';
-  statusBar.className = 'status-bar';
-  parseBtn.disabled = false;
+
+  tb.textContent=rows.map(r=>[r.order_date,r.customer_name,r.item_name,r.description||'',r.quantity,'','',r.sales_order].join('\t')).join('\n');
+  rc.textContent='— '+rows.length+' new rows';
+  rw.classList.remove('hidden');
+  set('Done — '+rows.length+' new rows, '+skipped.length+' duplicates skipped');
+  pb.disabled=false;
 }
 
-copyBtn.addEventListener('click', () => {
-  navigator.clipboard.writeText(tsvBox.textContent).then(() => {
-    copyBtn.textContent = '✅ Copied!';
-    setTimeout(() => { copyBtn.textContent = '📋 Copy TSV'; }, 2000);
-  });
+cb.addEventListener('click',()=>{
+  navigator.clipboard.writeText(tb.textContent).then(()=>{cb.textContent='✅ Copied!';setTimeout(()=>cb.textContent='📋 Copy TSV',2000);});
 });
-
-clearBtn.addEventListener('click', () => {
-  imageFiles = [];
-  previews.innerHTML = '';
-  fileInput.value = '';
-  parseBtn.disabled = true;
-  statusBar.textContent = 'Upload screenshots to begin';
-  statusBar.className = 'status-bar';
-  resultsWrap.classList.add('hidden');
-  tsvBox.textContent = '';
+document.getElementById('clrday').addEventListener('click',()=>{
+  save(memKey(),[]);
+  set('Today\'s memory cleared — all orders will be treated as new');
+});
+xb.addEventListener('click',()=>{
+  imgs=[];pv.innerHTML='';fi.value='';pb.disabled=true;
+  set('Upload screenshots to begin');rw.classList.add('hidden');tb.textContent='';
 });
 </script>
 </body>
