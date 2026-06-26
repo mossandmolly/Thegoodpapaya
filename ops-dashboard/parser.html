@@ -65,6 +65,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
   </div>
   <div class="previews" id="pv"></div>
   <div class="status-bar" id="sb">Upload screenshots to begin</div>
+  <div id="timing-summary" class="hidden" style="background:#0a120a;border:1px solid #1e301e;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#9abf9c;line-height:1.8"></div>
   <button class="btn-parse" id="pb" disabled>Parse orders</button>
   <div id="rw" class="hidden">
     <div class="section-label">Flags</div>
@@ -180,17 +181,30 @@ function add(files){
 }
 
 let t0 = 0;
+let timingLog = [];
 function set(msg,cls){
   const now = Date.now();
   const elapsed = t0 ? ` [${((now-t0)/1000).toFixed(1)}s]` : '';
   sb.innerHTML=(cls==='loading'?'<span class="spinner"></span>':'')+msg+elapsed;
   sb.className='status-bar'+(cls?' '+cls:'');
 }
-function timer(label){
-  const now = Date.now();
-  const elapsed = t0 ? ((now-t0)/1000).toFixed(1) : '0';
-  console.log(`[${elapsed}s] ${label}`);
-  return now;
+function logTime(label, ms, extra){
+  timingLog.push({label, ms, extra});
+  console.log(`[${(ms/1000).toFixed(1)}s] ${label}${extra?' | '+extra:''}`);
+}
+function showTimingSummary(totalMs){
+  const div = document.getElementById('timing-summary');
+  let html = '<strong style="color:#7ecb82">⏱ Timing breakdown</strong><br>';
+  timingLog.forEach(t => {
+    const pct = Math.round(t.ms/totalMs*100);
+    const bar = '█'.repeat(Math.round(pct/5));
+    html += `<span style="color:#4a6e4c">${t.label}:</span> <strong>${(t.ms/1000).toFixed(1)}s</strong> (${pct}%) ${bar}`;
+    if(t.extra) html += ` <span style="color:#4a6e4c;font-size:10px">${t.extra}</span>`;
+    html += '<br>';
+  });
+  html += `<strong style="color:#7ecb82">Total: ${(totalMs/1000).toFixed(1)}s</strong>`;
+  div.innerHTML = html;
+  div.classList.remove('hidden');
 }
 
 function compress(file){
@@ -222,6 +236,8 @@ pb.addEventListener('click',async()=>{
   if(!imgs.length)return;
   pb.disabled=true;rw.classList.add('hidden');
   t0 = Date.now();
+  timingLog = [];
+  document.getElementById('timing-summary').classList.add('hidden');
   set('Compressing '+imgs.length+' images…','loading');
 
   const aliasLines=Object.entries(ALIASES).map(([k,v])=>k+'→'+v).join(', ');
@@ -305,6 +321,7 @@ Return ONLY valid compact JSON, no markdown fences:
     const compressStart = Date.now();
     const b64s=await Promise.all(imgs.map(compress));
     const compressMs = Date.now() - compressStart;
+    logTime('Image compression', compressMs, imgs.length+' images');
     const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
 
     // Dynamic batching: target ~800KB total base64 per batch (safe for 26s timeout)
@@ -323,8 +340,7 @@ Return ONLY valid compact JSON, no markdown fences:
     if(currentBatch.length) batches.push(currentBatch);
 
     const totalKB = Math.round(b64s.reduce((a,b)=>a+b.length,0)/1024);
-    set(`Compressed ${imgs.length} imgs → ${totalKB}KB in ${(compressMs/1000).toFixed(1)}s → ${batches.length} batch(es)`, 'loading');
-    await new Promise(r=>setTimeout(r,1000));
+    set(`Compressed ${imgs.length} imgs → ${totalKB}KB → ${batches.length} batch(es)…`, 'loading');
 
     let allRows=[],allFlags=[];
 
@@ -342,7 +358,7 @@ Return ONLY valid compact JSON, no markdown fences:
       if(data.error)throw new Error(JSON.stringify(data.error));
       if(!data.content?.length)throw new Error('No content: '+data.stop_reason);
       const apiMs = Date.now() - apiStart;
-      console.log(`API call took ${(apiMs/1000).toFixed(1)}s, tokens: input=${data.usage?.input_tokens} output=${data.usage?.output_tokens}`);
+      logTime('API call ('+batch.length+' img)', apiMs, `in=${data.usage?.input_tokens} out=${data.usage?.output_tokens} tokens`);
       return parseJson(data.content.map(x=>x.text||'').join(''));
     }
 
@@ -351,8 +367,6 @@ Return ONLY valid compact JSON, no markdown fences:
         const batchStart = Date.now();
         set('Parsing '+label+'…','loading');
         const result = await callAPI(batch);
-        set('Parsed '+label+' in '+((Date.now()-batchStart)/1000).toFixed(1)+'s','loading');
-        await new Promise(r=>setTimeout(r,600));
         return result;
       }
       catch(e){
@@ -371,7 +385,9 @@ Return ONLY valid compact JSON, no markdown fences:
       allRows=allRows.concat(p.rows||[]);
       allFlags=allFlags.concat(p.flags||[]);
     }
+    const totalMs = Date.now() - t0;
     render({rows:allRows,flags:allFlags});
+    showTimingSummary(totalMs);
   }catch(e){
     set('❌ '+e.message,'error');
     pb.disabled=false;
