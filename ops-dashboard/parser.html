@@ -33,7 +33,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 @keyframes spin{to{transform:rotate(360deg)}}
 .config-section{background:#0a120a;border:1px solid #1e301e;border-radius:10px;padding:14px;margin-bottom:16px}
 .config-section h3{font-size:13px;font-weight:600;color:#7ecb82;margin-bottom:10px}
-.config-list{list-style:none}
+.config-list{list-style:none;max-height:200px;overflow-y:auto}
 .config-list li{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid #1a2a1a;color:#9abf9c}
 .config-list li:last-child{border-bottom:none}
 .config-list li span{color:#4a6e4c;font-size:11px;margin-left:8px;flex-shrink:0}
@@ -42,10 +42,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 .add-row input{flex:1;background:#131f14;border:1px solid #2e4d30;border-radius:8px;padding:8px 10px;color:#e8f0e8;font-size:12px;font-family:inherit}
 .add-row input::placeholder{color:#4a6e4c}
 .add-row button{background:#7ecb82;color:#0e1a0f;border:none;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;white-space:nowrap}
-.rules-list{font-size:12px;color:#9abf9c;line-height:2;list-style:none}
-.rules-list li{padding:3px 0;border-bottom:1px solid #1a2a1a}
+.rules-list{font-size:12px;color:#9abf9c;line-height:1.8;list-style:none}
+.rules-list li{padding:4px 0;border-bottom:1px solid #1a2a1a}
+.rules-list li:last-child{border-bottom:none}
 .badge{display:inline-block;background:#1a2e1a;border-radius:4px;padding:1px 6px;font-size:10px;color:#7ecb82;margin-right:4px}
-.skip-count{font-size:12px;color:#4a6e4c;margin-bottom:8px;padding:6px 10px;background:#0a120a;border-radius:6px}
+.note{font-size:11px;color:#4a6e4c;margin-top:6px;font-style:italic}
 </style>
 </head>
 <body>
@@ -55,11 +56,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
   <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
 </div>
 
+<!-- PARSER -->
 <div class="panel active" id="panel-parser">
   <div class="drop-zone" id="dz">
     <input type="file" id="fi" accept="image/*" multiple>
     <span class="drop-label">📸 Upload WhatsApp screenshots</span>
-    <div class="drop-sub">Tap to select · multiple images OK · duplicates auto-skipped</div>
+    <div class="drop-sub">Tap to select · multiple images OK · auto-batched</div>
   </div>
   <div class="previews" id="pv"></div>
   <div class="status-bar" id="sb">Upload screenshots to begin</div>
@@ -68,43 +70,45 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
     <div class="section-label">Flags</div>
     <div id="fb"></div>
     <div class="section-label">Parsed rows <span id="rc"></span></div>
-    <div id="sc" class="skip-count hidden"></div>
     <div class="tsv-box" id="tb"></div>
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
-    <button class="btn-sec" id="clrday" style="color:#e07070;border-color:#4a2a2a">🗑 Clear today's memory</button>
-    <button class="btn-sec" id="xb">🔄 Clear images</button>
+    <button class="btn-sec" id="xb">🔄 Clear</button>
   </div>
 </div>
 
+<!-- CONFIG -->
 <div class="panel" id="panel-config">
   <div class="config-section">
     <h3>📋 Parser Rules</h3>
     <ul class="rules-list">
       <li><span class="badge">columns</span>order_date · customer_name · item_name · description · quantity · final_quantity(blank) · status(blank) · sales_order</li>
-      <li><span class="badge">customer</span>Society + door only — strip Indian names. "Shalu Villa 54"→"Villa 54"</li>
+      <li><span class="badge">customer</span>Society + door only — strip Indian names. "Shalu Villa 54"→"Villa 54", "Femina Iksha G1301"→"Iksha G1301"</li>
       <li><span class="badge">sales order</span>Date + name no spaces. e.g. 2026-06-26-Villa54</li>
       <li><span class="badge">item name</span>Base fruit from canonical list only, no qualifiers</li>
-      <li><span class="badge">description</span>ALL qualifiers — ripe, sweet, medium, organic, ready to eat, semi-ripe, not very ripe, long, small, big, assumed N pieces, if available, delivery notes, complaints</li>
-      <li><span class="badge">qty: g/kg</span>Convert to decimal — 500g=0.5, half kg=0.5</li>
-      <li><span class="badge">qty: pieces</span>Multiply by kg/pc → add "assumed N pieces" to description</li>
-      <li><span class="badge">qty: unknown</span>No conversion rule → raw count + flag</li>
-      <li><span class="badge">qty: none</span>No quantity → 1 + flag</li>
-      <li><span class="badge">ignore</span>👍 reacted messages, payments, deleted messages, system messages</li>
-      <li><span class="badge">keep</span>Complaints and delivery notes → put in description field</li>
-      <li><span class="badge">duplicates</span>Same customer+item+qty already parsed today → skipped</li>
+      <li><span class="badge">description</span>ALL qualifiers + delivery notes + conditions + piece count. e.g. "ripe, 3 pieces", "door pe rakh dena", "only if sweet", "ready to eat, 2 pieces"</li>
+      <li><span class="badge">pieces</span>Always include "N pieces" in description when order is by count</li>
+      <li><span class="badge">qty: g/kg</span>Convert to decimal — 500g=0.5, half kg=0.5, 1/2kg=0.5</li>
+      <li><span class="badge">qty: pieces</span>N × kg/pc from table → quantity in kg. Add "N pieces" to description</li>
+      <li><span class="badge">qty: unknown</span>No conversion → keep raw count as qty, flag, add "N pieces" to description</li>
+      <li><span class="badge">qty: none</span>No quantity stated → use 1, flag</li>
+      <li><span class="badge">ignore</span>👍 reacted messages, payment messages, deleted messages, system messages</li>
+      <li><span class="badge">keep</span>Complaints, delivery notes, conditions → description field</li>
       <li><span class="badge">societies</span>Auto-detected — no list needed</li>
     </ul>
+    <p class="note">Config changes on this tab apply immediately to the next parse. Resets on page refresh.</p>
   </div>
+
   <div class="config-section">
-    <h3>🍎 Canonical Fruit List</h3>
+    <h3>🍎 Canonical Fruit List <span style="font-size:11px;color:#4a6e4c;font-weight:400">(session only)</span></h3>
     <ul class="config-list" id="fruit-list"></ul>
     <div class="add-row">
       <input type="text" id="new-fruit" placeholder="Add fruit e.g. Dragonfruit yellow">
       <button onclick="addFruit()">Add</button>
     </div>
   </div>
+
   <div class="config-section">
-    <h3>⚖️ Piece → KG Conversions</h3>
+    <h3>⚖️ Piece → KG Conversions <span style="font-size:11px;color:#4a6e4c;font-weight:400">(session only)</span></h3>
     <ul class="config-list" id="pkg-list"></ul>
     <div class="add-row">
       <input type="text" id="new-pkg-fruit" placeholder="Fruit name e.g. Lychee" style="flex:2">
@@ -112,44 +116,27 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
       <button onclick="addPkg()">Add</button>
     </div>
   </div>
+
   <div class="config-section">
-    <h3>🔁 Aliases</h3>
+    <h3>🔁 Aliases <span style="font-size:11px;color:#4a6e4c;font-weight:400">(session only)</span></h3>
     <ul class="config-list" id="alias-list"></ul>
     <div class="add-row">
-      <input type="text" id="new-alias-from" placeholder="What customer types">
-      <input type="text" id="new-alias-to" placeholder="Canonical name">
+      <input type="text" id="new-alias-from" placeholder="What customer types e.g. litchee">
+      <input type="text" id="new-alias-to" placeholder="Canonical name e.g. Lychee">
       <button onclick="addAlias()">Add</button>
     </div>
   </div>
 </div>
 
 <script>
-const DEFAULT_FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan"];
-const DEFAULT_PKG={"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50};
-const DEFAULT_ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orange","sweet orange":"Mandarin orange","yellaki":"Yelakki banana","yellakki":"Yelakki banana","yalakki":"Yelakki banana","yalaki":"Yelakki banana","elaichi banana":"Yelakki banana","elachi banana":"Yelakki banana","banana":"Yelakki banana","y banana":"Yelakki banana","y bananas":"Yelakki banana","langda":"Langra mango","langdaa":"Langra mango","langra":"Langra mango","langa":"Langra mango","kesar":"Kesar mango","alphonso":"Alphonso mango","dasheri":"Dasheri mango","dussehri":"Dasheri mango","badami":"Badami mango","beganpalli":"Banganapalli mango","baganpalli":"Banganapalli mango","pedanpally":"Banganapalli mango","banganphalli":"Banganapalli mango","baiganphali":"Banganapalli mango","bagganpalli":"Banganapalli mango","cherry sweet":"Cherry Indian","cherry":"Cherry Indian","grapes":"Green grapes","litchi":"Lychee","lichi":"Lychee","sweet lime":"Mosambi","rocket apple":"Rockit apple","rock apple":"Rockit apple","rambuttan":"Rambutan","rambutten":"Rambutan","rambhutan":"Rambutan","rambuthan":"Rambutan","imanpasad":"Imampasand mango","imampasad":"Imampasand mango","thai guava":"Guava white","white guava":"Guava white","dragon fruit red":"Dragon red","dragonfruit red":"Dragon red"};
+// ── Default config ────────────────────────────────────────────────────────
+let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan"];
 
-function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
-function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+let PKG={"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50};
 
-let FRUITS=load('gp_fruits',DEFAULT_FRUITS);
-let PKG=load('gp_pkg',DEFAULT_PKG);
-let ALIASES=load('gp_aliases',DEFAULT_ALIASES);
+let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orange","sweet orange":"Mandarin orange","yellaki":"Yelakki banana","yellakki":"Yelakki banana","yalakki":"Yelakki banana","yalaki":"Yelakki banana","elaichi banana":"Yelakki banana","elachi banana":"Yelakki banana","banana":"Yelakki banana","y banana":"Yelakki banana","y bananas":"Yelakki banana","langda":"Langra mango","langdaa":"Langra mango","langra":"Langra mango","langa":"Langra mango","kesar":"Kesar mango","alphonso":"Alphonso mango","dasheri":"Dasheri mango","dussehri":"Dasheri mango","badami":"Badami mango","beganpalli":"Banganapalli mango","baganpalli":"Banganapalli mango","pedanpally":"Banganapalli mango","banganphalli":"Banganapalli mango","baiganphali":"Banganapalli mango","bagganpalli":"Banganapalli mango","cherry sweet":"Cherry Indian","cherry":"Cherry Indian","grapes":"Green grapes","litchi":"Lychee","lichi":"Lychee","sweet lime":"Mosambi","rocket apple":"Rockit apple","rock apple":"Rockit apple","rambuttan":"Rambutan","rambutten":"Rambutan","rambhutan":"Rambutan","rambuthan":"Rambutan","imanpasad":"Imampasand mango","imampasad":"Imampasand mango","thai guava":"Guava white","white guava":"Guava white","dragon fruit red":"Dragon red","dragonfruit red":"Dragon red"};
 
-const TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
-
-// ── Duplicate memory ──────────────────────────────────────────────────────
-function memKey(){return 'gp_parsed_'+TODAY;}
-function getMemory(){return load(memKey(),[]);}
-function saveMemory(rows){save(memKey(),rows);}
-function rowKey(r){return [r.customer_name,r.item_name,String(r.quantity)].join('|').toLowerCase();}
-function isDuplicate(r){return getMemory().some(k=>k===rowKey(r));}
-function addToMemory(rows){
-  const existing=getMemory();
-  const keys=new Set(existing);
-  rows.forEach(r=>keys.add(rowKey(r)));
-  saveMemory([...keys]);
-}
-
+// ── Tabs ──────────────────────────────────────────────────────────────────
 function switchTab(name){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','config'][i]===name));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -157,24 +144,26 @@ function switchTab(name){
   if(name==='config')renderConfig();
 }
 
+// ── Config UI ─────────────────────────────────────────────────────────────
 function renderConfig(){
   document.getElementById('fruit-list').innerHTML=FRUITS.map((f,i)=>`<li>${f}<button class="del-btn" onclick="delFruit(${i})">✕</button></li>`).join('');
   document.getElementById('pkg-list').innerHTML=Object.entries(PKG).map(([k,v])=>`<li>${k}<span>${v} kg/pc</span><button class="del-btn" onclick="delPkg('${k}')">✕</button></li>`).join('');
   document.getElementById('alias-list').innerHTML=Object.entries(ALIASES).map(([k,v])=>`<li>${k}<span>→ ${v}</span><button class="del-btn" onclick="delAlias('${k}')">✕</button></li>`).join('');
 }
+function addFruit(){const v=document.getElementById('new-fruit').value.trim();if(!v)return;FRUITS.push(v);document.getElementById('new-fruit').value='';renderConfig();}
+function delFruit(i){FRUITS.splice(i,1);renderConfig();}
+function addPkg(){const f=document.getElementById('new-pkg-fruit').value.trim().toLowerCase();const v=parseFloat(document.getElementById('new-pkg-val').value);if(!f||isNaN(v))return;PKG[f]=v;document.getElementById('new-pkg-fruit').value='';document.getElementById('new-pkg-val').value='';renderConfig();}
+function delPkg(k){delete PKG[k];renderConfig();}
+function addAlias(){const f=document.getElementById('new-alias-from').value.trim().toLowerCase();const t=document.getElementById('new-alias-to').value.trim();if(!f||!t)return;ALIASES[f]=t;document.getElementById('new-alias-from').value='';document.getElementById('new-alias-to').value='';renderConfig();}
+function delAlias(k){delete ALIASES[k];renderConfig();}
 
-function addFruit(){const v=document.getElementById('new-fruit').value.trim();if(!v)return;FRUITS.push(v);save('gp_fruits',FRUITS);document.getElementById('new-fruit').value='';renderConfig();}
-function delFruit(i){FRUITS.splice(i,1);save('gp_fruits',FRUITS);renderConfig();}
-function addPkg(){const f=document.getElementById('new-pkg-fruit').value.trim().toLowerCase();const v=parseFloat(document.getElementById('new-pkg-val').value);if(!f||isNaN(v))return;PKG[f]=v;save('gp_pkg',PKG);document.getElementById('new-pkg-fruit').value='';document.getElementById('new-pkg-val').value='';renderConfig();}
-function delPkg(k){delete PKG[k];save('gp_pkg',PKG);renderConfig();}
-function addAlias(){const f=document.getElementById('new-alias-from').value.trim().toLowerCase();const t=document.getElementById('new-alias-to').value.trim();if(!f||!t)return;ALIASES[f]=t;save('gp_aliases',ALIASES);document.getElementById('new-alias-from').value='';document.getElementById('new-alias-to').value='';renderConfig();}
-function delAlias(k){delete ALIASES[k];save('gp_aliases',ALIASES);renderConfig();}
-
+// ── Parser ────────────────────────────────────────────────────────────────
+const TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
 let imgs=[];
 const dz=document.getElementById('dz'),fi=document.getElementById('fi'),pv=document.getElementById('pv');
 const pb=document.getElementById('pb'),sb=document.getElementById('sb'),rw=document.getElementById('rw');
 const fb=document.getElementById('fb'),tb=document.getElementById('tb'),rc=document.getElementById('rc');
-const cb=document.getElementById('cb'),xb=document.getElementById('xb'),sc=document.getElementById('sc');
+const cb=document.getElementById('cb'),xb=document.getElementById('xb');
 
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
 dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
@@ -239,25 +228,41 @@ KG/PC CONVERSIONS: ${pkgLines}
 ALIASES: ${aliasLines}
 
 RULES:
-1. customer_name = society+door ONLY, strip all Indian first/last names. Examples: "Shalu Villa 54"→"Villa 54", "Femina Iksha G1301"→"Iksha G1301", "Nandhini Muthukrishnan Dhavala C602"→"Dhavala C602"
-2. IGNORE ONLY: 👍 reacted messages, payment confirmations, UPI receipts, deleted messages, system messages (member added/removed)
-3. KEEP complaints and delivery notes — put them in the description field e.g. "not very ripe", "door delivery", "if available", "only if sweet"
-4. item_name = canonical name only, no qualifiers
-5. description = ALL qualifiers AND delivery notes AND complaints AND conditions. Examples: "ripe", "sweet", "medium", "organic", "ready to eat", "semi-ripe", "not very ripe", "long", "small", "if available", "assumed 3 pieces", "door pe rakh dena"
-6. Quantity rules:
-   - g or gm or gms or kg stated → convert to kg decimal (500g=0.5, 300gm=0.3, half kg=0.5, 1/2kg=0.5)
-   - plain number or Npc or N pieces → multiply by kg/pc if fruit in conversion table → add "assumed N pieces" to description
-   - fruit NOT in conversion table with plain count → keep raw count as quantity, flag, add "assumed N pieces" to description  
-   - Rambutan with piece count → keep raw count, flag (no conversion yet)
-   - no quantity stated → use 1, flag
-7. sales_order = ${TODAY}-CustomerNameNoSpaces (use stripped name)
-8. final_quantity and status = always empty string ""
-9. Plain "mango" with no variety → item_name="Mango", flag for manual variety entry
-10. Plain "grapes" → Green grapes
+1. customer_name = society+door ONLY, strip all Indian first/last names.
+   Examples: "Shalu Villa 54"→"Villa 54", "Femina Iksha G1301"→"Iksha G1301", "Nandhini Muthukrishnan Dhavala C602"→"Dhavala C602"
 
-CRITICAL: Every order line must have description populated if there are ANY qualifiers, notes, conditions or piece assumptions. Do not leave description blank if the customer said anything beyond just the fruit name and weight.
+2. IGNORE ONLY: 👍 reacted messages, payment/UPI confirmations, deleted messages, system messages (member added/removed)
 
-Return ONLY valid compact JSON, no markdown:
+3. item_name = canonical name only, NO qualifiers in item_name
+
+4. description = EVERYTHING except the base fruit name and quantity:
+   - All qualifiers: ripe, sweet, medium, large, small, organic, ready to eat, semi-ripe, not very ripe, long, striped etc
+   - Delivery instructions: "door pe rakh dena", "leave at door", "call before delivery" etc
+   - Conditions: "only if sweet", "if available", "not overripe" etc
+   - Piece count: ALWAYS include "N pieces" when order is by count e.g. "2 pieces", "ripe, 3 pieces", "ready to eat, 1 piece"
+   - Complaints or special requests also go here
+
+5. Quantity rules:
+   - g/gm/gms/kg stated → convert to kg decimal (500g=0.5, 300gm=0.3, half kg=0.5, 1/2kg=0.5, 2kg=2)
+   - N pc / N pieces / plain N → if fruit in KG/PC table: qty = N × kg/pc, add "N pieces" to description
+   - fruit NOT in table with piece count → qty = raw count, flag yellow, add "N pieces" to description
+   - Rambutan with piece count → qty = raw count, flag (no conversion yet), add "N pieces" to description
+   - no quantity → qty = 1, flag yellow
+
+6. sales_order = ${TODAY}-CustomerNameNoSpaces
+
+7. final_quantity and status = always empty string ""
+
+8. Plain "mango" no variety → item_name="Mango", flag for manual variety entry
+
+9. Plain "grapes" → Green grapes
+
+CRITICAL RULES:
+- description must NEVER be blank if there are any qualifiers, notes, conditions, or piece counts
+- "N pieces" MUST appear in description whenever the order quantity was originally specified as pieces/pc/nos
+- Do NOT put qualifiers in item_name — only base fruit name belongs there
+
+Return ONLY valid compact JSON, no markdown fences:
 {"rows":[{"order_date":"${TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
 
   try{
@@ -266,7 +271,6 @@ Return ONLY valid compact JSON, no markdown:
     const BATCH=4;
     const batches=[];
     for(let i=0;i<blocks.length;i+=BATCH)batches.push(blocks.slice(i,i+BATCH));
-
     let allRows=[],allFlags=[];
 
     async function callAPI(batch){
@@ -301,16 +305,7 @@ Return ONLY valid compact JSON, no markdown:
       allRows=allRows.concat(p.rows||[]);
       allFlags=allFlags.concat(p.flags||[]);
     }
-
-    // Deduplicate against today's memory
-    const skipped=[];
-    const newRows=allRows.filter(r=>{
-      if(isDuplicate(r)){skipped.push(r.customer_name+' – '+r.item_name);return false;}
-      return true;
-    });
-    addToMemory(newRows);
-
-    render({rows:newRows,flags:allFlags,skipped});
+    render({rows:allRows,flags:allFlags});
   }catch(e){
     set('❌ '+e.message,'error');
     pb.disabled=false;
@@ -318,30 +313,18 @@ Return ONLY valid compact JSON, no markdown:
 });
 
 function render(p){
-  const{rows=[],flags=[],skipped=[]}=p;
+  const{rows=[],flags=[]}=p;
   if(flags.length){fb.className='flags-box';fb.textContent=flags.join('\n');}
   else{fb.className='flags-ok';fb.textContent='All rows parsed cleanly ✓';}
-
-  if(skipped.length){
-    sc.className='skip-count';
-    sc.textContent='⏭ Skipped '+skipped.length+' duplicate(s) already parsed today: '+skipped.join(', ');
-  } else {
-    sc.className='skip-count hidden';
-  }
-
   tb.textContent=rows.map(r=>[r.order_date,r.customer_name,r.item_name,r.description||'',r.quantity,'','',r.sales_order].join('\t')).join('\n');
-  rc.textContent='— '+rows.length+' new rows';
+  rc.textContent='— '+rows.length+' rows';
   rw.classList.remove('hidden');
-  set('Done — '+rows.length+' new rows, '+skipped.length+' duplicates skipped');
+  set('Done — '+rows.length+' rows from '+imgs.length+' image(s)');
   pb.disabled=false;
 }
 
 cb.addEventListener('click',()=>{
   navigator.clipboard.writeText(tb.textContent).then(()=>{cb.textContent='✅ Copied!';setTimeout(()=>cb.textContent='📋 Copy TSV',2000);});
-});
-document.getElementById('clrday').addEventListener('click',()=>{
-  save(memKey(),[]);
-  set('Today\'s memory cleared — all orders will be treated as new');
 });
 xb.addEventListener('click',()=>{
   imgs=[];pv.innerHTML='';fi.value='';pb.disabled=true;
