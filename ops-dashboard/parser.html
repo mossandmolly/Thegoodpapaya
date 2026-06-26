@@ -188,12 +188,12 @@ function compress(file){
   return new Promise((res,rej)=>{
     const img=new Image();
     img.onload=()=>{
-      const MAX=1000,c=document.createElement('canvas');
+      const MAX=800,c=document.createElement('canvas');
       let w=img.width,h=img.height;
       if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
       if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
       c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
-      res(c.toDataURL('image/jpeg',0.65).split(',')[1]);
+      res(c.toDataURL('image/jpeg',0.55).split(',')[1]);
     };
     img.onerror=rej;img.src=URL.createObjectURL(file);
   });
@@ -279,13 +279,14 @@ RULES:
     - Only parse what the customer wrote BELOW the quoted box
     - This applies regardless of exact wording — "also add", "plus", "and also", or any reply to their own order
     - If the reply is just a confirmation, address, or non-order text → ignore entirely
+    - For add-on items, prepend "add-on" to the description e.g. "add-on, ripe" or just "add-on" if no other qualifiers
 
-CRITICAL RULES:
-- description must NEVER be blank if there are any qualifiers, notes, conditions, or piece counts
-- "N pieces" MUST appear in description whenever the order quantity was originally specified as pieces/pc/nos
-- Do NOT put qualifiers in item_name — only base fruit name belongs there
-- NEVER default to striped variants — only use Watermelon striped or Muskmelon striped when customer explicitly says "striped"
-- "orange" alone means Mandarin orange, NEVER mango
+CRITICAL:
+- description never blank if any qualifier/note/condition/piece count exists
+- Always include "N pieces" in description when order was by count
+- item_name = base fruit only, no qualifiers ever
+- Watermelon/Muskmelon = plain variety by default, NEVER striped unless explicitly said
+- "orange" = Mandarin orange always, never mango
 
 Return ONLY valid compact JSON, no markdown fences:
 {"rows":[{"order_date":"${TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
@@ -293,7 +294,7 @@ Return ONLY valid compact JSON, no markdown fences:
   try{
     const b64s=await Promise.all(imgs.map(compress));
     const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
-    const BATCH=4;
+    const BATCH=6;
     const batches=[];
     for(let i=0;i<blocks.length;i+=BATCH)batches.push(blocks.slice(i,i+BATCH));
     let allRows=[],allFlags=[];
