@@ -398,11 +398,14 @@ Return ONLY valid compact JSON, no markdown fences:
       }
     }
 
-    for(let i=0;i<batches.length;i++){
-      const p=await processBatch(batches[i],`batch ${i+1}/${batches.length}`);
-      allRows=allRows.concat(p.rows||[]);
-      allFlags=allFlags.concat(p.flags||[]);
-    }
+    set(`Firing ${batches.length} batch(es) in parallel…`,'loading');
+    const results = await Promise.all(
+      batches.map((batch,i) => processBatch(batch, 'B'+(i+1)))
+    );
+    results.forEach(p => {
+      allRows = allRows.concat(p.rows||[]);
+      allFlags = allFlags.concat(p.flags||[]);
+    });
     const totalMs = Date.now() - t0;
     render({rows:allRows, flags:allFlags});
     showTimingSummary(totalMs);
