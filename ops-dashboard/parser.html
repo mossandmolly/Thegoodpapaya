@@ -179,9 +179,18 @@ function add(files){
   if(imgs.length){pb.disabled=false;set(imgs.length+' image(s) ready');}
 }
 
+let t0 = 0;
 function set(msg,cls){
-  sb.innerHTML=(cls==='loading'?'<span class="spinner"></span>':'')+msg;
+  const now = Date.now();
+  const elapsed = t0 ? ` [${((now-t0)/1000).toFixed(1)}s]` : '';
+  sb.innerHTML=(cls==='loading'?'<span class="spinner"></span>':'')+msg+elapsed;
   sb.className='status-bar'+(cls?' '+cls:'');
+}
+function timer(label){
+  const now = Date.now();
+  const elapsed = t0 ? ((now-t0)/1000).toFixed(1) : '0';
+  console.log(`[${elapsed}s] ${label}`);
+  return now;
 }
 
 function compress(file){
@@ -212,6 +221,7 @@ function parseJson(raw){
 pb.addEventListener('click',async()=>{
   if(!imgs.length)return;
   pb.disabled=true;rw.classList.add('hidden');
+  t0 = Date.now();
   set('Compressing '+imgs.length+' images…','loading');
 
   const aliasLines=Object.entries(ALIASES).map(([k,v])=>k+'→'+v).join(', ');
@@ -292,7 +302,9 @@ Return ONLY valid compact JSON, no markdown fences:
 {"rows":[{"order_date":"${TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
 
   try{
+    const compressStart = Date.now();
     const b64s=await Promise.all(imgs.map(compress));
+    const compressMs = Date.now() - compressStart;
     const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
 
     // Dynamic batching: target ~800KB total base64 per batch (safe for 26s timeout)
@@ -311,12 +323,13 @@ Return ONLY valid compact JSON, no markdown fences:
     if(currentBatch.length) batches.push(currentBatch);
 
     const totalKB = Math.round(b64s.reduce((a,b)=>a+b.length,0)/1024);
-    set(`${imgs.length} images compressed to ${totalKB}KB → ${batches.length} batch(es)`, 'loading');
-    await new Promise(r=>setTimeout(r,800)); // brief pause so user sees the info
+    set(`Compressed ${imgs.length} imgs → ${totalKB}KB in ${(compressMs/1000).toFixed(1)}s → ${batches.length} batch(es)`, 'loading');
+    await new Promise(r=>setTimeout(r,1000));
 
     let allRows=[],allFlags=[];
 
     async function callAPI(batch){
+      const apiStart = Date.now();
       const resp=await fetch('/.netlify/functions/parse',{
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:4000,system:SYS,
@@ -328,14 +341,24 @@ Return ONLY valid compact JSON, no markdown fences:
       try{data=JSON.parse(txt);}catch(e){throw new Error('HTTP '+resp.status+': '+txt.slice(0,150));}
       if(data.error)throw new Error(JSON.stringify(data.error));
       if(!data.content?.length)throw new Error('No content: '+data.stop_reason);
+      const apiMs = Date.now() - apiStart;
+      console.log(`API call took ${(apiMs/1000).toFixed(1)}s, tokens: input=${data.usage?.input_tokens} output=${data.usage?.output_tokens}`);
       return parseJson(data.content.map(x=>x.text||'').join(''));
     }
 
     async function processBatch(batch,label){
-      try{set('Parsing '+label+'…','loading');return await callAPI(batch);}
+      try{
+        const batchStart = Date.now();
+        set('Parsing '+label+'…','loading');
+        const result = await callAPI(batch);
+        set('Parsed '+label+' in '+((Date.now()-batchStart)/1000).toFixed(1)+'s','loading');
+        await new Promise(r=>setTimeout(r,600));
+        return result;
+      }
       catch(e){
         if(batch.length<=1)throw new Error(label+' failed: '+e.message);
-        set('Splitting '+label+', retrying…','loading');
+        set('⚠️ '+label+' timed out after '+((Date.now()-t0)/1000).toFixed(1)+'s, splitting…','loading');
+        await new Promise(r=>setTimeout(r,500));
         const mid=Math.ceil(batch.length/2);
         const a=await processBatch(batch.slice(0,mid),label+'a');
         const b=await processBatch(batch.slice(mid),label+'b');
