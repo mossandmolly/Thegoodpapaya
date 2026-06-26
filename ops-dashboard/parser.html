@@ -257,10 +257,32 @@ RULES:
 
 9. Plain "grapes" → Green grapes
 
+10. DEFAULTS — when no variety specified, use these:
+    - "orange" → Mandarin orange (add "confirm mandarin variety" to description)
+    - "pomegranate" → Pomegranate large
+    - "watermelon" → Watermelon (NOT Watermelon striped — only use striped if customer explicitly says striped)
+    - "muskmelon" → Muskmelon (NOT Muskmelon striped — only use striped if explicitly stated)
+    - "guava" → Guava white
+    - "banana" → Yelakki banana
+    - "cherry" → Cherry Indian
+    - "apple" → Gala apple
+
+11. SOCIETY NAME — if a customer's message has no society name, infer it from:
+    - The WhatsApp group name shown at the top of the screenshot
+    - OR other customers in the same screenshot who have the same society
+    - Add inferred society to customer_name as normal
+
+12. ADD-ON ORDERS — if a message says "also add", "plus", "additionally", "add to my order" etc:
+    - Output ONLY the new add-on items, not the original order items
+    - Do NOT repeat items already listed in the original order message
+    - If the add-on references a previous order not visible in the screenshot, only output the new items mentioned
+
 CRITICAL RULES:
 - description must NEVER be blank if there are any qualifiers, notes, conditions, or piece counts
 - "N pieces" MUST appear in description whenever the order quantity was originally specified as pieces/pc/nos
 - Do NOT put qualifiers in item_name — only base fruit name belongs there
+- NEVER default to striped variants — only use Watermelon striped or Muskmelon striped when customer explicitly says "striped"
+- "orange" alone means Mandarin orange, NEVER mango
 
 Return ONLY valid compact JSON, no markdown fences:
 {"rows":[{"order_date":"${TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
