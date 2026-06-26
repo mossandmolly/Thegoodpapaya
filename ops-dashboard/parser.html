@@ -294,9 +294,26 @@ Return ONLY valid compact JSON, no markdown fences:
   try{
     const b64s=await Promise.all(imgs.map(compress));
     const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
-    const BATCH=6;
-    const batches=[];
-    for(let i=0;i<blocks.length;i+=BATCH)batches.push(blocks.slice(i,i+BATCH));
+
+    // Dynamic batching: target ~800KB total base64 per batch (safe for 26s timeout)
+    const TARGET_BYTES = 800 * 1024;
+    const batches = [];
+    let currentBatch = [], currentSize = 0;
+    for(let i=0; i<blocks.length; i++){
+      const sz = b64s[i].length;
+      if(currentBatch.length > 0 && currentSize + sz > TARGET_BYTES){
+        batches.push(currentBatch);
+        currentBatch = []; currentSize = 0;
+      }
+      currentBatch.push(blocks[i]);
+      currentSize += sz;
+    }
+    if(currentBatch.length) batches.push(currentBatch);
+
+    const totalKB = Math.round(b64s.reduce((a,b)=>a+b.length,0)/1024);
+    set(`${imgs.length} images compressed to ${totalKB}KB → ${batches.length} batch(es)`, 'loading');
+    await new Promise(r=>setTimeout(r,800)); // brief pause so user sees the info
+
     let allRows=[],allFlags=[];
 
     async function callAPI(batch){
