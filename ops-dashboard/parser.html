@@ -339,7 +339,7 @@ Return ONLY valid compact JSON, no markdown fences:
     const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
 
     // Dynamic batching: target ~800KB total base64 per batch (safe for 26s timeout)
-    const TARGET_BYTES = 2 * 1024 * 1024;
+    const TARGET_BYTES = 300 * 1024;
     const batches = [];
     let currentBatch = [], currentSize = 0;
     for(let i=0; i<blocks.length; i++){
@@ -358,27 +358,48 @@ Return ONLY valid compact JSON, no markdown fences:
 
     let allRows=[],allFlags=[];
 
-    // ONE call to Netlify — parallel Anthropic calls happen server-side
-    set('Parsing ' + batches.length + ' batch(es)…', 'loading');
-    const apiStart = Date.now();
-    const resp = await fetch('/.netlify/functions/parse', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4000, system: SYS, batches: batches })
-    });
-    const txt = await resp.text();
-    let results;
-    try { results = JSON.parse(txt); } catch(e) { throw new Error('HTTP ' + resp.status + ': ' + txt.slice(0,150)); }
-    if (results.error) throw new Error(results.error);
-    const apiMs = Date.now() - apiStart;
-    results.forEach((r, i) => {
-      totalInputTokens += r.usage?.input_tokens || 0;
-      totalOutputTokens += r.usage?.output_tokens || 0;
-      logTime('Batch ' + (i+1) + ' (' + batches[i].length + ' img)', r.ms || apiMs, 'in=' + (r.usage?.input_tokens||0) + ' out=' + (r.usage?.output_tokens||0));
-      const parsed = parseJson(r.text);
-      allRows = allRows.concat(parsed.rows || []);
-      allFlags = allFlags.concat(parsed.flags || []);
-    });
+    async function callBatch(batch, label) {
+      const apiStart = Date.now();
+      const resp = await fetch('/.netlify/functions/parse', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:4000, system:SYS,
+          messages:[{role:'user', content:[...batch, {type:'text', text:'Parse all orders. Return only valid compact JSON.'}]}]
+        })
+      });
+      const txt = await resp.text();
+      let data;
+      try{data=JSON.parse(txt);}catch(e){throw new Error('HTTP '+resp.status+': '+txt.slice(0,150));}
+      if(data.error) throw new Error(JSON.stringify(data.error));
+      if(!data.content?.length) throw new Error('No content: '+data.stop_reason);
+      const apiMs = Date.now() - apiStart;
+      const inTok = data.usage?.input_tokens||0;
+      const outTok = data.usage?.output_tokens||0;
+      totalInputTokens += inTok;
+      totalOutputTokens += outTok;
+      logTime(label+' ('+batch.length+' img)', apiMs, 'in='+inTok+' out='+outTok);
+      return parseJson(data.content.map(x=>x.text||'').join(''));
+    }
+
+    for(let i=0; i<batches.length; i++){
+      set('Parsing batch '+(i+1)+' of '+batches.length+'…','loading');
+      try {
+        const p = await callBatch(batches[i], 'Batch '+(i+1));
+        allRows = allRows.concat(p.rows||[]);
+        allFlags = allFlags.concat(p.flags||[]);
+      } catch(e) {
+        // if batch fails, split and retry
+        if(batches[i].length > 1) {
+          set('Splitting batch '+(i+1)+'…','loading');
+          const mid = Math.ceil(batches[i].length/2);
+          const a = await callBatch(batches[i].slice(0,mid), 'Batch '+(i+1)+'a');
+          const b = await callBatch(batches[i].slice(mid), 'Batch '+(i+1)+'b');
+          allRows = allRows.concat((a.rows||[]), (b.rows||[]));
+          allFlags = allFlags.concat((a.flags||[]), (b.flags||[]));
+        } else {
+          throw e;
+        }
+      }
+    }
     const totalMs = Date.now() - t0;
     render({rows:allRows, flags:allFlags});
     showTimingSummary(totalMs);
