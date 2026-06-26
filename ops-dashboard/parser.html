@@ -131,6 +131,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 
 <script>
 // ── Default config ────────────────────────────────────────────────────────
+const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
+
 let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan"];
 
 let PKG={"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50};
@@ -254,6 +256,7 @@ pb.addEventListener('click',async()=>{
 
   const aliasLines=Object.entries(ALIASES).map(([k,v])=>k+'→'+v).join(', ');
   const pkgLines=Object.entries(PKG).map(([k,v])=>k+'='+v+'kg/pc').join(', ');
+  const societyList=SOCIETIES.join(', ');
 
   const SYS=`You are an order parser for Good Papaya, a fresh produce delivery business in Bengaluru.
 
@@ -266,8 +269,13 @@ KG/PC CONVERSIONS: ${pkgLines}
 ALIASES: ${aliasLines}
 
 RULES:
-1. customer_name = society+door ONLY, strip all Indian first/last names.
-   Examples: "Shalu Villa 54"→"Villa 54", "Femina Iksha G1301"→"Iksha G1301", "Nandhini Muthukrishnan Dhavala C602"→"Dhavala C602"
+1. customer_name = society name + door/flat number ONLY, society first then door.
+   KNOWN SOCIETIES: ${societyList}
+   Also use judgement to identify new societies not on this list.
+   STRIP: Indian first/last names (Kalika, Radhika, Kavita, Shalu, Sapna, Femina, Usha, Harpreet, Swati, Nandhini, Komali, Monika, Gayathri, Anu, Nikesha, Chanchal, Sampada, Chanda, Soumya, Anupreet etc), Indian city names (Delhi, Mumbai, Bangalore etc), builder prefixes (APR, Prestige, Brigade unless part of society name).
+   NEVER strip the society name itself. When in doubt whether a word is a person name or society name, KEEP it.
+   REORDER if needed: society always before door e.g. "B303 T4"→"T4 B303", "Sapna T4 B303"→"T4 B303".
+   Examples: "Kalika Villa 384"→"Villa 384", "Radhika Meda A705"→"Meda A705", "Kavita Ferns E402"→"Ferns E402", "Usha Espana L401"→"Espana L401", "Harpreet Lakefront E501"→"Lakefront E501", "Rupal APR Villa 269"→"Villa 269"
 
 2. IGNORE ONLY: 👍 reacted messages, payment/UPI confirmations, deleted messages, system messages (member added/removed)
 
