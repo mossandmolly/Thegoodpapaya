@@ -338,18 +338,21 @@ Return ONLY valid compact JSON, no markdown fences:
     logTime('Image compression', compressMs, imgs.length+' images');
     const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
 
-    // One image per call - simple and reliable
+    // 4 images per batch, sequential
+    const BATCH = 4;
+    const batches = [];
+    for(let i=0; i<blocks.length; i+=BATCH) batches.push(blocks.slice(i, i+BATCH));
     const totalKB = Math.round(b64s.reduce((a,b)=>a+b.length,0)/1024);
-    set('Compressed ' + imgs.length + ' imgs → ' + totalKB + 'KB', 'loading');
+    set('Compressed ' + imgs.length + ' imgs → ' + totalKB + 'KB → ' + batches.length + ' batch(es)', 'loading');
     let allRows=[],allFlags=[];
 
-    for(let i=0; i<blocks.length; i++){
-      set('Parsing image '+(i+1)+' of '+blocks.length+'…','loading');
+    for(let i=0; i<batches.length; i++){
+      set('Parsing batch '+(i+1)+' of '+batches.length+'…','loading');
       const apiStart = Date.now();
       const resp = await fetch('/.netlify/functions/parse', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:4000, system:SYS,
-          messages:[{role:'user', content:[blocks[i], {type:'text', text:'Parse all orders. Return only valid compact JSON.'}]}]
+          messages:[{role:'user', content:[...batches[i], {type:'text', text:'Parse all orders. Return only valid compact JSON.'}]}]
         })
       });
       const txt = await resp.text();
@@ -362,7 +365,7 @@ Return ONLY valid compact JSON, no markdown fences:
       const outTok = data.usage?.output_tokens||0;
       totalInputTokens += inTok;
       totalOutputTokens += outTok;
-      logTime('Image '+(i+1), apiMs, 'in='+inTok+' out='+outTok);
+      logTime('Batch '+(i+1)+' ('+batches[i].length+' imgs)', apiMs, 'in='+inTok+' out='+outTok);
       const p = parseJson(data.content.map(x=>x.text||'').join(''));
       allRows = allRows.concat(p.rows||[]);
       allFlags = allFlags.concat(p.flags||[]);
