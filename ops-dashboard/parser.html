@@ -293,10 +293,12 @@ RULES:
     - "cherry" → Cherry Indian
     - "apple" → Gala apple
 
-11. SOCIETY NAME — if a customer's message has no society name, infer it from:
-    - The WhatsApp group name shown at the top of the screenshot
-    - OR other customers in the same screenshot who have the same society
-    - Add inferred society to customer_name as normal
+11. SOCIETY NAME — if a customer's message has no society name (just a door/flat number like D424, C0711):
+    - Look at the WhatsApp group name at the top of the screenshot (e.g. "77 degree fresh fruits group" → society is "77degree")
+    - OR look at other customers in the same screenshot who have a society name
+    - Prepend the inferred society to the door number
+    - Examples: "D424" in 77degree group → "77degree D424", "C0711" in same group → "77degree C0711"
+    - If you cannot determine society from any context → keep door number only and flag
 
 12. REPLY/ADD-ON ORDERS — WhatsApp replies show a quoted grey box above the new message.
     If a message is a REPLY to another message (i.e. has a quoted grey box at the top showing the original message):
