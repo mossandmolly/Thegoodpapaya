@@ -358,53 +358,26 @@ Return ONLY valid compact JSON, no markdown fences:
 
     let allRows=[],allFlags=[];
 
-    async function callAPI(batch){
-      const apiStart = Date.now();
-      const resp=await fetch('/.netlify/functions/parse',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:4000,system:SYS,
-          messages:[{role:'user',content:[...batch,{type:'text',text:'Parse all orders. Return only valid compact JSON.'}]}]
-        })
-      });
-      const txt=await resp.text();
-      let data;
-      try{data=JSON.parse(txt);}catch(e){throw new Error('HTTP '+resp.status+': '+txt.slice(0,150));}
-      if(data.error)throw new Error(JSON.stringify(data.error));
-      if(!data.content?.length)throw new Error('No content: '+data.stop_reason);
-      const apiMs = Date.now() - apiStart;
-      const inTok = data.usage?.input_tokens || 0;
-      const outTok = data.usage?.output_tokens || 0;
-      totalInputTokens += inTok;
-      totalOutputTokens += outTok;
-      logTime('API call ('+batch.length+' img)', apiMs, `in=${inTok} out=${outTok} tokens`);
-      return parseJson(data.content.map(x=>x.text||'').join(''));
-    }
-
-    async function processBatch(batch,label){
-      try{
-        const batchStart = Date.now();
-        set('Parsing '+label+'…','loading');
-        const result = await callAPI(batch);
-        return result;
-      }
-      catch(e){
-        if(batch.length<=1)throw new Error(label+' failed: '+e.message);
-        set('⚠️ '+label+' timed out after '+((Date.now()-t0)/1000).toFixed(1)+'s, splitting…','loading');
-        await new Promise(r=>setTimeout(r,500));
-        const mid=Math.ceil(batch.length/2);
-        const a=await processBatch(batch.slice(0,mid),label+'a');
-        const b=await processBatch(batch.slice(mid),label+'b');
-        return{rows:[...(a.rows||[]),...(b.rows||[])],flags:[...(a.flags||[]),...(b.flags||[])]};
-      }
-    }
-
-    set(`Firing ${batches.length} batch(es) in parallel…`,'loading');
-    const results = await Promise.all(
-      batches.map((batch,i) => processBatch(batch, 'B'+(i+1)))
-    );
-    results.forEach(p => {
-      allRows = allRows.concat(p.rows||[]);
-      allFlags = allFlags.concat(p.flags||[]);
+    // ONE call to Netlify — parallel Anthropic calls happen server-side
+    set('Parsing ' + batches.length + ' batch(es)…', 'loading');
+    const apiStart = Date.now();
+    const resp = await fetch('/.netlify/functions/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4000, system: SYS, batches: batches })
+    });
+    const txt = await resp.text();
+    let results;
+    try { results = JSON.parse(txt); } catch(e) { throw new Error('HTTP ' + resp.status + ': ' + txt.slice(0,150)); }
+    if (results.error) throw new Error(results.error);
+    const apiMs = Date.now() - apiStart;
+    results.forEach((r, i) => {
+      totalInputTokens += r.usage?.input_tokens || 0;
+      totalOutputTokens += r.usage?.output_tokens || 0;
+      logTime('Batch ' + (i+1) + ' (' + batches[i].length + ' img)', r.ms || apiMs, 'in=' + (r.usage?.input_tokens||0) + ' out=' + (r.usage?.output_tokens||0));
+      const parsed = parseJson(r.text);
+      allRows = allRows.concat(parsed.rows || []);
+      allFlags = allFlags.concat(parsed.flags || []);
     });
     const totalMs = Date.now() - t0;
     render({rows:allRows, flags:allFlags});
