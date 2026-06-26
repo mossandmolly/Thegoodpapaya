@@ -339,7 +339,7 @@ Return ONLY valid compact JSON, no markdown fences:
     const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
 
     // Start with 3 images per batch, auto-split on timeout
-    const BATCH = 3;
+    const BATCH = 2;
     const batches = [];
     for(let i=0; i<blocks.length; i+=BATCH) batches.push(blocks.slice(i, i+BATCH));
     const totalKB = Math.round(b64s.reduce((a,b)=>a+b.length,0)/1024);
