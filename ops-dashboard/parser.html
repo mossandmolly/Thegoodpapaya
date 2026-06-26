@@ -272,10 +272,13 @@ RULES:
     - OR other customers in the same screenshot who have the same society
     - Add inferred society to customer_name as normal
 
-12. ADD-ON ORDERS — if a message says "also add", "plus", "additionally", "add to my order" etc:
-    - Output ONLY the new add-on items, not the original order items
-    - Do NOT repeat items already listed in the original order message
-    - If the add-on references a previous order not visible in the screenshot, only output the new items mentioned
+12. REPLY/ADD-ON ORDERS — WhatsApp replies show a quoted grey box above the new message.
+    If a message is a REPLY to another message (i.e. has a quoted grey box at the top showing the original message):
+    - Output ONLY the NEW items in the reply, not the items in the quoted/grey box
+    - The quoted box content is the ORIGINAL order — ignore it, it was already parsed
+    - Only parse what the customer wrote BELOW the quoted box
+    - This applies regardless of exact wording — "also add", "plus", "and also", or any reply to their own order
+    - If the reply is just a confirmation, address, or non-order text → ignore entirely
 
 CRITICAL RULES:
 - description must NEVER be blank if there are any qualifiers, notes, conditions, or piece counts
