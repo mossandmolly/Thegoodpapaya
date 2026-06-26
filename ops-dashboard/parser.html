@@ -338,32 +338,18 @@ Return ONLY valid compact JSON, no markdown fences:
     logTime('Image compression', compressMs, imgs.length+' images');
     const blocks=b64s.map(b=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b}}));
 
-    // Dynamic batching: target ~800KB total base64 per batch (safe for 26s timeout)
-    const TARGET_BYTES = 300 * 1024;
-    const batches = [];
-    let currentBatch = [], currentSize = 0;
-    for(let i=0; i<blocks.length; i++){
-      const sz = b64s[i].length;
-      if(currentBatch.length > 0 && currentSize + sz > TARGET_BYTES){
-        batches.push(currentBatch);
-        currentBatch = []; currentSize = 0;
-      }
-      currentBatch.push(blocks[i]);
-      currentSize += sz;
-    }
-    if(currentBatch.length) batches.push(currentBatch);
-
+    // One image per call - simple and reliable
     const totalKB = Math.round(b64s.reduce((a,b)=>a+b.length,0)/1024);
-    set(`Compressed ${imgs.length} imgs → ${totalKB}KB → ${batches.length} batch(es)…`, 'loading');
-
+    set('Compressed ' + imgs.length + ' imgs → ' + totalKB + 'KB', 'loading');
     let allRows=[],allFlags=[];
 
-    async function callBatch(batch, label) {
+    for(let i=0; i<blocks.length; i++){
+      set('Parsing image '+(i+1)+' of '+blocks.length+'…','loading');
       const apiStart = Date.now();
       const resp = await fetch('/.netlify/functions/parse', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:4000, system:SYS,
-          messages:[{role:'user', content:[...batch, {type:'text', text:'Parse all orders. Return only valid compact JSON.'}]}]
+          messages:[{role:'user', content:[blocks[i], {type:'text', text:'Parse all orders. Return only valid compact JSON.'}]}]
         })
       });
       const txt = await resp.text();
@@ -376,29 +362,10 @@ Return ONLY valid compact JSON, no markdown fences:
       const outTok = data.usage?.output_tokens||0;
       totalInputTokens += inTok;
       totalOutputTokens += outTok;
-      logTime(label+' ('+batch.length+' img)', apiMs, 'in='+inTok+' out='+outTok);
-      return parseJson(data.content.map(x=>x.text||'').join(''));
-    }
-
-    for(let i=0; i<batches.length; i++){
-      set('Parsing batch '+(i+1)+' of '+batches.length+'…','loading');
-      try {
-        const p = await callBatch(batches[i], 'Batch '+(i+1));
-        allRows = allRows.concat(p.rows||[]);
-        allFlags = allFlags.concat(p.flags||[]);
-      } catch(e) {
-        // if batch fails, split and retry
-        if(batches[i].length > 1) {
-          set('Splitting batch '+(i+1)+'…','loading');
-          const mid = Math.ceil(batches[i].length/2);
-          const a = await callBatch(batches[i].slice(0,mid), 'Batch '+(i+1)+'a');
-          const b = await callBatch(batches[i].slice(mid), 'Batch '+(i+1)+'b');
-          allRows = allRows.concat((a.rows||[]), (b.rows||[]));
-          allFlags = allFlags.concat((a.flags||[]), (b.flags||[]));
-        } else {
-          throw e;
-        }
-      }
+      logTime('Image '+(i+1), apiMs, 'in='+inTok+' out='+outTok);
+      const p = parseJson(data.content.map(x=>x.text||'').join(''));
+      allRows = allRows.concat(p.rows||[]);
+      allFlags = allFlags.concat(p.flags||[]);
     }
     const totalMs = Date.now() - t0;
     render({rows:allRows, flags:allFlags});
