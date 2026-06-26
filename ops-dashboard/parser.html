@@ -182,6 +182,8 @@ function add(files){
 
 let t0 = 0;
 let timingLog = [];
+let totalInputTokens = 0;
+let totalOutputTokens = 0;
 function set(msg,cls){
   const now = Date.now();
   const elapsed = t0 ? ` [${((now-t0)/1000).toFixed(1)}s]` : '';
@@ -194,6 +196,12 @@ function logTime(label, ms, extra){
 }
 function showTimingSummary(totalMs){
   const div = document.getElementById('timing-summary');
+  // Sonnet pricing: $3/M input, $15/M output
+  const inputCost = (totalInputTokens / 1_000_000) * 3;
+  const outputCost = (totalOutputTokens / 1_000_000) * 15;
+  const totalCostUSD = inputCost + outputCost;
+  const totalCostINR = totalCostUSD * 84;
+
   let html = '<strong style="color:#7ecb82">⏱ Timing breakdown</strong><br>';
   timingLog.forEach(t => {
     const pct = Math.round(t.ms/totalMs*100);
@@ -202,7 +210,9 @@ function showTimingSummary(totalMs){
     if(t.extra) html += ` <span style="color:#4a6e4c;font-size:10px">${t.extra}</span>`;
     html += '<br>';
   });
-  html += `<strong style="color:#7ecb82">Total: ${(totalMs/1000).toFixed(1)}s</strong>`;
+  html += `<strong style="color:#7ecb82">Total: ${(totalMs/1000).toFixed(1)}s</strong><br>`;
+  html += `<span style="color:#4a6e4c">Tokens:</span> ${totalInputTokens} in + ${totalOutputTokens} out<br>`;
+  html += `<strong style="color:#c8b060">Cost: $${totalCostUSD.toFixed(4)} (₹${totalCostINR.toFixed(2)})</strong>`;
   div.innerHTML = html;
   div.classList.remove('hidden');
 }
@@ -237,6 +247,8 @@ pb.addEventListener('click',async()=>{
   pb.disabled=true;rw.classList.add('hidden');
   t0 = Date.now();
   timingLog = [];
+  totalInputTokens = 0;
+  totalOutputTokens = 0;
   document.getElementById('timing-summary').classList.add('hidden');
   set('Compressing '+imgs.length+' images…','loading');
 
@@ -360,7 +372,11 @@ Return ONLY valid compact JSON, no markdown fences:
       if(data.error)throw new Error(JSON.stringify(data.error));
       if(!data.content?.length)throw new Error('No content: '+data.stop_reason);
       const apiMs = Date.now() - apiStart;
-      logTime('API call ('+batch.length+' img)', apiMs, `in=${data.usage?.input_tokens} out=${data.usage?.output_tokens} tokens`);
+      const inTok = data.usage?.input_tokens || 0;
+      const outTok = data.usage?.output_tokens || 0;
+      totalInputTokens += inTok;
+      totalOutputTokens += outTok;
+      logTime('API call ('+batch.length+' img)', apiMs, `in=${inTok} out=${outTok} tokens`);
       return parseJson(data.content.map(x=>x.text||'').join(''));
     }
 
