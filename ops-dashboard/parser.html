@@ -314,8 +314,11 @@ CRITICAL:
 - Watermelon/Muskmelon = plain variety by default, NEVER striped unless explicitly said
 - "orange" = Mandarin orange always, never mango
 
-Return ONLY valid compact JSON, no markdown fences:
-{"rows":[{"order_date":"${TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
+Return ONLY valid compact JSON, no markdown fences.
+Use positional arrays to minimise output tokens.
+Column order: [order_date, customer_name, item_name, description, quantity, sales_order]
+Flags are plain strings.
+Example: {"r":[["${TODAY}","Villa 54","Jamun","ripe",0.5,"${TODAY}-Villa54"],["${TODAY}","Villa 54","Kesar mango","2 pieces",1,"${TODAY}-Villa54"]],"f":["🟡 Villa 54 watermelon - no qty"]}`;
 
   try{
     const compressStart = Date.now();
@@ -386,7 +389,12 @@ Return ONLY valid compact JSON, no markdown fences:
       allFlags=allFlags.concat(p.flags||[]);
     }
     const totalMs = Date.now() - t0;
-    render({rows:allRows,flags:allFlags});
+    // Convert compact array format to row objects
+    const rowObjs = allRows.map(r => ({
+      order_date: r[0], customer_name: r[1], item_name: r[2],
+      description: r[3]||'', quantity: r[4], sales_order: r[5]
+    }));
+    render({rows:rowObjs, flags:allFlags});
     showTimingSummary(totalMs);
   }catch(e){
     set('❌ '+e.message,'error');
