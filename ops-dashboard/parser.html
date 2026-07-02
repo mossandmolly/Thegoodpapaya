@@ -461,9 +461,13 @@ pushb.addEventListener('click',async()=>{
         });
       }
     });
-    const{error:ordersErr}=await sb.from('orders')
-      .upsert([...headers.values()],{onConflict:'sales_order_id',ignoreDuplicates:true});
-    if(ordersErr)throw new Error('orders: '+ordersErr.message);
+    const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      body:JSON.stringify({headers:[...headers.values()]}),
+    });
+    const createOrderData=await createOrderRes.json();
+    if(!createOrderRes.ok)throw new Error('orders: '+(createOrderData.error||'failed'));
 
     // 2. Line items — held if (sales_order_id, item_name, requested_quantity) already exists today
     let opened=0,held=0;
