@@ -24,6 +24,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 .btn-parse{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#7ecb82;color:#0e1a0f;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
 .btn-parse:disabled{opacity:0.4;cursor:not-allowed}
 .btn-sec{display:block;width:100%;padding:11px;border-radius:10px;border:1.5px solid #2e4d30;background:transparent;color:#7ecb82;font-size:13px;cursor:pointer;margin-bottom:8px;font-family:inherit}
+.btn-push{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#4a90d9;color:#0e1a0f;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
+.btn-push:disabled{opacity:0.5;cursor:not-allowed}
+.push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#4a6e4c}
+.push-status.ok{color:#7ecb82}.push-status.err{color:#e07070}
 .section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#4a6e4c;margin:16px 0 6px}
 .flags-box{background:#1a1a0e;border:1px solid #4a4a20;border-radius:8px;padding:10px 14px;font-size:12px;color:#c8b060;line-height:1.8;white-space:pre-wrap}
 .flags-ok{background:#0a1a0a;border:1px solid #2a4a2a;border-radius:8px;padding:10px 14px;font-size:12px;color:#7ecb82}
@@ -72,6 +76,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
     <div id="fb"></div>
     <div class="section-label">Parsed rows <span id="rc"></span></div>
     <div class="tsv-box" id="tb"></div>
+    <button class="btn-push" id="pushb">📤 Push to Operations</button>
+    <div class="push-status" id="ps"></div>
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
     <button class="btn-sec" id="xb">🔄 Clear</button>
   </div>
@@ -129,7 +135,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
+const SUPABASE_URL  = 'https://fykqprogzqcfzrgwlrem.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5a3Fwcm9nenFjZnpyZ3dscmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NDkzMzEsImV4cCI6MjA5MTIyNTMzMX0.FseaaYNbN-QLhzdQF5rcImLvvoWRHOiGcZcbiFaIplQ';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
 // ── Default config ────────────────────────────────────────────────────────
 const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
 
@@ -164,7 +175,7 @@ function delAlias(k){delete ALIASES[k];renderConfig();}
 const TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
 let imgs=[];
 const dz=document.getElementById('dz'),fi=document.getElementById('fi'),pv=document.getElementById('pv');
-const pb=document.getElementById('pb'),sb=document.getElementById('sb'),rw=document.getElementById('rw');
+const pb=document.getElementById('pb'),sbEl=document.getElementById('sb'),rw=document.getElementById('rw');
 const fb=document.getElementById('fb'),tb=document.getElementById('tb'),rc=document.getElementById('rc');
 const cb=document.getElementById('cb'),xb=document.getElementById('xb');
 
@@ -189,8 +200,8 @@ let totalOutputTokens = 0;
 function set(msg,cls){
   const now = Date.now();
   const elapsed = t0 ? ` [${((now-t0)/1000).toFixed(1)}s]` : '';
-  sb.innerHTML=(cls==='loading'?'<span class="spinner"></span>':'')+msg+elapsed;
-  sb.className='status-bar'+(cls?' '+cls:'');
+  sbEl.innerHTML=(cls==='loading'?'<span class="spinner"></span>':'')+msg+elapsed;
+  sbEl.className='status-bar'+(cls?' '+cls:'');
 }
 function logTime(label, ms, extra){
   timingLog.push({label, ms, extra});
@@ -404,8 +415,10 @@ Return ONLY valid compact JSON, no markdown fences:
   }
 });
 
+let lastRows=[];
 function render(p){
   const{rows=[],flags=[]}=p;
+  lastRows=rows;
   if(flags.length){fb.className='flags-box';fb.textContent=flags.join('\n');}
   else{fb.className='flags-ok';fb.textContent='All rows parsed cleanly ✓';}
   tb.textContent=rows.map(r=>[r.order_date,r.customer_name,r.item_name,r.description||'',r.quantity,'','',r.sales_order].join('\t')).join('\n');
@@ -413,6 +426,8 @@ function render(p){
   rw.classList.remove('hidden');
   set('Done — '+rows.length+' rows from '+imgs.length+' image(s)');
   pb.disabled=false;
+  pushb.disabled=false;pushb.textContent='📤 Push to Operations';
+  setPush('');
 }
 
 cb.addEventListener('click',()=>{
@@ -421,6 +436,63 @@ cb.addEventListener('click',()=>{
 xb.addEventListener('click',()=>{
   imgs=[];pv.innerHTML='';fi.value='';pb.disabled=true;
   set('Upload screenshots to begin');rw.classList.add('hidden');tb.textContent='';
+  lastRows=[];
+});
+
+// ── Push to order_items ──────────────────────────────────────────────────────
+const pushb=document.getElementById('pushb'),ps=document.getElementById('ps');
+function setPush(msg,cls){ps.textContent=msg;ps.className='push-status'+(cls?' '+cls:'');}
+
+pushb.addEventListener('click',async()=>{
+  const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
+  if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
+  pushb.disabled=true;pushb.textContent='Pushing…';setPush('');
+  try{
+    // 1. Header row per unique customer — create if missing, never overwrite an existing one
+    const headers=new Map();
+    rows.forEach(r=>{
+      if(!headers.has(r.sales_order)){
+        headers.set(r.sales_order,{
+          sales_order_id: r.sales_order,
+          customer_name:  r.customer_name,
+          source:         'whatsapp',
+          payment_method: 'cod',
+          invoice_status: 'pending',
+        });
+      }
+    });
+    const{error:ordersErr}=await sb.from('orders')
+      .upsert([...headers.values()],{onConflict:'sales_order_id',ignoreDuplicates:true});
+    if(ordersErr)throw new Error('orders: '+ordersErr.message);
+
+    // 2. Line items — held if (sales_order_id, item_name, requested_quantity) already exists today
+    let opened=0,held=0;
+    for(const r of rows){
+      const qty=parseFloat(r.quantity)||0;
+      const{data:existing,error:selErr}=await sb.from('order_items')
+        .select('id')
+        .eq('sales_order_id',r.sales_order)
+        .eq('item_name',r.item_name)
+        .eq('requested_quantity',qty)
+        .limit(1);
+      if(selErr)throw new Error('check: '+selErr.message);
+      const status=(existing&&existing.length)?'held':'open';
+      const{error:insErr}=await sb.from('order_items').insert({
+        sales_order_id:     r.sales_order,
+        item_name:          r.item_name,
+        description:        r.description||null,
+        requested_quantity: qty,
+        status,
+      });
+      if(insErr)throw new Error('insert: '+insErr.message);
+      status==='held'?held++:opened++;
+    }
+    setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':''),'ok');
+    pushb.textContent='✅ Pushed';
+  }catch(e){
+    setPush('❌ '+e.message,'err');
+    pushb.disabled=false;pushb.textContent='📤 Push to Operations';
+  }
 });
 </script>
 </body>
