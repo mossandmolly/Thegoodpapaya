@@ -73,6 +73,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .modal-box select,.modal-box input{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
 .modal-actions{display:flex;gap:8px;margin-top:4px}
 .modal-actions button{flex:1}
+.mt-item-row{display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px;color:#2b2320;border-bottom:1px solid #f5efe6}
+.mt-item-row:last-child{border-bottom:none}
+.mt-item-row input{width:auto;margin:0}
 .pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:10px}
 .pack-card.status-packed{border-color:#f0dd8a;background:#fdf6d9}
@@ -148,6 +151,19 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div class="modal-actions">
       <button class="btn-sec" id="ai-cancel" style="margin-bottom:0">Cancel</button>
       <button class="btn-parse" id="ai-add" style="margin-bottom:0">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- MOVE TO TOMORROW MODAL -->
+<div class="modal-overlay hidden" id="mt-modal">
+  <div class="modal-box">
+    <h3>Move to tomorrow</h3>
+    <label class="modal-label">Select items to move</label>
+    <div id="mt-items"></div>
+    <div class="modal-actions">
+      <button class="btn-sec" id="mt-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="mt-move" style="margin-bottom:0">Move to Tomorrow</button>
     </div>
   </div>
 </div>
@@ -640,6 +656,7 @@ async function loadTodaysOrders(){
     if(!bySalesOrder[key])bySalesOrder[key]={customer:customerMap[key]||key,items:[]};
     bySalesOrder[key].items.push(item);
   });
+  currentOrdersById=bySalesOrder;
 
   // Group orders by society — first token of customer_name before the first space
   const bySociety={};
@@ -654,7 +671,7 @@ async function loadTodaysOrders(){
     return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
       orders.map(order=>
         '<div class="order-row">'+
-          '<div class="or-top"><span class="or-cust">'+escH(order.customer)+'</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a></span></div>'+
+          '<div class="or-top"><span class="or-cust">'+escH(order.customer)+'</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · <a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a></span></div>'+
           '<div class="or-pills">'+order.items.map(item=>
             '<span class="item-pill status-'+item.status+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\',\''+item.status+'\','+item.requested_quantity+')">'+
               escH(item.item_name)+' × '+item.requested_quantity+
@@ -727,6 +744,71 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
   });
   if(error){alert('Failed to add item: '+error.message);return;}
   aiModal.classList.add('hidden');
+  await loadTodaysOrders();
+});
+
+// ── Move to tomorrow modal ───────────────────────────────────────────────────
+// Moves selected items of an order onto tomorrow's sales_order_id (same
+// customer suffix, date prefix bumped by one day). Needs an orders header row
+// for that new id — anon can't write orders directly, so it goes through the
+// same create-order edge function the parser push uses, before the item rows
+// are repointed.
+let currentOrdersById={};
+let mtTargetOrder=null;
+const mtModal=document.getElementById('mt-modal'),mtItems=document.getElementById('mt-items');
+
+function addDays(dateStr,n){
+  const d=new Date(dateStr+'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate()+n);
+  return d.toISOString().slice(0,10);
+}
+
+function moveToTomorrowPrompt(salesOrderId){
+  const order=currentOrdersById[salesOrderId];
+  if(!order||!order.items.length){alert('No items to move');return;}
+  mtTargetOrder=salesOrderId;
+  mtItems.innerHTML=order.items.map(item=>
+    '<label class="mt-item-row"><input type="checkbox" value="'+item.id+'" checked>'+
+      escH(item.item_name)+' × '+item.requested_quantity+
+    '</label>'
+  ).join('');
+  mtModal.classList.remove('hidden');
+}
+
+document.getElementById('mt-cancel').addEventListener('click',()=>{mtModal.classList.add('hidden');});
+
+document.getElementById('mt-move').addEventListener('click',async()=>{
+  const ids=[...mtItems.querySelectorAll('input:checked')].map(cb=>cb.value);
+  if(!ids.length){alert('Select at least one item');return;}
+
+  const order=currentOrdersById[mtTargetOrder];
+  const newSalesOrderId=addDays(mtTargetOrder.slice(0,10),1)+mtTargetOrder.slice(10);
+
+  try{
+    const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      body:JSON.stringify({headers:[{
+        sales_order_id: newSalesOrderId,
+        customer_name:  order.customer,
+        source:         'manual',
+        payment_method: 'cod',
+        invoice_status: 'pending',
+      }]}),
+    });
+    const createOrderData=await createOrderRes.json();
+    if(!createOrderRes.ok)throw new Error(createOrderData.error||'Could not create tomorrow\'s order header');
+
+    const{error}=await sb.from('order_items')
+      .update({sales_order_id:newSalesOrderId,status:'open'})
+      .in('id',ids);
+    if(error)throw new Error(error.message);
+  }catch(e){
+    alert('Failed to move to tomorrow: '+e.message);
+    return;
+  }finally{
+    mtModal.classList.add('hidden');
+  }
   await loadTodaysOrders();
 });
 
