@@ -28,6 +28,24 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 .btn-push:disabled{opacity:0.5;cursor:not-allowed}
 .push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#4a6e4c}
 .push-status.ok{color:#7ecb82}.push-status.err{color:#e07070}
+.to-empty{font-size:12px;color:#4a6e4c;text-align:center;padding:16px}
+.order-card{background:#0a120a;border:1px solid #1e301e;border-radius:8px;padding:10px 12px;margin-bottom:10px}
+.oc-top{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:8px}
+.oc-cust{font-weight:600;color:#e8f0e8}
+.oc-meta{color:#4a6e4c;font-size:11px}
+.oi-row{display:flex;align-items:center;gap:6px;padding:6px 0;border-top:1px solid #1a2a1a;flex-wrap:wrap}
+.oi-row:first-child{border-top:none}
+.oi-name{flex:1;min-width:80px;font-size:12px;color:#e8f0e8}
+.oi-qty{width:56px;background:#131f14;border:1px solid #2e4d30;border-radius:6px;padding:4px 6px;color:#e8f0e8;font-size:12px;font-family:inherit}
+.oi-status{border-radius:12px;padding:3px 8px;font-size:10px;border:1px solid transparent;white-space:nowrap}
+.oi-status.open{background:#131f14;border-color:#2e4d30;color:#9abf9c}
+.oi-status.held{background:#1a1a0e;border-color:#4a4a20;color:#c8b060}
+.oi-status.packed{background:#0e1e2e;border-color:#264a6e;color:#7eb0e0}
+.oi-status.final{background:#0a1a0a;border-color:#2a4a2a;color:#7ecb82}
+.oi-status.invoiced{background:#1a0e2e;border-color:#4a2e6e;color:#b07eda}
+.oi-btn{background:none;border:1.5px solid #2e4d30;border-radius:6px;cursor:pointer;font-size:11px;line-height:1;padding:4px 7px;color:#9abf9c}
+.oi-btn.oi-approve{border-color:#2a4a2a;color:#7ecb82}
+.oi-btn.oi-delete{border-color:#4a2020;color:#e07070}
 .section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#4a6e4c;margin:16px 0 6px}
 .flags-box{background:#1a1a0e;border:1px solid #4a4a20;border-radius:8px;padding:10px 14px;font-size:12px;color:#c8b060;line-height:1.8;white-space:pre-wrap}
 .flags-ok{background:#0a1a0a;border:1px solid #2a4a2a;border-radius:8px;padding:10px 14px;font-size:12px;color:#7ecb82}
@@ -57,6 +75,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 <div class="logo">good<span>papaya</span> · parser</div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
+  <button class="tab" onclick="switchTab('today')">📋 Today's Orders</button>
   <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
 </div>
 
@@ -81,6 +100,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
     <button class="btn-sec" id="xb">🔄 Clear</button>
   </div>
+</div>
+
+<!-- TODAY'S ORDERS -->
+<div class="panel" id="panel-today">
+  <div class="section-label">Today's orders <span id="to-rc"></span></div>
+  <button class="btn-sec" id="to-refresh" style="margin-bottom:12px">🔄 Refresh</button>
+  <div id="to-list"><div class="to-empty">Loading…</div></div>
 </div>
 
 <!-- CONFIG -->
@@ -152,10 +178,11 @@ let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orang
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','config'][i]===name));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','today','config'][i]===name));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='config')renderConfig();
+  if(name==='today')loadTodaysOrders();
 }
 
 // ── Config UI ─────────────────────────────────────────────────────────────
@@ -498,6 +525,67 @@ pushb.addEventListener('click',async()=>{
     pushb.disabled=false;pushb.textContent='📤 Push to Operations';
   }
 });
+
+// ── Today's Orders ──────────────────────────────────────────────────────────
+function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+async function loadTodaysOrders(){
+  const list=document.getElementById('to-list');
+  list.innerHTML='<div class="to-empty">Loading…</div>';
+  const{data,error}=await sb.from('order_items')
+    .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,orders(customer_name)')
+    .like('sales_order_id',TODAY+'-%')
+    .order('sales_order_id');
+  if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+
+  document.getElementById('to-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
+  if(!data||!data.length){list.innerHTML='<div class="to-empty">No orders yet today</div>';return;}
+
+  const bySalesOrder={};
+  data.forEach(item=>{
+    const key=item.sales_order_id;
+    if(!bySalesOrder[key])bySalesOrder[key]={customer:item.orders?.customer_name||key,items:[]};
+    bySalesOrder[key].items.push(item);
+  });
+
+  list.innerHTML=Object.entries(bySalesOrder).map(([soid,order])=>
+    '<div class="order-card">'+
+      '<div class="oc-top"><span class="oc-cust">'+escH(order.customer)+'</span><span class="oc-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+'</span></div>'+
+      order.items.map(item=>
+        '<div class="oi-row" data-id="'+item.id+'">'+
+          '<span class="oi-name" title="'+escH(item.description||'')+'">'+escH(item.item_name)+'</span>'+
+          '<input class="oi-qty" type="number" step="0.01" value="'+item.requested_quantity+'" onchange="updateQty(\''+item.id+'\',this.value)">'+
+          '<span class="oi-status '+item.status+'">'+item.status+'</span>'+
+          (item.status==='held'?'<button class="oi-btn oi-approve" onclick="approveHeldItem(\''+item.id+'\')">✓ Approve</button>':'')+
+          '<button class="oi-btn oi-delete" onclick="deleteItem(\''+item.id+'\')">✕</button>'+
+        '</div>'
+      ).join('')+
+    '</div>'
+  ).join('');
+}
+
+async function updateQty(id,val){
+  const qty=parseFloat(val);
+  if(isNaN(qty)||qty<0){alert('Enter a valid quantity');await loadTodaysOrders();return;}
+  const{error}=await sb.from('order_items').update({requested_quantity:qty}).eq('id',id);
+  if(error){alert('Failed to update: '+error.message);}
+  await loadTodaysOrders();
+}
+
+async function approveHeldItem(id){
+  const{error}=await sb.from('order_items').update({status:'open'}).eq('id',id);
+  if(error){alert('Failed to approve: '+error.message);return;}
+  await loadTodaysOrders();
+}
+
+async function deleteItem(id){
+  if(!confirm('Delete this line item? This cannot be undone.'))return;
+  const{error}=await sb.from('order_items').delete().eq('id',id);
+  if(error){alert('Failed to delete: '+error.message);return;}
+  await loadTodaysOrders();
+}
+
+document.getElementById('to-refresh').addEventListener('click',loadTodaysOrders);
 </script>
 </body>
 </html>
