@@ -565,15 +565,22 @@ async function loadTodaysOrders(){
   document.getElementById('to-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
   if(!data||!data.length){list.innerHTML='<div class="to-empty">No orders yet today</div>';return;}
 
-  // Plain flat lookup for customer names — no embedded join (avoids depending on
-  // PostgREST's relationship/schema cache, which can lag behind a freshly created FK)
+  // orders' RLS locks reads to service-role only — fetch customer names via
+  // the edge function instead of a direct (silently-empty) anon select.
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
-  const{data:orderRows,error:orderErr}=await sb.from('orders')
-    .select('sales_order_id,customer_name')
-    .in('sales_order_id',uniqueIds);
-  if(orderErr){list.innerHTML='<div class="to-empty">'+escH(orderErr.message)+'</div>';return;}
   const customerMap={};
-  (orderRows||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
+  try{
+    const custRes=await fetch(SUPABASE_URL+'/functions/v1/get-order-customers',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      body:JSON.stringify({sales_order_ids:uniqueIds}),
+    });
+    const custData=await custRes.json();
+    if(!custRes.ok)throw new Error(custData.error||'failed');
+    (custData.customers||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
+  }catch(e){
+    list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(e.message)+'</div>';return;
+  }
 
   const bySalesOrder={};
   data.forEach(item=>{
@@ -582,7 +589,7 @@ async function loadTodaysOrders(){
     bySalesOrder[key].items.push(item);
   });
 
-  // Group orders by society (best-guess: longest known SOCIETIES prefix, else first word)
+  // Group orders by society — first token of customer_name before the first space
   const bySociety={};
   Object.entries(bySalesOrder).forEach(([soid,order])=>{
     const soc=deriveSociety(order.customer);
@@ -609,13 +616,7 @@ async function loadTodaysOrders(){
 
 function deriveSociety(customerName){
   const name=(customerName||'').trim();
-  const low=name.toLowerCase();
-  let best='';
-  SOCIETIES.forEach(soc=>{
-    const socLow=soc.toLowerCase();
-    if(low.startsWith(socLow)&&socLow.length>best.length)best=soc;
-  });
-  return best||name.split(' ')[0]||name;
+  return name.split(' ')[0]||name;
 }
 
 function pillClick(id,status,currentQty){
