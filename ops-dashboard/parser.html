@@ -1,58 +1,88 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Order Parser — Good Papaya Ops</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
-  <style>
-    .parser-wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
-    .drop-zone {
-      border: 2px dashed var(--border); border-radius: var(--radius);
-      padding: 32px 20px; text-align: center; cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-      margin-bottom: 12px; position: relative; background: var(--card-bg);
-    }
-    .drop-zone:hover, .drop-zone.drag { border-color: var(--brand); background: #fff5f0; }
-    .drop-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
-    .drop-icon { font-size: 2rem; margin-bottom: 8px; }
-    .drop-label { font-size: 1rem; font-weight: 600; color: var(--text); display: block; margin-bottom: 4px; }
-    .drop-sub { font-size: 0.8rem; color: var(--text-muted); }
-    .previews { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    .preview-thumb { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; border: 1.5px solid var(--border); }
-    .status-bar { font-size: 0.85rem; color: var(--text-muted); text-align: center; min-height: 20px; margin-bottom: 12px; }
-    .status-bar.loading { color: var(--brand); }
-    .status-bar.error { color: var(--red); }
-    .btn-parse {
-      width: 100%; padding: 14px; border-radius: var(--radius);
-      border: none; background: var(--brand); color: white;
-      font-size: 1rem; font-weight: 600; cursor: pointer;
-      font-family: "DM Sans", sans-serif; margin-bottom: 10px;
-      transition: background 0.15s, transform 0.1s;
-    }
-    .btn-parse:hover { background: var(--brand-dark); }
-    .btn-parse:active { transform: scale(0.98); }
-    .btn-parse:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-sec {
-      width: 100%; padding: 11px; border-radius: var(--radius);
-      border: 1.5px solid var(--border); background: white;
-      color: var(--text); font-size: 0.9rem; cursor: pointer;
-      font-family: "DM Sans", sans-serif; margin-bottom: 8px;
-    }
-    .btn-sec:hover { background: var(--bg); }
-    .section-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 16px 0 6px; }
-    .flags-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; font-size: 0.82rem; color: #92400e; line-height: 1.8; white-space: pre-wrap; }
-    .flags-ok { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 8px; padding: 10px 14px; font-size: 0.82rem; color: var(--green); }
-    .tsv-box { background: #f9f9f9; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: monospace; font-size: 11px; color: var(--text); overflow-x: auto; white-space: pre; line-height: 1.6; max-height: 300px; overflow-y: auto; margin-bottom: 10px; }
-    .row-count { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px; }
-    .hidden { display: none; }
-    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Good Papaya · Order Parser</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8;min-height:100vh;padding:20px 16px 48px}
+.logo{font-size:20px;font-weight:700;color:#7ecb82;margin-bottom:20px}.logo span{color:#e8f0e8;font-weight:300}
+.tabs{display:flex;gap:8px;margin-bottom:20px}
+.tab{padding:8px 16px;border-radius:20px;border:1.5px solid #2e4d30;background:transparent;color:#4a6e4c;font-size:13px;cursor:pointer;font-family:inherit}
+.tab.active{background:#7ecb82;color:#0e1a0f;border-color:#7ecb82;font-weight:600}
+.panel{display:none}.panel.active{display:block}
+.drop-zone{border:1.5px dashed #2e4d30;border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:12px;position:relative;background:#131f14}
+.drop-zone:hover,.drop-zone.drag{border-color:#7ecb82}
+.drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.drop-label{font-size:15px;font-weight:600;color:#7ecb82;display:block;margin-bottom:4px}
+.drop-sub{font-size:12px;color:#4a6e4c}
+.previews{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.preview-thumb{width:60px;height:60px;border-radius:8px;object-fit:cover;border:1.5px solid #2e4d30}
+.status-bar{font-size:13px;color:#4a6e4c;text-align:center;min-height:20px;margin-bottom:12px;padding:8px;background:#0a120a;border-radius:8px;word-break:break-all}
+.status-bar.loading{color:#7ecb82}.status-bar.error{color:#e07070;background:#1a0a0a}
+.btn-parse{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#7ecb82;color:#0e1a0f;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
+.btn-parse:disabled{opacity:0.4;cursor:not-allowed}
+.btn-sec{display:block;width:100%;padding:11px;border-radius:10px;border:1.5px solid #2e4d30;background:transparent;color:#7ecb82;font-size:13px;cursor:pointer;margin-bottom:8px;font-family:inherit}
+.section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#4a6e4c;margin:16px 0 6px}
+.flags-box{background:#1a1a0e;border:1px solid #4a4a20;border-radius:8px;padding:10px 14px;font-size:12px;color:#c8b060;line-height:1.8;white-space:pre-wrap}
+.flags-ok{background:#0a1a0a;border:1px solid #2a4a2a;border-radius:8px;padding:10px 14px;font-size:12px;color:#7ecb82}
+.tsv-box{background:#0a120a;border:1px solid #1e301e;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#9abf9c;overflow-x:auto;white-space:pre;line-height:1.6;max-height:300px;overflow-y:auto;margin-bottom:10px}
+.hidden{display:none}
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid #2e4d30;border-top-color:#7ecb82;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.config-section{background:#0a120a;border:1px solid #1e301e;border-radius:10px;padding:14px;margin-bottom:16px}
+.config-section h3{font-size:13px;font-weight:600;color:#7ecb82;margin-bottom:10px}
+.config-list{list-style:none;max-height:200px;overflow-y:auto}
+.config-list li{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid #1a2a1a;color:#9abf9c}
+.config-list li:last-child{border-bottom:none}
+.config-list li span{color:#4a6e4c;font-size:11px;margin-left:8px;flex-shrink:0}
+.del-btn{background:none;border:none;color:#e07070;cursor:pointer;font-size:14px;padding:0 4px}
+.add-row{display:flex;gap:8px;margin-top:10px}
+.add-row input{flex:1;background:#131f14;border:1px solid #2e4d30;border-radius:8px;padding:8px 10px;color:#e8f0e8;font-size:12px;font-family:inherit}
+.add-row input::placeholder{color:#4a6e4c}
+.add-row button{background:#7ecb82;color:#0e1a0f;border:none;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;white-space:nowrap}
+.rules-list{font-size:12px;color:#9abf9c;line-height:1.8;list-style:none}
+.rules-list li{padding:4px 0;border-bottom:1px solid #1a2a1a}
+.rules-list li:last-child{border-bottom:none}
+.badge{display:inline-block;background:#1a2e1a;border-radius:4px;padding:1px 6px;font-size:10px;color:#7ecb82;margin-right:4px}
+.note{font-size:11px;color:#4a6e4c;margin-top:6px;font-style:italic}
+.btn-push{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#4a90d9;color:#0e1a0f;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
+.btn-push:disabled{opacity:0.5;cursor:not-allowed}
+.push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#4a6e4c}
+.push-status.ok{color:#7ecb82}.push-status.err{color:#e07070}
+.phone-prompt{background:#1a1a0e;border:1px solid #4a4a20;border-radius:8px;padding:12px 14px;margin-bottom:10px}
+.phone-prompt h4{font-size:12px;color:#c8b060;margin-bottom:4px}
+.phone-prompt p{font-size:11px;color:#9abf9c;margin-bottom:8px;line-height:1.5}
+.phone-row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.phone-row span{flex:1;font-size:12px;color:#e8f0e8}
+.phone-row input{flex:1;background:#131f14;border:1px solid #2e4d30;border-radius:8px;padding:7px 9px;color:#e8f0e8;font-size:12px;font-family:inherit}
+.phone-actions{display:flex;gap:8px;margin-top:8px}
+.phone-actions button{flex:1;padding:9px;border-radius:8px;border:none;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.phone-actions .btn-save{background:#7ecb82;color:#0e1a0f}
+.phone-actions .btn-skip{background:transparent;border:1.5px solid #2e4d30;color:#9abf9c}
+.order-card{background:#0a120a;border:1px solid #1e301e;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.order-card .oc-top{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:8px}
+.order-card .oc-cust{font-weight:600;color:#e8f0e8}
+.order-card .oc-meta{color:#4a6e4c;font-size:11px}
+.oc-pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap}
+.pill-draft{background:#131f14;border-color:#2e4d30;color:#9abf9c}
+.pill-packed{background:#0e1e2e;border-color:#264a6e;color:#7eb0e0}
+.pill-final{background:#0a1a0a;border-color:#2a4a2a;color:#7ecb82}
+.pill-held{background:#1a1a0e;border-color:#4a4a20;color:#c8b060}
+.pill-btn{background:none;border:none;cursor:pointer;font-size:11px;line-height:1;padding:0;color:inherit;opacity:0.75}
+.pill-btn:hover{opacity:1}
+.held-empty{font-size:12px;color:#4a6e4c;text-align:center;padding:16px}
+</style>
 </head>
 <body>
+<div class="logo">good<span>papaya</span> · parser</div>
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
+  <button class="tab" onclick="switchTab('held')">📋 Today's Orders <span id="held-count"></span></button>
+  <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
+</div>
 
 <header>
   <div class="header-content">
@@ -83,11 +113,82 @@
 
   <div id="resultsWrap" class="hidden">
     <div class="section-label">Flags</div>
-    <div id="flagsBox"></div>
-    <div class="section-label">Parsed rows <span id="rowCount" style="font-weight:600;color:var(--text)"></span></div>
-    <div class="tsv-box" id="tsvBox"></div>
-    <button class="btn-sec" id="copyBtn">📋 Copy TSV</button>
-    <button class="btn-sec" id="clearBtn">🔄 Clear & start over</button>
+    <div id="fb"></div>
+    <div class="section-label">Parsed rows <span id="rc"></span></div>
+    <div class="tsv-box" id="tb"></div>
+    <button class="btn-push" id="pushb">📤 Push to Operations</button>
+    <div class="push-status" id="ps"></div>
+    <div class="phone-prompt hidden" id="pp">
+      <h4>Phone numbers needed</h4>
+      <p>These customers don't have a mobile number on file. Add one, or skip to push without.</p>
+      <div id="pp-rows"></div>
+      <div class="phone-actions">
+        <button class="btn-save" id="pp-save">Save &amp; push →</button>
+        <button class="btn-skip" id="pp-skip">Skip</button>
+      </div>
+    </div>
+    <button class="btn-sec" id="cb">📋 Copy TSV</button>
+    <button class="btn-sec" id="xb">🔄 Clear</button>
+  </div>
+</div>
+
+<!-- TODAY'S ORDERS -->
+<div class="panel" id="panel-held">
+  <div class="section-label">Today's orders <span id="hi-rc"></span></div>
+  <p class="note" style="margin-bottom:12px">Every order for today, grouped by customer. Grey = not packed · blue = packed · green = finalized · amber = held (duplicate — approve ✓ or dismiss ✕ right on the pill).</p>
+  <button class="btn-sec" id="hi-refresh" style="margin-bottom:12px">🔄 Refresh</button>
+  <div id="hi-list"><div class="held-empty">Loading…</div></div>
+</div>
+
+<!-- CONFIG -->
+<div class="panel" id="panel-config">
+  <div class="config-section">
+    <h3>📋 Parser Rules</h3>
+    <ul class="rules-list">
+      <li><span class="badge">columns</span>order_date · customer_name · item_name · description · quantity · final_quantity(blank) · status(blank) · sales_order</li>
+      <li><span class="badge">customer</span>Society + door only — strip Indian names. "Shalu Villa 54"→"Villa 54", "Femina Iksha G1301"→"Iksha G1301"</li>
+      <li><span class="badge">sales order</span>Date + name no spaces. e.g. 2026-06-26-Villa54</li>
+      <li><span class="badge">item name</span>Base fruit from canonical list only, no qualifiers</li>
+      <li><span class="badge">description</span>ALL qualifiers + delivery notes + conditions + piece count. e.g. "ripe, 3 pieces", "door pe rakh dena", "only if sweet", "ready to eat, 2 pieces"</li>
+      <li><span class="badge">pieces</span>Always include "N pieces" in description when order is by count</li>
+      <li><span class="badge">qty: g/kg</span>Convert to decimal — 500g=0.5, half kg=0.5, 1/2kg=0.5</li>
+      <li><span class="badge">qty: pieces</span>N × kg/pc from table → quantity in kg. Add "N pieces" to description</li>
+      <li><span class="badge">qty: unknown</span>No conversion → keep raw count as qty, flag, add "N pieces" to description</li>
+      <li><span class="badge">qty: none</span>No quantity stated → use 1, flag</li>
+      <li><span class="badge">ignore</span>👍 reacted messages, payment messages, deleted messages, system messages</li>
+      <li><span class="badge">keep</span>Complaints, delivery notes, conditions → description field</li>
+      <li><span class="badge">societies</span>Auto-detected — no list needed</li>
+    </ul>
+    <p class="note">Config changes on this tab apply immediately to the next parse. Resets on page refresh.</p>
+  </div>
+
+  <div class="config-section">
+    <h3>🍎 Canonical Fruit List <span style="font-size:11px;color:#4a6e4c;font-weight:400">(session only)</span></h3>
+    <ul class="config-list" id="fruit-list"></ul>
+    <div class="add-row">
+      <input type="text" id="new-fruit" placeholder="Add fruit e.g. Dragonfruit yellow">
+      <button onclick="addFruit()">Add</button>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>⚖️ Piece → KG Conversions <span style="font-size:11px;color:#4a6e4c;font-weight:400">(session only)</span></h3>
+    <ul class="config-list" id="pkg-list"></ul>
+    <div class="add-row">
+      <input type="text" id="new-pkg-fruit" placeholder="Fruit name e.g. Lychee" style="flex:2">
+      <input type="number" id="new-pkg-val" placeholder="kg/pc e.g. 0.05" step="0.01" style="flex:1">
+      <button onclick="addPkg()">Add</button>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>🔁 Aliases <span style="font-size:11px;color:#4a6e4c;font-weight:400">(session only)</span></h3>
+    <ul class="config-list" id="alias-list"></ul>
+    <div class="add-row">
+      <input type="text" id="new-alias-from" placeholder="What customer types e.g. litchee">
+      <input type="text" id="new-alias-to" placeholder="Canonical name e.g. Lychee">
+      <button onclick="addAlias()">Add</button>
+    </div>
   </div>
 </div>
 
@@ -306,36 +407,57 @@ async function doPush(records,allowMissingPhones){
   }
 }
 
-// ── Held items approval ──────────────────────────────────────────────────────
+// ── Today's Orders ──────────────────────────────────────────────────────────
 function escH2(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function pillClass(item){
+  if(item.status==='held')return 'pill-held';
+  if(item.status==='final')return 'pill-final';
+  if(item.status==='draft'&&item.final_quantity!=null)return 'pill-packed';
+  return 'pill-draft';
+}
 
 async function loadHeldItems(){
   const list=document.getElementById('hi-list');
   list.innerHTML='<div class="held-empty">Loading…</div>';
+  const today=todayIST();
   const{data,error}=await sb.from('operations')
-    .select('id, sales_order_id, invoice_date, customer_name, item_name, requested_quantity, description')
-    .eq('status','held')
-    .order('invoice_date',{ascending:false})
+    .select('id, sales_order_id, customer_name, item_name, requested_quantity, final_quantity, status, description')
+    .eq('invoice_date',today)
+    .neq('status','removed')
     .order('customer_name');
   if(error){list.innerHTML='<div class="held-empty">'+escH2(error.message)+'</div>';return;}
-  document.getElementById('hi-rc').textContent=data&&data.length?'— '+data.length:'';
-  updateHeldBadge(data?data.length:0);
-  if(!data||!data.length){list.innerHTML='<div class="held-empty">No held items ✓</div>';return;}
-  list.innerHTML=data.map(item=>
-    '<div class="held-item" data-id="'+item.id+'">'+
-      '<div class="hi-top"><span class="hi-cust">'+escH2(item.customer_name)+'</span><span class="hi-date">'+item.invoice_date+'</span></div>'+
-      '<div class="hi-item">'+escH2(item.item_name)+' · '+item.requested_quantity+(item.description?' · '+escH2(item.description):'')+'</div>'+
-      '<div class="hi-actions">'+
-        '<button class="hi-approve" onclick="approveHeld(\''+item.id+'\')">Approve</button>'+
-        '<button class="hi-dismiss" onclick="dismissHeld(\''+item.id+'\')">Dismiss</button>'+
-      '</div>'+
+
+  const heldCount=(data||[]).filter(i=>i.status==='held').length;
+  updateHeldBadge(heldCount);
+  document.getElementById('hi-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':'')+' across today\'s orders':'';
+  if(!data||!data.length){list.innerHTML='<div class="held-empty">No orders yet today</div>';return;}
+
+  const bySalesOrder={};
+  data.forEach(item=>{
+    const key=item.sales_order_id||item.customer_name;
+    if(!bySalesOrder[key])bySalesOrder[key]={customer:item.customer_name,items:[]};
+    bySalesOrder[key].items.push(item);
+  });
+
+  list.innerHTML=Object.entries(bySalesOrder).map(([soid,order])=>
+    '<div class="order-card">'+
+      '<div class="oc-top"><span class="oc-cust">'+escH2(order.customer)+'</span><span class="oc-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+'</span></div>'+
+      '<div class="oc-pills">'+order.items.map(item=>
+        '<span class="pill '+pillClass(item)+'" title="'+escH2(item.description||'')+'">'+
+          escH2(item.item_name)+' '+item.requested_quantity+
+          (item.status==='held'
+            ? ' <button class="pill-btn" onclick="approveHeld(\''+item.id+'\')" title="Approve">✓</button><button class="pill-btn" onclick="dismissHeld(\''+item.id+'\')" title="Dismiss">✕</button>'
+            : '')+
+        '</span>'
+      ).join('')+'</div>'+
     '</div>'
   ).join('');
 }
 
 function updateHeldBadge(n){
   const el=document.getElementById('held-count');
-  el.textContent=n>0?'('+n+')':'';
+  el.textContent=n>0?'('+n+' held)':'';
 }
 
 async function approveHeld(id){
