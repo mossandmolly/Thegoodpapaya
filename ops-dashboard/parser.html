@@ -214,7 +214,7 @@ function delAlias(k){delete ALIASES[k];renderConfig();}
 const TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
 let imgs=[];
 const dz=document.getElementById('dz'),fi=document.getElementById('fi'),pv=document.getElementById('pv');
-const pb=document.getElementById('pb'),sb=document.getElementById('sb'),rw=document.getElementById('rw');
+const pb=document.getElementById('pb'),sbEl=document.getElementById('sb'),rw=document.getElementById('rw');
 const fb=document.getElementById('fb'),tb=document.getElementById('tb'),rc=document.getElementById('rc');
 const cb=document.getElementById('cb'),xb=document.getElementById('xb');
 
@@ -239,8 +239,8 @@ let totalOutputTokens = 0;
 function set(msg,cls){
   const now = Date.now();
   const elapsed = t0 ? ` [${((now-t0)/1000).toFixed(1)}s]` : '';
-  sb.innerHTML=(cls==='loading'?'<span class="spinner"></span>':'')+msg+elapsed;
-  sb.className='status-bar'+(cls?' '+cls:'');
+  sbEl.innerHTML=(cls==='loading'?'<span class="spinner"></span>':'')+msg+elapsed;
+  sbEl.className='status-bar'+(cls?' '+cls:'');
 }
 function logTime(label, ms, extra){
   timingLog.push({label, ms, extra});
