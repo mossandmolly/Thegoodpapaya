@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
     const rows = (headers as any[]).map(h => ({
       sales_order_id: h.sales_order_id,
       customer_name:  h.customer_name,
-      source:         h.source ?? 'whatsapp',
+      source:         h.source ?? 'manual',
       payment_method: h.payment_method ?? 'cod',
       invoice_status: h.invoice_status ?? 'pending',
     }));

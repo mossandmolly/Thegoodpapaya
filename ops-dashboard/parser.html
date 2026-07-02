@@ -455,7 +455,7 @@ pushb.addEventListener('click',async()=>{
         headers.set(r.sales_order,{
           sales_order_id: r.sales_order,
           customer_name:  r.customer_name,
-          source:         'whatsapp',
+          source:         'manual',
           payment_method: 'cod',
           invoice_status: 'pending',
         });
