@@ -115,7 +115,7 @@ async function getOrCreateContact(
   const create = await fetch(zohoUrl('/contacts', orgId), {
     method: 'POST',
     headers: zohoHeaders(token),
-    body: JSON.stringify({ JSONString: JSON.stringify(body) }),
+    body: JSON.stringify(body),
   });
   const cd = await create.json();
   if (cd.code !== 0) throw new Error(`Zoho create contact failed: ${cd.message}`);
@@ -178,7 +178,7 @@ async function createZohoInvoice(
   const res  = await fetch(zohoUrl('/invoices', orgId), {
     method: 'POST',
     headers: zohoHeaders(token),
-    body: JSON.stringify({ JSONString: JSON.stringify(body) }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   if (data.code !== 0) throw new Error(`Zoho create invoice failed: ${data.message}`);
@@ -196,9 +196,7 @@ async function applyPaymentToInvoice(
   const res  = await fetch(zohoUrl(`/invoices/${invoiceId}/payments`, orgId), {
     method: 'POST',
     headers: zohoHeaders(token),
-    body: JSON.stringify({
-      JSONString: JSON.stringify({ payments: [{ payment_id: paymentId, amount_applied: amount }] }),
-    }),
+    body: JSON.stringify({ payments: [{ payment_id: paymentId, amount_applied: amount }] }),
   });
   const data = await res.json();
   if (data.code !== 0) console.warn(`Payment reapply warning: ${data.message}`);
