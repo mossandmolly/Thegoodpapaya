@@ -573,13 +573,47 @@ pushb.addEventListener('click',async()=>{
 // ── Today's Orders ──────────────────────────────────────────────────────────
 function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
+// PostgREST caps rows per request (Supabase's default is 1000) — a single
+// unpaginated select silently truncates once a day's order_items pass that
+// cap. Page through with .range() so every matching row comes back regardless
+// of how many orders are in today (need headroom for 500+ orders/day).
+const ORDER_ITEMS_PAGE_SIZE=1000;
+async function fetchAllOrderItems(applyFilters){
+  const rows=[];
+  let from=0;
+  while(true){
+    let q=sb.from('order_items')
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status');
+    q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
+    const{data,error}=await q;
+    if(error)return{data:null,error};
+    rows.push(...(data||[]));
+    if(!data||data.length<ORDER_ITEMS_PAGE_SIZE)break;
+    from+=ORDER_ITEMS_PAGE_SIZE;
+  }
+  return{data:rows,error:null};
+}
+
+// order_customer_lookup's .in() list also needs chunking — a long URL with
+// hundreds of sales_order_ids can be rejected/truncated, so batch it.
+const CUSTOMER_LOOKUP_CHUNK=200;
+async function fetchCustomerMap(ids){
+  const map={};
+  for(let i=0;i<ids.length;i+=CUSTOMER_LOOKUP_CHUNK){
+    const chunk=ids.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
+    const{data,error}=await sb.from('order_customer_lookup')
+      .select('sales_order_id,customer_name')
+      .in('sales_order_id',chunk);
+    if(error)return{map:null,error};
+    (data||[]).forEach(o=>{map[o.sales_order_id]=o.customer_name;});
+  }
+  return{map,error:null};
+}
+
 async function loadTodaysOrders(){
   const list=document.getElementById('to-list');
   list.innerHTML='<div class="to-empty">Loading…</div>';
-  const{data,error}=await sb.from('order_items')
-    .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status')
-    .like('sales_order_id',TODAY+'-%')
-    .order('sales_order_id');
+  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',TODAY+'-%'));
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
 
   document.getElementById('to-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
@@ -589,12 +623,8 @@ async function loadTodaysOrders(){
   // order_customer_lookup — a narrow view (sales_order_id, customer_name only)
   // granted to anon — instead of an edge-function round trip.
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
-  const customerMap={};
-  const{data:custRows,error:custErr}=await sb.from('order_customer_lookup')
-    .select('sales_order_id,customer_name')
-    .in('sales_order_id',uniqueIds);
+  const{map:customerMap,error:custErr}=await fetchCustomerMap(uniqueIds);
   if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
-  (custRows||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
 
   const bySalesOrder={};
   data.forEach(item=>{
@@ -711,22 +741,15 @@ document.getElementById('to-refresh').addEventListener('click',loadTodaysOrders)
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
   grid.innerHTML='<div class="to-empty">Loading…</div>';
-  const{data,error}=await sb.from('order_items')
-    .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status')
-    .like('sales_order_id',TODAY+'-%')
-    .in('status',['open','packed'])
-    .order('sales_order_id');
+  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',TODAY+'-%').in('status',['open','packed']));
   if(error){grid.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
 
   document.getElementById('pk-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
   if(!data||!data.length){grid.innerHTML='<div class="to-empty">Nothing left to pack ✓</div>';return;}
 
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
-  const customerMap={};
-  const{data:custRows}=await sb.from('order_customer_lookup')
-    .select('sales_order_id,customer_name')
-    .in('sales_order_id',uniqueIds);
-  (custRows||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
+  const{map}=await fetchCustomerMap(uniqueIds);
+  const customerMap=map||{};
 
   grid.innerHTML=data.map(item=>
     '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
