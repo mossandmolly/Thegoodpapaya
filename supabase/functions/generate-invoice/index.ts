@@ -6,10 +6,16 @@
 // Fast path (no prior Zoho invoice):  create only (~600ms)
 // Slow path (prior invoice exists):   fetch payments → unapply → delete → create → reapply (~2-3s)
 //
-// Reads line items from operations (not order_items).
+// Reads line items from order_items (status='final' only) — every item must
+// be packed and marked final before this is called; the frontend only shows
+// the "generate invoice" action once that's true for the whole order.
+// Rate comes from catalog.unit_price by item_name — run sync-catalog first
+// if prices look stale.
 // Sets cf_requested_quantity custom field per line item.
 // Updates orders.invoice_status, zoho_invoice_id, invoice_number, invoice_total, balance_due.
+// Marks the order_items 'invoiced' on success.
 // Does NOT reset amount_paid — cumulative across regenerations.
+// Razorpay payment links are out of scope here — see create-payment-link.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -175,27 +181,35 @@ Deno.serve(async (req) => {
     const token    = await getZohoToken();
     const orgId    = env('ZOHO_ORGANIZATION_ID');
 
-    // Load order header and operations line items in parallel
+    // Load order header and final order_items line items in parallel
     const [{ data: order, error: orderErr }, { data: items, error: itemsErr }] = await Promise.all([
       supabase.from('orders').select('*').eq('sales_order_id', sales_order_id).single(),
-      supabase.from('operations').select('*').eq('sales_order_id', sales_order_id).neq('status', 'removed'),
+      supabase.from('order_items').select('*').eq('sales_order_id', sales_order_id).eq('status', 'final'),
     ]);
     if (orderErr || !order) throw new Error(`Order ${sales_order_id} not found`);
     if (itemsErr) throw new Error(itemsErr.message);
-    if (!items?.length) throw new Error(`No operations items for ${sales_order_id}`);
+    if (!items?.length) throw new Error(`No final items for ${sales_order_id} — pack and mark every item final first`);
 
-    const missing = items.filter((i: any) => i.status !== 'nobill' && !i.final_quantity);
+    const missing = items.filter((i: any) => i.final_quantity == null);
     if (missing.length) {
       throw new Error(`Missing final qty: ${missing.map((i: any) => i.item_name).join(', ')}`);
+    }
+
+    const { data: catalog, error: catalogErr } = await supabase
+      .from('catalog').select('item_name, unit_price');
+    if (catalogErr) throw new Error(catalogErr.message);
+    const rateByItem = new Map((catalog ?? []).map((c: any) => [c.item_name, c.unit_price ?? 0]));
+
+    const noRate = items.filter((i: any) => !rateByItem.has(i.item_name));
+    if (noRate.length) {
+      throw new Error(`No catalog rate for: ${noRate.map((i: any) => i.item_name).join(', ')} — sync catalog first`);
     }
 
     const lineItems = items.map((i: any) => ({
       name:          i.item_name,
       requested_qty: i.requested_quantity ?? 0,
-      qty:           i.status === 'nobill'
-        ? (i.final_quantity ?? i.requested_quantity ?? 0)
-        : (i.final_quantity ?? 0),
-      rate:          i.status === 'nobill' ? 0 : (i.unit_price ?? 0),
+      qty:           i.final_quantity ?? 0,
+      rate:          rateByItem.get(i.item_name) ?? 0,
       description:   i.description || undefined,
     }));
 
@@ -236,6 +250,10 @@ Deno.serve(async (req) => {
       balance_due:     balanceDue,
       invoice_status:  'done',
     }).eq('sales_order_id', sales_order_id);
+
+    await supabase.from('order_items')
+      .update({ status: 'invoiced' })
+      .in('id', items.map((i: any) => i.id));
 
     return new Response(
       JSON.stringify({ invoice_id, invoice_number, sales_order_id }),

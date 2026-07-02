@@ -130,6 +130,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="panel" id="panel-today">
   <div class="section-label">Today's orders <span id="to-rc"></span></div>
   <button class="btn-sec" id="to-refresh" style="margin-bottom:12px">🔄 Refresh</button>
+  <button class="btn-sec" id="to-sync-catalog" style="margin-bottom:12px">💰 Sync Catalog</button>
   <div id="to-list"><div class="to-empty">Loading…</div></div>
 </div>
 
@@ -268,6 +269,9 @@ function computeBusinessDate(){
   return ist.toISOString().slice(0,10);
 }
 const TODAY=computeBusinessDate();
+// Plain IST calendar date (no 7pm business-day shift) — used to check whether
+// the catalog has been synced from Zoho yet today.
+const CALENDAR_TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
 let imgs=[];
 const dz=document.getElementById('dz'),fi=document.getElementById('fi'),pv=document.getElementById('pv');
 const pb=document.getElementById('pb'),sbEl=document.getElementById('sb'),rw=document.getElementById('rw');
@@ -671,7 +675,9 @@ async function loadTodaysOrders(){
     return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
       orders.map(order=>
         '<div class="order-row">'+
-          '<div class="or-top"><span class="or-cust">'+escH(order.customer)+'</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · <a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a></span></div>'+
+          '<div class="or-top"><span class="or-cust">'+escH(order.customer)+'</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · <a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'+
+            (order.items.every(i=>i.status==='final')?' · <a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
+          '</span></div>'+
           '<div class="or-pills">'+order.items.map(item=>
             '<span class="item-pill status-'+item.status+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\',\''+item.status+'\','+item.requested_quantity+')">'+
               escH(item.item_name)+' × '+item.requested_quantity+
@@ -811,6 +817,67 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
   }
   await loadTodaysOrders();
 });
+
+// ── Catalog sync + Generate Invoice ──────────────────────────────────────────
+async function syncCatalog(){
+  const res=await fetch(SUPABASE_URL+'/functions/v1/sync-catalog',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+    body:'{}',
+  });
+  const data=await res.json();
+  if(!res.ok)throw new Error(data.error||'Catalog sync failed');
+  catalogItems=null; // force the add-item dropdown to reload with fresh prices next time
+  return data;
+}
+
+// Rates drift in Zoho day to day — make sure catalog reflects today's prices
+// before the first invoice of the day goes out, without syncing on every click.
+async function ensureCatalogSyncedToday(){
+  const{data}=await sb.from('catalog').select('synced_at').order('synced_at',{ascending:false}).limit(1);
+  const last=data&&data[0]&&data[0].synced_at;
+  const lastDay=last?new Date(new Date(last).getTime()+330*60*1000).toISOString().slice(0,10):null;
+  if(lastDay===CALENDAR_TODAY)return;
+  await syncCatalog();
+}
+
+const syncCatalogBtn=document.getElementById('to-sync-catalog');
+syncCatalogBtn.addEventListener('click',async()=>{
+  syncCatalogBtn.disabled=true;syncCatalogBtn.textContent='Syncing…';
+  try{
+    const{synced}=await syncCatalog();
+    syncCatalogBtn.textContent='✅ Synced ('+synced+')';
+  }catch(e){
+    alert('Catalog sync failed: '+e.message);
+    syncCatalogBtn.textContent='💰 Sync Catalog';
+  }finally{
+    syncCatalogBtn.disabled=false;
+    setTimeout(()=>{syncCatalogBtn.textContent='💰 Sync Catalog';},3000);
+  }
+});
+
+async function generateInvoice(salesOrderId,btnEl){
+  if(!confirm('Generate Zoho invoice for '+salesOrderId+'?'))return;
+  const original=btnEl.textContent;
+  btnEl.textContent='Generating…';
+  btnEl.style.pointerEvents='none';
+  try{
+    await ensureCatalogSyncedToday();
+    const res=await fetch(SUPABASE_URL+'/functions/v1/generate-invoice',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      body:JSON.stringify({sales_order_id:salesOrderId}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Invoice generation failed');
+    alert('Invoice '+data.invoice_number+' created ✓');
+  }catch(e){
+    alert('Failed to generate invoice: '+e.message);
+    btnEl.textContent=original;
+    btnEl.style.pointerEvents='';
+  }
+  await loadTodaysOrders();
+}
 
 async function approveHeldItem(id){
   const{error}=await sb.from('order_items').update({status:'open'}).eq('id',id);
