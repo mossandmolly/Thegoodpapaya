@@ -4,14 +4,6 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
-// Auth guard — redirect to login if not signed in
-// login.html is exempt
-if (!window.location.pathname.endsWith('login.html')) {
-  sb.auth.getSession().then(({ data }) => {
-    if (!data.session) window.location.replace('login.html');
-  });
-}
-
 // Today's date in IST
 function todayIST() {
   return new Date(Date.now() + 330 * 60 * 1000).toISOString().substring(0, 10);
