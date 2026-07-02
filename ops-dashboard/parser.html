@@ -76,6 +76,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .mt-item-row{display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px;color:#2b2320;border-bottom:1px solid #f5efe6}
 .mt-item-row:last-child{border-bottom:none}
 .mt-item-row input{width:auto;margin:0}
+.no-item-row{display:flex;gap:6px;margin-bottom:8px}
+.no-item-row select{flex:2;margin-bottom:0}
+.no-item-row input{flex:1;margin-bottom:0}
+.no-item-row button{flex:0 0 auto;background:none;border:none;color:#b3261e;font-size:16px;cursor:pointer;padding:0 4px}
+.gi-row{padding:8px 0;border-bottom:1px solid #f5efe6}
+.gi-row:last-child{border-bottom:none}
+.gi-row label{display:block;font-size:12px;color:#2b2320;margin-bottom:4px}
+.gi-row select{margin-bottom:0}
 .pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:10px}
 .pack-card.status-packed{border-color:#f0dd8a;background:#fdf6d9}
@@ -131,6 +139,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="section-label">Today's orders <span id="to-rc"></span></div>
   <button class="btn-sec" id="to-refresh" style="margin-bottom:12px">🔄 Refresh</button>
   <button class="btn-sec" id="to-sync-catalog" style="margin-bottom:12px">💰 Sync Catalog</button>
+  <button class="btn-push" id="to-new-order" style="margin-bottom:12px">➕ New Order</button>
   <div id="to-list"><div class="to-empty">Loading…</div></div>
 </div>
 
@@ -165,6 +174,50 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div class="modal-actions">
       <button class="btn-sec" id="mt-cancel" style="margin-bottom:0">Cancel</button>
       <button class="btn-parse" id="mt-move" style="margin-bottom:0">Move to Tomorrow</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT ITEM MODAL (qty + description) -->
+<div class="modal-overlay hidden" id="ei-modal">
+  <div class="modal-box">
+    <h3>Edit item</h3>
+    <label class="modal-label">Quantity</label>
+    <input type="number" id="ei-qty" step="0.01" min="0">
+    <label class="modal-label">Description</label>
+    <input type="text" id="ei-desc" placeholder="optional">
+    <div class="modal-actions">
+      <button class="btn-sec" id="ei-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="ei-save" style="margin-bottom:0">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW ORDER MODAL -->
+<div class="modal-overlay hidden" id="no-modal">
+  <div class="modal-box">
+    <h3>New order</h3>
+    <label class="modal-label">Customer name</label>
+    <input type="text" id="no-customer" placeholder="e.g. Dhavala A502">
+    <label class="modal-label">Items</label>
+    <div id="no-items"></div>
+    <button class="btn-sec" id="no-add-row" style="margin-bottom:12px">+ add another item</button>
+    <div class="modal-actions">
+      <button class="btn-sec" id="no-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="no-create" style="margin-bottom:0">Create Order</button>
+    </div>
+  </div>
+</div>
+
+<!-- GENERATE INVOICE — RATE RESOLUTION MODAL -->
+<div class="modal-overlay hidden" id="gi-modal">
+  <div class="modal-box">
+    <h3>Match catalog items</h3>
+    <label class="modal-label">Some item names don't match the catalog exactly — pick the right one</label>
+    <div id="gi-items"></div>
+    <div class="modal-actions">
+      <button class="btn-sec" id="gi-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="gi-continue" style="margin-bottom:0">Continue</button>
     </div>
   </div>
 </div>
@@ -655,12 +708,15 @@ async function loadTodaysOrders(){
   if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
 
   const bySalesOrder={};
+  const byItemId={};
   data.forEach(item=>{
     const key=item.sales_order_id;
     if(!bySalesOrder[key])bySalesOrder[key]={customer:customerMap[key]||key,items:[]};
     bySalesOrder[key].items.push(item);
+    byItemId[item.id]=item;
   });
   currentOrdersById=bySalesOrder;
+  currentItemsById=byItemId;
 
   // Group orders by society — first token of customer_name before the first space
   const bySociety={};
@@ -679,7 +735,7 @@ async function loadTodaysOrders(){
             (order.items.every(i=>i.status==='final')?' · <a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
           '</span></div>'+
           '<div class="or-pills">'+order.items.map(item=>
-            '<span class="item-pill status-'+item.status+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\',\''+item.status+'\','+item.requested_quantity+')">'+
+            '<span class="item-pill status-'+item.status+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\')">'+
               escH(item.item_name)+' × '+item.requested_quantity+
               '<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>'+
             '</span>'
@@ -694,45 +750,72 @@ function deriveSociety(customerName){
   return name.split(' ')[0]||name;
 }
 
-function pillClick(id,status,currentQty){
-  if(status==='held'){
+function pillClick(id){
+  const item=currentItemsById[id];
+  if(!item)return;
+  if(item.status==='held'){
     if(confirm('Approve this held item? It will move to open.'))approveHeldItem(id);
   }else{
-    const val=prompt('New quantity:',currentQty);
-    if(val!==null&&val.trim()!=='')updateQty(id,val);
+    editItemPrompt(id);
   }
 }
 
-async function updateQty(id,val){
-  const qty=parseFloat(val);
-  if(isNaN(qty)||qty<0){alert('Enter a valid quantity');await loadTodaysOrders();return;}
-  // Any quantity edit reverts the item to open — it needs to be (re)packed
-  const{error}=await sb.from('order_items').update({requested_quantity:qty,status:'open'}).eq('id',id);
+async function updateQty(id,qty,description){
+  const{error}=await sb.from('order_items')
+    // Any edit reverts the item to open — it needs to be (re)packed
+    .update({requested_quantity:qty,description:description||null,status:'open'})
+    .eq('id',id);
   if(error){alert('Failed to update: '+error.message);}
   await loadTodaysOrders();
 }
+
+// ── Edit item modal (quantity + description together) ───────────────────────
+const eiModal=document.getElementById('ei-modal'),eiQty=document.getElementById('ei-qty'),eiDesc=document.getElementById('ei-desc');
+let eiTargetItem=null;
+
+function editItemPrompt(id){
+  const item=currentItemsById[id];
+  if(!item)return;
+  eiTargetItem=id;
+  eiQty.value=item.requested_quantity;
+  eiDesc.value=item.description||'';
+  eiModal.classList.remove('hidden');
+}
+
+document.getElementById('ei-cancel').addEventListener('click',()=>{eiModal.classList.add('hidden');});
+
+document.getElementById('ei-save').addEventListener('click',async()=>{
+  const qty=parseFloat(eiQty.value);
+  if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
+  eiModal.classList.add('hidden');
+  await updateQty(eiTargetItem,qty,eiDesc.value.trim());
+});
 
 // ── Add-item modal (catalog dropdown + qty in one form) ─────────────────────
 let catalogItems=null;
 let aiTargetOrder=null;
 const aiModal=document.getElementById('ai-modal'),aiItemSel=document.getElementById('ai-item'),aiQty=document.getElementById('ai-qty');
 
+async function ensureCatalogItems(){
+  if(catalogItems)return catalogItems;
+  const{data,error}=await sb.from('catalog').select('item_name').order('item_name');
+  if(error)throw new Error('Could not load catalog: '+error.message);
+  catalogItems=data||[];
+  return catalogItems;
+}
+
 async function addItemPrompt(salesOrderId){
   aiTargetOrder=salesOrderId;
-  if(!catalogItems){
-    aiItemSel.innerHTML='<option>Loading…</option>';
-    aiModal.classList.remove('hidden');
-    const{data,error}=await sb.from('catalog').select('item_name').order('item_name');
-    if(error){
-      aiModal.classList.add('hidden');
-      alert('Could not load catalog: '+error.message);
-      return;
-    }
-    catalogItems=data||[];
-  }
-  aiItemSel.innerHTML=catalogItems.map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('');
-  aiQty.value='';
+  aiItemSel.innerHTML='<option>Loading…</option>';
   aiModal.classList.remove('hidden');
+  try{
+    const items=await ensureCatalogItems();
+    aiItemSel.innerHTML=items.map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('');
+    aiQty.value='';
+  }catch(e){
+    aiModal.classList.add('hidden');
+    alert(e.message);
+  }
 }
 
 document.getElementById('ai-cancel').addEventListener('click',()=>{aiModal.classList.add('hidden');});
@@ -753,6 +836,95 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
   await loadTodaysOrders();
 });
 
+// ── New order modal (new customer, 2+ items in one go) ──────────────────────
+const noModal=document.getElementById('no-modal'),noCustomer=document.getElementById('no-customer'),noItems=document.getElementById('no-items');
+let noRowCount=0;
+
+async function addNoRow(){
+  const idx=noRowCount++;
+  noItems.insertAdjacentHTML('beforeend',
+    '<div class="no-item-row" data-idx="'+idx+'">'+
+      '<select class="no-item-sel"></select>'+
+      '<input type="number" class="no-item-qty" step="0.01" min="0" placeholder="qty">'+
+      '<button type="button" onclick="this.closest(\'.no-item-row\').remove()" title="Remove row">✕</button>'+
+    '</div>'
+  );
+  try{
+    const items=await ensureCatalogItems();
+    const sel=noItems.querySelector('.no-item-row[data-idx="'+idx+'"] .no-item-sel');
+    sel.innerHTML=items.map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('');
+  }catch(e){
+    alert(e.message);
+  }
+}
+
+document.getElementById('to-new-order').addEventListener('click',async()=>{
+  noCustomer.value='';
+  noItems.innerHTML='';
+  noRowCount=0;
+  noModal.classList.remove('hidden');
+  await addNoRow();
+  await addNoRow();
+});
+
+document.getElementById('no-add-row').addEventListener('click',addNoRow);
+document.getElementById('no-cancel').addEventListener('click',()=>{noModal.classList.add('hidden');});
+
+document.getElementById('no-create').addEventListener('click',async()=>{
+  const customerName=noCustomer.value.trim();
+  if(!customerName){alert('Enter a customer name');return;}
+  const rows=[...noItems.querySelectorAll('.no-item-row')].map(row=>({
+    item_name: row.querySelector('.no-item-sel').value,
+    qty:       parseFloat(row.querySelector('.no-item-qty').value),
+  })).filter(r=>r.item_name&&!isNaN(r.qty)&&r.qty>0);
+  if(!rows.length){alert('Add at least one item with a quantity');return;}
+
+  const salesOrderId=TODAY+'-'+customerName.replace(/\s+/g,'');
+  const createBtn=document.getElementById('no-create');
+  createBtn.disabled=true;createBtn.textContent='Creating…';
+  try{
+    const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      body:JSON.stringify({headers:[{
+        sales_order_id: salesOrderId,
+        customer_name:  customerName,
+        source:         'manual',
+        payment_method: 'cod',
+        invoice_status: 'pending',
+      }]}),
+    });
+    const createOrderData=await createOrderRes.json();
+    if(!createOrderRes.ok)throw new Error(createOrderData.error||'Could not create order header');
+
+    // Held if (sales_order_id, item_name, requested_quantity) already exists today —
+    // same duplicate rule the parser push uses.
+    for(const r of rows){
+      const{data:existing,error:selErr}=await sb.from('order_items')
+        .select('id')
+        .eq('sales_order_id',salesOrderId)
+        .eq('item_name',r.item_name)
+        .eq('requested_quantity',r.qty)
+        .limit(1);
+      if(selErr)throw new Error(selErr.message);
+      const status=(existing&&existing.length)?'held':'open';
+      const{error:insErr}=await sb.from('order_items').insert({
+        sales_order_id:     salesOrderId,
+        item_name:          r.item_name,
+        requested_quantity: r.qty,
+        status,
+      });
+      if(insErr)throw new Error(insErr.message);
+    }
+    noModal.classList.add('hidden');
+  }catch(e){
+    alert('Failed to create order: '+e.message);
+  }finally{
+    createBtn.disabled=false;createBtn.textContent='Create Order';
+  }
+  await loadTodaysOrders();
+});
+
 // ── Move to tomorrow modal ───────────────────────────────────────────────────
 // Moves selected items of an order onto tomorrow's sales_order_id (same
 // customer suffix, date prefix bumped by one day). Needs an orders header row
@@ -760,6 +932,7 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
 // same create-order edge function the parser push uses, before the item rows
 // are repointed.
 let currentOrdersById={};
+let currentItemsById={};
 let mtTargetOrder=null;
 const mtModal=document.getElementById('mt-modal'),mtItems=document.getElementById('mt-items');
 
@@ -856,8 +1029,8 @@ syncCatalogBtn.addEventListener('click',async()=>{
   }
 });
 
-async function generateInvoice(salesOrderId,btnEl){
-  if(!confirm('Generate Zoho invoice for '+salesOrderId+'?'))return;
+async function generateInvoice(salesOrderId,btnEl,overrides){
+  if(!overrides&&!confirm('Generate Zoho invoice for '+salesOrderId+'?'))return;
   const original=btnEl.textContent;
   btnEl.textContent='Generating…';
   btnEl.style.pointerEvents='none';
@@ -866,18 +1039,61 @@ async function generateInvoice(salesOrderId,btnEl){
     const res=await fetch(SUPABASE_URL+'/functions/v1/generate-invoice',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
-      body:JSON.stringify({sales_order_id:salesOrderId}),
+      body:JSON.stringify({sales_order_id:salesOrderId,rate_overrides:overrides||undefined}),
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Invoice generation failed');
-    alert('Invoice '+data.invoice_number+' created ✓');
+
+    if(data.needs_resolution){
+      btnEl.textContent=original;
+      btnEl.style.pointerEvents='';
+      openRateResolutionModal(salesOrderId,btnEl,data.unresolved);
+      return;
+    }
+
+    let msg='Invoice '+data.invoice_number+' created ✓';
+    if(data.free_items&&data.free_items.length){
+      msg+='\n\nBilled at ₹0 (replacement/free/free sample): '+data.free_items.join(', ');
+    }
+    alert(msg);
   }catch(e){
     alert('Failed to generate invoice: '+e.message);
     btnEl.textContent=original;
     btnEl.style.pointerEvents='';
+    return;
   }
   await loadTodaysOrders();
 }
+
+// ── Rate resolution modal — item name doesn't match catalog exactly ─────────
+const giModal=document.getElementById('gi-modal'),giItemsEl=document.getElementById('gi-items');
+let giTargetOrder=null,giTargetBtn=null;
+
+async function openRateResolutionModal(salesOrderId,btnEl,unresolved){
+  giTargetOrder=salesOrderId;
+  giTargetBtn=btnEl;
+  let items=[];
+  try{ items=await ensureCatalogItems(); }catch(e){ alert(e.message); }
+  giItemsEl.innerHTML=unresolved.map((u,i)=>{
+    const options=[...new Set([...u.suggestions,...items.map(c=>c.item_name)])];
+    return '<div class="gi-row" data-item="'+escH(u.item_name)+'">'+
+      '<label>"'+escH(u.item_name)+'" isn\'t in the catalog — use rate from:</label>'+
+      '<select>'+options.map(o=>'<option value="'+escH(o)+'">'+escH(o)+'</option>').join('')+'</select>'+
+    '</div>';
+  }).join('');
+  giModal.classList.remove('hidden');
+}
+
+document.getElementById('gi-cancel').addEventListener('click',()=>{giModal.classList.add('hidden');});
+
+document.getElementById('gi-continue').addEventListener('click',async()=>{
+  const overrides={};
+  giItemsEl.querySelectorAll('.gi-row').forEach(row=>{
+    overrides[row.dataset.item]=row.querySelector('select').value;
+  });
+  giModal.classList.add('hidden');
+  await generateInvoice(giTargetOrder,giTargetBtn,overrides);
+});
 
 async function approveHeldItem(id){
   const{error}=await sb.from('order_items').update({status:'open'}).eq('id',id);

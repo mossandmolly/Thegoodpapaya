@@ -1,7 +1,8 @@
 // Supabase Edge Function — generate-invoice
 //
-// Input:  { sales_order_id: string }
-// Output: { invoice_id, invoice_number, sales_order_id }
+// Input:  { sales_order_id: string, rate_overrides?: { [item_name: string]: string } }
+// Output (success):          { invoice_id, invoice_number, sales_order_id, free_items }
+// Output (needs resolution): { needs_resolution: true, unresolved: [{ item_name, suggestions }] }
 //
 // Fast path (no prior Zoho invoice):  create only (~600ms)
 // Slow path (prior invoice exists):   fetch payments → unapply → delete → create → reapply (~2-3s)
@@ -9,8 +10,16 @@
 // Reads line items from order_items (status='final' only) — every item must
 // be packed and marked final before this is called; the frontend only shows
 // the "generate invoice" action once that's true for the whole order.
-// Rate comes from catalog.unit_price by item_name — run sync-catalog first
-// if prices look stale.
+//
+// Rate comes from catalog.unit_price, matched to item_name case-insensitively.
+// Items whose description contains "replacement", "free", or "free sample"
+// are billed at ₹0 regardless of catalog match — reported back in free_items
+// so the frontend can show it in the confirmation summary.
+// If a non-free item's name doesn't match the catalog at all, the request
+// comes back with needs_resolution + closest-name suggestions instead of
+// failing outright; resubmit with rate_overrides = { item_name: catalog_item_name }
+// once the caller has picked the right one, and it'll use that catalog row's rate.
+//
 // Sets cf_requested_quantity custom field per line item.
 // Updates orders.invoice_status, zoho_invoice_id, invoice_number, invoice_total, balance_due.
 // Marks the order_items 'invoiced' on success.
@@ -22,6 +31,32 @@
 //   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORGANIZATION_ID
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const FREE_ITEM_RE = /\b(replacement|free sample|free)\b/i;
+
+// Small edit-distance so a typo'd or aliased item name ("Papaya Ripe" vs
+// "Ripe Papaya") still surfaces the right catalog row instead of just failing.
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...new Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+function closestCatalogNames(name: string, catalogNames: string[], n = 3): string[] {
+  return [...catalogNames]
+    .map(c => ({ c, d: levenshtein(name.toLowerCase(), c.toLowerCase()) }))
+    .sort((x, y) => x.d - y.d)
+    .slice(0, n)
+    .map(x => x.c);
+}
 
 function env(key: string) {
   const val = Deno.env.get(key);
@@ -174,8 +209,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { sales_order_id } = await req.json();
+    const { sales_order_id, rate_overrides } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
+    const overrides: Record<string, string> = rate_overrides ?? {};
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
     const token    = await getZohoToken();
@@ -198,20 +234,47 @@ Deno.serve(async (req) => {
     const { data: catalog, error: catalogErr } = await supabase
       .from('catalog').select('item_name, unit_price');
     if (catalogErr) throw new Error(catalogErr.message);
-    const rateByItem = new Map((catalog ?? []).map((c: any) => [c.item_name, c.unit_price ?? 0]));
+    const catalogNames = (catalog ?? []).map((c: any) => c.item_name as string);
+    const rateByLowerName = new Map(
+      (catalog ?? []).map((c: any) => [(c.item_name as string).toLowerCase(), c.unit_price ?? 0]),
+    );
 
-    const noRate = items.filter((i: any) => !rateByItem.has(i.item_name));
-    if (noRate.length) {
-      throw new Error(`No catalog rate for: ${noRate.map((i: any) => i.item_name).join(', ')} — sync catalog first`);
+    const freeItems: string[] = [];
+    const unresolved: Array<{ item_name: string; suggestions: string[] }> = [];
+    const lineItems: Array<{ name: string; requested_qty: number; qty: number; rate: number; description?: string }> = [];
+
+    for (const i of items) {
+      const isFree = FREE_ITEM_RE.test(i.description ?? '');
+      if (isFree) {
+        freeItems.push(i.item_name);
+        lineItems.push({
+          name: i.item_name, requested_qty: i.requested_quantity ?? 0,
+          qty: i.final_quantity ?? 0, rate: 0, description: i.description || undefined,
+        });
+        continue;
+      }
+
+      let rate = rateByLowerName.get((i.item_name as string).toLowerCase());
+      if (rate === undefined && overrides[i.item_name]) {
+        rate = rateByLowerName.get(overrides[i.item_name].toLowerCase());
+      }
+      if (rate === undefined) {
+        unresolved.push({ item_name: i.item_name, suggestions: closestCatalogNames(i.item_name, catalogNames) });
+        continue;
+      }
+
+      lineItems.push({
+        name: i.item_name, requested_qty: i.requested_quantity ?? 0,
+        qty: i.final_quantity ?? 0, rate, description: i.description || undefined,
+      });
     }
 
-    const lineItems = items.map((i: any) => ({
-      name:          i.item_name,
-      requested_qty: i.requested_quantity ?? 0,
-      qty:           i.final_quantity ?? 0,
-      rate:          rateByItem.get(i.item_name) ?? 0,
-      description:   i.description || undefined,
-    }));
+    if (unresolved.length) {
+      return new Response(
+        JSON.stringify({ needs_resolution: true, unresolved }),
+        { headers: { ...CORS, 'Content-Type': 'application/json' } },
+      );
+    }
 
     const contactId = await getOrCreateContact(
       order.customer_name,
@@ -256,7 +319,7 @@ Deno.serve(async (req) => {
       .in('id', items.map((i: any) => i.id));
 
     return new Response(
-      JSON.stringify({ invoice_id, invoice_number, sales_order_id }),
+      JSON.stringify({ invoice_id, invoice_number, sales_order_id, free_items: freeItems }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
