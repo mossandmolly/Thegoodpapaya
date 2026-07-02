@@ -65,6 +65,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .add-row input{flex:1;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;color:#2b2320;font-size:12px;font-family:inherit}
 .add-row input::placeholder{color:#8a7a6a}
 .add-row button{background:#e8720c;color:#ffffff;border:none;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;white-space:nowrap}
+.modal-overlay{position:fixed;inset:0;background:rgba(43,35,32,0.4);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
+.modal-overlay.hidden{display:none}
+.modal-box{background:#ffffff;border-radius:12px;padding:20px;width:100%;max-width:340px;box-shadow:0 8px 30px rgba(43,35,32,0.2)}
+.modal-box h3{font-size:15px;font-weight:700;color:#2b2320;margin-bottom:14px}
+.modal-label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:4px}
+.modal-box select,.modal-box input{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
+.modal-actions{display:flex;gap:8px;margin-top:4px}
+.modal-actions button{flex:1}
 .rules-list{font-size:12px;color:#5c4f42;line-height:1.8;list-style:none}
 .rules-list li{padding:4px 0;border-bottom:1px solid #f1e9df}
 .rules-list li:last-child{border-bottom:none}
@@ -108,6 +116,21 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="section-label">Today's orders <span id="to-rc"></span></div>
   <button class="btn-sec" id="to-refresh" style="margin-bottom:12px">🔄 Refresh</button>
   <div id="to-list"><div class="to-empty">Loading…</div></div>
+</div>
+
+<!-- ADD ITEM MODAL -->
+<div class="modal-overlay hidden" id="ai-modal">
+  <div class="modal-box">
+    <h3>Add item</h3>
+    <label class="modal-label">Item</label>
+    <select id="ai-item"></select>
+    <label class="modal-label">Quantity</label>
+    <input type="number" id="ai-qty" step="0.01" min="0" placeholder="e.g. 0.5">
+    <div class="modal-actions">
+      <button class="btn-sec" id="ai-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="ai-add" style="margin-bottom:0">Add</button>
+    </div>
+  </div>
 </div>
 
 <!-- CONFIG -->
@@ -534,7 +557,7 @@ async function loadTodaysOrders(){
   const list=document.getElementById('to-list');
   list.innerHTML='<div class="to-empty">Loading…</div>';
   const{data,error}=await sb.from('order_items')
-    .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,orders(customer_name)')
+    .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status')
     .like('sales_order_id',TODAY+'-%')
     .order('sales_order_id');
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
@@ -542,10 +565,20 @@ async function loadTodaysOrders(){
   document.getElementById('to-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
   if(!data||!data.length){list.innerHTML='<div class="to-empty">No orders yet today</div>';return;}
 
+  // Plain flat lookup for customer names — no embedded join (avoids depending on
+  // PostgREST's relationship/schema cache, which can lag behind a freshly created FK)
+  const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
+  const{data:orderRows,error:orderErr}=await sb.from('orders')
+    .select('sales_order_id,customer_name')
+    .in('sales_order_id',uniqueIds);
+  if(orderErr){list.innerHTML='<div class="to-empty">'+escH(orderErr.message)+'</div>';return;}
+  const customerMap={};
+  (orderRows||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
+
   const bySalesOrder={};
   data.forEach(item=>{
     const key=item.sales_order_id;
-    if(!bySalesOrder[key])bySalesOrder[key]={customer:item.orders?.customer_name||key,items:[]};
+    if(!bySalesOrder[key])bySalesOrder[key]={customer:customerMap[key]||key,items:[]};
     bySalesOrder[key].items.push(item);
   });
 
@@ -603,21 +636,46 @@ async function updateQty(id,val){
   await loadTodaysOrders();
 }
 
+// ── Add-item modal (catalog dropdown + qty in one form) ─────────────────────
+let catalogItems=null;
+let aiTargetOrder=null;
+const aiModal=document.getElementById('ai-modal'),aiItemSel=document.getElementById('ai-item'),aiQty=document.getElementById('ai-qty');
+
 async function addItemPrompt(salesOrderId){
-  const itemName=prompt('Item name:');
-  if(!itemName||!itemName.trim())return;
-  const qtyStr=prompt('Quantity for '+itemName+':');
-  const qty=parseFloat(qtyStr);
+  aiTargetOrder=salesOrderId;
+  if(!catalogItems){
+    aiItemSel.innerHTML='<option>Loading…</option>';
+    aiModal.classList.remove('hidden');
+    const{data,error}=await sb.from('catalog').select('item_name').order('item_name');
+    if(error){
+      aiModal.classList.add('hidden');
+      alert('Could not load catalog: '+error.message);
+      return;
+    }
+    catalogItems=data||[];
+  }
+  aiItemSel.innerHTML=catalogItems.map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('');
+  aiQty.value='';
+  aiModal.classList.remove('hidden');
+}
+
+document.getElementById('ai-cancel').addEventListener('click',()=>{aiModal.classList.add('hidden');});
+
+document.getElementById('ai-add').addEventListener('click',async()=>{
+  const itemName=aiItemSel.value;
+  const qty=parseFloat(aiQty.value);
+  if(!itemName){alert('Choose an item');return;}
   if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
   const{error}=await sb.from('order_items').insert({
-    sales_order_id: salesOrderId,
-    item_name:      itemName.trim(),
+    sales_order_id: aiTargetOrder,
+    item_name:      itemName,
     requested_quantity: qty,
     status:         'open',
   });
   if(error){alert('Failed to add item: '+error.message);return;}
+  aiModal.classList.add('hidden');
   await loadTodaysOrders();
-}
+});
 
 async function approveHeldItem(id){
   const{error}=await sb.from('order_items').update({status:'open'}).eq('id',id);
