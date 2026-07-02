@@ -243,7 +243,15 @@ function addAlias(){const f=document.getElementById('new-alias-from').value.trim
 function delAlias(k){delete ALIASES[k];renderConfig();}
 
 // ── Parser ────────────────────────────────────────────────────────────────
-const TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
+// Business day, not calendar day: orders placed 7pm–midnight are next-day
+// deliveries, so they (and Today's Orders / Packer) should bucket under
+// tomorrow's date, same as orders placed after midnight already do.
+function computeBusinessDate(){
+  const ist=new Date(Date.now()+330*60*1000); // IST wall-clock via UTC getters
+  if(ist.getUTCHours()>=19)ist.setUTCDate(ist.getUTCDate()+1);
+  return ist.toISOString().slice(0,10);
+}
+const TODAY=computeBusinessDate();
 let imgs=[];
 const dz=document.getElementById('dz'),fi=document.getElementById('fi'),pv=document.getElementById('pv');
 const pb=document.getElementById('pb'),sbEl=document.getElementById('sb'),rw=document.getElementById('rw');
