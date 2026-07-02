@@ -4,6 +4,11 @@
 // real Zoho invoice / Razorpay payment state), so the parser can't upsert
 // it directly with the public anon key. This function is the write path.
 //
+// Also derives the society/community name from each customer_name (first
+// token before the first space, e.g. "Dhavala A502" -> "Dhavala") and
+// upserts it into `communities` — grows that reference table from real
+// order data instead of maintaining a static list.
+//
 // Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status? }] }
 // Output: { created: <count submitted> }
 //
@@ -60,6 +65,24 @@ Deno.serve(async (req) => {
       body:    JSON.stringify(rows),
     });
     if (!res.ok) throw new Error(await res.text());
+
+    // Best-effort: grow the communities table from these customer names.
+    // Never fails the request — a name-check pattern miss shouldn't block order creation.
+    try {
+      const societies = [...new Set(
+        rows.map(r => (r.customer_name || '').trim().split(' ')[0]).filter(Boolean),
+      )].map(name => ({ name }));
+
+      if (societies.length) {
+        await fetch(`${env('SUPABASE_URL')}/rest/v1/communities?on_conflict=name`, {
+          method:  'POST',
+          headers: { ...sbHeaders(), Prefer: 'resolution=ignore-duplicates,return=minimal' },
+          body:    JSON.stringify(societies),
+        });
+      }
+    } catch (_e) {
+      // swallow — communities is a nice-to-have, not load-bearing for this request
+    }
 
     return new Response(
       JSON.stringify({ created: rows.length }),
