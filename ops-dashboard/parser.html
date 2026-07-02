@@ -61,15 +61,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 .phone-actions button{flex:1;padding:9px;border-radius:8px;border:none;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
 .phone-actions .btn-save{background:#7ecb82;color:#0e1a0f}
 .phone-actions .btn-skip{background:transparent;border:1.5px solid #2e4d30;color:#9abf9c}
-.held-item{background:#0a120a;border:1px solid #1e301e;border-radius:8px;padding:10px 12px;margin-bottom:8px}
-.held-item .hi-top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px}
-.held-item .hi-cust{font-weight:600;color:#e8f0e8}
-.held-item .hi-date{color:#4a6e4c;font-size:11px}
-.held-item .hi-item{font-size:12px;color:#9abf9c;margin-bottom:8px}
-.held-item .hi-actions{display:flex;gap:8px}
-.held-item .hi-actions button{flex:1;padding:7px;border-radius:8px;border:none;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
-.hi-approve{background:#7ecb82;color:#0e1a0f}
-.hi-dismiss{background:transparent;border:1.5px solid #4a2020!important;color:#e07070}
+.order-card{background:#0a120a;border:1px solid #1e301e;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.order-card .oc-top{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:8px}
+.order-card .oc-cust{font-weight:600;color:#e8f0e8}
+.order-card .oc-meta{color:#4a6e4c;font-size:11px}
+.oc-pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap}
+.pill-draft{background:#131f14;border-color:#2e4d30;color:#9abf9c}
+.pill-packed{background:#0e1e2e;border-color:#264a6e;color:#7eb0e0}
+.pill-final{background:#0a1a0a;border-color:#2a4a2a;color:#7ecb82}
+.pill-held{background:#1a1a0e;border-color:#4a4a20;color:#c8b060}
+.pill-btn{background:none;border:none;cursor:pointer;font-size:11px;line-height:1;padding:0;color:inherit;opacity:0.75}
+.pill-btn:hover{opacity:1}
 .held-empty{font-size:12px;color:#4a6e4c;text-align:center;padding:16px}
 </style>
 </head>
@@ -77,7 +80,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 <div class="logo">good<span>papaya</span> · parser</div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
-  <button class="tab" onclick="switchTab('held')">✅ Approve <span id="held-count"></span></button>
+  <button class="tab" onclick="switchTab('held')">📋 Today's Orders <span id="held-count"></span></button>
   <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
 </div>
 
@@ -113,10 +116,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
   </div>
 </div>
 
-<!-- HELD APPROVAL -->
+<!-- TODAY'S ORDERS -->
 <div class="panel" id="panel-held">
-  <div class="section-label">Held items <span id="hi-rc"></span></div>
-  <p class="note" style="margin-bottom:12px">Items already submitted for this customer+date come in as "held" instead of overwriting what's being packed. Approve to release them into Operations as draft, or dismiss to discard.</p>
+  <div class="section-label">Today's orders <span id="hi-rc"></span></div>
+  <p class="note" style="margin-bottom:12px">Every order for today, grouped by customer. Grey = not packed · blue = packed · green = finalized · amber = held (duplicate — approve ✓ or dismiss ✕ right on the pill).</p>
   <button class="btn-sec" id="hi-refresh" style="margin-bottom:12px">🔄 Refresh</button>
   <div id="hi-list"><div class="held-empty">Loading…</div></div>
 </div>
@@ -572,36 +575,57 @@ async function doPush(records,allowMissingPhones){
   }
 }
 
-// ── Held items approval ──────────────────────────────────────────────────────
+// ── Today's Orders ──────────────────────────────────────────────────────────
 function escH2(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function pillClass(item){
+  if(item.status==='held')return 'pill-held';
+  if(item.status==='final')return 'pill-final';
+  if(item.status==='draft'&&item.final_quantity!=null)return 'pill-packed';
+  return 'pill-draft';
+}
 
 async function loadHeldItems(){
   const list=document.getElementById('hi-list');
   list.innerHTML='<div class="held-empty">Loading…</div>';
+  const today=todayIST();
   const{data,error}=await sb.from('operations')
-    .select('id, sales_order_id, invoice_date, customer_name, item_name, requested_quantity, description')
-    .eq('status','held')
-    .order('invoice_date',{ascending:false})
+    .select('id, sales_order_id, customer_name, item_name, requested_quantity, final_quantity, status, description')
+    .eq('invoice_date',today)
+    .neq('status','removed')
     .order('customer_name');
   if(error){list.innerHTML='<div class="held-empty">'+escH2(error.message)+'</div>';return;}
-  document.getElementById('hi-rc').textContent=data&&data.length?'— '+data.length:'';
-  updateHeldBadge(data?data.length:0);
-  if(!data||!data.length){list.innerHTML='<div class="held-empty">No held items ✓</div>';return;}
-  list.innerHTML=data.map(item=>
-    '<div class="held-item" data-id="'+item.id+'">'+
-      '<div class="hi-top"><span class="hi-cust">'+escH2(item.customer_name)+'</span><span class="hi-date">'+item.invoice_date+'</span></div>'+
-      '<div class="hi-item">'+escH2(item.item_name)+' · '+item.requested_quantity+(item.description?' · '+escH2(item.description):'')+'</div>'+
-      '<div class="hi-actions">'+
-        '<button class="hi-approve" onclick="approveHeld(\''+item.id+'\')">Approve</button>'+
-        '<button class="hi-dismiss" onclick="dismissHeld(\''+item.id+'\')">Dismiss</button>'+
-      '</div>'+
+
+  const heldCount=(data||[]).filter(i=>i.status==='held').length;
+  updateHeldBadge(heldCount);
+  document.getElementById('hi-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':'')+' across today\'s orders':'';
+  if(!data||!data.length){list.innerHTML='<div class="held-empty">No orders yet today</div>';return;}
+
+  const bySalesOrder={};
+  data.forEach(item=>{
+    const key=item.sales_order_id||item.customer_name;
+    if(!bySalesOrder[key])bySalesOrder[key]={customer:item.customer_name,items:[]};
+    bySalesOrder[key].items.push(item);
+  });
+
+  list.innerHTML=Object.entries(bySalesOrder).map(([soid,order])=>
+    '<div class="order-card">'+
+      '<div class="oc-top"><span class="oc-cust">'+escH2(order.customer)+'</span><span class="oc-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+'</span></div>'+
+      '<div class="oc-pills">'+order.items.map(item=>
+        '<span class="pill '+pillClass(item)+'" title="'+escH2(item.description||'')+'">'+
+          escH2(item.item_name)+' '+item.requested_quantity+
+          (item.status==='held'
+            ? ' <button class="pill-btn" onclick="approveHeld(\''+item.id+'\')" title="Approve">✓</button><button class="pill-btn" onclick="dismissHeld(\''+item.id+'\')" title="Dismiss">✕</button>'
+            : '')+
+        '</span>'
+      ).join('')+'</div>'+
     '</div>'
   ).join('');
 }
 
 function updateHeldBadge(n){
   const el=document.getElementById('held-count');
-  el.textContent=n>0?'('+n+')':'';
+  el.textContent=n>0?'('+n+' held)':'';
 }
 
 async function approveHeld(id){
