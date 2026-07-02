@@ -6,70 +6,70 @@
 <title>Good Papaya · Order Parser</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'DM Sans',system-ui,sans-serif;background:#161c18;color:#e4e6e0;min-height:100vh;padding:20px 16px 48px}
-.logo{font-size:20px;font-weight:700;color:#8fb996;margin-bottom:20px}.logo span{color:#e4e6e0;font-weight:300}
+body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320;min-height:100vh;padding:20px 16px 48px}
+.logo{font-size:20px;font-weight:700;color:#c2570a;margin-bottom:20px}.logo span{color:#2b2320;font-weight:300}
 .tabs{display:flex;gap:8px;margin-bottom:20px}
-.tab{padding:8px 16px;border-radius:20px;border:1.5px solid #374a35;background:transparent;color:#77836f;font-size:13px;cursor:pointer;font-family:inherit}
-.tab.active{background:#8fb996;color:#161c18;border-color:#8fb996;font-weight:600}
+.tab{padding:8px 16px;border-radius:20px;border:1.5px solid #eee0d0;background:transparent;color:#8a7a6a;font-size:13px;cursor:pointer;font-family:inherit}
+.tab.active{background:#e8720c;color:#ffffff;border-color:#e8720c;font-weight:600}
 .panel{display:none}.panel.active{display:block}
-.drop-zone{border:1.5px dashed #374a35;border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:12px;position:relative;background:#1b2119}
-.drop-zone:hover,.drop-zone.drag{border-color:#8fb996}
+.drop-zone{border:1.5px dashed #eee0d0;border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:12px;position:relative;background:#fdf8f3}
+.drop-zone:hover,.drop-zone.drag{border-color:#e8720c}
 .drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
-.drop-label{font-size:15px;font-weight:600;color:#8fb996;display:block;margin-bottom:4px}
-.drop-sub{font-size:12px;color:#77836f}
+.drop-label{font-size:15px;font-weight:600;color:#c2570a;display:block;margin-bottom:4px}
+.drop-sub{font-size:12px;color:#8a7a6a}
 .previews{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-.preview-thumb{width:60px;height:60px;border-radius:8px;object-fit:cover;border:1.5px solid #374a35}
-.status-bar{font-size:13px;color:#77836f;text-align:center;min-height:20px;margin-bottom:12px;padding:8px;background:#13170f;border-radius:8px;word-break:break-all}
-.status-bar.loading{color:#8fb996}.status-bar.error{color:#d18888;background:#1e1512}
-.btn-parse{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#8fb996;color:#161c18;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
+.preview-thumb{width:60px;height:60px;border-radius:8px;object-fit:cover;border:1.5px solid #eee0d0}
+.status-bar{font-size:13px;color:#8a7a6a;text-align:center;min-height:20px;margin-bottom:12px;padding:8px;background:#fdf8f3;border-radius:8px;word-break:break-all}
+.status-bar.loading{color:#c2570a}.status-bar.error{color:#b3261e;background:#fbe9e7}
+.btn-parse{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#e8720c;color:#ffffff;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
 .btn-parse:disabled{opacity:0.4;cursor:not-allowed}
-.btn-sec{display:block;width:100%;padding:11px;border-radius:10px;border:1.5px solid #374a35;background:transparent;color:#8fb996;font-size:13px;cursor:pointer;margin-bottom:8px;font-family:inherit}
-.btn-push{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#5e8bbd;color:#161c18;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
+.btn-sec{display:block;width:100%;padding:11px;border-radius:10px;border:1.5px solid #eee0d0;background:transparent;color:#c2570a;font-size:13px;cursor:pointer;margin-bottom:8px;font-family:inherit}
+.btn-push{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#c2570a;color:#ffffff;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
 .btn-push:disabled{opacity:0.5;cursor:not-allowed}
-.push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#77836f}
-.push-status.ok{color:#8fb996}.push-status.err{color:#d18888}
-.to-empty{font-size:12px;color:#77836f;text-align:center;padding:16px}
-.society-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#8fb996;margin:16px 0 6px;padding-bottom:4px;border-bottom:1px solid #374a35}
+.push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#8a7a6a}
+.push-status.ok{color:#3f7a34}.push-status.err{color:#b3261e}
+.to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px}
+.society-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#c2570a;margin:16px 0 6px;padding-bottom:4px;border-bottom:1px solid #eee0d0}
 .society-header:first-child{margin-top:0}
-.sh-count{font-weight:400;text-transform:none;letter-spacing:normal;color:#77836f;font-size:11px}
-.or-meta a{color:#8fb996;cursor:pointer;text-decoration:none}
+.sh-count{font-weight:400;text-transform:none;letter-spacing:normal;color:#8a7a6a;font-size:11px}
+.or-meta a{color:#e8720c;cursor:pointer;text-decoration:none}
 .or-meta a:hover{text-decoration:underline}
-.order-row{background:#13170f;border:1px solid #26301f;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.order-row{background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:10px 12px;margin-bottom:8px}
 .or-top{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:8px}
-.or-cust{font-weight:600;color:#e4e6e0}
-.or-meta{color:#77836f;font-size:11px}
+.or-cust{font-weight:600;color:#2b2320}
+.or-meta{color:#8a7a6a;font-size:11px}
 .or-pills{display:flex;flex-wrap:wrap;gap:6px}
 .item-pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 6px 4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
-.item-pill.status-open{background:#1e1e1a;border-color:#42423c;color:#bcbcb2}
-.item-pill.status-held{background:#281c14;border-color:#5c4732;color:#c99a75}
-.item-pill.status-packed{background:#282413;border-color:#5c5530;color:#c9bd83}
-.item-pill.status-final{background:#1a2530;border-color:#2c405a;color:#82a6c4}
-.item-pill.status-invoiced{background:#141a10;border-color:#33402f;color:#8fb996}
-.pill-x{background:none;border:none;cursor:pointer;font-size:12px;line-height:1;padding:2px;color:inherit;opacity:0.7}
+.item-pill.status-open{background:#f1efec;border-color:#e0dad0;color:#726a60}
+.item-pill.status-held{background:#fdead9;border-color:#f5c896;color:#b45f0e}
+.item-pill.status-packed{background:#fdf6d9;border-color:#f0dd8a;color:#a8860a}
+.item-pill.status-final{background:#e3eef7;border-color:#b8d4e8;color:#2f6690}
+.item-pill.status-invoiced{background:#e5f3e3;border-color:#bfe0b8;color:#3f7a34}
+.pill-x{background:none;border:none;cursor:pointer;font-size:12px;line-height:1;padding:2px;color:inherit;opacity:0.6}
 .pill-x:hover{opacity:1}
-.section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#77836f;margin:16px 0 6px}
-.flags-box{background:#221f16;border:1px solid #4a4530;border-radius:8px;padding:10px 14px;font-size:12px;color:#c2ac74;line-height:1.8;white-space:pre-wrap}
-.flags-ok{background:#141a10;border:1px solid #33402f;border-radius:8px;padding:10px 14px;font-size:12px;color:#8fb996}
-.tsv-box{background:#13170f;border:1px solid #26301f;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#a9b6a3;overflow-x:auto;white-space:pre;line-height:1.6;max-height:300px;overflow-y:auto;margin-bottom:10px}
+.section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#8a7a6a;margin:16px 0 6px}
+.flags-box{background:#fdf6d9;border:1px solid #f0dd8a;border-radius:8px;padding:10px 14px;font-size:12px;color:#8a6d0a;line-height:1.8;white-space:pre-wrap}
+.flags-ok{background:#e5f3e3;border:1px solid #bfe0b8;border-radius:8px;padding:10px 14px;font-size:12px;color:#3f7a34}
+.tsv-box{background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#5c4f42;overflow-x:auto;white-space:pre;line-height:1.6;max-height:300px;overflow-y:auto;margin-bottom:10px}
 .hidden{display:none}
-.spinner{display:inline-block;width:13px;height:13px;border:2px solid #374a35;border-top-color:#8fb996;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px}
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid #eee0d0;border-top-color:#e8720c;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.config-section{background:#13170f;border:1px solid #26301f;border-radius:10px;padding:14px;margin-bottom:16px}
-.config-section h3{font-size:13px;font-weight:600;color:#8fb996;margin-bottom:10px}
+.config-section{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:14px;margin-bottom:16px}
+.config-section h3{font-size:13px;font-weight:600;color:#c2570a;margin-bottom:10px}
 .config-list{list-style:none;max-height:200px;overflow-y:auto}
-.config-list li{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid #22261d;color:#a9b6a3}
+.config-list li{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid #f1e9df;color:#5c4f42}
 .config-list li:last-child{border-bottom:none}
-.config-list li span{color:#77836f;font-size:11px;margin-left:8px;flex-shrink:0}
-.del-btn{background:none;border:none;color:#d18888;cursor:pointer;font-size:14px;padding:0 4px}
+.config-list li span{color:#8a7a6a;font-size:11px;margin-left:8px;flex-shrink:0}
+.del-btn{background:none;border:none;color:#b3261e;cursor:pointer;font-size:14px;padding:0 4px}
 .add-row{display:flex;gap:8px;margin-top:10px}
-.add-row input{flex:1;background:#1b2119;border:1px solid #374a35;border-radius:8px;padding:8px 10px;color:#e4e6e0;font-size:12px;font-family:inherit}
-.add-row input::placeholder{color:#77836f}
-.add-row button{background:#8fb996;color:#161c18;border:none;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;white-space:nowrap}
-.rules-list{font-size:12px;color:#a9b6a3;line-height:1.8;list-style:none}
-.rules-list li{padding:4px 0;border-bottom:1px solid #22261d}
+.add-row input{flex:1;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;color:#2b2320;font-size:12px;font-family:inherit}
+.add-row input::placeholder{color:#8a7a6a}
+.add-row button{background:#e8720c;color:#ffffff;border:none;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;white-space:nowrap}
+.rules-list{font-size:12px;color:#5c4f42;line-height:1.8;list-style:none}
+.rules-list li{padding:4px 0;border-bottom:1px solid #f1e9df}
 .rules-list li:last-child{border-bottom:none}
-.badge{display:inline-block;background:#212a1d;border-radius:4px;padding:1px 6px;font-size:10px;color:#8fb996;margin-right:4px}
-.note{font-size:11px;color:#77836f;margin-top:6px;font-style:italic}
+.badge{display:inline-block;background:#fdead9;border-radius:4px;padding:1px 6px;font-size:10px;color:#c2570a;margin-right:4px}
+.note{font-size:11px;color:#8a7a6a;margin-top:6px;font-style:italic}
 </style>
 </head>
 <body>
@@ -89,7 +89,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#161c18;color:#e4e6e0
   </div>
   <div class="previews" id="pv"></div>
   <div class="status-bar" id="sb">Upload screenshots to begin</div>
-  <div id="timing-summary" class="hidden" style="background:#13170f;border:1px solid #26301f;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#a9b6a3;line-height:1.8"></div>
+  <div id="timing-summary" class="hidden" style="background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#5c4f42;line-height:1.8"></div>
   <button class="btn-parse" id="pb" disabled>Parse orders</button>
   <div id="rw" class="hidden">
     <div class="section-label">Flags</div>
@@ -133,7 +133,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#161c18;color:#e4e6e0
   </div>
 
   <div class="config-section">
-    <h3>🍎 Canonical Fruit List <span style="font-size:11px;color:#77836f;font-weight:400">(session only)</span></h3>
+    <h3>🍎 Canonical Fruit List <span style="font-size:11px;color:#8a7a6a;font-weight:400">(session only)</span></h3>
     <ul class="config-list" id="fruit-list"></ul>
     <div class="add-row">
       <input type="text" id="new-fruit" placeholder="Add fruit e.g. Dragonfruit yellow">
@@ -142,7 +142,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#161c18;color:#e4e6e0
   </div>
 
   <div class="config-section">
-    <h3>⚖️ Piece → KG Conversions <span style="font-size:11px;color:#77836f;font-weight:400">(session only)</span></h3>
+    <h3>⚖️ Piece → KG Conversions <span style="font-size:11px;color:#8a7a6a;font-weight:400">(session only)</span></h3>
     <ul class="config-list" id="pkg-list"></ul>
     <div class="add-row">
       <input type="text" id="new-pkg-fruit" placeholder="Fruit name e.g. Lychee" style="flex:2">
@@ -152,7 +152,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#161c18;color:#e4e6e0
   </div>
 
   <div class="config-section">
-    <h3>🔁 Aliases <span style="font-size:11px;color:#77836f;font-weight:400">(session only)</span></h3>
+    <h3>🔁 Aliases <span style="font-size:11px;color:#8a7a6a;font-weight:400">(session only)</span></h3>
     <ul class="config-list" id="alias-list"></ul>
     <div class="add-row">
       <input type="text" id="new-alias-from" placeholder="What customer types e.g. litchee">
@@ -243,17 +243,17 @@ function showTimingSummary(totalMs){
   const totalCostUSD = inputCost + outputCost;
   const totalCostINR = totalCostUSD * 84;
 
-  let html = '<strong style="color:#8fb996">⏱ Timing breakdown</strong><br>';
+  let html = '<strong style="color:#c2570a">⏱ Timing breakdown</strong><br>';
   timingLog.forEach(t => {
     const pct = Math.round(t.ms/totalMs*100);
     const bar = '█'.repeat(Math.round(pct/5));
-    html += `<span style="color:#77836f">${t.label}:</span> <strong>${(t.ms/1000).toFixed(1)}s</strong> (${pct}%) ${bar}`;
-    if(t.extra) html += ` <span style="color:#77836f;font-size:10px">${t.extra}</span>`;
+    html += `<span style="color:#8a7a6a">${t.label}:</span> <strong>${(t.ms/1000).toFixed(1)}s</strong> (${pct}%) ${bar}`;
+    if(t.extra) html += ` <span style="color:#8a7a6a;font-size:10px">${t.extra}</span>`;
     html += '<br>';
   });
-  html += `<strong style="color:#8fb996">Total: ${(totalMs/1000).toFixed(1)}s</strong><br>`;
-  html += `<span style="color:#77836f">Tokens:</span> ${totalInputTokens} in + ${totalOutputTokens} out<br>`;
-  html += `<strong style="color:#c2ac74">Cost: $${totalCostUSD.toFixed(4)} (₹${totalCostINR.toFixed(2)})</strong>`;
+  html += `<strong style="color:#c2570a">Total: ${(totalMs/1000).toFixed(1)}s</strong><br>`;
+  html += `<span style="color:#8a7a6a">Tokens:</span> ${totalInputTokens} in + ${totalOutputTokens} out<br>`;
+  html += `<strong style="color:#8a6d0a">Cost: $${totalCostUSD.toFixed(4)} (₹${totalCostINR.toFixed(2)})</strong>`;
   div.innerHTML = html;
   div.classList.remove('hidden');
 }
