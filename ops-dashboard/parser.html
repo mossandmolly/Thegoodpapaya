@@ -585,22 +585,16 @@ async function loadTodaysOrders(){
   document.getElementById('to-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
   if(!data||!data.length){list.innerHTML='<div class="to-empty">No orders yet today</div>';return;}
 
-  // orders' RLS locks reads to service-role only — fetch customer names via
-  // the edge function instead of a direct (silently-empty) anon select.
+  // orders' RLS locks direct reads to service-role only, so this goes through
+  // order_customer_lookup — a narrow view (sales_order_id, customer_name only)
+  // granted to anon — instead of an edge-function round trip.
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
   const customerMap={};
-  try{
-    const custRes=await fetch(SUPABASE_URL+'/functions/v1/get-order-customers',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
-      body:JSON.stringify({sales_order_ids:uniqueIds}),
-    });
-    const custData=await custRes.json();
-    if(!custRes.ok)throw new Error(custData.error||'failed');
-    (custData.customers||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
-  }catch(e){
-    list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(e.message)+'</div>';return;
-  }
+  const{data:custRows,error:custErr}=await sb.from('order_customer_lookup')
+    .select('sales_order_id,customer_name')
+    .in('sales_order_id',uniqueIds);
+  if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
+  (custRows||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
 
   const bySalesOrder={};
   data.forEach(item=>{
@@ -729,15 +723,10 @@ async function loadPackerView(){
 
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
   const customerMap={};
-  try{
-    const custRes=await fetch(SUPABASE_URL+'/functions/v1/get-order-customers',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
-      body:JSON.stringify({sales_order_ids:uniqueIds}),
-    });
-    const custData=await custRes.json();
-    if(custRes.ok)(custData.customers||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
-  }catch(_e){/* fall back to raw sales_order_id below if this fails */}
+  const{data:custRows}=await sb.from('order_customer_lookup')
+    .select('sales_order_id,customer_name')
+    .in('sales_order_id',uniqueIds);
+  (custRows||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
 
   grid.innerHTML=data.map(item=>
     '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
