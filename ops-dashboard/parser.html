@@ -73,6 +73,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .modal-box select,.modal-box input{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
 .modal-actions{display:flex;gap:8px;margin-top:4px}
 .modal-actions button{flex:1}
+.pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:10px}
+.pack-card.status-packed{border-color:#f0dd8a;background:#fdf6d9}
+.pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
+.pk-item{font-size:14px;font-weight:600;color:#2b2320;margin-bottom:2px}
+.pk-req{font-size:11px;color:#8a7a6a;margin-bottom:8px}
+.pk-row{display:flex;gap:6px;margin-bottom:6px}
+.pk-qty{width:100%;padding:7px 8px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
+.pk-tick{background:#e8720c;color:#ffffff;border:none;border-radius:8px;padding:0 12px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0}
+.pk-final{width:100%;background:transparent;border:1.5px solid #bfe0b8;color:#3f7a34;border-radius:8px;padding:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.pk-final:disabled{opacity:0.4;cursor:not-allowed}
 .rules-list{font-size:12px;color:#5c4f42;line-height:1.8;list-style:none}
 .rules-list li{padding:4px 0;border-bottom:1px solid #f1e9df}
 .rules-list li:last-child{border-bottom:none}
@@ -85,6 +96,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="tabs">
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
   <button class="tab" onclick="switchTab('today')">📋 Today's Orders</button>
+  <button class="tab" onclick="switchTab('packer')">📦 Packer</button>
   <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
 </div>
 
@@ -116,6 +128,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="section-label">Today's orders <span id="to-rc"></span></div>
   <button class="btn-sec" id="to-refresh" style="margin-bottom:12px">🔄 Refresh</button>
   <div id="to-list"><div class="to-empty">Loading…</div></div>
+</div>
+
+<!-- PACKER -->
+<div class="panel" id="panel-packer">
+  <div class="section-label">To pack <span id="pk-rc"></span></div>
+  <button class="btn-sec" id="pk-refresh" style="margin-bottom:12px">🔄 Refresh</button>
+  <div id="pk-grid" class="pack-grid"><div class="to-empty">Loading…</div></div>
 </div>
 
 <!-- ADD ITEM MODAL -->
@@ -202,11 +221,12 @@ let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orang
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','today','config'][i]===name));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','today','packer','config'][i]===name));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='config')renderConfig();
   if(name==='today')loadTodaysOrders();
+  if(name==='packer')loadPackerView();
 }
 
 // ── Config UI ─────────────────────────────────────────────────────────────
@@ -692,6 +712,64 @@ async function deleteItem(id){
 }
 
 document.getElementById('to-refresh').addEventListener('click',loadTodaysOrders);
+
+// ── Packer ────────────────────────────────────────────────────────────────
+async function loadPackerView(){
+  const grid=document.getElementById('pk-grid');
+  grid.innerHTML='<div class="to-empty">Loading…</div>';
+  const{data,error}=await sb.from('order_items')
+    .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status')
+    .like('sales_order_id',TODAY+'-%')
+    .in('status',['open','packed'])
+    .order('sales_order_id');
+  if(error){grid.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+
+  document.getElementById('pk-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
+  if(!data||!data.length){grid.innerHTML='<div class="to-empty">Nothing left to pack ✓</div>';return;}
+
+  const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
+  const customerMap={};
+  try{
+    const custRes=await fetch(SUPABASE_URL+'/functions/v1/get-order-customers',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      body:JSON.stringify({sales_order_ids:uniqueIds}),
+    });
+    const custData=await custRes.json();
+    if(custRes.ok)(custData.customers||[]).forEach(o=>{customerMap[o.sales_order_id]=o.customer_name;});
+  }catch(_e){/* fall back to raw sales_order_id below if this fails */}
+
+  grid.innerHTML=data.map(item=>
+    '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
+      '<div class="pk-cust">'+escH(customerMap[item.sales_order_id]||item.sales_order_id)+'</div>'+
+      '<div class="pk-item">'+escH(item.item_name)+'</div>'+
+      '<div class="pk-req">requested: '+item.requested_quantity+(item.description?' · '+escH(item.description):'')+'</div>'+
+      '<div class="pk-row">'+
+        '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'">'+
+        '<button class="pk-tick" onclick="savePackedQty(\''+item.id+'\')" title="Save">✓</button>'+
+      '</div>'+
+      '<button class="pk-final" onclick="markFinal(\''+item.id+'\')" '+(item.status!=='packed'?'disabled title="Save a final quantity first"':'')+'>Mark as Final</button>'+
+    '</div>'
+  ).join('');
+}
+
+async function savePackedQty(id){
+  const val=document.getElementById('pk-qty-'+id).value;
+  const qty=parseFloat(val);
+  if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
+  const{error}=await sb.from('order_items').update({final_quantity:qty,status:'packed'}).eq('id',id);
+  if(error){alert('Failed to save: '+error.message);return;}
+  await loadPackerView();
+}
+
+async function markFinal(id){
+  if(!confirm('Mark as final? This locks it in as ready for invoicing.'))return;
+  const{error}=await sb.from('order_items').update({status:'final'}).eq('id',id);
+  if(error){alert('Failed to mark final: '+error.message);return;}
+  await loadPackerView();
+}
+
+document.getElementById('pk-refresh').addEventListener('click',loadPackerView);
 </script>
 </body>
 </html>
