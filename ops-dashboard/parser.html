@@ -47,6 +47,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 .rules-list li:last-child{border-bottom:none}
 .badge{display:inline-block;background:#1a2e1a;border-radius:4px;padding:1px 6px;font-size:10px;color:#7ecb82;margin-right:4px}
 .note{font-size:11px;color:#4a6e4c;margin-top:6px;font-style:italic}
+.btn-push{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#4a90d9;color:#0e1a0f;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
+.btn-push:disabled{opacity:0.5;cursor:not-allowed}
+.push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#4a6e4c}
+.push-status.ok{color:#7ecb82}.push-status.err{color:#e07070}
+.phone-prompt{background:#1a1a0e;border:1px solid #4a4a20;border-radius:8px;padding:12px 14px;margin-bottom:10px}
+.phone-prompt h4{font-size:12px;color:#c8b060;margin-bottom:4px}
+.phone-prompt p{font-size:11px;color:#9abf9c;margin-bottom:8px;line-height:1.5}
+.phone-row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.phone-row span{flex:1;font-size:12px;color:#e8f0e8}
+.phone-row input{flex:1;background:#131f14;border:1px solid #2e4d30;border-radius:8px;padding:7px 9px;color:#e8f0e8;font-size:12px;font-family:inherit}
+.phone-actions{display:flex;gap:8px;margin-top:8px}
+.phone-actions button{flex:1;padding:9px;border-radius:8px;border:none;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.phone-actions .btn-save{background:#7ecb82;color:#0e1a0f}
+.phone-actions .btn-skip{background:transparent;border:1.5px solid #2e4d30;color:#9abf9c}
 </style>
 </head>
 <body>
@@ -72,6 +86,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
     <div id="fb"></div>
     <div class="section-label">Parsed rows <span id="rc"></span></div>
     <div class="tsv-box" id="tb"></div>
+    <button class="btn-push" id="pushb">📤 Push to Operations</button>
+    <div class="push-status" id="ps"></div>
+    <div class="phone-prompt hidden" id="pp">
+      <h4>Phone numbers needed</h4>
+      <p>These customers don't have a mobile number on file. Add one, or skip to push without.</p>
+      <div id="pp-rows"></div>
+      <div class="phone-actions">
+        <button class="btn-save" id="pp-save">Save &amp; push →</button>
+        <button class="btn-skip" id="pp-skip">Skip</button>
+      </div>
+    </div>
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
     <button class="btn-sec" id="xb">🔄 Clear</button>
   </div>
@@ -129,6 +154,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
 <script>
 // ── Default config ────────────────────────────────────────────────────────
 const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
@@ -404,8 +431,10 @@ Return ONLY valid compact JSON, no markdown fences:
   }
 });
 
+let lastRows=[];
 function render(p){
   const{rows=[],flags=[]}=p;
+  lastRows=rows;
   if(flags.length){fb.className='flags-box';fb.textContent=flags.join('\n');}
   else{fb.className='flags-ok';fb.textContent='All rows parsed cleanly ✓';}
   tb.textContent=rows.map(r=>[r.order_date,r.customer_name,r.item_name,r.description||'',r.quantity,'','',r.sales_order].join('\t')).join('\n');
@@ -413,6 +442,9 @@ function render(p){
   rw.classList.remove('hidden');
   set('Done — '+rows.length+' rows from '+imgs.length+' image(s)');
   pb.disabled=false;
+  pushb.disabled=false;pushb.textContent='📤 Push to Operations';
+  ps.textContent='';ps.className='push-status';
+  pp.classList.add('hidden');
 }
 
 cb.addEventListener('click',()=>{
@@ -421,7 +453,104 @@ cb.addEventListener('click',()=>{
 xb.addEventListener('click',()=>{
   imgs=[];pv.innerHTML='';fi.value='';pb.disabled=true;
   set('Upload screenshots to begin');rw.classList.add('hidden');tb.textContent='';
+  lastRows=[];pendingPush=null;pp.classList.add('hidden');
 });
+
+// ── Push to Operations ──────────────────────────────────────────────────────
+const pushb=document.getElementById('pushb'),ps=document.getElementById('ps'),pp=document.getElementById('pp'),ppRows=document.getElementById('pp-rows');
+let pendingPush=null;
+
+function setPush(msg,cls){ps.textContent=msg;ps.className='push-status'+(cls?' '+cls:'');}
+
+function normPhone(raw){
+  const d=(raw||'').replace(/\D/g,'');
+  if(d.length===10&&/^[6-9]/.test(d))return '+91'+d;
+  if(d.length===12&&d.startsWith('91'))return '+'+d;
+  if(d.length===11&&d.startsWith('0'))return '+91'+d.slice(1);
+  return null;
+}
+
+pushb.addEventListener('click',async()=>{
+  const records=lastRows.filter(r=>r.customer_name&&r.item_name).map(r=>({
+    customer_name: r.customer_name,
+    invoice_date: r.order_date,
+    item_name: r.item_name,
+    description: r.description||null,
+    requested_quantity: parseFloat(r.quantity)||0,
+  }));
+  if(!records.length){setPush('Nothing to push — parse some orders first','err');return;}
+  pushb.disabled=true;pushb.textContent='Checking…';setPush('');
+  try{
+    const uniqueCustomers=[...new Set(records.map(r=>r.customer_name))];
+    const{data:phoneData}=await sb.from('customer_phones').select('customer_name').in('customer_name',uniqueCustomers);
+    const hasPhone=new Set((phoneData||[]).map(r=>r.customer_name.toLowerCase()));
+    const needPhone=uniqueCustomers.filter(c=>!hasPhone.has(c.toLowerCase()));
+    if(needPhone.length){
+      pendingPush=records;
+      ppRows.innerHTML=needPhone.map(name=>{
+        const slug=name.toLowerCase().replace(/[^a-z0-9]/g,'-');
+        return '<div class="phone-row"><span>'+name.replace(/</g,'&lt;')+'</span><input type="tel" id="pph-'+slug+'" data-customer="'+name.replace(/"/g,'&quot;')+'" placeholder="+91 XXXXX XXXXX"></div>';
+      }).join('');
+      pp.classList.remove('hidden');
+      pushb.disabled=false;pushb.textContent='📤 Push to Operations';
+      return;
+    }
+    await doPush(records);
+  }catch(e){
+    setPush('❌ '+e.message,'err');pushb.disabled=false;pushb.textContent='📤 Push to Operations';
+  }
+});
+
+document.getElementById('pp-skip').addEventListener('click',async()=>{
+  pp.classList.add('hidden');
+  if(pendingPush)await doPush(pendingPush,true);
+  pendingPush=null;
+});
+
+document.getElementById('pp-save').addEventListener('click',async()=>{
+  const inputs=ppRows.querySelectorAll('input');
+  const phoneRows=[];
+  inputs.forEach(input=>{
+    const phone=normPhone(input.value.trim());
+    if(phone)phoneRows.push({customer_name:input.dataset.customer,phone_number:phone,label:'primary'});
+  });
+  if(phoneRows.length){
+    const{error}=await sb.from('customer_phones').upsert(phoneRows,{onConflict:'customer_name,phone_number'});
+    if(error){setPush('Could not save phones: '+error.message,'err');return;}
+  }
+  pp.classList.add('hidden');
+  if(pendingPush)await doPush(pendingPush,true);
+  pendingPush=null;
+});
+
+async function doPush(records,allowMissingPhones){
+  pushb.disabled=true;pushb.textContent='Pushing…';setPush('');
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/add-orders',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      body:JSON.stringify({records,allowMissingPhones:!!allowMissingPhones}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Push failed');
+    if(data.missingPhones?.length){
+      pendingPush=records;
+      ppRows.innerHTML=data.missingPhones.map(name=>{
+        const slug=name.toLowerCase().replace(/[^a-z0-9]/g,'-');
+        return '<div class="phone-row"><span>'+name.replace(/</g,'&lt;')+'</span><input type="tel" id="pph-'+slug+'" data-customer="'+name.replace(/"/g,'&quot;')+'" placeholder="+91 XXXXX XXXXX"></div>';
+      }).join('');
+      pp.classList.remove('hidden');
+      pushb.disabled=false;pushb.textContent='📤 Push to Operations';
+      return;
+    }
+    const n=data.inserted||0,heldMsg=data.held>0?' ('+data.held+' held as duplicate)':'';
+    setPush('✅ '+n+' item'+(n!==1?'s':'')+' pushed to Operations'+heldMsg,'ok');
+    pushb.textContent='✅ Pushed';
+  }catch(e){
+    setPush('❌ '+e.message,'err');
+    pushb.disabled=false;pushb.textContent='📤 Push to Operations';
+  }
+}
 </script>
 </body>
 </html>
