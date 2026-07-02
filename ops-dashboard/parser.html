@@ -61,12 +61,23 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
 .phone-actions button{flex:1;padding:9px;border-radius:8px;border:none;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
 .phone-actions .btn-save{background:#7ecb82;color:#0e1a0f}
 .phone-actions .btn-skip{background:transparent;border:1.5px solid #2e4d30;color:#9abf9c}
+.held-item{background:#0a120a;border:1px solid #1e301e;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.held-item .hi-top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px}
+.held-item .hi-cust{font-weight:600;color:#e8f0e8}
+.held-item .hi-date{color:#4a6e4c;font-size:11px}
+.held-item .hi-item{font-size:12px;color:#9abf9c;margin-bottom:8px}
+.held-item .hi-actions{display:flex;gap:8px}
+.held-item .hi-actions button{flex:1;padding:7px;border-radius:8px;border:none;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.hi-approve{background:#7ecb82;color:#0e1a0f}
+.hi-dismiss{background:transparent;border:1.5px solid #4a2020!important;color:#e07070}
+.held-empty{font-size:12px;color:#4a6e4c;text-align:center;padding:16px}
 </style>
 </head>
 <body>
 <div class="logo">good<span>papaya</span> · parser</div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
+  <button class="tab" onclick="switchTab('held')">✅ Approve <span id="held-count"></span></button>
   <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
 </div>
 
@@ -100,6 +111,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0e1a0f;color:#e8f0e8
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
     <button class="btn-sec" id="xb">🔄 Clear</button>
   </div>
+</div>
+
+<!-- HELD APPROVAL -->
+<div class="panel" id="panel-held">
+  <div class="section-label">Held items <span id="hi-rc"></span></div>
+  <p class="note" style="margin-bottom:12px">Items already submitted for this customer+date come in as "held" instead of overwriting what's being packed. Approve to release them into Operations as draft, or dismiss to discard.</p>
+  <button class="btn-sec" id="hi-refresh" style="margin-bottom:12px">🔄 Refresh</button>
+  <div id="hi-list"><div class="held-empty">Loading…</div></div>
 </div>
 
 <!-- CONFIG -->
@@ -168,10 +187,11 @@ let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orang
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','config'][i]===name));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','held','config'][i]===name));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='config')renderConfig();
+  if(name==='held')loadHeldItems();
 }
 
 // ── Config UI ─────────────────────────────────────────────────────────────
@@ -551,6 +571,56 @@ async function doPush(records,allowMissingPhones){
     pushb.disabled=false;pushb.textContent='📤 Push to Operations';
   }
 }
+
+// ── Held items approval ──────────────────────────────────────────────────────
+function escH2(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+async function loadHeldItems(){
+  const list=document.getElementById('hi-list');
+  list.innerHTML='<div class="held-empty">Loading…</div>';
+  const{data,error}=await sb.from('operations')
+    .select('id, sales_order_id, invoice_date, customer_name, item_name, requested_quantity, description')
+    .eq('status','held')
+    .order('invoice_date',{ascending:false})
+    .order('customer_name');
+  if(error){list.innerHTML='<div class="held-empty">'+escH2(error.message)+'</div>';return;}
+  document.getElementById('hi-rc').textContent=data&&data.length?'— '+data.length:'';
+  updateHeldBadge(data?data.length:0);
+  if(!data||!data.length){list.innerHTML='<div class="held-empty">No held items ✓</div>';return;}
+  list.innerHTML=data.map(item=>
+    '<div class="held-item" data-id="'+item.id+'">'+
+      '<div class="hi-top"><span class="hi-cust">'+escH2(item.customer_name)+'</span><span class="hi-date">'+item.invoice_date+'</span></div>'+
+      '<div class="hi-item">'+escH2(item.item_name)+' · '+item.requested_quantity+(item.description?' · '+escH2(item.description):'')+'</div>'+
+      '<div class="hi-actions">'+
+        '<button class="hi-approve" onclick="approveHeld(\''+item.id+'\')">Approve</button>'+
+        '<button class="hi-dismiss" onclick="dismissHeld(\''+item.id+'\')">Dismiss</button>'+
+      '</div>'+
+    '</div>'
+  ).join('');
+}
+
+function updateHeldBadge(n){
+  const el=document.getElementById('held-count');
+  el.textContent=n>0?'('+n+')':'';
+}
+
+async function approveHeld(id){
+  const{error}=await sb.from('operations').update({status:'draft'}).eq('id',id);
+  if(error){alert('Failed to approve: '+error.message);return;}
+  await loadHeldItems();
+}
+
+async function dismissHeld(id){
+  const{error}=await sb.from('operations').delete().eq('id',id);
+  if(error){alert('Failed to dismiss: '+error.message);return;}
+  await loadHeldItems();
+}
+
+document.getElementById('hi-refresh').addEventListener('click',loadHeldItems);
+
+// Populate the held-count badge on load, without switching tabs
+sb.from('operations').select('id',{count:'exact',head:true}).eq('status','held')
+  .then(({count})=>updateHeldBadge(count||0));
 </script>
 </body>
 </html>
