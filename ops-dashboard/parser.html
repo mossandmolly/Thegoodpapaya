@@ -7,10 +7,14 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320;min-height:100vh;padding:20px 16px 48px}
-.top-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:10px}
+.top-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:10px;flex-wrap:wrap}
+.top-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .logo{font-size:20px;font-weight:700;color:#c2570a}.logo span{color:#2b2320;font-weight:300}
+.header-btn{background:#fdf8f3;border:1px solid #eee0d0;color:#8a7a6a;border-radius:14px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+.header-btn:disabled{opacity:0.5;cursor:not-allowed}
 .tomorrow-pill{background:#fdead9;color:#b45f0e;border-radius:14px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
 .tomorrow-pill.active{background:#e8720c;color:#ffffff}
+.section-divider{border:none;border-top:1px solid #eee0d0;margin:24px 0}
 .tabs{display:flex;gap:8px;margin-bottom:20px}
 .tab{padding:8px 16px;border-radius:20px;border:1.5px solid #eee0d0;background:transparent;color:#8a7a6a;font-size:13px;cursor:pointer;font-family:inherit}
 .tab.active{background:#e8720c;color:#ffffff;border-color:#e8720c;font-weight:600}
@@ -161,8 +165,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div id="app" class="hidden">
 <div class="top-header">
   <div class="logo">good<span>papaya</span> · parser</div>
-  <span class="tomorrow-pill" id="tomorrow-pill" onclick="toggleTomorrowView()">Tomorrow (0)</span>
-  <a class="signout-link" onclick="signOut()">Sign out</a>
+  <div class="top-header-actions">
+    <button class="header-btn" id="to-sync-catalog">💰 Catalog</button>
+    <button class="header-btn" id="sync-customers">👥 Customers</button>
+    <span class="tomorrow-pill" id="tomorrow-pill" onclick="toggleTomorrowView()">Tomorrow (0)</span>
+    <a class="signout-link" onclick="signOut()">Sign out</a>
+  </div>
 </div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
@@ -173,6 +181,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
 <!-- PARSER -->
 <div class="panel active" id="panel-parser">
+  <div class="section-label">📸 Upload &amp; Parse</div>
   <div class="drop-zone" id="dz">
     <input type="file" id="fi" accept="image/*" multiple>
     <span class="drop-label">📸 Upload WhatsApp screenshots</span>
@@ -196,10 +205,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="btn-sec" id="xb">🔄 Clear</button>
   </div>
 
-  <div class="push-row" style="margin-top:4px">
-    <button class="btn-sec" id="to-sync-catalog">💰 Sync Catalog</button>
-    <button class="btn-sec" id="sync-customers">👥 Sync Customers</button>
-  </div>
+  <hr class="section-divider">
 
   <!-- QUICK ORDER ENTRY -->
   <div class="config-section" id="quick-order-section">
@@ -846,10 +852,10 @@ syncCustomersBtn.addEventListener('click',async()=>{
     syncCustomersBtn.textContent='✅ Synced ('+synced+')';
   }catch(e){
     alert('Customer sync failed: '+e.message);
-    syncCustomersBtn.textContent='👥 Sync Customers';
+    syncCustomersBtn.textContent='👥 Customers';
   }finally{
     syncCustomersBtn.disabled=false;
-    setTimeout(()=>{syncCustomersBtn.textContent='👥 Sync Customers';},3000);
+    setTimeout(()=>{syncCustomersBtn.textContent='👥 Customers';},3000);
   }
 });
 
@@ -1379,10 +1385,10 @@ syncCatalogBtn.addEventListener('click',async()=>{
     syncCatalogBtn.textContent='✅ Synced ('+synced+')';
   }catch(e){
     alert('Catalog sync failed: '+e.message);
-    syncCatalogBtn.textContent='💰 Sync Catalog';
+    syncCatalogBtn.textContent='💰 Catalog';
   }finally{
     syncCatalogBtn.disabled=false;
-    setTimeout(()=>{syncCatalogBtn.textContent='💰 Sync Catalog';},3000);
+    setTimeout(()=>{syncCatalogBtn.textContent='💰 Catalog';},3000);
   }
 });
 
