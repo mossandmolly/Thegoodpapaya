@@ -68,6 +68,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .or-cta:hover{background:#fdf8f3;border-color:#e0c9a6}
 .or-cta.primary{background:#e8720c;border-color:#e8720c;color:#ffffff}
 .or-cta.primary:hover{background:#d4650a}
+/* + add item / tomorrow are lower-priority than generate invoice — plain
+   blue links pinned to the bottom right of the card via margin-left:auto
+   on the wrapping span, instead of competing buttons. */
+.or-links{margin-left:auto;display:flex;gap:14px}
+.or-link{color:#1a73e8;cursor:pointer;text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap}
+.or-link:hover{text-decoration:underline}
 .item-pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 6px 4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
 .item-pill.status-open{background:#fdf6d9;border-color:#f0dd8a;color:#a8860a}
 .item-pill.status-held{background:#fdead9;border-color:#f5c896;color:#b45f0e}
@@ -1252,23 +1258,23 @@ function renderOrdersList(){
             '</span>';
           }).join('')+'</div>'+
           '<div class="or-actions"><span class="or-count">'+order.items.length+' item'+(order.items.length!==1?'s':'')+'</span>'+
-            // + add item stays available even on a cancelled order — adding
-            // a new item is how you reopen it (order goes back to active,
-            // previously-cancelled items stay cancelled as history, the new
-            // item comes in fresh/open).
-            '<a class="or-cta" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
-            (cancelled?'':(
-              (viewingTomorrow
-                ?'<a class="or-cta" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
-                :'<a class="or-cta" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
-              // Shown once everything's past packing (nothing open/held/packed)
-              // but only while there's actually something to invoice — a
-              // fresh order, or one with a 'final' item still unbilled after
-              // a post-invoice CRUD. Once every item reads 'invoiced' with
-              // nothing newly final, the invoice already covers this order
-              // exactly as it stands, so there's nothing left to generate.
-              (readyToInvoice?'<a class="or-cta primary" onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')
-            ))+
+            // Shown once everything's past packing (nothing open/held/packed)
+            // but only while there's actually something to invoice — a
+            // fresh order, or one with a 'final' item still unbilled after
+            // a post-invoice CRUD. Once every item reads 'invoiced' with
+            // nothing newly final, the invoice already covers this order
+            // exactly as it stands, so there's nothing left to generate.
+            (readyToInvoice?'<a class="or-cta primary" onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
+            '<span class="or-links">'+
+              // + add item stays available even on a cancelled order — adding
+              // a new item is how you reopen it (order goes back to active,
+              // previously-cancelled items stay cancelled as history, the new
+              // item comes in fresh/open).
+              '<a class="or-link" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
+              (cancelled?'':(viewingTomorrow
+                ?'<a class="or-link" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
+                :'<a class="or-link" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'))+
+            '</span>'+
           '</div>'+
         '</div>';
       }).join('');
