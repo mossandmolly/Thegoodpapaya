@@ -1224,7 +1224,7 @@ function renderOrdersList(){
       '</div>'+
       orders.map(order=>{
         const cancelled=order.orderStatus==='cancelled';
-        const readyToInvoice=order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced');
+        const readyToInvoice=isReadyToInvoice(order);
         // Payment link only makes sense once nothing is left to (re)invoice —
         // driven by the freshly-fetched item pipeline itself (every item
         // 'invoiced', none still sitting at 'final') rather than the orders
@@ -1261,11 +1261,12 @@ function renderOrdersList(){
               (viewingTomorrow
                 ?'<a class="or-cta" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
                 :'<a class="or-cta" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
-              // Ready whenever nothing's still open/held/packed — deliberately
-              // shown even if every item is already 'invoiced' with nothing
-              // newly final, since ANY change to an already-invoiced order
-              // (qty edit, item removed) should re-enable regenerating it,
-              // and source of truth is always Supabase, not the last invoice.
+              // Shown once everything's past packing (nothing open/held/packed)
+              // but only while there's actually something to invoice — a
+              // fresh order, or one with a 'final' item still unbilled after
+              // a post-invoice CRUD. Once every item reads 'invoiced' with
+              // nothing newly final, the invoice already covers this order
+              // exactly as it stands, so there's nothing left to generate.
               (readyToInvoice?'<a class="or-cta primary" onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')
             ))+
           '</div>'+
@@ -1611,8 +1612,12 @@ function toggleSocietySelectAll(soids,checked){
   renderOrdersList();
 }
 
+// True only while there's actually something to invoice: nothing left
+// open/held/packed, AND at least one item not yet 'invoiced'. Once every
+// item reads 'invoiced' the last invoice already covers the order exactly
+// as it stands, so there's nothing left to (re)generate.
 function isReadyToInvoice(order){
-  return !!(order&&order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced'));
+  return !!(order&&order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced')&&!isFullyInvoiced(order));
 }
 
 // Every item actually invoiced, none still sitting at 'final' — driven by
