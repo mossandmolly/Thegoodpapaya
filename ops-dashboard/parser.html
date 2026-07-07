@@ -198,7 +198,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="top-header-actions">
     <button class="header-btn" id="to-sync-catalog">💰 Catalog</button>
     <button class="header-btn" id="sync-customers">👥 Customers</button>
-    <span class="tomorrow-pill" id="tomorrow-pill" onclick="toggleTomorrowView()">Tomorrow (0)</span>
+    <span class="tomorrow-pill" id="tomorrow-pill" onclick="toggleTomorrowView()">Tomorrow</span>
     <a class="signout-link" onclick="signOut()">Sign out</a>
   </div>
 </div>
@@ -406,7 +406,7 @@ async function initAppAfterLogin(){
   appInitialized=true;
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
-  refreshTomorrowPill();
+  updateTomorrowPillLabel();
   ensureCustomerNameOptions();
   addQoBlock();
 }
@@ -1077,16 +1077,34 @@ async function fetchAllOrderItems(applyFilters){
 // hundreds of sales_order_ids can be rejected/truncated, so batch it.
 // Returns the full row per sales_order_id (not just the name) so callers can
 // also read phone/razorpay_url/invoice_status for the payment-link UI.
+//
+// Cached across the whole session, keyed by sales_order_id — once an order's
+// row has been fetched it's never re-queried on a later load, only ids we
+// haven't seen yet go over the network. Anything that mutates fields this
+// view exposes (invoice_status, razorpay_url, phone, status, customer_name)
+// must call evictCustomerLookupCache() for that sales_order_id so the next
+// load re-fetches fresh data instead of serving the stale cached row.
 const CUSTOMER_LOOKUP_CHUNK=200;
+const customerLookupCache={};
+
+function evictCustomerLookupCache(ids){
+  (Array.isArray(ids)?ids:[ids]).forEach(id=>{delete customerLookupCache[id];});
+}
+
 async function fetchCustomerMap(ids){
   const map={};
-  for(let i=0;i<ids.length;i+=CUSTOMER_LOOKUP_CHUNK){
-    const chunk=ids.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
+  const uncached=[];
+  ids.forEach(id=>{
+    if(customerLookupCache[id])map[id]=customerLookupCache[id];
+    else uncached.push(id);
+  });
+  for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
+    const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
       .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
-    (data||[]).forEach(o=>{map[o.sales_order_id]=o;});
+    (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
   }
   return{map,error:null};
 }
@@ -1115,17 +1133,18 @@ function computeDuplicateItemIds(items){
 
 let viewingTomorrow=false;
 
-async function toggleTomorrowView(){
+// No count on this pill — it's not worth a network round trip on every load
+// just to show a number nobody acts on. switchTab('today') already triggers
+// loadTodaysOrders itself, so this doesn't also await a second load.
+function toggleTomorrowView(){
   viewingTomorrow=!viewingTomorrow;
+  updateTomorrowPillLabel();
   switchTab('today');
-  await loadTodaysOrders();
 }
 
-async function refreshTomorrowPill(){
-  const{data}=await sb.from('order_items').select('sales_order_id').like('sales_order_id',TOMORROW+'-%');
-  const count=new Set((data||[]).map(r=>r.sales_order_id)).size;
+function updateTomorrowPillLabel(){
   const pill=document.getElementById('tomorrow-pill');
-  pill.textContent=viewingTomorrow?'← Back to Today':('Tomorrow ('+count+')');
+  pill.textContent=viewingTomorrow?'← Back to Today':'Tomorrow';
   pill.classList.toggle('active',viewingTomorrow);
 }
 
@@ -1136,7 +1155,6 @@ async function loadTodaysOrders(){
   list.innerHTML='<div class="to-empty">Loading…</div>';
   const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%'));
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
-  await refreshTomorrowPill();
 
   document.getElementById('to-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
   if(!data||!data.length){
@@ -1279,6 +1297,7 @@ async function invalidateOrderInvoiceIfNeeded(salesOrderId){
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not invalidate invoice');
+    evictCustomerLookupCache(salesOrderId);
   }catch(e){
     alert('Warning: could not clear the old Zoho invoice automatically ('+e.message+'). You may need to regenerate it manually.');
   }
@@ -1384,6 +1403,7 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
       });
       const data=await res.json();
       if(!res.ok)throw new Error(data.error||'Could not reopen order');
+      evictCustomerLookupCache(aiTargetOrder);
     }catch(e){
       alert('Warning: could not reopen the order automatically ('+e.message+').');
     }
@@ -1524,6 +1544,7 @@ async function generateInvoiceCore(salesOrderId,overrides){
   });
   const data=await res.json();
   if(!res.ok)throw new Error(data.error||'Invoice generation failed');
+  evictCustomerLookupCache(salesOrderId);
   return data;
 }
 
@@ -1673,6 +1694,7 @@ async function generatePaymentLinksBulk(salesOrderIds){
         if(!res.ok)throw new Error(data.error||'Could not generate payment link');
         succeeded.push(soid);
         selectedOrders.delete(soid);
+        evictCustomerLookupCache(soid);
       }catch(e){
         failed.push(soid+': '+e.message);
       }
@@ -1720,6 +1742,7 @@ async function cancelOrdersBulk(salesOrderIds){
         if(!res.ok)throw new Error(data.error||'Could not cancel order');
         succeeded.push(soid);
         selectedOrders.delete(soid);
+        evictCustomerLookupCache(soid);
       }catch(e){
         failed.push(soid+': '+e.message);
       }
