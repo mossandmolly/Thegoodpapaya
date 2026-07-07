@@ -99,6 +99,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .ac-list.hidden{display:none}
 .ac-item{padding:8px 10px;font-size:13px;color:#2b2320;cursor:pointer}
 .ac-item:hover{background:#fdf8f3}
+.ac-item.ac-empty{color:#8a7a6a;font-style:italic;cursor:default}
+.ac-item.ac-empty:hover{background:none}
 .modal-actions{display:flex;gap:8px;margin-top:4px}
 .modal-actions button{flex:1}
 .mt-item-row{display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px;color:#2b2320;border-bottom:1px solid #f5efe6}
@@ -925,19 +927,30 @@ async function ensureCustomerNameOptions(){
 // still just works since this never blocks free text.
 function attachCustomerAutocomplete(inputEl,listEl){
   function render(){
+    // Only actually show the box while the field has focus — otherwise it'd
+    // stay visibly open (even just as an empty/hint box) on page load.
+    if(document.activeElement!==inputEl){listEl.classList.add('hidden');return;}
     const q=inputEl.value.trim().toLowerCase();
     const names=customerNameOptions||[];
     const matches=(q?names.filter(n=>n.toLowerCase().includes(q)):names).slice(0,8);
-    if(!matches.length){listEl.classList.add('hidden');listEl.innerHTML='';return;}
+    if(!matches.length){
+      listEl.innerHTML='<div class="ac-item ac-empty">'+(names.length?'No matches — will add as new':'No existing customers yet — type a new name')+'</div>';
+      listEl.classList.remove('hidden');
+      return;
+    }
     listEl.innerHTML=matches.map(n=>'<div class="ac-item">'+escH(n)+'</div>').join('');
     listEl.classList.remove('hidden');
   }
   inputEl.addEventListener('focus',render);
   inputEl.addEventListener('input',render);
+  // Re-render once the name list finishes loading, in case focus/typing
+  // happened before that fetch resolved — otherwise the box never updates
+  // and looks like it's just a plain text field with nothing behind it.
+  ensureCustomerNameOptions().then(render);
   inputEl.addEventListener('blur',()=>{setTimeout(()=>listEl.classList.add('hidden'),150);});
   listEl.addEventListener('mousedown',e=>{
     const item=e.target.closest('.ac-item');
-    if(!item)return;
+    if(!item||item.classList.contains('ac-empty'))return;
     e.preventDefault();
     inputEl.value=item.textContent;
     listEl.classList.add('hidden');
