@@ -40,6 +40,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .order-row{background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:10px 12px;margin-bottom:8px}
 .or-top{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:8px}
 .or-cust{font-weight:600;color:#2b2320}
+.pay-missing{font-size:11px;font-weight:700;color:#b3261e}
+.pay-link{font-size:11px;color:#3f7a34;text-decoration:none}
+.pay-link:hover{text-decoration:underline}
 .or-meta{color:#8a7a6a;font-size:11px}
 .or-pills{display:flex;flex-wrap:wrap;gap:6px}
 .item-pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 6px 4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
@@ -699,16 +702,18 @@ async function fetchAllOrderItems(applyFilters){
 
 // order_customer_lookup's .in() list also needs chunking — a long URL with
 // hundreds of sales_order_ids can be rejected/truncated, so batch it.
+// Returns the full row per sales_order_id (not just the name) so callers can
+// also read phone/razorpay_url/invoice_status for the payment-link UI.
 const CUSTOMER_LOOKUP_CHUNK=200;
 async function fetchCustomerMap(ids){
   const map={};
   for(let i=0;i<ids.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=ids.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
-    (data||[]).forEach(o=>{map[o.sales_order_id]=o.customer_name;});
+    (data||[]).forEach(o=>{map[o.sales_order_id]=o;});
   }
   return{map,error:null};
 }
@@ -759,8 +764,9 @@ async function loadTodaysOrders(){
   if(!data||!data.length){list.innerHTML='<div class="to-empty">No orders yet'+(viewingTomorrow?' for tomorrow':' today')+'</div>';return;}
 
   // orders' RLS locks direct reads to service-role only, so this goes through
-  // order_customer_lookup — a narrow view (sales_order_id, customer_name only)
-  // granted to anon — instead of an edge-function round trip.
+  // order_customer_lookup — a narrow view (sales_order_id, customer_name,
+  // phone, razorpay_url, invoice_status) granted to anon — instead of an
+  // edge-function round trip.
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
   const{map:customerMap,error:custErr}=await fetchCustomerMap(uniqueIds);
   if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
@@ -771,7 +777,16 @@ async function loadTodaysOrders(){
   const byItemId={};
   data.forEach(item=>{
     const key=item.sales_order_id;
-    if(!bySalesOrder[key])bySalesOrder[key]={customer:customerMap[key]||key,items:[]};
+    if(!bySalesOrder[key]){
+      const o=customerMap[key];
+      bySalesOrder[key]={
+        customer:      o?.customer_name||key,
+        phone:         o?.phone||null,
+        razorpayUrl:   o?.razorpay_url||null,
+        invoiceStatus: o?.invoice_status||null,
+        items:[],
+      };
+    }
     bySalesOrder[key].items.push(item);
     byItemId[item.id]=item;
   });
@@ -791,7 +806,12 @@ async function loadTodaysOrders(){
     return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
       orders.map(order=>
         '<div class="order-row">'+
-          '<div class="or-top"><span class="or-cust">'+escH(order.customer)+'</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · <a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'+
+          '<div class="or-top"><span class="or-cust">'+escH(order.customer)+
+            (order.invoiceStatus==='done'?(order.razorpayUrl
+              ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
+              :' <span class="pay-missing">Payment link not generated</span> <a onclick="generatePaymentLinkPrompt(\''+order.soid+'\')">Generate Payment Link</a>'
+            ):'')+
+          '</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · <a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'+
             // Ready once nothing's still open/held/packed AND there's at least
             // one newly-final item — items already invoiced from a prior run
             // don't count on their own, or the link would never go away.
@@ -1118,12 +1138,36 @@ async function generateInvoice(salesOrderId,btnEl,overrides){
     if(data.free_items&&data.free_items.length){
       msg+='\n\nBilled at ₹0 (replacement/free/free sample): '+data.free_items.join(', ');
     }
+    if(data.payment_link){
+      msg+='\n\nPayment link: '+data.payment_link;
+    }else{
+      msg+='\n\nPayment link not generated — no phone number on file. Use "Generate Payment Link" on the order to add one.';
+    }
     alert(msg);
   }catch(e){
     alert('Failed to generate invoice: '+e.message);
     btnEl.textContent=original;
     btnEl.style.pointerEvents='';
     return;
+  }
+  await loadTodaysOrders();
+}
+
+// ── Generate Payment Link (manual, when no phone was on file) ───────────────
+async function generatePaymentLinkPrompt(salesOrderId){
+  const phone=prompt('Customer phone number (10 digits):');
+  if(!phone||!phone.trim())return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/create-order-payment-link',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      body:JSON.stringify({sales_order_id:salesOrderId,phone:phone.trim()}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not generate payment link');
+    alert('Payment link created: '+data.payment_url);
+  }catch(e){
+    alert('Failed to generate payment link: '+e.message);
   }
   await loadTodaysOrders();
 }
@@ -1231,7 +1275,7 @@ function renderPackerGrid(){
   const filtered=packerItems.filter(item=>{
     if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
     if(packerFilters.fruit&&item.item_name!==packerFilters.fruit)return false;
-    const customer=packerCustomerMap[item.sales_order_id]||item.sales_order_id;
+    const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
     if(searchSociety&&!deriveSociety(customer).toLowerCase().includes(searchSociety))return false;
     if(searchFruit&&!item.item_name.toLowerCase().includes(searchFruit))return false;
     return true;
@@ -1247,7 +1291,7 @@ function renderPackerGrid(){
 
   grid.innerHTML=filtered.map(item=>
     '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
-      '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]||item.sales_order_id)+'</div>'+
+      '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+'</div>'+
       '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+escH(item.item_name)+'</span>'+
         '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span>'+
         '<button class="pk-x" onclick="deleteItem(\''+item.id+'\')" title="Remove">✕</button></span>'+

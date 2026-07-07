@@ -1,7 +1,7 @@
 // Supabase Edge Function — generate-invoice
 //
 // Input:  { sales_order_id: string, rate_overrides?: { [item_name: string]: string } }
-// Output (success):          { invoice_id, invoice_number, sales_order_id, free_items }
+// Output (success):          { invoice_id, invoice_number, sales_order_id, free_items, payment_link }
 // Output (needs resolution): { needs_resolution: true, unresolved: [{ item_name, suggestions }] }
 //
 // Fast path (no prior Zoho invoice):  create only (~600ms)
@@ -24,7 +24,13 @@
 // Updates orders.invoice_status, zoho_invoice_id, invoice_number, invoice_total, balance_due.
 // Marks the order_items 'invoiced' on success.
 // Does NOT reset amount_paid — cumulative across regenerations.
-// Razorpay payment links are out of scope here — see create-payment-link.
+//
+// Also (re)generates the Razorpay payment link, best-effort, if orders.phone
+// is set — cancels any prior link first so a stale/wrong-amount link can't be
+// paid. If there's no phone on file, payment_link comes back null and the
+// dashboard shows a manual "Generate Payment Link" action instead
+// (see create-order-payment-link). Unrelated to create-payment-link, which
+// serves the public shop checkout.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -56,6 +62,37 @@ function closestCatalogNames(name: string, catalogNames: string[], n = 3): strin
     .sort((x, y) => x.d - y.d)
     .slice(0, n)
     .map(x => x.c);
+}
+
+// ── Razorpay payment link (best-effort, only if a phone is on file) ────────
+// A regenerated invoice can have a different total, so any existing link is
+// cancelled and a fresh one created — never blocks invoice generation itself.
+async function razorpayCancelLink(linkId: string, auth: string): Promise<void> {
+  await fetch(`https://api.razorpay.com/v1/payment_links/${linkId}/cancel`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}` },
+  });
+}
+
+async function razorpayCreateLink(
+  amountPaise: number, customerName: string, phone: string, salesOrderId: string, auth: string,
+): Promise<{ id: string; short_url: string }> {
+  const res = await fetch('https://api.razorpay.com/v1/payment_links', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount:   amountPaise,
+      currency: 'INR',
+      description: `The Good Papaya — order ${salesOrderId}`,
+      customer: { name: customerName, contact: `+91${phone.replace(/^\+91/, '')}` },
+      notify:          { sms: true, email: false },
+      reminder_enable: false,
+      notes: { sales_order_id: salesOrderId, source: 'ops-dashboard' },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.description || 'Razorpay error');
+  return { id: data.id, short_url: data.short_url };
 }
 
 function env(key: string) {
@@ -320,8 +357,34 @@ Deno.serve(async (req) => {
       .update({ status: 'invoiced' })
       .in('id', items.map((i: any) => i.id));
 
+    // Best-effort: (re)generate the Razorpay payment link so it always
+    // reflects the current invoice total. Only possible if a phone is on
+    // file — otherwise the ops dashboard shows "Generate Payment Link" for
+    // someone to add one manually.
+    let paymentLink: string | null = null;
+    if (order.phone) {
+      try {
+        const keyId     = Deno.env.get('RAZORPAY_KEY_ID');
+        const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
+        if (keyId && keySecret) {
+          const auth = btoa(`${keyId}:${keySecret}`);
+          if (order.razorpay_link_id) await razorpayCancelLink(order.razorpay_link_id, auth);
+          const link = await razorpayCreateLink(
+            Math.round(invoice_total * 100), order.customer_name, order.phone, sales_order_id, auth,
+          );
+          await supabase.from('orders').update({
+            razorpay_link_id: link.id,
+            razorpay_url:     link.short_url,
+          }).eq('sales_order_id', sales_order_id);
+          paymentLink = link.short_url;
+        }
+      } catch (_e) {
+        // swallow — payment link is a nice-to-have, not load-bearing for invoicing
+      }
+    }
+
     return new Response(
-      JSON.stringify({ invoice_id, invoice_number, sales_order_id, free_items: freeItems }),
+      JSON.stringify({ invoice_id, invoice_number, sales_order_id, free_items: freeItems, payment_link: paymentLink }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
