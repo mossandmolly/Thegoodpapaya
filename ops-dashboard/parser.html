@@ -31,6 +31,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .btn-push:disabled{opacity:0.5;cursor:not-allowed}
 .push-row{display:flex;gap:8px;margin-bottom:10px}
 .push-row .btn-push{width:auto;flex:1;margin-bottom:0}
+.push-row .btn-sec{width:auto;flex:1;margin-bottom:0}
 .btn-tomorrow{width:auto;flex:0 0 auto;padding:0 14px;border-radius:10px;border:1.5px solid #f5c896;background:#fdead9;color:#b45f0e;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
 .btn-tomorrow:disabled{opacity:0.5;cursor:not-allowed}
 .push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#8a7a6a}
@@ -92,6 +93,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .no-item-row select{flex:2;margin-bottom:0}
 .no-item-row input{flex:1;margin-bottom:0}
 .no-item-row button{flex:0 0 auto;background:none;border:none;color:#b3261e;font-size:16px;cursor:pointer;padding:0 4px}
+.qo-block{border:1px solid #eee0d0;border-radius:8px;padding:10px;margin-bottom:10px;background:#ffffff}
+.qo-block-header{display:flex;gap:6px;margin-bottom:8px}
+.qo-block-header input{flex:1;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
+.qo-block-header button{background:none;border:none;color:#b3261e;font-size:16px;cursor:pointer;padding:0 4px;flex-shrink:0}
+.qo-row{display:flex;gap:6px;margin-bottom:6px}
+.qo-row select,.qo-row input{padding:8px 9px;border:1px solid #eee0d0;border-radius:8px;font-size:12px;color:#2b2320;font-family:inherit;background:#ffffff}
+.qo-row select{flex:2}
+.qo-row .qo-qty{flex:1}
+.qo-row .qo-desc{flex:2}
+.qo-row button{background:none;border:none;color:#8a7a6a;font-size:12px;cursor:pointer;padding:0 4px;flex-shrink:0}
+.qo-row button:hover{color:#b3261e}
+.qo-add-item-btn{margin-bottom:0}
 .gi-row{padding:8px 0;border-bottom:1px solid #f5efe6}
 .gi-row:last-child{border-bottom:none}
 .gi-row label{display:block;font-size:12px;color:#2b2320;margin-bottom:4px}
@@ -163,13 +176,27 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
     <button class="btn-sec" id="xb">🔄 Clear</button>
   </div>
+
+  <div class="push-row" style="margin-top:4px">
+    <button class="btn-sec" id="to-sync-catalog">💰 Sync Catalog</button>
+    <button class="btn-sec" id="sync-customers">👥 Sync Customers</button>
+  </div>
+
+  <!-- QUICK ORDER ENTRY -->
+  <div class="config-section" id="quick-order-section">
+    <h3>⚡ Quick Order Entry</h3>
+    <div id="qo-blocks"></div>
+    <button class="btn-sec" id="qo-add-customer">+ Add new customer</button>
+    <button class="btn-push" id="qo-submit">Submit Quick Order(s)</button>
+    <div class="push-status" id="qo-status"></div>
+  </div>
+  <datalist id="qo-customer-list"></datalist>
 </div>
 
 <!-- TODAY'S ORDERS -->
 <div class="panel" id="panel-today">
   <div class="section-label"><span id="to-label">Today's orders</span> <span id="to-rc"></span></div>
   <button class="btn-sec" id="to-refresh" style="margin-bottom:12px">🔄 Refresh</button>
-  <button class="btn-sec" id="to-sync-catalog" style="margin-bottom:12px">💰 Sync Catalog</button>
   <button class="btn-push" id="to-new-order" style="margin-bottom:12px">➕ New Order</button>
   <div id="to-list"><div class="to-empty">Loading…</div></div>
 </div>
@@ -722,6 +749,122 @@ pushTomorrowBtn.addEventListener('click',async()=>{
 
 // ── Today's Orders ──────────────────────────────────────────────────────────
 function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ── Sync Catalog / Sync Customers (Parser screen) ────────────────────────────
+async function syncCustomers(){
+  const res=await fetch(SUPABASE_URL+'/functions/v1/sync-customers',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+    body:'{}',
+  });
+  const data=await res.json();
+  if(!res.ok)throw new Error(data.error||'Customer sync failed');
+  return data;
+}
+
+const syncCustomersBtn=document.getElementById('sync-customers');
+syncCustomersBtn.addEventListener('click',async()=>{
+  syncCustomersBtn.disabled=true;syncCustomersBtn.textContent='Syncing…';
+  try{
+    const{synced}=await syncCustomers();
+    syncCustomersBtn.textContent='✅ Synced ('+synced+')';
+  }catch(e){
+    alert('Customer sync failed: '+e.message);
+    syncCustomersBtn.textContent='👥 Sync Customers';
+  }finally{
+    syncCustomersBtn.disabled=false;
+    setTimeout(()=>{syncCustomersBtn.textContent='👥 Sync Customers';},3000);
+  }
+});
+
+// ── Quick Order Entry — manual entry of one or more customers' orders ───────
+// without going through the screenshot-parse flow. Reuses pushRows (same
+// header-create + held-duplicate-check logic as the parser push).
+const qoBlocksEl=document.getElementById('qo-blocks');
+let qoBlockCount=0,qoRowCount=0;
+let customerNameOptions=null;
+
+async function ensureCustomerNameOptions(){
+  if(customerNameOptions)return customerNameOptions;
+  // order_customer_lookup is anon-readable across all dates, unlike orders/customers.
+  const{data,error}=await sb.from('order_customer_lookup').select('customer_name');
+  customerNameOptions=error?[]:[...new Set((data||[]).map(r=>r.customer_name).filter(Boolean))].sort();
+  return customerNameOptions;
+}
+
+async function addQoRow(blockIdx){
+  const rowIdx=qoRowCount++;
+  const rowsEl=qoBlocksEl.querySelector('.qo-block[data-idx="'+blockIdx+'"] .qo-rows');
+  if(!rowsEl)return;
+  rowsEl.insertAdjacentHTML('beforeend',
+    '<div class="qo-row" data-ridx="'+rowIdx+'">'+
+      '<select class="qo-item"></select>'+
+      '<input type="number" class="qo-qty" step="0.01" min="0" placeholder="qty">'+
+      '<input type="text" class="qo-desc" placeholder="description (optional)">'+
+      '<button type="button" onclick="this.closest(\'.qo-row\').remove()" title="Remove item">✕</button>'+
+    '</div>'
+  );
+  try{
+    const items=await ensureCatalogItems();
+    const sel=rowsEl.querySelector('.qo-row[data-ridx="'+rowIdx+'"] .qo-item');
+    sel.innerHTML=items.map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('');
+  }catch(e){
+    alert(e.message);
+  }
+}
+
+async function addQoBlock(){
+  const idx=qoBlockCount++;
+  qoBlocksEl.insertAdjacentHTML('beforeend',
+    '<div class="qo-block" data-idx="'+idx+'">'+
+      '<div class="qo-block-header">'+
+        '<input type="text" class="qo-customer" list="qo-customer-list" placeholder="Customer name (e.g. Dhavala A502)">'+
+        '<button type="button" onclick="this.closest(\'.qo-block\').remove()" title="Remove customer">✕</button>'+
+      '</div>'+
+      '<div class="qo-rows"></div>'+
+      '<button type="button" class="btn-sec qo-add-item-btn" onclick="addQoRow('+idx+')">+ Add new item</button>'+
+    '</div>'
+  );
+  await addQoRow(idx);
+}
+
+document.getElementById('qo-add-customer').addEventListener('click',addQoBlock);
+
+const qoStatus=document.getElementById('qo-status'),qoSubmitBtn=document.getElementById('qo-submit');
+function setQoStatus(msg,cls){qoStatus.textContent=msg;qoStatus.className='push-status'+(cls?' '+cls:'');}
+
+qoSubmitBtn.addEventListener('click',async()=>{
+  const rows=[];
+  qoBlocksEl.querySelectorAll('.qo-block').forEach(block=>{
+    const customerName=block.querySelector('.qo-customer').value.trim();
+    if(!customerName)return;
+    block.querySelectorAll('.qo-row').forEach(row=>{
+      const itemName=row.querySelector('.qo-item').value;
+      const qty=parseFloat(row.querySelector('.qo-qty').value);
+      const description=row.querySelector('.qo-desc').value.trim();
+      if(itemName&&!isNaN(qty)&&qty>0){
+        rows.push({customer_name:customerName,item_name:itemName,quantity:qty,description});
+      }
+    });
+  });
+  if(!rows.length){setQoStatus('Add at least one customer with an item and quantity','err');return;}
+
+  qoSubmitBtn.disabled=true;qoSubmitBtn.textContent='Submitting…';setQoStatus('');
+  try{
+    const{opened,held}=await pushRows(rows,r=>TODAY+'-'+r.customer_name.replace(/\s+/g,''));
+    setQoStatus('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':''),'ok');
+    qoBlocksEl.innerHTML='';qoBlockCount=0;
+    await addQoBlock();
+  }catch(e){
+    setQoStatus('❌ '+e.message,'err');
+  }
+  qoSubmitBtn.disabled=false;qoSubmitBtn.textContent='Submit Quick Order(s)';
+});
+
+ensureCustomerNameOptions().then(names=>{
+  document.getElementById('qo-customer-list').innerHTML=names.map(n=>'<option value="'+escH(n)+'"></option>').join('');
+});
+addQoBlock();
 
 // PostgREST caps rows per request (Supabase's default is 1000) — a single
 // unpaginated select silently truncates once a day's order_items pass that
