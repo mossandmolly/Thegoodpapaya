@@ -1557,7 +1557,7 @@ async function generateInvoiceCore(salesOrderId,overrides){
 }
 
 async function generateInvoice(salesOrderId,btnEl,overrides){
-  if(!overrides&&!confirm('Generate Zoho invoice for '+salesOrderId+'?\n\nIf this order was invoiced earlier today, that invoice will be replaced with one consolidated invoice covering all its final items (old + new).'))return;
+  if(!overrides&&!confirm('Generate invoice for '+salesOrderId+'?'))return;
   const original=btnEl.textContent;
   btnEl.textContent='Generating…';
   btnEl.style.pointerEvents='none';
