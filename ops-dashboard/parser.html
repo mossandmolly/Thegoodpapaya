@@ -909,9 +909,13 @@ const qoBlocksEl=document.getElementById('qo-blocks');
 let qoBlockCount=0,qoRowCount=0;
 let customerNameOptions=null;
 
+// customers (Zoho-synced via Sync Customers) is the real source of truth for
+// "who is a customer" — order_customer_lookup only ever had whoever's
+// already placed an order through this tool, same mismatch item_name avoids
+// by pointing at catalog instead of re-deriving from order_items.
 async function ensureCustomerNameOptions(){
   if(customerNameOptions)return customerNameOptions;
-  const{data,error}=await sb.from('order_customer_lookup').select('customer_name');
+  const{data,error}=await sb.from('customers').select('customer_name').eq('active',true);
   if(error){
     console.error('Could not load customer names for autocomplete:',error.message);
     customerNameOptions=[];
