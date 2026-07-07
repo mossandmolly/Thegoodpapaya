@@ -195,10 +195,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
-<!-- MOVE TO TOMORROW MODAL -->
+<!-- MOVE TO TOMORROW / BACK TO TODAY MODAL -->
 <div class="modal-overlay hidden" id="mt-modal">
   <div class="modal-box">
-    <h3>Move to tomorrow</h3>
+    <h3 id="mt-title">Move to tomorrow</h3>
     <label class="modal-label">Select items to move</label>
     <div id="mt-items"></div>
     <div class="modal-actions">
@@ -817,7 +817,10 @@ async function loadTodaysOrders(){
               ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
               :' <span class="pay-missing">Payment link not generated</span> <a onclick="generatePaymentLinkPrompt(\''+order.soid+'\')">Generate Payment Link</a>'
             ):'')+
-          '</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · <a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'+
+          '</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · '+
+            (viewingTomorrow
+              ?'<a onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
+              :'<a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
             // Ready once nothing's still open/held/packed AND there's at least
             // one newly-final item — items already invoiced from a prior run
             // don't count on their own, or the link would never go away.
@@ -1015,16 +1018,17 @@ document.getElementById('no-create').addEventListener('click',async()=>{
   await loadTodaysOrders();
 });
 
-// ── Move to tomorrow modal ───────────────────────────────────────────────────
-// Moves selected items of an order onto tomorrow's sales_order_id (same
-// customer suffix, date prefix bumped by one day). Needs an orders header row
-// for that new id — anon can't write orders directly, so it goes through the
-// same create-order edge function the parser push uses, before the item rows
-// are repointed.
+// ── Move to tomorrow / pull back to today modal ──────────────────────────────
+// Moves selected items of an order onto another day's sales_order_id (same
+// customer suffix, date prefix shifted by mtDirection days). Needs an orders
+// header row for that new id — anon can't write orders directly, so it goes
+// through the same create-order edge function the parser push uses, before
+// the item rows are repointed.
 let currentOrdersById={};
 let currentItemsById={};
 let mtTargetOrder=null;
-const mtModal=document.getElementById('mt-modal'),mtItems=document.getElementById('mt-items');
+let mtDirection=1;
+const mtModal=document.getElementById('mt-modal'),mtItems=document.getElementById('mt-items'),mtTitle=document.getElementById('mt-title'),mtMoveBtn=document.getElementById('mt-move');
 
 function addDays(dateStr,n){
   const d=new Date(dateStr+'T00:00:00Z');
@@ -1032,10 +1036,13 @@ function addDays(dateStr,n){
   return d.toISOString().slice(0,10);
 }
 
-function moveToTomorrowPrompt(salesOrderId){
+function openMoveDateModal(salesOrderId,direction){
   const order=currentOrdersById[salesOrderId];
   if(!order||!order.items.length){alert('No items to move');return;}
   mtTargetOrder=salesOrderId;
+  mtDirection=direction;
+  mtTitle.textContent=direction>0?'Move to tomorrow':"Add to today's orders";
+  mtMoveBtn.textContent=direction>0?'Move to Tomorrow':"Add to Today's Orders";
   mtItems.innerHTML=order.items.map(item=>
     '<label class="mt-item-row"><input type="checkbox" value="'+item.id+'" checked>'+
       escH(item.item_name)+' × '+item.requested_quantity+
@@ -1044,6 +1051,9 @@ function moveToTomorrowPrompt(salesOrderId){
   mtModal.classList.remove('hidden');
 }
 
+function moveToTomorrowPrompt(salesOrderId){openMoveDateModal(salesOrderId,1);}
+function moveToTodayPrompt(salesOrderId){openMoveDateModal(salesOrderId,-1);}
+
 document.getElementById('mt-cancel').addEventListener('click',()=>{mtModal.classList.add('hidden');});
 
 document.getElementById('mt-move').addEventListener('click',async()=>{
@@ -1051,7 +1061,8 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
   if(!ids.length){alert('Select at least one item');return;}
 
   const order=currentOrdersById[mtTargetOrder];
-  const newSalesOrderId=addDays(mtTargetOrder.slice(0,10),1)+mtTargetOrder.slice(10);
+  const newSalesOrderId=addDays(mtTargetOrder.slice(0,10),mtDirection)+mtTargetOrder.slice(10);
+  const movingForward=mtDirection>0;
 
   try{
     const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
@@ -1066,17 +1077,18 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
       }]}),
     });
     const createOrderData=await createOrderRes.json();
-    if(!createOrderRes.ok)throw new Error(createOrderData.error||'Could not create tomorrow\'s order header');
+    if(!createOrderRes.ok)throw new Error(createOrderData.error||'Could not create the order header for the target day');
 
     // carried_forward marks these as punted from an earlier day so the next
     // day's Today's Orders can flag them CF — a priority since the customer
-    // wasn't served on time.
-    const{error}=await sb.from('order_items')
-      .update({sales_order_id:newSalesOrderId,status:'open',carried_forward:true})
-      .in('id',ids);
+    // wasn't served on time. Only set when pushing forward — pulling an item
+    // back to today is a deliberate pull-up, not a missed-service punt.
+    const update={sales_order_id:newSalesOrderId,status:'open'};
+    if(movingForward)update.carried_forward=true;
+    const{error}=await sb.from('order_items').update(update).in('id',ids);
     if(error)throw new Error(error.message);
   }catch(e){
-    alert('Failed to move to tomorrow: '+e.message);
+    alert('Failed to move order: '+e.message);
     return;
   }finally{
     mtModal.classList.add('hidden');
