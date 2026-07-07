@@ -7,7 +7,10 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320;min-height:100vh;padding:20px 16px 48px}
-.logo{font-size:20px;font-weight:700;color:#c2570a;margin-bottom:20px}.logo span{color:#2b2320;font-weight:300}
+.top-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:10px}
+.logo{font-size:20px;font-weight:700;color:#c2570a}.logo span{color:#2b2320;font-weight:300}
+.tomorrow-pill{background:#fdead9;color:#b45f0e;border-radius:14px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.tomorrow-pill.active{background:#e8720c;color:#ffffff}
 .tabs{display:flex;gap:8px;margin-bottom:20px}
 .tab{padding:8px 16px;border-radius:20px;border:1.5px solid #eee0d0;background:transparent;color:#8a7a6a;font-size:13px;cursor:pointer;font-family:inherit}
 .tab.active{background:#e8720c;color:#ffffff;border-color:#e8720c;font-weight:600}
@@ -45,6 +48,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .item-pill.status-packed{background:#fdf6d9;border-color:#f0dd8a;color:#a8860a}
 .item-pill.status-final{background:#e3eef7;border-color:#b8d4e8;color:#2f6690}
 .item-pill.status-invoiced{background:#e5f3e3;border-color:#bfe0b8;color:#3f7a34}
+.item-pill.dup-item{color:#b3261e;font-weight:700}
 .pill-x{background:none;border:none;cursor:pointer;font-size:12px;line-height:1;padding:2px;color:inherit;opacity:0.6}
 .pill-x:hover{opacity:1}
 .section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#8a7a6a;margin:16px 0 6px}
@@ -94,6 +98,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
 .pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
+.pk-item.dup-item{color:#b3261e;font-weight:700}
+.pk-line1-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.pk-x{background:none;border:none;cursor:pointer;font-size:12px;color:#8a7a6a;padding:2px;flex-shrink:0}
+.pk-x:hover{color:#b3261e}
 .pk-qty-label{font-size:12px;font-weight:700;color:#2b2320;white-space:nowrap}
 .pk-instr{font-size:12px;font-weight:700;color:#b3261e;margin-bottom:8px}
 .pk-row{display:flex;gap:6px;margin-bottom:6px}
@@ -109,7 +117,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 </style>
 </head>
 <body>
-<div class="logo">good<span>papaya</span> · parser</div>
+<div class="top-header">
+  <div class="logo">good<span>papaya</span> · parser</div>
+  <span class="tomorrow-pill" id="tomorrow-pill" onclick="toggleTomorrowView()">Tomorrow (0)</span>
+</div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
   <button class="tab" onclick="switchTab('today')">📋 Today's Orders</button>
@@ -142,7 +153,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
 <!-- TODAY'S ORDERS -->
 <div class="panel" id="panel-today">
-  <div class="section-label">Today's orders <span id="to-rc"></span></div>
+  <div class="section-label"><span id="to-label">Today's orders</span> <span id="to-rc"></span></div>
   <button class="btn-sec" id="to-refresh" style="margin-bottom:12px">🔄 Refresh</button>
   <button class="btn-sec" id="to-sync-catalog" style="margin-bottom:12px">💰 Sync Catalog</button>
   <button class="btn-push" id="to-new-order" style="margin-bottom:12px">➕ New Order</button>
@@ -332,6 +343,7 @@ function computeBusinessDate(){
   return ist.toISOString().slice(0,10);
 }
 const TODAY=computeBusinessDate();
+const TOMORROW=addDays(TODAY,1);
 // Plain IST calendar date (no 7pm business-day shift) — used to check whether
 // the catalog has been synced from Zoho yet today.
 const CALENDAR_TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
@@ -701,14 +713,50 @@ async function fetchCustomerMap(ids){
   return{map,error:null};
 }
 
+// Same customer, same day, same item ordered 2+ times (quantities may differ)
+// — flags likely accidental double-entries from WhatsApp parsing so an admin
+// or packer can spot and remove the extra one, distinct from the exact-match
+// 'held' duplicate check which only catches identical quantities.
+function computeDuplicateItemIds(items){
+  const counts={};
+  items.forEach(i=>{
+    const key=i.sales_order_id+'|'+i.item_name;
+    counts[key]=(counts[key]||0)+1;
+  });
+  const dupIds=new Set();
+  items.forEach(i=>{
+    if(counts[i.sales_order_id+'|'+i.item_name]>1)dupIds.add(i.id);
+  });
+  return dupIds;
+}
+
+let viewingTomorrow=false;
+
+async function toggleTomorrowView(){
+  viewingTomorrow=!viewingTomorrow;
+  switchTab('today');
+  await loadTodaysOrders();
+}
+
+async function refreshTomorrowPill(){
+  const{data}=await sb.from('order_items').select('sales_order_id').like('sales_order_id',TOMORROW+'-%');
+  const count=new Set((data||[]).map(r=>r.sales_order_id)).size;
+  const pill=document.getElementById('tomorrow-pill');
+  pill.textContent=viewingTomorrow?'← Back to Today':('Tomorrow ('+count+')');
+  pill.classList.toggle('active',viewingTomorrow);
+}
+
 async function loadTodaysOrders(){
   const list=document.getElementById('to-list');
+  const viewDate=viewingTomorrow?TOMORROW:TODAY;
+  document.getElementById('to-label').textContent=viewingTomorrow?"Tomorrow's orders":"Today's orders";
   list.innerHTML='<div class="to-empty">Loading…</div>';
-  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',TODAY+'-%'));
+  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%'));
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  await refreshTomorrowPill();
 
   document.getElementById('to-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
-  if(!data||!data.length){list.innerHTML='<div class="to-empty">No orders yet today</div>';return;}
+  if(!data||!data.length){list.innerHTML='<div class="to-empty">No orders yet'+(viewingTomorrow?' for tomorrow':' today')+'</div>';return;}
 
   // orders' RLS locks direct reads to service-role only, so this goes through
   // order_customer_lookup — a narrow view (sales_order_id, customer_name only)
@@ -716,6 +764,8 @@ async function loadTodaysOrders(){
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
   const{map:customerMap,error:custErr}=await fetchCustomerMap(uniqueIds);
   if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
+
+  const dupIds=computeDuplicateItemIds(data);
 
   const bySalesOrder={};
   const byItemId={};
@@ -748,7 +798,7 @@ async function loadTodaysOrders(){
             (order.items.every(i=>i.status==='final'||i.status==='invoiced')&&order.items.some(i=>i.status==='final')?' · <a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
           '</span></div>'+
           '<div class="or-pills">'+order.items.map(item=>
-            '<span class="item-pill status-'+item.status+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\')">'+
+            '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\')">'+
               escH(item.item_name)+' × '+item.requested_quantity+
               '<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>'+
             '</span>'
@@ -892,7 +942,7 @@ document.getElementById('no-create').addEventListener('click',async()=>{
   })).filter(r=>r.item_name&&!isNaN(r.qty)&&r.qty>0);
   if(!rows.length){alert('Add at least one item with a quantity');return;}
 
-  const salesOrderId=TODAY+'-'+customerName.replace(/\s+/g,'');
+  const salesOrderId=(viewingTomorrow?TOMORROW:TODAY)+'-'+customerName.replace(/\s+/g,'');
   const createBtn=document.getElementById('no-create');
   createBtn.disabled=true;createBtn.textContent='Creating…';
   try{
@@ -1118,7 +1168,8 @@ async function deleteItem(id){
   if(!confirm('Delete this line item? This cannot be undone.'))return;
   const{error}=await sb.from('order_items').delete().eq('id',id);
   if(error){alert('Failed to delete: '+error.message);return;}
-  await loadTodaysOrders();
+  if(document.getElementById('panel-packer').classList.contains('active'))await loadPackerView();
+  else await loadTodaysOrders();
 }
 
 document.getElementById('to-refresh').addEventListener('click',loadTodaysOrders);
@@ -1192,10 +1243,15 @@ function renderPackerGrid(){
     return;
   }
 
+  const dupIds=computeDuplicateItemIds(packerItems);
+
   grid.innerHTML=filtered.map(item=>
     '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
       '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]||item.sales_order_id)+'</div>'+
-      '<div class="pk-line1"><span class="pk-item">'+escH(item.item_name)+'</span><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></div>'+
+      '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+escH(item.item_name)+'</span>'+
+        '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span>'+
+        '<button class="pk-x" onclick="deleteItem(\''+item.id+'\')" title="Remove">✕</button></span>'+
+      '</div>'+
       (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
       '<div class="pk-row">'+
         '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'">'+
@@ -1231,6 +1287,8 @@ async function markFinal(id){
 }
 
 document.getElementById('pk-refresh').addEventListener('click',loadPackerView);
+
+refreshTomorrowPill();
 </script>
 </body>
 </html>
