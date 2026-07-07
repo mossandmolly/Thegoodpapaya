@@ -31,6 +31,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .btn-parse{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#e8720c;color:#ffffff;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
 .btn-parse:disabled{opacity:0.4;cursor:not-allowed}
 .btn-sec{display:block;width:100%;padding:11px;border-radius:10px;border:1.5px solid #eee0d0;background:transparent;color:#c2570a;font-size:13px;cursor:pointer;margin-bottom:8px;font-family:inherit}
+.btn-sec.cancel-link{color:#b3261e;border-color:#f3c9c2}
+.btn-sec:disabled{opacity:0.5;cursor:not-allowed}
 .btn-push{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#c2570a;color:#ffffff;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
 .btn-push:disabled{opacity:0.5;cursor:not-allowed}
 .push-row{display:flex;gap:8px;margin-bottom:10px}
@@ -56,17 +58,15 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .cf-badge{background:#b3261e;color:#ffffff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
 .dup-badge{background:#8a3ab3;color:#ffffff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
 .or-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
-/* Action row sits below the pills — count + primary actions on the left,
-   the two lower-priority/"common" actions (payment link, cancel) styled as
-   small muted buttons on the right instead of blending in as plain links. */
-.or-actions{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;color:#8a7a6a;font-size:12px;line-height:1.9}
-.or-actions a{color:#e8720c;cursor:pointer;text-decoration:none;display:inline-block;padding:4px 3px}
-.or-actions a:hover{text-decoration:underline}
-.or-count{white-space:nowrap}
-.or-actions-small{display:flex;gap:6px;margin-left:auto}
-.or-cta-small{display:inline-block;font-size:10px;padding:4px 9px;border-radius:12px;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a;cursor:pointer;text-decoration:none;white-space:nowrap}
-.or-cta-small:hover{background:#fdf8f3}
-.or-cta-small.cancel-link{color:#b3261e!important;border-color:#f3c9c2}
+/* Action row sits below the pills — item count on the left, actions as
+   pill-shaped buttons so they're easy to tap on mobile instead of cramped
+   text links. Payment link / cancel moved out to page-level bulk CTAs. */
+.or-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:#8a7a6a;font-size:12px;line-height:1.4}
+.or-count{white-space:nowrap;margin-right:2px}
+.or-pill{display:inline-flex;align-items:center;border-radius:14px;padding:5px 11px;font-size:11px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a}
+.or-pill:hover{background:#fdf8f3}
+.or-pill.primary{background:#e8720c;border-color:#e8720c;color:#ffffff}
+.or-pill.primary:hover{background:#d4650a}
 .item-pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 6px 4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
 .item-pill.status-open{background:#f1efec;border-color:#e0dad0;color:#726a60}
 .item-pill.status-held{background:#fdead9;border-color:#f5c896;color:#b45f0e}
@@ -250,16 +250,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <!-- TODAY'S ORDERS -->
 <div class="panel" id="panel-today">
   <div class="section-label"><span id="to-label">Today's orders</span> <span id="to-rc"></span></div>
-  <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:12px" disabled>🧾 Generate Selected (0)</button>
+  <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:8px" disabled>🧾 Generate Selected Invoices (0)</button>
+  <div class="push-row" style="margin-bottom:12px">
+    <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
+    <button class="btn-sec cancel-link" id="to-bulk-cancel" disabled>🚫 Cancel Selected (0)</button>
+  </div>
   <div id="to-list"><div class="to-empty">Loading…</div></div>
 </div>
 
 <!-- PACKER -->
 <div class="panel" id="panel-packer">
   <div class="section-label">To pack <span id="pk-rc"></span></div>
-  <button class="btn-sec" id="pk-refresh" style="margin-bottom:12px">🔄 Refresh</button>
-  <input type="text" class="pk-search" id="pk-search-society" placeholder="🔍 Search society...">
-  <input type="text" class="pk-search" id="pk-search-fruit" placeholder="🔍 Search fruit...">
+  <input type="text" class="pk-search" id="pk-search" placeholder="🔍 Search society or fruit...">
   <div class="filter-group-label">Fruit</div>
   <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
   <div class="filter-group-label">Status</div>
@@ -1092,7 +1094,7 @@ async function fetchCustomerMap(ids){
 // Cycled by society index so each society's orders are visually distinct at
 // a glance — light enough tints that all the existing status-pill colors
 // still read fine on top of them.
-const SOCIETY_COLORS=['#fdf8f3','#f3f8fd','#fdf3f0','#f3fdf6','#f9f3fd','#fdfaf0','#f0fdfa','#fdf0f5'];
+const SOCIETY_COLORS=['#fce4d6','#dceefc','#dcf5e3','#ebe0f7','#fcefc7','#fbdfe6','#d7f5f0','#f2e6d3'];
 
 // Same customer, same day, same item ordered 2+ times (quantities may differ)
 // — flags likely accidental double-entries from WhatsApp parsing so an admin
@@ -1191,7 +1193,7 @@ async function loadTodaysOrders(){
         const readyToInvoice=order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced');
         return '<div class="order-row'+(cancelled?' order-cancelled':'')+'" style="background:'+rowBg+'">'+
           '<div class="or-top"><span class="or-cust">'+
-            (!cancelled&&readyToInvoice?'<input type="checkbox" class="inv-select" '+(selectedInvoiceOrders.has(order.soid)?'checked ':'')+'onchange="toggleInvoiceSelect('+escH(JSON.stringify(order.soid))+',this.checked)"> ':'')+
+            (!cancelled?'<input type="checkbox" class="inv-select" '+(selectedOrders.has(order.soid)?'checked ':'')+'onchange="toggleOrderSelect('+escH(JSON.stringify(order.soid))+',this.checked)"> ':'')+
             escH(order.customer)+
             (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
             (!cancelled&&order.invoiceStatus==='done'?(order.razorpayUrl
@@ -1213,26 +1215,23 @@ async function loadTodaysOrders(){
             // a new item is how you reopen it (order goes back to active,
             // previously-cancelled items stay cancelled as history, the new
             // item comes in fresh/open).
-            '<a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
+            '<a class="or-pill" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
             (cancelled?'':(
               (viewingTomorrow
-                ?'<a onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
-                :'<a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
+                ?'<a class="or-pill" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
+                :'<a class="or-pill" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
               // Ready whenever nothing's still open/held/packed — deliberately
               // shown even if every item is already 'invoiced' with nothing
               // newly final, since ANY change to an already-invoiced order
               // (qty edit, item removed) should re-enable regenerating it,
               // and source of truth is always Supabase, not the last invoice.
-              (readyToInvoice?'<a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
-              '<span class="or-actions-small">'+
-                (order.invoiceStatus==='done'&&!order.razorpayUrl?'<a class="or-cta-small" onclick="generatePaymentLinkPrompt(\''+order.soid+'\')">💳 payment link</a>':'')+
-                '<a class="or-cta-small cancel-link" onclick="cancelOrderPrompt(\''+order.soid+'\')">🚫 cancel</a>'+
-              '</span>'
+              (readyToInvoice?'<a class="or-pill primary" onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')
             ))+
           '</div>'+
         '</div>';
       }).join('');
   }).join('');
+  updateBulkButtons();
 }
 
 function deriveSociety(customerName){
@@ -1548,23 +1547,45 @@ async function generateInvoice(salesOrderId,btnEl,overrides){
   await loadTodaysOrders();
 }
 
-// ── Bulk invoice generation (multi-select or whole-society) ────────────────
-let selectedInvoiceOrders=new Set();
+// ── Bulk actions (multi-select or whole-society) — one shared selection
+// drives Generate Selected Invoices, Payment Links, and Cancel Selected. ────
+let selectedOrders=new Set();
 
-function toggleInvoiceSelect(soid,checked){
-  if(checked)selectedInvoiceOrders.add(soid);
-  else selectedInvoiceOrders.delete(soid);
-  updateBulkInvoiceButton();
+function toggleOrderSelect(soid,checked){
+  if(checked)selectedOrders.add(soid);
+  else selectedOrders.delete(soid);
+  updateBulkButtons();
 }
 
-function updateBulkInvoiceButton(){
-  const btn=document.getElementById('to-bulk-invoice');
-  btn.textContent='🧾 Generate Selected ('+selectedInvoiceOrders.size+')';
-  btn.disabled=selectedInvoiceOrders.size===0;
+function isReadyToInvoice(order){
+  return !!(order&&order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced'));
+}
+
+// One shared checkbox selection drives all three bulk actions — each button
+// only counts/acts on the subset of the selection it's actually eligible for
+// (e.g. checking a not-yet-invoiced order doesn't count toward "payment
+// links"), so the counts shown always match what a click will actually do.
+function updateBulkButtons(){
+  const selected=[...selectedOrders].map(soid=>currentOrdersById[soid]&&{soid,order:currentOrdersById[soid]}).filter(Boolean);
+
+  const invoiceIds=selected.filter(x=>isReadyToInvoice(x.order)).map(x=>x.soid);
+  const invBtn=document.getElementById('to-bulk-invoice');
+  invBtn.textContent='🧾 Generate Selected Invoices ('+invoiceIds.length+')';
+  invBtn.disabled=invoiceIds.length===0;
+
+  const paylinkIds=selected.filter(x=>x.order.invoiceStatus==='done'&&!x.order.razorpayUrl).map(x=>x.soid);
+  const payBtn=document.getElementById('to-bulk-paylink');
+  payBtn.textContent='💳 Payment Links ('+paylinkIds.length+')';
+  payBtn.disabled=paylinkIds.length===0;
+
+  const cancelIds=selected.filter(x=>x.order.orderStatus!=='cancelled').map(x=>x.soid);
+  const cancelBtn=document.getElementById('to-bulk-cancel');
+  cancelBtn.textContent='🚫 Cancel Selected ('+cancelIds.length+')';
+  cancelBtn.disabled=cancelIds.length===0;
 }
 
 async function generateInvoicesBulk(salesOrderIds){
-  if(!salesOrderIds.length){alert('Nothing selected');return;}
+  if(!salesOrderIds.length){alert('Nothing selected that\'s ready to invoice');return;}
   if(!confirm('Generate/regenerate Zoho invoices for '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'? Rate mismatches will be skipped for individual follow-up.'))return;
 
   const btn=document.getElementById('to-bulk-invoice');
@@ -1578,65 +1599,122 @@ async function generateInvoicesBulk(salesOrderIds){
         const data=await generateInvoiceCore(soid);
         if(data.needs_resolution)needsResolution.push(soid);
         else succeeded.push(soid+' ('+data.invoice_number+')');
+        selectedOrders.delete(soid);
       }catch(e){
         failed.push(soid+': '+e.message);
       }
     }
-    selectedInvoiceOrders.clear();
     let msg='Generated '+succeeded.length+' invoice'+(succeeded.length!==1?'s':'')+'.';
     if(needsResolution.length)msg+='\n\nNeeds manual catalog match (generate individually): '+needsResolution.join(', ');
     if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
     alert(msg);
   }finally{
-    updateBulkInvoiceButton();
+    updateBulkButtons();
   }
   await loadTodaysOrders();
 }
 
 document.getElementById('to-bulk-invoice').addEventListener('click',()=>{
-  generateInvoicesBulk([...selectedInvoiceOrders]);
+  const ids=[...selectedOrders].filter(soid=>isReadyToInvoice(currentOrdersById[soid]));
+  generateInvoicesBulk(ids);
 });
 
-// ── Generate Payment Link (manual, when no phone was on file) ───────────────
-async function generatePaymentLinkPrompt(salesOrderId){
-  const phone=prompt('Customer phone number (10 digits):');
-  if(!phone||!phone.trim())return;
+// ── Bulk payment links — uses the phone already on file where possible,
+// otherwise prompts per order (leave blank to skip that one) ────────────────
+async function generatePaymentLinksBulk(salesOrderIds){
+  if(!salesOrderIds.length){alert('Nothing selected that needs a payment link');return;}
+  if(!confirm('Generate Razorpay payment links for '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'?'))return;
+
+  const btn=document.getElementById('to-bulk-paylink');
+  btn.disabled=true;
+  const succeeded=[],skipped=[],failed=[];
   try{
-    const res=await fetch(SUPABASE_URL+'/functions/v1/create-order-payment-link',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:salesOrderId,phone:phone.trim()}),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Could not generate payment link');
-    alert('Payment link created: '+data.payment_url);
-  }catch(e){
-    alert('Failed to generate payment link: '+e.message);
+    for(const soid of salesOrderIds){
+      btn.textContent='Generating '+(succeeded.length+skipped.length+failed.length+1)+'/'+salesOrderIds.length+'…';
+      const order=currentOrdersById[soid];
+      let phone=order?.phone;
+      if(!phone){
+        const entered=prompt('Phone number for '+soid+' (10 digits) — leave blank to skip:');
+        if(!entered||!entered.trim()){skipped.push(soid);continue;}
+        phone=entered.trim();
+      }
+      try{
+        const res=await fetch(SUPABASE_URL+'/functions/v1/create-order-payment-link',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+          body:JSON.stringify({sales_order_id:soid,phone}),
+        });
+        const data=await res.json();
+        if(!res.ok)throw new Error(data.error||'Could not generate payment link');
+        succeeded.push(soid);
+        selectedOrders.delete(soid);
+      }catch(e){
+        failed.push(soid+': '+e.message);
+      }
+    }
+    let msg='Generated '+succeeded.length+' payment link'+(succeeded.length!==1?'s':'')+'.';
+    if(skipped.length)msg+='\n\nSkipped (no phone given): '+skipped.join(', ');
+    if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
+    alert(msg);
+  }finally{
+    updateBulkButtons();
   }
   await loadTodaysOrders();
 }
 
-// ── Cancel order (soft — never deletes the row) ──────────────────────────────
-// Available at any stage. Unapplies/deletes the Zoho invoice (payments left
-// as unused customer credit), cancels the Razorpay link, cleans up
-// invoice_queue/invoice_line_items, and sets the order + every one of its
-// items to 'cancelled'.
-async function cancelOrderPrompt(salesOrderId){
-  if(!confirm('Cancel order '+salesOrderId+'?\n\nThis deletes its Zoho invoice (if any) and Razorpay link — any payment already made is kept as customer credit in Zoho, not refunded. This cannot be undone from here.'))return;
+document.getElementById('to-bulk-paylink').addEventListener('click',()=>{
+  const ids=[...selectedOrders].filter(soid=>{
+    const o=currentOrdersById[soid];
+    return o&&o.invoiceStatus==='done'&&!o.razorpayUrl;
+  });
+  generatePaymentLinksBulk(ids);
+});
+
+// ── Bulk cancel (soft — never deletes rows) ──────────────────────────────────
+// Available at any stage. Per order: unapplies/deletes the Zoho invoice
+// (payments left as unused customer credit), cancels the Razorpay link,
+// cleans up invoice_queue/invoice_line_items, and sets the order + every one
+// of its items to 'cancelled'.
+async function cancelOrdersBulk(salesOrderIds){
+  if(!salesOrderIds.length){alert('Nothing selected');return;}
+  if(!confirm('Cancel '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'?\n\nThis deletes each one\'s Zoho invoice (if any) and Razorpay link — any payment already made is kept as customer credit in Zoho, not refunded. This cannot be undone from here.'))return;
+
+  const btn=document.getElementById('to-bulk-cancel');
+  btn.disabled=true;
+  const succeeded=[],failed=[];
   try{
-    const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:salesOrderId}),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Could not cancel order');
-    alert('Order cancelled.'+(data.results?.length?'\n\n'+data.results.join('\n'):''));
-  }catch(e){
-    alert('Failed to cancel order: '+e.message);
+    for(const soid of salesOrderIds){
+      btn.textContent='Cancelling '+(succeeded.length+failed.length+1)+'/'+salesOrderIds.length+'…';
+      try{
+        const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+          body:JSON.stringify({sales_order_id:soid}),
+        });
+        const data=await res.json();
+        if(!res.ok)throw new Error(data.error||'Could not cancel order');
+        succeeded.push(soid);
+        selectedOrders.delete(soid);
+      }catch(e){
+        failed.push(soid+': '+e.message);
+      }
+    }
+    let msg='Cancelled '+succeeded.length+' order'+(succeeded.length!==1?'s':'')+'.';
+    if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
+    alert(msg);
+  }finally{
+    updateBulkButtons();
   }
   await loadTodaysOrders();
 }
+
+document.getElementById('to-bulk-cancel').addEventListener('click',()=>{
+  const ids=[...selectedOrders].filter(soid=>{
+    const o=currentOrdersById[soid];
+    return o&&o.orderStatus!=='cancelled';
+  });
+  cancelOrdersBulk(ids);
+});
 
 // ── Rate resolution modal — item name doesn't match catalog exactly ─────────
 const giModal=document.getElementById('gi-modal'),giItemsEl=document.getElementById('gi-items');
@@ -1686,7 +1764,7 @@ async function deleteItem(id){
 
 // ── Packer ────────────────────────────────────────────────────────────────
 let packerItems=[],packerCustomerMap={},packerUnitByItem={};
-const packerFilters={society:'',fruits:new Set(),statuses:new Set(['open','packed'])};
+const packerFilters={search:'',fruits:new Set(),statuses:new Set(['open','packed'])};
 
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
@@ -1756,15 +1834,13 @@ function togglePackerStatusPill(status){
 
 function renderPackerGrid(){
   const grid=document.getElementById('pk-grid');
-  const searchSociety=packerFilters.society.trim().toLowerCase();
-  const searchFruit=packerFilters.fruit_search?.trim().toLowerCase()||'';
+  const search=packerFilters.search.trim().toLowerCase();
 
   const filtered=packerItems.filter(item=>{
     if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
     if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
     const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
-    if(searchSociety&&!deriveSociety(customer).toLowerCase().includes(searchSociety))return false;
-    if(searchFruit&&!item.item_name.toLowerCase().includes(searchFruit))return false;
+    if(search&&!deriveSociety(customer).toLowerCase().includes(search)&&!item.item_name.toLowerCase().includes(search))return false;
     return true;
   });
 
@@ -1796,12 +1872,8 @@ function renderPackerGrid(){
   ).join('');
 }
 
-document.getElementById('pk-search-society').addEventListener('input',e=>{
-  packerFilters.society=e.target.value;
-  renderPackerGrid();
-});
-document.getElementById('pk-search-fruit').addEventListener('input',e=>{
-  packerFilters.fruit_search=e.target.value;
+document.getElementById('pk-search').addEventListener('input',e=>{
+  packerFilters.search=e.target.value;
   renderPackerGrid();
 });
 
@@ -1820,7 +1892,6 @@ async function markFinal(id){
   await loadPackerView();
 }
 
-document.getElementById('pk-refresh').addEventListener('click',loadPackerView);
 </script>
 </body>
 </html>
