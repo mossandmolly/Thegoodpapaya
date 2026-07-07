@@ -29,6 +29,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .btn-sec{display:block;width:100%;padding:11px;border-radius:10px;border:1.5px solid #eee0d0;background:transparent;color:#c2570a;font-size:13px;cursor:pointer;margin-bottom:8px;font-family:inherit}
 .btn-push{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#c2570a;color:#ffffff;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
 .btn-push:disabled{opacity:0.5;cursor:not-allowed}
+.push-row{display:flex;gap:8px;margin-bottom:10px}
+.push-row .btn-push{width:auto;flex:1;margin-bottom:0}
+.btn-tomorrow{width:auto;flex:0 0 auto;padding:0 14px;border-radius:10px;border:1.5px solid #f5c896;background:#fdead9;color:#b45f0e;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn-tomorrow:disabled{opacity:0.5;cursor:not-allowed}
 .push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#8a7a6a}
 .push-status.ok{color:#3f7a34}.push-status.err{color:#b3261e}
 .to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px}
@@ -151,7 +155,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div id="fb"></div>
     <div class="section-label">Parsed rows <span id="rc"></span></div>
     <div class="tsv-box" id="tb"></div>
-    <button class="btn-push" id="pushb">📤 Push to Operations</button>
+    <div class="push-row">
+      <button class="btn-push" id="pushb">📤 Push to Operations</button>
+      <button class="btn-tomorrow" id="push-tomorrow">📤→ Tomorrow</button>
+    </div>
     <div class="push-status" id="ps"></div>
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
     <button class="btn-sec" id="xb">🔄 Clear</button>
@@ -623,63 +630,94 @@ xb.addEventListener('click',()=>{
 });
 
 // ── Push to order_items ──────────────────────────────────────────────────────
-const pushb=document.getElementById('pushb'),ps=document.getElementById('ps');
+const pushb=document.getElementById('pushb'),pushTomorrowBtn=document.getElementById('push-tomorrow'),ps=document.getElementById('ps');
 function setPush(msg,cls){ps.textContent=msg;ps.className='push-status'+(cls?' '+cls:'');}
+
+// salesOrderIdFor lets the same push logic target either today's date
+// (the parser's own embedded TODAY) or tomorrow's, for the separate
+// "push to tomorrow" action — same header-create + held-duplicate-check
+// flow either way, just a different sales_order_id per row.
+async function pushRows(rows,salesOrderIdFor){
+  // 1. Header row per unique customer — create if missing, never overwrite an existing one
+  const headers=new Map();
+  rows.forEach(r=>{
+    const soid=salesOrderIdFor(r);
+    if(!headers.has(soid)){
+      headers.set(soid,{
+        sales_order_id: soid,
+        customer_name:  r.customer_name,
+        source:         'manual',
+        payment_method: 'cod',
+        invoice_status: 'pending',
+      });
+    }
+  });
+  const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+    body:JSON.stringify({headers:[...headers.values()]}),
+  });
+  const createOrderData=await createOrderRes.json();
+  if(!createOrderRes.ok)throw new Error('orders: '+(createOrderData.error||'failed'));
+
+  // 2. Line items — held if (sales_order_id, item_name, requested_quantity) already exists
+  let opened=0,held=0;
+  for(const r of rows){
+    const soid=salesOrderIdFor(r);
+    const qty=parseFloat(r.quantity)||0;
+    const{data:existing,error:selErr}=await sb.from('order_items')
+      .select('id')
+      .eq('sales_order_id',soid)
+      .eq('item_name',r.item_name)
+      .eq('requested_quantity',qty)
+      .limit(1);
+    if(selErr)throw new Error('check: '+selErr.message);
+    const status=(existing&&existing.length)?'held':'open';
+    const{error:insErr}=await sb.from('order_items').insert({
+      sales_order_id:     soid,
+      item_name:          r.item_name,
+      description:        r.description||null,
+      requested_quantity: qty,
+      status,
+    });
+    if(insErr)throw new Error('insert: '+insErr.message);
+    status==='held'?held++:opened++;
+  }
+  return{opened,held};
+}
 
 pushb.addEventListener('click',async()=>{
   const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
   if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
   pushb.disabled=true;pushb.textContent='Pushing…';setPush('');
   try{
-    // 1. Header row per unique customer — create if missing, never overwrite an existing one
-    const headers=new Map();
-    rows.forEach(r=>{
-      if(!headers.has(r.sales_order)){
-        headers.set(r.sales_order,{
-          sales_order_id: r.sales_order,
-          customer_name:  r.customer_name,
-          source:         'manual',
-          payment_method: 'cod',
-          invoice_status: 'pending',
-        });
-      }
-    });
-    const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
-      body:JSON.stringify({headers:[...headers.values()]}),
-    });
-    const createOrderData=await createOrderRes.json();
-    if(!createOrderRes.ok)throw new Error('orders: '+(createOrderData.error||'failed'));
-
-    // 2. Line items — held if (sales_order_id, item_name, requested_quantity) already exists today
-    let opened=0,held=0;
-    for(const r of rows){
-      const qty=parseFloat(r.quantity)||0;
-      const{data:existing,error:selErr}=await sb.from('order_items')
-        .select('id')
-        .eq('sales_order_id',r.sales_order)
-        .eq('item_name',r.item_name)
-        .eq('requested_quantity',qty)
-        .limit(1);
-      if(selErr)throw new Error('check: '+selErr.message);
-      const status=(existing&&existing.length)?'held':'open';
-      const{error:insErr}=await sb.from('order_items').insert({
-        sales_order_id:     r.sales_order,
-        item_name:          r.item_name,
-        description:        r.description||null,
-        requested_quantity: qty,
-        status,
-      });
-      if(insErr)throw new Error('insert: '+insErr.message);
-      status==='held'?held++:opened++;
-    }
+    const{opened,held}=await pushRows(rows,r=>r.sales_order);
     setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':''),'ok');
     pushb.textContent='✅ Pushed';
   }catch(e){
     setPush('❌ '+e.message,'err');
     pushb.disabled=false;pushb.textContent='📤 Push to Operations';
   }
+});
+
+pushTomorrowBtn.addEventListener('click',async()=>{
+  const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
+  if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
+  if(!confirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to TOMORROW\'s orders instead of today\'s?'))return;
+  pushTomorrowBtn.disabled=true;pushTomorrowBtn.textContent='Pushing…';setPush('');
+  let ok=false;
+  try{
+    // r.sales_order is TODAY-CustomerName (first 10 chars are the date) —
+    // swap in TOMORROW's date, keep the same customer suffix.
+    const{opened,held}=await pushRows(rows,r=>TOMORROW+r.sales_order.slice(10));
+    setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed to tomorrow'+(held?' ('+held+' held as duplicate)':''),'ok');
+    ok=true;
+  }catch(e){
+    setPush('❌ '+e.message,'err');
+  }
+  pushTomorrowBtn.disabled=false;
+  pushTomorrowBtn.textContent=ok?'✅ Pushed':'📤→ Tomorrow';
+  if(ok)setTimeout(()=>{pushTomorrowBtn.textContent='📤→ Tomorrow';},3000);
 });
 
 // ── Today's Orders ──────────────────────────────────────────────────────────
