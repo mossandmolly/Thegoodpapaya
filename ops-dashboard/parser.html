@@ -300,7 +300,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="modal-box">
     <h3>New order</h3>
     <label class="modal-label">Customer name</label>
-    <input type="text" id="no-customer" placeholder="e.g. Dhavala A502">
+    <input type="text" id="no-customer" list="qo-customer-list" placeholder="e.g. Dhavala A502">
     <label class="modal-label">Items</label>
     <div id="no-items"></div>
     <button class="btn-sec" id="no-add-row" style="margin-bottom:12px">+ add another item</button>
@@ -482,6 +482,21 @@ function computeBusinessDate(){
 }
 const TODAY=computeBusinessDate();
 const TOMORROW=addDays(TODAY,1);
+
+// Customer identity must not depend on case or punctuation — "Dhavala A502",
+// "dhavala a502" and "Dhavala-A502" are the same customer/order. This key
+// (not the display name) is what goes into sales_order_id, so typing
+// variations across screenshots/manual entry never split one customer into
+// multiple orders.
+function canonicalCustomerKey(name){
+  return (name||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+// Display form: trimmed, single spaces, first letter capitalized — otherwise
+// left as typed/parsed.
+function formatCustomerName(name){
+  const trimmed=(name||'').trim().replace(/\s+/g,' ');
+  return trimmed?trimmed.charAt(0).toUpperCase()+trimmed.slice(1):trimmed;
+}
 // Plain IST calendar date (no 7pm business-day shift) — used to check whether
 // the catalog has been synced from Zoho yet today.
 const CALENDAR_TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
@@ -729,7 +744,14 @@ Return ONLY valid compact JSON, no markdown fences:
 
 let lastRows=[];
 function render(p){
-  const{rows=[],flags=[]}=p;
+  const{rows:rawRows=[],flags=[]}=p;
+  // Re-derive sales_order from a canonical key regardless of what casing/
+  // punctuation the parser produced for customer_name, so the same customer
+  // always lands on the same sales_order_id.
+  const rows=rawRows.map(r=>{
+    const customer_name=formatCustomerName(r.customer_name);
+    return{...r,customer_name,sales_order:(r.order_date||TODAY)+'-'+canonicalCustomerKey(customer_name)};
+  });
   lastRows=rows;
   if(flags.length){fb.className='flags-box';fb.textContent=flags.join('\n');}
   else{fb.className='flags-ok';fb.textContent='All rows parsed cleanly ✓';}
@@ -931,7 +953,7 @@ function setQoStatus(msg,cls){qoStatus.textContent=msg;qoStatus.className='push-
 qoSubmitBtn.addEventListener('click',async()=>{
   const rows=[];
   qoBlocksEl.querySelectorAll('.qo-block').forEach(block=>{
-    const customerName=block.querySelector('.qo-customer').value.trim();
+    const customerName=formatCustomerName(block.querySelector('.qo-customer').value);
     if(!customerName)return;
     block.querySelectorAll('.qo-row').forEach(row=>{
       const itemName=row.querySelector('.qo-item').value;
@@ -946,7 +968,7 @@ qoSubmitBtn.addEventListener('click',async()=>{
 
   qoSubmitBtn.disabled=true;qoSubmitBtn.textContent='Submitting…';setQoStatus('');
   try{
-    const{opened,held}=await pushRows(rows,r=>TODAY+'-'+r.customer_name.replace(/\s+/g,''));
+    const{opened,held}=await pushRows(rows,r=>TODAY+'-'+canonicalCustomerKey(r.customer_name));
     setQoStatus('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':''),'ok');
     qoBlocksEl.innerHTML='';qoBlockCount=0;
     await addQoBlock();
@@ -1098,8 +1120,13 @@ async function loadTodaysOrders(){
               :' <span class="pay-missing">Payment link not generated</span>'
             ):'')+
           '</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+
+            // + add item stays available even on a cancelled order — adding
+            // a new item is how you reopen it (order goes back to active,
+            // previously-cancelled items stay cancelled as history, the new
+            // item comes in fresh/open).
+            ' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
             (cancelled?'':(
-              ' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · '+
+              ' · '+
               (viewingTomorrow
                 ?'<a onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
                 :'<a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
@@ -1113,14 +1140,15 @@ async function loadTodaysOrders(){
               ' · <a class="cancel-link" onclick="cancelOrderPrompt(\''+order.soid+'\')">🚫 cancel order</a>'
             ))+
           '</span></div>'+
-          '<div class="or-pills">'+order.items.map(item=>
-            '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'"'+(cancelled?'':' onclick="pillClick(\''+item.id+'\')"')+'>'+
+          '<div class="or-pills">'+order.items.map(item=>{
+            const itemCancelled=item.status==='cancelled';
+            return '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'"'+(itemCancelled?'':' onclick="pillClick(\''+item.id+'\')"')+'>'+
               (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
               (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
               escH(item.item_name)+' × '+item.requested_quantity+
-              (cancelled?'':'<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>')+
-            '</span>'
-          ).join('')+'</div>'+
+              (itemCancelled?'':'<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>')+
+            '</span>';
+          }).join('')+'</div>'+
         '</div>';
       }).join('');
   }).join('');
@@ -1248,6 +1276,24 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
   };
   if(orderWasInvoiced)row.final_quantity=qty;
   if(orderWasInvoiced)await invalidateOrderInvoiceIfNeeded(aiTargetOrder);
+
+  // Adding an item to a cancelled order reopens it: order goes back to
+  // active, previously-cancelled items stay cancelled as history, only this
+  // new item is fresh/open.
+  if(order&&order.orderStatus==='cancelled'){
+    try{
+      const res=await fetch(SUPABASE_URL+'/functions/v1/reopen-order',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+        body:JSON.stringify({sales_order_id:aiTargetOrder}),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Could not reopen order');
+    }catch(e){
+      alert('Warning: could not reopen the order automatically ('+e.message+').');
+    }
+  }
+
   const{error}=await sb.from('order_items').insert(row);
   if(error){alert('Failed to add item: '+error.message);return;}
   aiModal.classList.add('hidden');
@@ -1289,7 +1335,7 @@ document.getElementById('no-add-row').addEventListener('click',addNoRow);
 document.getElementById('no-cancel').addEventListener('click',()=>{noModal.classList.add('hidden');});
 
 document.getElementById('no-create').addEventListener('click',async()=>{
-  const customerName=noCustomer.value.trim();
+  const customerName=formatCustomerName(noCustomer.value);
   if(!customerName){alert('Enter a customer name');return;}
   const rows=[...noItems.querySelectorAll('.no-item-row')].map(row=>({
     item_name: row.querySelector('.no-item-sel').value,
@@ -1297,7 +1343,7 @@ document.getElementById('no-create').addEventListener('click',async()=>{
   })).filter(r=>r.item_name&&!isNaN(r.qty)&&r.qty>0);
   if(!rows.length){alert('Add at least one item with a quantity');return;}
 
-  const salesOrderId=(viewingTomorrow?TOMORROW:TODAY)+'-'+customerName.replace(/\s+/g,'');
+  const salesOrderId=(viewingTomorrow?TOMORROW:TODAY)+'-'+canonicalCustomerKey(customerName);
   const createBtn=document.getElementById('no-create');
   createBtn.disabled=true;createBtn.textContent='Creating…';
   try{
