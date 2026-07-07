@@ -742,7 +742,10 @@ async function loadTodaysOrders(){
       orders.map(order=>
         '<div class="order-row">'+
           '<div class="or-top"><span class="or-cust">'+escH(order.customer)+'</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · <a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'+
-            (order.items.every(i=>i.status==='final')?' · <a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
+            // Ready once nothing's still open/held/packed AND there's at least
+            // one newly-final item — items already invoiced from a prior run
+            // don't count on their own, or the link would never go away.
+            (order.items.every(i=>i.status==='final'||i.status==='invoiced')&&order.items.some(i=>i.status==='final')?' · <a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
           '</span></div>'+
           '<div class="or-pills">'+order.items.map(item=>
             '<span class="item-pill status-'+item.status+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\')">'+
@@ -1040,7 +1043,7 @@ syncCatalogBtn.addEventListener('click',async()=>{
 });
 
 async function generateInvoice(salesOrderId,btnEl,overrides){
-  if(!overrides&&!confirm('Generate Zoho invoice for '+salesOrderId+'?'))return;
+  if(!overrides&&!confirm('Generate Zoho invoice for '+salesOrderId+'?\n\nIf this order was invoiced earlier today, that invoice will be replaced with one consolidated invoice covering all its final items (old + new).'))return;
   const original=btnEl.textContent;
   btnEl.textContent='Generating…';
   btnEl.style.pointerEvents='none';

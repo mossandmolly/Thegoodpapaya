@@ -215,10 +215,14 @@ Deno.serve(async (req) => {
     const token    = await getZohoToken();
     const orgId    = env('ZOHO_ORGANIZATION_ID');
 
-    // Load order header and final order_items line items in parallel
+    // Load order header and its billable order_items in parallel. 'invoiced'
+    // items are included alongside 'final' ones — otherwise regenerating (see
+    // the slow path below, which deletes the existing Zoho invoice first)
+    // would only pull newly-final items and drop everything billed by a prior
+    // run, since generate-invoice itself is what flips final -> invoiced.
     const [{ data: order, error: orderErr }, { data: items, error: itemsErr }] = await Promise.all([
       supabase.from('orders').select('*').eq('sales_order_id', sales_order_id).single(),
-      supabase.from('order_items').select('*').eq('sales_order_id', sales_order_id).eq('status', 'final'),
+      supabase.from('order_items').select('*').eq('sales_order_id', sales_order_id).in('status', ['final', 'invoiced']),
     ]);
     if (orderErr || !order) throw new Error(`Order ${sales_order_id} not found`);
     if (itemsErr) throw new Error(itemsErr.message);
