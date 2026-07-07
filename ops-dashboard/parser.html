@@ -43,9 +43,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#8a7a6a}
 .push-status.ok{color:#3f7a34}.push-status.err{color:#b3261e}
 .to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px}
-.society-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#c2570a;margin:16px 0 6px;padding-bottom:4px;border-bottom:1px solid #eee0d0}
+.society-header{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#ffffff;background:#c2570a;margin:18px 0 8px;padding:9px 12px;border-radius:8px}
 .society-header:first-child{margin-top:0}
-.sh-count{font-weight:400;text-transform:none;letter-spacing:normal;color:#8a7a6a;font-size:11px}
+.sh-count{font-weight:400;text-transform:none;letter-spacing:normal;color:#fbdec2;font-size:11px}
 .order-row{border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:8px}
 /* Customer name on its own full-width line — squeezing it against the
    action links on narrow screens is what pushed it into a corner and
@@ -1139,7 +1139,12 @@ async function loadTodaysOrders(){
   await refreshTomorrowPill();
 
   document.getElementById('to-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
-  if(!data||!data.length){list.innerHTML='<div class="to-empty">No orders yet'+(viewingTomorrow?' for tomorrow':' today')+'</div>';return;}
+  if(!data||!data.length){
+    currentOrdersById={};
+    currentItemsById={};
+    list.innerHTML='<div class="to-empty">No orders yet'+(viewingTomorrow?' for tomorrow':' today')+'</div>';
+    return;
+  }
 
   // orders' RLS locks direct reads to service-role only, so this goes through
   // order_customer_lookup — a narrow view (sales_order_id, customer_name,
@@ -1148,8 +1153,6 @@ async function loadTodaysOrders(){
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
   const{map:customerMap,error:custErr}=await fetchCustomerMap(uniqueIds);
   if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
-
-  const dupIds=computeDuplicateItemIds(data);
 
   const bySalesOrder={};
   const byItemId={};
@@ -1172,9 +1175,19 @@ async function loadTodaysOrders(){
   currentOrdersById=bySalesOrder;
   currentItemsById=byItemId;
 
+  renderOrdersList();
+}
+
+// Pure re-render from the already-fetched currentOrdersById/currentItemsById
+// — no network calls — so toggling a society's "select all" checkbox can
+// just update selectedOrders and redraw instantly instead of re-fetching.
+function renderOrdersList(){
+  const list=document.getElementById('to-list');
+  const dupIds=computeDuplicateItemIds(Object.values(currentItemsById));
+
   // Group orders by society — first token of customer_name before the first space
   const bySociety={};
-  Object.entries(bySalesOrder).forEach(([soid,order])=>{
+  Object.entries(currentOrdersById).forEach(([soid,order])=>{
     const soc=deriveSociety(order.customer);
     if(!bySociety[soc])bySociety[soc]=[];
     bySociety[soc].push({soid,...order});
@@ -1183,10 +1196,12 @@ async function loadTodaysOrders(){
   const socNames=Object.keys(bySociety).sort();
   list.innerHTML=socNames.map((soc,socIdx)=>{
     const orders=bySociety[soc];
-    const readySoids=orders.filter(o=>o.items.length&&o.items.every(i=>i.status==='final'||i.status==='invoiced')&&o.orderStatus!=='cancelled').map(o=>o.soid);
+    const selectableSoids=orders.filter(o=>o.orderStatus!=='cancelled').map(o=>o.soid);
+    const allSelected=selectableSoids.length>0&&selectableSoids.every(soid=>selectedOrders.has(soid));
     const rowBg=SOCIETY_COLORS[socIdx%SOCIETY_COLORS.length];
-    return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+
-      (readySoids.length?' <a onclick="generateInvoicesBulk('+escH(JSON.stringify(readySoids))+')">🧾 Generate All ('+readySoids.length+')</a>':'')+
+    return '<div class="society-header">'+
+      (selectableSoids.length?'<input type="checkbox" class="inv-select" '+(allSelected?'checked ':'')+'onchange="toggleSocietySelectAll('+escH(JSON.stringify(selectableSoids))+',this.checked)" title="Select all orders in this society"> ':'')+
+      escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+
       '</div>'+
       orders.map(order=>{
         const cancelled=order.orderStatus==='cancelled';
@@ -1555,6 +1570,16 @@ function toggleOrderSelect(soid,checked){
   if(checked)selectedOrders.add(soid);
   else selectedOrders.delete(soid);
   updateBulkButtons();
+}
+
+// Select/deselect every non-cancelled order in one society at once — redraws
+// from cached data (renderOrdersList), no re-fetch needed.
+function toggleSocietySelectAll(soids,checked){
+  soids.forEach(soid=>{
+    if(checked)selectedOrders.add(soid);
+    else selectedOrders.delete(soid);
+  });
+  renderOrdersList();
 }
 
 function isReadyToInvoice(order){
