@@ -95,7 +95,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .modal-label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:4px}
 .modal-box select,.modal-box input{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
 .ac-wrap{position:relative}
-.ac-list{position:absolute;top:100%;left:0;right:0;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;margin-top:2px;max-height:160px;overflow-y:auto;z-index:50;box-shadow:0 4px 12px rgba(43,35,32,0.15)}
+.ac-list{position:absolute;top:100%;left:0;right:0;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;margin-top:2px;max-height:240px;overflow-y:auto;z-index:50;box-shadow:0 4px 12px rgba(43,35,32,0.15)}
 .ac-list.hidden{display:none}
 .ac-item{padding:8px 10px;font-size:13px;color:#2b2320;cursor:pointer}
 .ac-item:hover{background:#fdf8f3}
@@ -936,7 +936,9 @@ function attachCustomerAutocomplete(inputEl,listEl){
     if(document.activeElement!==inputEl){listEl.classList.add('hidden');return;}
     const q=inputEl.value.trim().toLowerCase();
     const names=customerNameOptions||[];
-    const matches=(q?names.filter(n=>n.toLowerCase().includes(q)):names).slice(0,8);
+    // No artificial cap — .ac-list scrolls (max-height + overflow-y:auto),
+    // so every match should be reachable, not just the first handful.
+    const matches=q?names.filter(n=>n.toLowerCase().includes(q)):names;
     if(!matches.length){
       listEl.innerHTML='<div class="ac-item ac-empty">'+(names.length?'No matches — will add as new':'No existing customers yet — type a new name')+'</div>';
       listEl.classList.remove('hidden');
