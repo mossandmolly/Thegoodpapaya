@@ -11,8 +11,9 @@
 //  3. Delete invoice_queue and invoice_line_items rows for this
 //     sales_order_id — neither has a cascade that would clean them up once
 //     we stop deleting the orders row.
-//  4. Set orders.status = 'cancelled' and clear the now-stale Zoho/Razorpay
-//     fields (the orders row itself stays — never deleted).
+//  4. Set orders.status = 'cancelled', invoice_status = 'cancelled', and
+//     clear the now-stale Zoho/Razorpay fields (the orders row itself stays
+//     — never deleted).
 //  5. Set every order_items row for this sales_order_id to status =
 //     'cancelled', regardless of what stage each item was at.
 //
@@ -179,7 +180,7 @@ Deno.serve(async (req) => {
       invoice_number:    null,
       invoice_total:     null,
       balance_due:       null,
-      invoice_status:    'pending',
+      invoice_status:    'cancelled',
       razorpay_link_id:  null,
       razorpay_url:      null,
     }).eq('sales_order_id', sales_order_id);

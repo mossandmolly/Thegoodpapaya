@@ -6,6 +6,10 @@
 // 'cancelled' as a historical record — only the order-level flag moves,
 // nothing about existing order_items rows changes here.
 //
+// invoice_status also resets to 'pending' — cancel-order sets it to
+// 'cancelled' alongside status, so reopening needs to undo that too or the
+// order would sit there reading as invoice_status 'cancelled' while active.
+//
 // Input:  { sales_order_id: string }
 // Output: { sales_order_id, reopened: true }
 //
@@ -50,7 +54,7 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
     const { error } = await supabase
-      .from('orders').update({ status: 'active' }).eq('sales_order_id', sales_order_id);
+      .from('orders').update({ status: 'active', invoice_status: 'pending' }).eq('sales_order_id', sales_order_id);
     if (error) throw new Error(error.message);
 
     return new Response(

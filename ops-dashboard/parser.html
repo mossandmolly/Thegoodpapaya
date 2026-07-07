@@ -1836,7 +1836,7 @@ async function deleteItem(id){
 
 // ── Packer ────────────────────────────────────────────────────────────────
 let packerItems=[],packerCustomerMap={},packerUnitByItem={};
-const packerFilters={search:'',fruits:new Set(),statuses:new Set(['open','packed'])};
+const packerFilters={search:'',fruits:new Set(),statuses:new Set()};
 
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
@@ -1912,7 +1912,10 @@ function renderPackerGrid(){
     if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
     if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
     const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
-    if(search&&!deriveSociety(customer).toLowerCase().includes(search)&&!item.item_name.toLowerCase().includes(search))return false;
+    // Match anywhere in the full customer name, not just the derived
+    // society token (its first word) — searching a later word in the name
+    // was otherwise coming up empty, reading like a begins-with search.
+    if(search&&!customer.toLowerCase().includes(search)&&!item.item_name.toLowerCase().includes(search))return false;
     return true;
   });
 
