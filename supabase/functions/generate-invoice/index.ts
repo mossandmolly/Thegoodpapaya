@@ -147,6 +147,14 @@ function zohoHeaders(token: string): HeadersInit {
   return { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' };
 }
 
+// Same identity rule as the frontend's canonicalCustomerKey — case AND
+// punctuation/spacing insensitive — so "Assetz 12-098" and "Assetz 12098"
+// match the same Zoho contact instead of the old plain-lowercase compare
+// (which only caught case differences) creating a duplicate for the latter.
+function canonicalKey(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 // ── Find or create a Zoho contact ────────────────────────────────────────────
 async function getOrCreateContact(
   name: string, phone: string | null, token: string, orgId: string,
@@ -156,8 +164,9 @@ async function getOrCreateContact(
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
   );
   const sd = await search.json();
+  const targetKey = canonicalKey(name);
   const existing = sd.contacts?.find(
-    (c: any) => c.contact_name.toLowerCase() === name.toLowerCase(),
+    (c: any) => canonicalKey(c.contact_name) === targetKey,
   );
   if (existing) return existing.contact_id;
 
