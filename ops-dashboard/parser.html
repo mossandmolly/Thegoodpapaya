@@ -1634,12 +1634,6 @@ async function markFinal(id){
 }
 
 document.getElementById('pk-refresh').addEventListener('click',loadPackerView);
-
-refreshTomorrowPill();
-ensureCustomerNameOptions().then(names=>{
-  document.getElementById('qo-customer-list').innerHTML=names.map(n=>'<option value="'+escH(n)+'"></option>').join('');
-});
-addQoBlock();
 </script>
 </body>
 </html>
