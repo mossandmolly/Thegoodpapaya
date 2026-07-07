@@ -44,17 +44,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .society-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#c2570a;margin:16px 0 6px;padding-bottom:4px;border-bottom:1px solid #eee0d0}
 .society-header:first-child{margin-top:0}
 .sh-count{font-weight:400;text-transform:none;letter-spacing:normal;color:#8a7a6a;font-size:11px}
-.or-meta a{color:#e8720c;cursor:pointer;text-decoration:none}
+.or-meta a{color:#e8720c;cursor:pointer;text-decoration:none;display:inline-block;padding:4px 3px}
 .or-meta a:hover{text-decoration:underline}
-.order-row{background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:10px 12px;margin-bottom:8px}
-.or-top{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:8px}
-.or-cust{font-weight:600;color:#2b2320}
+.order-row{background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:8px}
+/* or-top stacks the customer name above the action row instead of forcing
+   them onto one squeezed line — on narrow screens that's what was pushing
+   the house number to the left and wrapping it awkwardly. */
+.or-top{display:flex;flex-direction:column;gap:2px;font-size:13px;margin-bottom:10px}
+.or-cust{font-weight:600;color:#2b2320;font-size:14px;white-space:normal}
 .pay-missing{font-size:11px;font-weight:700;color:#b3261e}
 .pay-link{font-size:11px;color:#3f7a34;text-decoration:none}
 .pay-link:hover{text-decoration:underline}
 .cf-badge{background:#b3261e;color:#ffffff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
 .dup-badge{background:#8a3ab3;color:#ffffff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
-.or-meta{color:#8a7a6a;font-size:11px}
+.or-meta{color:#8a7a6a;font-size:12px;line-height:1.9}
 .or-pills{display:flex;flex-wrap:wrap;gap:6px}
 .item-pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 6px 4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
 .item-pill.status-open{background:#f1efec;border-color:#e0dad0;color:#726a60}
