@@ -681,7 +681,7 @@ async function pushRows(rows,salesOrderIdFor){
   });
   const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
     method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
     body:JSON.stringify({headers:[...headers.values()]}),
   });
   const createOrderData=await createOrderRes.json();
@@ -754,7 +754,7 @@ function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 async function syncCustomers(){
   const res=await fetch(SUPABASE_URL+'/functions/v1/sync-customers',{
     method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
     body:'{}',
   });
   const data=await res.json();
@@ -860,11 +860,6 @@ qoSubmitBtn.addEventListener('click',async()=>{
   }
   qoSubmitBtn.disabled=false;qoSubmitBtn.textContent='Submit Quick Order(s)';
 });
-
-ensureCustomerNameOptions().then(names=>{
-  document.getElementById('qo-customer-list').innerHTML=names.map(n=>'<option value="'+escH(n)+'"></option>').join('');
-});
-addQoBlock();
 
 // PostgREST caps rows per request (Supabase's default is 1000) — a single
 // unpaginated select silently truncates once a day's order_items pass that
@@ -1159,7 +1154,7 @@ document.getElementById('no-create').addEventListener('click',async()=>{
   try{
     const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
       body:JSON.stringify({headers:[{
         sales_order_id: salesOrderId,
         customer_name:  customerName,
@@ -1248,7 +1243,7 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
   try{
     const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
       body:JSON.stringify({headers:[{
         sales_order_id: newSalesOrderId,
         customer_name:  order.customer,
@@ -1281,7 +1276,7 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
 async function syncCatalog(){
   const res=await fetch(SUPABASE_URL+'/functions/v1/sync-catalog',{
     method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
     body:'{}',
   });
   const data=await res.json();
@@ -1324,7 +1319,7 @@ async function generateInvoice(salesOrderId,btnEl,overrides){
     await ensureCatalogSyncedToday();
     const res=await fetch(SUPABASE_URL+'/functions/v1/generate-invoice',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
       body:JSON.stringify({sales_order_id:salesOrderId,rate_overrides:overrides||undefined}),
     });
     const data=await res.json();
@@ -1363,7 +1358,7 @@ async function generatePaymentLinkPrompt(salesOrderId){
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/create-order-payment-link',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON},
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
       body:JSON.stringify({sales_order_id:salesOrderId,phone:phone.trim()}),
     });
     const data=await res.json();
@@ -1552,6 +1547,10 @@ async function markFinal(id){
 document.getElementById('pk-refresh').addEventListener('click',loadPackerView);
 
 refreshTomorrowPill();
+ensureCustomerNameOptions().then(names=>{
+  document.getElementById('qo-customer-list').innerHTML=names.map(n=>'<option value="'+escH(n)+'"></option>').join('');
+});
+addQoBlock();
 </script>
 </body>
 </html>
