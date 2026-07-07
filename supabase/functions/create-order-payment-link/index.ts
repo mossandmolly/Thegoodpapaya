@@ -34,6 +34,20 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
 };
 
+// This function uses the service role internally, so it bypasses RLS
+// regardless of who calls it — the anon key alone is enough to invoke it at
+// the platform level. Requiring a real logged-in user session here is what
+// actually restricts this to signed-in ops staff (this one creates real
+// Razorpay payment links, so it matters more than most).
+async function requireAuth(req: Request): Promise<void> {
+  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!jwt) throw new Error('Not authenticated');
+  const res = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, {
+    headers: { Authorization: `Bearer ${jwt}`, apikey: env('SUPABASE_SERVICE_ROLE_KEY') },
+  });
+  if (!res.ok) throw new Error('Not authenticated');
+}
+
 async function cancelPaymentLink(linkId: string, auth: string): Promise<void> {
   await fetch(`https://api.razorpay.com/v1/payment_links/${linkId}/cancel`, {
     method: 'POST',
@@ -66,6 +80,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
+    await requireAuth(req);
     const { sales_order_id, phone: inputPhone } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
 

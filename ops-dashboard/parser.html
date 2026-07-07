@@ -138,12 +138,31 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .rules-list li:last-child{border-bottom:none}
 .badge{display:inline-block;background:#fdead9;border-radius:4px;padding:1px 6px;font-size:10px;color:#c2570a;margin-right:4px}
 .note{font-size:11px;color:#8a7a6a;margin-top:6px;font-style:italic}
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+#login-screen.hidden{display:none}
+.login-box{width:100%;max-width:320px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:12px;padding:24px}
+.login-box input{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
+.signout-link{font-size:11px;color:#8a7a6a;cursor:pointer;text-decoration:underline;margin-left:8px;flex-shrink:0}
 </style>
 </head>
 <body>
+<div id="login-screen">
+  <div class="login-box">
+    <div class="logo" style="text-align:center;margin-bottom:20px">good<span>papaya</span> · parser</div>
+    <label class="modal-label">Email</label>
+    <input type="email" id="login-email" autocomplete="username">
+    <label class="modal-label">Password</label>
+    <input type="password" id="login-password" autocomplete="current-password">
+    <button class="btn-parse" id="login-submit" style="margin-top:6px">Sign in</button>
+    <div class="push-status" id="login-error"></div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
 <div class="top-header">
   <div class="logo">good<span>papaya</span> · parser</div>
   <span class="tomorrow-pill" id="tomorrow-pill" onclick="toggleTomorrowView()">Tomorrow (0)</span>
+  <a class="signout-link" onclick="signOut()">Sign out</a>
 </div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
@@ -337,12 +356,69 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
   </div>
 </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 const SUPABASE_URL  = 'https://fykqprogzqcfzrgwlrem.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5a3Fwcm9nenFjZnpyZ3dscmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NDkzMzEsImV4cCI6MjA5MTIyNTMzMX0.FseaaYNbN-QLhzdQF5rcImLvvoWRHOiGcZcbiFaIplQ';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+// supabase-js persists the session in localStorage and auto-refreshes the
+// access token by default, so a signed-in session survives reloads and
+// lasts well beyond 12 hours without re-prompting — no custom timeout logic
+// needed here. Edge functions get the real session token (not the anon key)
+// so their own auth check (added alongside this) can tell a logged-in caller
+// apart from anyone who just has the public anon key.
+async function authToken(){
+  const{data:{session}}=await sb.auth.getSession();
+  return session?.access_token||SUPABASE_ANON;
+}
+
+let appInitialized=false;
+async function initAppAfterLogin(){
+  if(appInitialized)return;
+  appInitialized=true;
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  refreshTomorrowPill();
+  ensureCustomerNameOptions().then(names=>{
+    document.getElementById('qo-customer-list').innerHTML=names.map(n=>'<option value="'+escH(n)+'"></option>').join('');
+  });
+  addQoBlock();
+}
+
+sb.auth.onAuthStateChange((_event,session)=>{
+  if(session){
+    initAppAfterLogin();
+  }else{
+    appInitialized=false;
+    document.getElementById('login-screen').classList.remove('hidden');
+    document.getElementById('app').classList.add('hidden');
+  }
+});
+
+document.getElementById('login-submit').addEventListener('click',async()=>{
+  const email=document.getElementById('login-email').value.trim();
+  const password=document.getElementById('login-password').value;
+  const errEl=document.getElementById('login-error');
+  errEl.textContent='';errEl.className='push-status';
+  if(!email||!password){errEl.textContent='Enter email and password';errEl.className='push-status err';return;}
+  const btn=document.getElementById('login-submit');
+  btn.disabled=true;btn.textContent='Signing in…';
+  const{error}=await sb.auth.signInWithPassword({email,password});
+  btn.disabled=false;btn.textContent='Sign in';
+  if(error){errEl.textContent=error.message;errEl.className='push-status err';}
+});
+
+document.getElementById('login-password').addEventListener('keydown',e=>{
+  if(e.key==='Enter')document.getElementById('login-submit').click();
+});
+
+function signOut(){
+  sb.auth.signOut().then(()=>{location.reload();});
+}
 
 // ── Default config ────────────────────────────────────────────────────────
 const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
@@ -1418,7 +1494,7 @@ document.getElementById('to-refresh').addEventListener('click',loadTodaysOrders)
 
 // ── Packer ────────────────────────────────────────────────────────────────
 let packerItems=[],packerCustomerMap={},packerUnitByItem={};
-const packerFilters={society:'',fruit:'',statuses:new Set(['open','packed'])};
+const packerFilters={society:'',fruits:new Set(),statuses:new Set(['open','packed'])};
 
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
@@ -1448,9 +1524,9 @@ const ALL_ORDER_STATUSES=['open','held','packed','final','invoiced'];
 function renderPackerFilterPills(){
   const fruits=[...new Set(packerItems.map(i=>i.item_name))].sort();
   document.getElementById('pk-fruit-pills').innerHTML=
-    '<span class="filter-pill'+(!packerFilters.fruit?' active':'')+'" onclick="setPackerFruitFilter(\'\')">All</span>'+
+    '<span class="filter-pill'+(packerFilters.fruits.size===0?' active':'')+'" onclick="clearPackerFruitFilter()">All</span>'+
     fruits.map(f=>
-      '<span class="filter-pill'+(packerFilters.fruit===f?' active':'')+'" onclick="setPackerFruitFilter('+escH(JSON.stringify(f))+')">'+escH(f)+'</span>'
+      '<span class="filter-pill'+(packerFilters.fruits.has(f)?' active':'')+'" onclick="togglePackerFruitPill('+escH(JSON.stringify(f))+')">'+escH(f)+'</span>'
     ).join('');
 
   document.getElementById('pk-status-pills').innerHTML=
@@ -1460,8 +1536,15 @@ function renderPackerFilterPills(){
     ).join('');
 }
 
-function setPackerFruitFilter(fruit){
-  packerFilters.fruit=fruit;
+function clearPackerFruitFilter(){
+  packerFilters.fruits.clear();
+  renderPackerFilterPills();
+  renderPackerGrid();
+}
+
+function togglePackerFruitPill(fruit){
+  if(packerFilters.fruits.has(fruit))packerFilters.fruits.delete(fruit);
+  else packerFilters.fruits.add(fruit);
   renderPackerFilterPills();
   renderPackerGrid();
 }
@@ -1486,7 +1569,7 @@ function renderPackerGrid(){
 
   const filtered=packerItems.filter(item=>{
     if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
-    if(packerFilters.fruit&&item.item_name!==packerFilters.fruit)return false;
+    if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
     const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
     if(searchSociety&&!deriveSociety(customer).toLowerCase().includes(searchSociety))return false;
     if(searchFruit&&!item.item_name.toLowerCase().includes(searchFruit))return false;
