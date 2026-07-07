@@ -59,14 +59,15 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dup-badge{background:#8a3ab3;color:#ffffff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
 .or-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 /* Action row sits below the pills — item count on the left, actions as
-   pill-shaped buttons so they're easy to tap on mobile instead of cramped
-   text links. Payment link / cancel moved out to page-level bulk CTAs. */
+   small rectangular buttons (deliberately NOT fully-rounded like the item
+   pills above) so the two rows don't visually blend into one another.
+   Payment link / cancel moved out to page-level bulk CTAs. */
 .or-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:#8a7a6a;font-size:12px;line-height:1.4}
 .or-count{white-space:nowrap;margin-right:2px}
-.or-pill{display:inline-flex;align-items:center;border-radius:14px;padding:5px 11px;font-size:11px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a}
-.or-pill:hover{background:#fdf8f3}
-.or-pill.primary{background:#e8720c;border-color:#e8720c;color:#ffffff}
-.or-pill.primary:hover{background:#d4650a}
+.or-cta{display:inline-flex;align-items:center;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;text-decoration:none;white-space:nowrap;border:1.5px solid #eee0d0;background:#ffffff;color:#8a7a6a}
+.or-cta:hover{background:#fdf8f3;border-color:#e0c9a6}
+.or-cta.primary{background:#e8720c;border-color:#e8720c;color:#ffffff}
+.or-cta.primary:hover{background:#d4650a}
 .item-pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 6px 4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
 .item-pill.status-open{background:#f1efec;border-color:#e0dad0;color:#726a60}
 .item-pill.status-held{background:#fdead9;border-color:#f5c896;color:#b45f0e}
@@ -1224,12 +1225,19 @@ function renderOrdersList(){
       orders.map(order=>{
         const cancelled=order.orderStatus==='cancelled';
         const readyToInvoice=order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced');
+        // Payment link only makes sense once nothing is left to (re)invoice —
+        // driven by the freshly-fetched item pipeline itself (every item
+        // 'invoiced', none still sitting at 'final') rather than the orders
+        // row's cached invoice_status, so a CRUD on items that hasn't yet
+        // round-tripped through invalidate-order-invoice can't leave this
+        // showing a payment link for an amount that's now stale.
+        const fullyInvoiced=isFullyInvoiced(order);
         return '<div class="order-row'+(cancelled?' order-cancelled':'')+'" style="background:'+rowBg+'">'+
           '<div class="or-top"><span class="or-cust">'+
             (!cancelled?'<input type="checkbox" class="inv-select" '+(selectedOrders.has(order.soid)?'checked ':'')+'onchange="toggleOrderSelect('+escH(JSON.stringify(order.soid))+',this.checked)"> ':'')+
             escH(order.customer)+
             (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
-            (!cancelled&&order.invoiceStatus==='done'?(order.razorpayUrl
+            (!cancelled&&fullyInvoiced?(order.razorpayUrl
               ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
               :' <span class="pay-missing">Payment link not generated</span>'
             ):'')+
@@ -1248,17 +1256,17 @@ function renderOrdersList(){
             // a new item is how you reopen it (order goes back to active,
             // previously-cancelled items stay cancelled as history, the new
             // item comes in fresh/open).
-            '<a class="or-pill" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
+            '<a class="or-cta" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
             (cancelled?'':(
               (viewingTomorrow
-                ?'<a class="or-pill" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
-                :'<a class="or-pill" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
+                ?'<a class="or-cta" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
+                :'<a class="or-cta" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
               // Ready whenever nothing's still open/held/packed — deliberately
               // shown even if every item is already 'invoiced' with nothing
               // newly final, since ANY change to an already-invoiced order
               // (qty edit, item removed) should re-enable regenerating it,
               // and source of truth is always Supabase, not the last invoice.
-              (readyToInvoice?'<a class="or-pill primary" onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')
+              (readyToInvoice?'<a class="or-cta primary" onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')
             ))+
           '</div>'+
         '</div>';
@@ -1607,6 +1615,14 @@ function isReadyToInvoice(order){
   return !!(order&&order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced'));
 }
 
+// Every item actually invoiced, none still sitting at 'final' — driven by
+// the freshly-fetched order_items pipeline, not the (cached) orders row's
+// invoice_status, so a payment link can never be offered for an order that
+// still needs a fresh/updated invoice.
+function isFullyInvoiced(order){
+  return !!(order&&order.items.length&&order.items.every(i=>i.status==='invoiced'));
+}
+
 // One shared checkbox selection drives all three bulk actions — each button
 // only counts/acts on the subset of the selection it's actually eligible for
 // (e.g. checking a not-yet-invoiced order doesn't count toward "payment
@@ -1619,7 +1635,7 @@ function updateBulkButtons(){
   invBtn.textContent='🧾 Generate Selected Invoices ('+invoiceIds.length+')';
   invBtn.disabled=invoiceIds.length===0;
 
-  const paylinkIds=selected.filter(x=>x.order.invoiceStatus==='done'&&!x.order.razorpayUrl).map(x=>x.soid);
+  const paylinkIds=selected.filter(x=>isFullyInvoiced(x.order)&&!x.order.razorpayUrl).map(x=>x.soid);
   const payBtn=document.getElementById('to-bulk-paylink');
   payBtn.textContent='💳 Payment Links ('+paylinkIds.length+')';
   payBtn.disabled=paylinkIds.length===0;
@@ -1710,10 +1726,7 @@ async function generatePaymentLinksBulk(salesOrderIds){
 }
 
 document.getElementById('to-bulk-paylink').addEventListener('click',()=>{
-  const ids=[...selectedOrders].filter(soid=>{
-    const o=currentOrdersById[soid];
-    return o&&o.invoiceStatus==='done'&&!o.razorpayUrl;
-  });
+  const ids=[...selectedOrders].filter(soid=>isFullyInvoiced(currentOrdersById[soid])&&!currentOrdersById[soid].razorpayUrl);
   generatePaymentLinksBulk(ids);
 });
 
