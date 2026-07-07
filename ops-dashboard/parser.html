@@ -43,6 +43,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pay-missing{font-size:11px;font-weight:700;color:#b3261e}
 .pay-link{font-size:11px;color:#3f7a34;text-decoration:none}
 .pay-link:hover{text-decoration:underline}
+.cf-badge{background:#b3261e;color:#ffffff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
 .or-meta{color:#8a7a6a;font-size:11px}
 .or-pills{display:flex;flex-wrap:wrap;gap:6px}
 .item-pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 6px 4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
@@ -93,8 +94,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .gi-row select{margin-bottom:0}
 .pk-search{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:8px;background:#ffffff}
 .filter-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.filter-group-label{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:4px}
 .filter-pill{display:inline-flex;align-items:center;border-radius:14px;padding:4px 10px;font-size:11px;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a;cursor:pointer;white-space:nowrap}
 .filter-pill.active{background:#e8720c;border-color:#e8720c;color:#ffffff;font-weight:600}
+.status-pills .filter-pill{border-color:#b8d4e8;color:#2f6690}
+.status-pills .filter-pill.active{background:#2f6690;border-color:#2f6690;color:#ffffff}
 .pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:10px}
 .pack-card.status-packed{border-color:#f0dd8a;background:#fdf6d9}
@@ -169,8 +173,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="btn-sec" id="pk-refresh" style="margin-bottom:12px">🔄 Refresh</button>
   <input type="text" class="pk-search" id="pk-search-society" placeholder="🔍 Search society...">
   <input type="text" class="pk-search" id="pk-search-fruit" placeholder="🔍 Search fruit...">
-  <div id="pk-fruit-pills" class="filter-pills"></div>
-  <div id="pk-status-pills" class="filter-pills"></div>
+  <div class="filter-group-label">Fruit</div>
+  <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
+  <div class="filter-group-label">Status</div>
+  <div id="pk-status-pills" class="filter-pills status-pills"></div>
   <div id="pk-grid" class="pack-grid"><div class="to-empty">Loading…</div></div>
 </div>
 
@@ -689,7 +695,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
@@ -819,6 +825,7 @@ async function loadTodaysOrders(){
           '</span></div>'+
           '<div class="or-pills">'+order.items.map(item=>
             '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\')">'+
+              (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
               escH(item.item_name)+' × '+item.requested_quantity+
               '<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>'+
             '</span>'
@@ -1061,8 +1068,11 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
     const createOrderData=await createOrderRes.json();
     if(!createOrderRes.ok)throw new Error(createOrderData.error||'Could not create tomorrow\'s order header');
 
+    // carried_forward marks these as punted from an earlier day so the next
+    // day's Today's Orders can flag them CF — a priority since the customer
+    // wasn't served on time.
     const{error}=await sb.from('order_items')
-      .update({sales_order_id:newSalesOrderId,status:'open'})
+      .update({sales_order_id:newSalesOrderId,status:'open',carried_forward:true})
       .in('id',ids);
     if(error)throw new Error(error.message);
   }catch(e){
@@ -1242,20 +1252,34 @@ async function loadPackerView(){
   renderPackerGrid();
 }
 
+// Fixed list, not derived from packerItems — otherwise a status with no
+// items currently loaded (e.g. nothing packed yet today) just vanishes from
+// the filter row instead of showing zero results.
+const ALL_ORDER_STATUSES=['open','held','packed','final','invoiced'];
+
 function renderPackerFilterPills(){
   const fruits=[...new Set(packerItems.map(i=>i.item_name))].sort();
-  document.getElementById('pk-fruit-pills').innerHTML=fruits.map(f=>
-    '<span class="filter-pill'+(packerFilters.fruit===f?' active':'')+'" onclick="togglePackerFruitPill('+escH(JSON.stringify(f))+')">'+escH(f)+'</span>'
-  ).join('');
+  document.getElementById('pk-fruit-pills').innerHTML=
+    '<span class="filter-pill'+(!packerFilters.fruit?' active':'')+'" onclick="setPackerFruitFilter(\'\')">All</span>'+
+    fruits.map(f=>
+      '<span class="filter-pill'+(packerFilters.fruit===f?' active':'')+'" onclick="setPackerFruitFilter('+escH(JSON.stringify(f))+')">'+escH(f)+'</span>'
+    ).join('');
 
-  const statuses=[...new Set(packerItems.map(i=>i.status))].sort();
-  document.getElementById('pk-status-pills').innerHTML=statuses.map(s=>
-    '<span class="filter-pill'+(packerFilters.statuses.has(s)?' active':'')+'" onclick="togglePackerStatusPill('+escH(JSON.stringify(s))+')">'+escH(s)+'</span>'
-  ).join('');
+  document.getElementById('pk-status-pills').innerHTML=
+    '<span class="filter-pill'+(packerFilters.statuses.size===0?' active':'')+'" onclick="clearPackerStatusFilter()">All</span>'+
+    ALL_ORDER_STATUSES.map(s=>
+      '<span class="filter-pill'+(packerFilters.statuses.has(s)?' active':'')+'" onclick="togglePackerStatusPill('+escH(JSON.stringify(s))+')">'+escH(s)+'</span>'
+    ).join('');
 }
 
-function togglePackerFruitPill(fruit){
-  packerFilters.fruit=(packerFilters.fruit===fruit)?'':fruit;
+function setPackerFruitFilter(fruit){
+  packerFilters.fruit=fruit;
+  renderPackerFilterPills();
+  renderPackerGrid();
+}
+
+function clearPackerStatusFilter(){
+  packerFilters.statuses.clear();
   renderPackerFilterPills();
   renderPackerGrid();
 }
@@ -1292,7 +1316,9 @@ function renderPackerGrid(){
   grid.innerHTML=filtered.map(item=>
     '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
       '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+'</div>'+
-      '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+escH(item.item_name)+'</span>'+
+      '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+
+        (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
+        escH(item.item_name)+'</span>'+
         '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span>'+
         '<button class="pk-x" onclick="deleteItem(\''+item.id+'\')" title="Remove">✕</button></span>'+
       '</div>'+
