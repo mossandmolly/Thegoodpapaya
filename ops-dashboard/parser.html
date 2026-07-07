@@ -84,12 +84,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .gi-row:last-child{border-bottom:none}
 .gi-row label{display:block;font-size:12px;color:#2b2320;margin-bottom:4px}
 .gi-row select{margin-bottom:0}
+.pk-search{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:8px;background:#ffffff}
+.filter-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.filter-pill{display:inline-flex;align-items:center;border-radius:14px;padding:4px 10px;font-size:11px;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a;cursor:pointer;white-space:nowrap}
+.filter-pill.active{background:#e8720c;border-color:#e8720c;color:#ffffff;font-weight:600}
 .pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:10px}
 .pack-card.status-packed{border-color:#f0dd8a;background:#fdf6d9}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
-.pk-item{font-size:14px;font-weight:600;color:#2b2320;margin-bottom:2px}
-.pk-req{font-size:11px;color:#8a7a6a;margin-bottom:8px}
+.pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
+.pk-item{font-size:14px;font-weight:600;color:#2b2320}
+.pk-qty-label{font-size:12px;font-weight:700;color:#2b2320;white-space:nowrap}
+.pk-instr{font-size:12px;font-weight:700;color:#b3261e;margin-bottom:8px}
 .pk-row{display:flex;gap:6px;margin-bottom:6px}
 .pk-qty{width:100%;padding:7px 8px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
 .pk-tick{background:#e8720c;color:#ffffff;border:none;border-radius:8px;padding:0 12px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0}
@@ -147,6 +153,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="panel" id="panel-packer">
   <div class="section-label">To pack <span id="pk-rc"></span></div>
   <button class="btn-sec" id="pk-refresh" style="margin-bottom:12px">🔄 Refresh</button>
+  <input type="text" class="pk-search" id="pk-search-society" placeholder="🔍 Search society...">
+  <input type="text" class="pk-search" id="pk-search-fruit" placeholder="🔍 Search fruit...">
+  <div id="pk-fruit-pills" class="filter-pills"></div>
+  <div id="pk-status-pills" class="filter-pills"></div>
   <div id="pk-grid" class="pack-grid"><div class="to-empty">Loading…</div></div>
 </div>
 
@@ -1111,24 +1121,79 @@ async function deleteItem(id){
 document.getElementById('to-refresh').addEventListener('click',loadTodaysOrders);
 
 // ── Packer ────────────────────────────────────────────────────────────────
+let packerItems=[],packerCustomerMap={},packerUnitByItem={};
+const packerFilters={society:'',fruit:'',statuses:new Set(['open','packed'])};
+
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
   grid.innerHTML='<div class="to-empty">Loading…</div>';
-  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',TODAY+'-%').in('status',['open','packed']));
+  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',TODAY+'-%'));
   if(error){grid.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  packerItems=data||[];
 
-  document.getElementById('pk-rc').textContent=data&&data.length?'— '+data.length+' item'+(data.length!==1?'s':''):'';
-  if(!data||!data.length){grid.innerHTML='<div class="to-empty">Nothing left to pack ✓</div>';return;}
+  const uniqueIds=[...new Set(packerItems.map(i=>i.sales_order_id))];
+  const[{map},{data:catalog}]=await Promise.all([
+    fetchCustomerMap(uniqueIds),
+    sb.from('catalog').select('item_name,unit'),
+  ]);
+  packerCustomerMap=map||{};
+  packerUnitByItem={};
+  (catalog||[]).forEach(c=>{packerUnitByItem[c.item_name]=c.unit||'kg';});
 
-  const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
-  const{map}=await fetchCustomerMap(uniqueIds);
-  const customerMap=map||{};
+  renderPackerFilterPills();
+  renderPackerGrid();
+}
 
-  grid.innerHTML=data.map(item=>
+function renderPackerFilterPills(){
+  const fruits=[...new Set(packerItems.map(i=>i.item_name))].sort();
+  document.getElementById('pk-fruit-pills').innerHTML=fruits.map(f=>
+    '<span class="filter-pill'+(packerFilters.fruit===f?' active':'')+'" onclick="togglePackerFruitPill('+escH(JSON.stringify(f))+')">'+escH(f)+'</span>'
+  ).join('');
+
+  const statuses=[...new Set(packerItems.map(i=>i.status))].sort();
+  document.getElementById('pk-status-pills').innerHTML=statuses.map(s=>
+    '<span class="filter-pill'+(packerFilters.statuses.has(s)?' active':'')+'" onclick="togglePackerStatusPill('+escH(JSON.stringify(s))+')">'+escH(s)+'</span>'
+  ).join('');
+}
+
+function togglePackerFruitPill(fruit){
+  packerFilters.fruit=(packerFilters.fruit===fruit)?'':fruit;
+  renderPackerFilterPills();
+  renderPackerGrid();
+}
+
+function togglePackerStatusPill(status){
+  if(packerFilters.statuses.has(status))packerFilters.statuses.delete(status);
+  else packerFilters.statuses.add(status);
+  renderPackerFilterPills();
+  renderPackerGrid();
+}
+
+function renderPackerGrid(){
+  const grid=document.getElementById('pk-grid');
+  const searchSociety=packerFilters.society.trim().toLowerCase();
+  const searchFruit=packerFilters.fruit_search?.trim().toLowerCase()||'';
+
+  const filtered=packerItems.filter(item=>{
+    if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
+    if(packerFilters.fruit&&item.item_name!==packerFilters.fruit)return false;
+    const customer=packerCustomerMap[item.sales_order_id]||item.sales_order_id;
+    if(searchSociety&&!deriveSociety(customer).toLowerCase().includes(searchSociety))return false;
+    if(searchFruit&&!item.item_name.toLowerCase().includes(searchFruit))return false;
+    return true;
+  });
+
+  document.getElementById('pk-rc').textContent=filtered.length?'— '+filtered.length+' item'+(filtered.length!==1?'s':''):'';
+  if(!filtered.length){
+    grid.innerHTML='<div class="to-empty">'+(packerItems.length?'No items match these filters':'Nothing left to pack ✓')+'</div>';
+    return;
+  }
+
+  grid.innerHTML=filtered.map(item=>
     '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
-      '<div class="pk-cust">'+escH(customerMap[item.sales_order_id]||item.sales_order_id)+'</div>'+
-      '<div class="pk-item">'+escH(item.item_name)+'</div>'+
-      '<div class="pk-req">requested: '+item.requested_quantity+(item.description?' · '+escH(item.description):'')+'</div>'+
+      '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]||item.sales_order_id)+'</div>'+
+      '<div class="pk-line1"><span class="pk-item">'+escH(item.item_name)+'</span><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></div>'+
+      (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
       '<div class="pk-row">'+
         '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'">'+
         '<button class="pk-tick" onclick="savePackedQty(\''+item.id+'\')" title="Save">✓</button>'+
@@ -1137,6 +1202,15 @@ async function loadPackerView(){
     '</div>'
   ).join('');
 }
+
+document.getElementById('pk-search-society').addEventListener('input',e=>{
+  packerFilters.society=e.target.value;
+  renderPackerGrid();
+});
+document.getElementById('pk-search-fruit').addEventListener('input',e=>{
+  packerFilters.fruit_search=e.target.value;
+  renderPackerGrid();
+});
 
 async function savePackedQty(id){
   const val=document.getElementById('pk-qty-'+id).value;
@@ -1148,7 +1222,6 @@ async function savePackedQty(id){
 }
 
 async function markFinal(id){
-  if(!confirm('Mark as final? This locks it in as ready for invoicing.'))return;
   const{error}=await sb.from('order_items').update({status:'final'}).eq('id',id);
   if(error){alert('Failed to mark final: '+error.message);return;}
   await loadPackerView();
