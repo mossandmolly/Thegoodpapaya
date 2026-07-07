@@ -94,6 +94,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .modal-box h3{font-size:15px;font-weight:700;color:#2b2320;margin-bottom:14px}
 .modal-label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:4px}
 .modal-box select,.modal-box input{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
+.ac-wrap{position:relative}
+.ac-list{position:absolute;top:100%;left:0;right:0;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;margin-top:2px;max-height:160px;overflow-y:auto;z-index:50;box-shadow:0 4px 12px rgba(43,35,32,0.15)}
+.ac-list.hidden{display:none}
+.ac-item{padding:8px 10px;font-size:13px;color:#2b2320;cursor:pointer}
+.ac-item:hover{background:#fdf8f3}
 .modal-actions{display:flex;gap:8px;margin-top:4px}
 .modal-actions button{flex:1}
 .mt-item-row{display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px;color:#2b2320;border-bottom:1px solid #f5efe6}
@@ -227,7 +232,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="btn-push" id="qo-submit">Submit Quick Order(s)</button>
     <div class="push-status" id="qo-status"></div>
   </div>
-  <datalist id="qo-customer-list"></datalist>
 </div>
 
 <!-- TODAY'S ORDERS -->
@@ -300,7 +304,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="modal-box">
     <h3>New order</h3>
     <label class="modal-label">Customer name</label>
-    <input type="text" id="no-customer" list="qo-customer-list" placeholder="e.g. Dhavala A502">
+    <div class="ac-wrap">
+      <input type="text" id="no-customer" placeholder="e.g. Dhavala A502" autocomplete="off">
+      <div class="ac-list hidden" id="no-customer-ac"></div>
+    </div>
     <label class="modal-label">Items</label>
     <div id="no-items"></div>
     <button class="btn-sec" id="no-add-row" style="margin-bottom:12px">+ add another item</button>
@@ -402,9 +409,8 @@ async function initAppAfterLogin(){
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   refreshTomorrowPill();
-  ensureCustomerNameOptions().then(names=>{
-    document.getElementById('qo-customer-list').innerHTML=names.map(n=>'<option value="'+escH(n)+'"></option>').join('');
-  });
+  ensureCustomerNameOptions();
+  attachCustomerAutocomplete(document.getElementById('no-customer'),document.getElementById('no-customer-ac'));
   addQoBlock();
 }
 
@@ -913,6 +919,31 @@ async function ensureCustomerNameOptions(){
   return customerNameOptions;
 }
 
+// Custom dropdown instead of native <datalist> — datalist's suggestion UI is
+// unreliable-to-absent on mobile Safari/Chrome, which is what this is mostly
+// used on. Filters customerNameOptions as you type; typing a brand-new name
+// still just works since this never blocks free text.
+function attachCustomerAutocomplete(inputEl,listEl){
+  function render(){
+    const q=inputEl.value.trim().toLowerCase();
+    const names=customerNameOptions||[];
+    const matches=(q?names.filter(n=>n.toLowerCase().includes(q)):names).slice(0,8);
+    if(!matches.length){listEl.classList.add('hidden');listEl.innerHTML='';return;}
+    listEl.innerHTML=matches.map(n=>'<div class="ac-item">'+escH(n)+'</div>').join('');
+    listEl.classList.remove('hidden');
+  }
+  inputEl.addEventListener('focus',render);
+  inputEl.addEventListener('input',render);
+  inputEl.addEventListener('blur',()=>{setTimeout(()=>listEl.classList.add('hidden'),150);});
+  listEl.addEventListener('mousedown',e=>{
+    const item=e.target.closest('.ac-item');
+    if(!item)return;
+    e.preventDefault();
+    inputEl.value=item.textContent;
+    listEl.classList.add('hidden');
+  });
+}
+
 async function addQoRow(blockIdx){
   const rowIdx=qoRowCount++;
   const rowsEl=qoBlocksEl.querySelector('.qo-block[data-idx="'+blockIdx+'"] .qo-rows');
@@ -939,13 +970,18 @@ async function addQoBlock(){
   qoBlocksEl.insertAdjacentHTML('beforeend',
     '<div class="qo-block" data-idx="'+idx+'">'+
       '<div class="qo-block-header">'+
-        '<input type="text" class="qo-customer" list="qo-customer-list" placeholder="Customer name (e.g. Dhavala A502)">'+
+        '<div class="ac-wrap" style="flex:1">'+
+          '<input type="text" class="qo-customer" placeholder="Customer name (e.g. Dhavala A502)" autocomplete="off">'+
+          '<div class="ac-list hidden"></div>'+
+        '</div>'+
         '<button type="button" onclick="this.closest(\'.qo-block\').remove()" title="Remove customer">✕</button>'+
       '</div>'+
       '<div class="qo-rows"></div>'+
       '<button type="button" class="btn-sec qo-add-item-btn" onclick="addQoRow('+idx+')">+ Add new item</button>'+
     '</div>'
   );
+  const block=qoBlocksEl.querySelector('.qo-block[data-idx="'+idx+'"]');
+  attachCustomerAutocomplete(block.querySelector('.qo-customer'),block.querySelector('.ac-list'));
   await addQoRow(idx);
 }
 
