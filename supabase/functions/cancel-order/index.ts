@@ -1,18 +1,30 @@
 // Supabase Edge Function — cancel-order
 //
-// Input:  { sales_order_id: string }
-// Output: { ok: true, results: string[] }
+// We never hard-delete an order (this function used to — that's the old
+// behavior, from before the order_items rebuild). Cancelling is now a
+// terminal status change:
+//  1. If a Zoho invoice exists: unapply any payments (left as unused/
+//     available credit on the customer's Zoho account — Zoho's own payment
+//     model treats an unapplied payment as customer credit automatically, no
+//     separate credit-note step needed) then delete the invoice.
+//  2. Cancel the Razorpay payment link, if one exists (best-effort).
+//  3. Delete invoice_queue and invoice_line_items rows for this
+//     sales_order_id — neither has a cascade that would clean them up once
+//     we stop deleting the orders row.
+//  4. Set orders.status = 'cancelled' and clear the now-stale Zoho/Razorpay
+//     fields (the orders row itself stays — never deleted).
+//  5. Set every order_items row for this sales_order_id to status =
+//     'cancelled', regardless of what stage each item was at.
 //
-// Steps:
-//   1. Fetch order from orders (get zoho_invoice_id, razorpay_link_id)
-//   2. Unapply Zoho payments → delete Zoho invoice
-//   3. Cancel Razorpay payment link
-//   4. Delete invoice_queue, operations, orders rows
+// Input:  { sales_order_id: string }
+// Output: { sales_order_id, cancelled: true, results: string[] }
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 //   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORGANIZATION_ID
 //   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 function env(key: string) {
   const val = Deno.env.get(key);
@@ -20,26 +32,25 @@ function env(key: string) {
   return val;
 }
 
+// This function uses the service role internally, so it bypasses RLS
+// regardless of who calls it — the anon key alone is enough to invoke it at
+// the platform level. Requiring a real logged-in user session here is what
+// actually restricts this to signed-in ops staff (it also deletes real Zoho
+// invoices and Razorpay links, so this matters more than most).
+async function requireAuth(req: Request): Promise<void> {
+  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!jwt) throw new Error('Not authenticated');
+  const res = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, {
+    headers: { Authorization: `Bearer ${jwt}`, apikey: env('SUPABASE_SERVICE_ROLE_KEY') },
+  });
+  if (!res.ok) throw new Error('Not authenticated');
+}
+
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
 };
-
-function sbHeaders() {
-  return {
-    'Authorization': `Bearer ${env('SUPABASE_SERVICE_ROLE_KEY')}`,
-    'apikey':        env('SUPABASE_SERVICE_ROLE_KEY'),
-    'Content-Type':  'application/json',
-  };
-}
-
-async function sbFetch(path: string, opts?: RequestInit) {
-  const url = `${env('SUPABASE_URL')}/rest/v1/${path}`;
-  const res  = await fetch(url, { ...opts, headers: { ...sbHeaders(), ...(opts?.headers as any) } });
-  if (!res.ok) throw new Error(await res.text());
-  return res;
-}
 
 // ── Zoho OAuth ────────────────────────────────────────────────────────────────
 async function getZohoToken(): Promise<string> {
@@ -113,62 +124,73 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
+    await requireAuth(req);
     const { sales_order_id } = await req.json();
-    if (!sales_order_id) {
-      return new Response(
-        JSON.stringify({ error: 'sales_order_id required' }),
-        { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } },
-      );
-    }
+    if (!sales_order_id) throw new Error('Missing sales_order_id');
 
-    // 1. Fetch order record
-    const orderRes = await sbFetch(
-      `orders?sales_order_id=eq.${encodeURIComponent(sales_order_id)}&select=zoho_invoice_id,razorpay_link_id,invoice_status`,
-    );
-    const orders = await orderRes.json();
-    const order  = orders[0];
+    const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
-    if (!order) {
-      return new Response(
-        JSON.stringify({ error: 'Order not found' }),
-        { status: 404, headers: { ...CORS, 'Content-Type': 'application/json' } },
-      );
-    }
+    const { data: order, error: orderErr } = await supabase
+      .from('orders').select('*').eq('sales_order_id', sales_order_id).single();
+    if (orderErr || !order) throw new Error(`Order ${sales_order_id} not found`);
 
     const results: string[] = [];
 
-    // 2. Unapply payments + delete Zoho invoice
+    if (order.status === 'cancelled') {
+      return new Response(
+        JSON.stringify({ ok: true, sales_order_id, results: ['Already cancelled'] }),
+        { headers: { ...CORS, 'Content-Type': 'application/json' } },
+      );
+    }
+
+    // 1. Unapply payments (left as unused customer credit in Zoho) + delete invoice
     if (order.zoho_invoice_id) {
       try {
         const token  = await getZohoToken();
         const orgId  = env('ZOHO_ORGANIZATION_ID');
         const payments = await fetchAppliedPayments(order.zoho_invoice_id, token, orgId);
-        await Promise.all(
-          payments.map(p => unapplyPayment(order.zoho_invoice_id, p.payment_id, token, orgId)),
-        );
+        for (const p of payments) {
+          await unapplyPayment(order.zoho_invoice_id, p.payment_id, token, orgId);
+        }
         await deleteZohoInvoice(order.zoho_invoice_id, token, orgId);
-        results.push(`Zoho invoice ${order.zoho_invoice_id} deleted (${payments.length} payments unapplied)`);
+        results.push(`Zoho invoice ${order.zoho_invoice_id} deleted (${payments.length} payment(s) unapplied as customer credit)`);
       } catch (e: any) {
         results.push(`Zoho delete failed (non-fatal): ${e.message}`);
       }
     }
 
-    // 3. Cancel Razorpay link
+    // 2. Cancel Razorpay link, if any
     if (order.razorpay_link_id) {
       await cancelRazorpayLink(order.razorpay_link_id);
       results.push('Razorpay link cancelled');
     }
 
-    // 4. Delete invoice_queue row (cascade-safe — uses ON DELETE CASCADE too)
-    await sbFetch(`invoice_queue?sales_order_id=eq.${encodeURIComponent(sales_order_id)}`, { method: 'DELETE' });
+    // 3. Clean up invoice_queue / invoice_line_items — neither has a cascade
+    // that fires now that we don't delete the orders row.
+    await supabase.from('invoice_queue').delete().eq('sales_order_id', sales_order_id);
+    const { error: liErr } = await supabase
+      .from('invoice_line_items').delete().eq('sales_order_id', sales_order_id);
+    if (liErr) throw new Error(`Could not clean up invoice_line_items: ${liErr.message}`);
 
-    // 5. Delete operations rows
-    await sbFetch(`operations?sales_order_id=eq.${encodeURIComponent(sales_order_id)}`, { method: 'DELETE' });
+    // 4. Soft-cancel the order — never delete the row itself
+    const { error: orderUpdErr } = await supabase.from('orders').update({
+      status:            'cancelled',
+      zoho_invoice_id:   null,
+      invoice_number:    null,
+      invoice_total:     null,
+      balance_due:       null,
+      invoice_status:    'pending',
+      razorpay_link_id:  null,
+      razorpay_url:      null,
+    }).eq('sales_order_id', sales_order_id);
+    if (orderUpdErr) throw new Error(orderUpdErr.message);
 
-    // 6. Delete order row
-    await sbFetch(`orders?sales_order_id=eq.${encodeURIComponent(sales_order_id)}`, { method: 'DELETE' });
+    // 5. Every item on this order becomes 'cancelled', whatever stage it was at
+    const { error: itemsUpdErr } = await supabase
+      .from('order_items').update({ status: 'cancelled' }).eq('sales_order_id', sales_order_id);
+    if (itemsUpdErr) throw new Error(itemsUpdErr.message);
 
-    results.push('DB records deleted');
+    results.push('Order and items marked cancelled');
 
     return new Response(
       JSON.stringify({ ok: true, sales_order_id, results }),
@@ -178,7 +200,7 @@ Deno.serve(async (req) => {
   } catch (err: any) {
     return new Response(
       JSON.stringify({ error: err.message }),
-      { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } },
+      { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
   }
 });

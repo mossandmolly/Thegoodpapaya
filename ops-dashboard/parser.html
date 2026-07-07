@@ -62,6 +62,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .item-pill.status-final{background:#e3eef7;border-color:#b8d4e8;color:#2f6690}
 .item-pill.status-invoiced{background:#e5f3e3;border-color:#bfe0b8;color:#3f7a34}
 .item-pill.dup-item{color:#b3261e;font-weight:700}
+.item-pill.status-cancelled{background:#f1efec;border-color:#e0dad0;color:#a39a8c;text-decoration:line-through}
+.order-cancelled{opacity:0.75}
+.cancelled-badge{background:#726a60;color:#ffffff;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
+.cancel-link{color:#b3261e!important}
 .pill-x{background:none;border:none;cursor:pointer;font-size:12px;line-height:1;padding:2px;color:inherit;opacity:0.6}
 .pill-x:hover{opacity:1}
 .section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#8a7a6a;margin:16px 0 6px}
@@ -123,6 +127,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:10px}
 .pack-card.status-packed{border-color:#f0dd8a;background:#fdf6d9}
+.pack-card.status-cancelled{opacity:0.6}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
 .pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
@@ -974,7 +979,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<ids.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=ids.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{map[o.sales_order_id]=o;});
@@ -1048,6 +1053,7 @@ async function loadTodaysOrders(){
         phone:         o?.phone||null,
         razorpayUrl:   o?.razorpay_url||null,
         invoiceStatus: o?.invoice_status||null,
+        orderStatus:   o?.status||'active',
         items:[],
       };
     }
@@ -1068,31 +1074,39 @@ async function loadTodaysOrders(){
   list.innerHTML=Object.keys(bySociety).sort().map(soc=>{
     const orders=bySociety[soc];
     return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
-      orders.map(order=>
-        '<div class="order-row">'+
+      orders.map(order=>{
+        const cancelled=order.orderStatus==='cancelled';
+        return '<div class="order-row'+(cancelled?' order-cancelled':'')+'">'+
           '<div class="or-top"><span class="or-cust">'+escH(order.customer)+
-            (order.invoiceStatus==='done'?(order.razorpayUrl
+            (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
+            (!cancelled&&order.invoiceStatus==='done'?(order.razorpayUrl
               ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
               :' <span class="pay-missing">Payment link not generated</span> <a onclick="generatePaymentLinkPrompt(\''+order.soid+'\')">Generate Payment Link</a>'
             ):'')+
-          '</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · '+
-            (viewingTomorrow
-              ?'<a onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
-              :'<a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
-            // Ready once nothing's still open/held/packed AND there's at least
-            // one newly-final item — items already invoiced from a prior run
-            // don't count on their own, or the link would never go away.
-            (order.items.every(i=>i.status==='final'||i.status==='invoiced')&&order.items.some(i=>i.status==='final')?' · <a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
+          '</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+
+            (cancelled?'':(
+              ' · <a onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a> · '+
+              (viewingTomorrow
+                ?'<a onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
+                :'<a onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>')+
+              // Ready whenever nothing's still open/held/packed — deliberately
+              // shown even if every item is already 'invoiced' with nothing
+              // newly final, since ANY change to an already-invoiced order
+              // (qty edit, item removed) should re-enable regenerating it,
+              // and source of truth is always Supabase, not the last invoice.
+              (order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced')?' · <a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
+              ' · <a class="cancel-link" onclick="cancelOrderPrompt(\''+order.soid+'\')">🚫 cancel order</a>'
+            ))+
           '</span></div>'+
           '<div class="or-pills">'+order.items.map(item=>
-            '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'" onclick="pillClick(\''+item.id+'\')">'+
+            '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'"'+(cancelled?'':' onclick="pillClick(\''+item.id+'\')"')+'>'+
               (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
               escH(item.item_name)+' × '+item.requested_quantity+
-              '<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>'+
+              (cancelled?'':'<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>')+
             '</span>'
           ).join('')+'</div>'+
-        '</div>'
-      ).join('');
+        '</div>';
+      }).join('');
   }).join('');
 }
 
@@ -1112,10 +1126,15 @@ function pillClick(id){
 }
 
 async function updateQty(id,qty,description){
-  const{error}=await sb.from('order_items')
-    // Any edit reverts the item to open — it needs to be (re)packed
-    .update({requested_quantity:qty,description:description||null,status:'open'})
-    .eq('id',id);
+  const current=currentItemsById[id];
+  // Editing an already-invoiced item is treated as a final correction (packer
+  // already finished it once) — goes straight back to final/blue with the
+  // edited qty as the new final_quantity, ready to re-invoice immediately.
+  // Anything earlier in the pipeline just reverts to open — it needs (re)packing.
+  const update=(current&&current.status==='invoiced')
+    ? {requested_quantity:qty,description:description||null,status:'final',final_quantity:qty}
+    : {requested_quantity:qty,description:description||null,status:'open'};
+  const{error}=await sb.from('order_items').update(update).eq('id',id);
   if(error){alert('Failed to update: '+error.message);}
   await loadTodaysOrders();
 }
@@ -1452,6 +1471,28 @@ async function generatePaymentLinkPrompt(salesOrderId){
   await loadTodaysOrders();
 }
 
+// ── Cancel order (soft — never deletes the row) ──────────────────────────────
+// Available at any stage. Unapplies/deletes the Zoho invoice (payments left
+// as unused customer credit), cancels the Razorpay link, cleans up
+// invoice_queue/invoice_line_items, and sets the order + every one of its
+// items to 'cancelled'.
+async function cancelOrderPrompt(salesOrderId){
+  if(!confirm('Cancel order '+salesOrderId+'?\n\nThis deletes its Zoho invoice (if any) and Razorpay link — any payment already made is kept as customer credit in Zoho, not refunded. This cannot be undone from here.'))return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:salesOrderId}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not cancel order');
+    alert('Order cancelled.'+(data.results?.length?'\n\n'+data.results.join('\n'):''));
+  }catch(e){
+    alert('Failed to cancel order: '+e.message);
+  }
+  await loadTodaysOrders();
+}
+
 // ── Rate resolution modal — item name doesn't match catalog exactly ─────────
 const giModal=document.getElementById('gi-modal'),giItemsEl=document.getElementById('gi-items');
 let giTargetOrder=null,giTargetBtn=null;
@@ -1525,7 +1566,7 @@ async function loadPackerView(){
 // Fixed list, not derived from packerItems — otherwise a status with no
 // items currently loaded (e.g. nothing packed yet today) just vanishes from
 // the filter row instead of showing zero results.
-const ALL_ORDER_STATUSES=['open','held','packed','final','invoiced'];
+const ALL_ORDER_STATUSES=['open','held','packed','final','invoiced','cancelled'];
 
 function renderPackerFilterPills(){
   const fruits=[...new Set(packerItems.map(i=>i.item_name))].sort();
