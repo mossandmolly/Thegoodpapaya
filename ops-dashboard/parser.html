@@ -53,6 +53,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pay-link{font-size:11px;color:#3f7a34;text-decoration:none}
 .pay-link:hover{text-decoration:underline}
 .cf-badge{background:#b3261e;color:#ffffff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
+.dup-badge{background:#8a3ab3;color:#ffffff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
 .or-meta{color:#8a7a6a;font-size:11px}
 .or-pills{display:flex;flex-wrap:wrap;gap:6px}
 .item-pill{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:4px 6px 4px 10px;font-size:11px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
@@ -125,7 +126,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .status-pills .filter-pill{border-color:#b8d4e8;color:#2f6690}
 .status-pills .filter-pill.active{background:#2f6690;border-color:#2f6690;color:#ffffff}
 .pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-.pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:10px}
+.pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:13px;min-height:195px;display:flex;flex-direction:column}
+.pk-status-badge{align-self:flex-start;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px}
+.pk-status-badge.status-open{background:#f1efec;color:#726a60}
+.pk-status-badge.status-held{background:#fdead9;color:#b45f0e}
+.pk-status-badge.status-packed{background:#fdf6d9;color:#a8860a}
+.pk-status-badge.status-final{background:#e3eef7;color:#2f6690}
+.pk-status-badge.status-invoiced{background:#e5f3e3;color:#3f7a34}
+.pk-status-badge.status-cancelled{background:#e0dad0;color:#726a60}
 .pack-card.status-packed{border-color:#f0dd8a;background:#fdf6d9}
 .pack-card.status-cancelled{opacity:0.6}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
@@ -133,8 +141,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
 .pk-item.dup-item{color:#b3261e;font-weight:700}
 .pk-line1-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
-.pk-x{background:none;border:none;cursor:pointer;font-size:12px;color:#8a7a6a;padding:2px;flex-shrink:0}
-.pk-x:hover{color:#b3261e}
 .pk-qty-label{font-size:12px;font-weight:700;color:#2b2320;white-space:nowrap}
 .pk-instr{font-size:12px;font-weight:700;color:#b3261e;margin-bottom:8px}
 .pk-row{display:flex;gap:6px;margin-bottom:6px}
@@ -1081,7 +1087,7 @@ async function loadTodaysOrders(){
             (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
             (!cancelled&&order.invoiceStatus==='done'?(order.razorpayUrl
               ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
-              :' <span class="pay-missing">Payment link not generated</span> <a onclick="generatePaymentLinkPrompt(\''+order.soid+'\')">Generate Payment Link</a>'
+              :' <span class="pay-missing">Payment link not generated</span>'
             ):'')+
           '</span><span class="or-meta">'+order.items.length+' item'+(order.items.length!==1?'s':'')+
             (cancelled?'':(
@@ -1095,12 +1101,14 @@ async function loadTodaysOrders(){
               // (qty edit, item removed) should re-enable regenerating it,
               // and source of truth is always Supabase, not the last invoice.
               (order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced')?' · <a onclick="generateInvoice(\''+order.soid+'\',this)">🧾 generate invoice</a>':'')+
+              (order.invoiceStatus==='done'&&!order.razorpayUrl?' · <a onclick="generatePaymentLinkPrompt(\''+order.soid+'\')">💳 generate payment link</a>':'')+
               ' · <a class="cancel-link" onclick="cancelOrderPrompt(\''+order.soid+'\')">🚫 cancel order</a>'
             ))+
           '</span></div>'+
           '<div class="or-pills">'+order.items.map(item=>
             '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'"'+(cancelled?'':' onclick="pillClick(\''+item.id+'\')"')+'>'+
               (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
+              (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
               escH(item.item_name)+' × '+item.requested_quantity+
               (cancelled?'':'<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>')+
             '</span>'
@@ -1195,12 +1203,20 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
   const qty=parseFloat(aiQty.value);
   if(!itemName){alert('Choose an item');return;}
   if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
-  const{error}=await sb.from('order_items').insert({
+  // Adding to an order that's already fully invoiced is treated the same as
+  // editing an invoiced item — goes straight in as final/blue with this qty
+  // as its final_quantity, so "generate invoice" re-enables immediately
+  // instead of needing a full pack cycle first.
+  const order=currentOrdersById[aiTargetOrder];
+  const orderWasInvoiced=order&&order.items.length&&order.items.every(i=>i.status==='invoiced');
+  const row={
     sales_order_id: aiTargetOrder,
     item_name:      itemName,
     requested_quantity: qty,
-    status:         'open',
-  });
+    status:         orderWasInvoiced?'final':'open',
+  };
+  if(orderWasInvoiced)row.final_quantity=qty;
+  const{error}=await sb.from('order_items').insert(row);
   if(error){alert('Failed to add item: '+error.message);return;}
   aiModal.classList.add('hidden');
   await loadTodaysOrders();
@@ -1633,12 +1649,13 @@ function renderPackerGrid(){
 
   grid.innerHTML=filtered.map(item=>
     '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
+      '<div class="pk-status-badge status-'+item.status+'">'+escH(item.status)+'</div>'+
       '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+'</div>'+
       '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+
         (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
+        (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
         escH(item.item_name)+'</span>'+
-        '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span>'+
-        '<button class="pk-x" onclick="deleteItem(\''+item.id+'\')" title="Remove">✕</button></span>'+
+        '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></span>'+
       '</div>'+
       (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
       '<div class="pk-row">'+
