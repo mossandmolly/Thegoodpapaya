@@ -903,9 +903,13 @@ let customerNameOptions=null;
 
 async function ensureCustomerNameOptions(){
   if(customerNameOptions)return customerNameOptions;
-  // order_customer_lookup is anon-readable across all dates, unlike orders/customers.
   const{data,error}=await sb.from('order_customer_lookup').select('customer_name');
-  customerNameOptions=error?[]:[...new Set((data||[]).map(r=>r.customer_name).filter(Boolean))].sort();
+  if(error){
+    console.error('Could not load customer names for autocomplete:',error.message);
+    customerNameOptions=[];
+    return customerNameOptions;
+  }
+  customerNameOptions=[...new Set((data||[]).map(r=>r.customer_name).filter(Boolean))].sort();
   return customerNameOptions;
 }
 
