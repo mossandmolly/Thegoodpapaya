@@ -1313,6 +1313,15 @@ async function invalidateOrderInvoiceIfNeeded(salesOrderId){
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not invalidate invoice');
     evictCustomerLookupCache(salesOrderId);
+    // The Zoho invoice covering this order is gone, so no item can still be
+    // considered 'invoiced' against it. Editing/adding an item already sets
+    // that one item's own status to 'final' right after this call, but a
+    // straight delete doesn't touch any surviving item — without this,
+    // those would keep reading 'invoiced', isFullyInvoiced would still be
+    // true, and "generate invoice" would wrongly stay hidden.
+    const{error:itemsErr}=await sb.from('order_items')
+      .update({status:'final'}).eq('sales_order_id',salesOrderId).eq('status','invoiced');
+    if(itemsErr)throw new Error(itemsErr.message);
   }catch(e){
     alert('Warning: could not clear the old Zoho invoice automatically ('+e.message+'). You may need to regenerate it manually.');
   }
