@@ -186,6 +186,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-row{display:flex;gap:6px;margin-bottom:6px}
 .pk-qty{width:100%;padding:7px 8px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
 .pk-tick{background:#e8720c;color:#ffffff;border:none;border-radius:8px;padding:0 12px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0}
+.pk-tick:disabled{background:#e0dad0;cursor:not-allowed}
 .pk-final{width:100%;background:transparent;border:1.5px solid #bfe0b8;color:#3f7a34;border-radius:8px;padding:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
 .pk-final:disabled{opacity:0.4;cursor:not-allowed}
 .rules-list{font-size:12px;color:#5c4f42;line-height:1.8;list-style:none}
@@ -1991,8 +1992,8 @@ function renderPackerGrid(){
       '</div>'+
       (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
       '<div class="pk-row">'+
-        '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'">'+
-        '<button class="pk-tick" onclick="savePackedQty(\''+item.id+'\')" title="Save">✓</button>'+
+        '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'" oninput="this.nextElementSibling.disabled=false">'+
+        '<button class="pk-tick" disabled onclick="savePackedQty(\''+item.id+'\')" title="Change the quantity to save">✓</button>'+
       '</div>'+
       '<button class="pk-final" onclick="markFinal(\''+item.id+'\')" '+(item.status!=='packed'?'disabled title="Save a final quantity first"':'')+'>Mark as Final</button>'+
     '</div>'
