@@ -12,8 +12,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .logo{font-size:20px;font-weight:700;color:#c2570a}.logo span{color:#2b2320;font-weight:300}
 .header-btn{background:#fdf8f3;border:1px solid #eee0d0;color:#8a7a6a;border-radius:14px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
 .header-btn:disabled{opacity:0.5;cursor:not-allowed}
-.tomorrow-pill{background:#fdead9;color:#b45f0e;border-radius:14px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
-.tomorrow-pill.active{background:#e8720c;color:#ffffff}
+.date-picker{width:100%;padding:9px 10px;border:1.5px solid #f5c896;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:10px;background:#fdead9}
 .section-divider{border:none;border-top:1px solid #eee0d0;margin:24px 0}
 .tabs{display:flex;gap:8px;margin-bottom:20px}
 .tab{padding:8px 16px;border-radius:20px;border:1.5px solid #eee0d0;background:transparent;color:#8a7a6a;font-size:13px;cursor:pointer;font-family:inherit}
@@ -218,7 +217,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="top-header">
   <div class="logo">good<span>papaya</span> · parser</div>
   <div class="top-header-actions">
-    <span class="tomorrow-pill" id="tomorrow-pill" onclick="toggleTomorrowView()">Tomorrow</span>
     <a class="signout-link" onclick="signOut()">Sign out</a>
   </div>
 </div>
@@ -274,6 +272,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <!-- TODAY'S ORDERS -->
 <div class="panel" id="panel-today">
   <div class="section-label"><span id="to-label">Today's orders</span> <span id="to-rc"></span></div>
+  <input type="date" class="date-picker" id="to-date-picker" onchange="setViewDate(this.value)">
   <div class="push-row bulk-actions-row" style="margin-bottom:12px">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Selected Invoices (0)</button>
     <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
@@ -284,7 +283,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
 <!-- PACKER -->
 <div class="panel" id="panel-packer">
-  <div class="section-label">To pack <span id="pk-rc"></span></div>
+  <div class="section-label"><span id="pk-label">To pack</span> <span id="pk-rc"></span></div>
+  <input type="date" class="date-picker" id="pk-date-picker" onchange="setViewDate(this.value)">
   <input type="text" class="pk-search" id="pk-search" placeholder="🔍 Search society or fruit...">
   <div class="filter-group-label">Fruit</div>
   <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
@@ -430,7 +430,7 @@ async function initAppAfterLogin(){
   appInitialized=true;
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
-  updateTomorrowPillLabel();
+  syncViewDatePickers();
   ensureCustomerNameOptions();
   addQoBlock();
 }
@@ -1151,27 +1151,45 @@ function computeDuplicateItemIds(items){
   return dupIds;
 }
 
-let viewingTomorrow=false;
+// Viewing always uses the real calendar date, never the 7pm business-day
+// shift (see computeBusinessDate/TODAY/TOMORROW below) — that shift only
+// decides which day's bucket a brand-new order goes into (parser push,
+// Quick Order Entry). Applying it to viewing too meant orders placed
+// earlier today silently vanished from "Today's Orders" the moment the
+// clock crossed 7pm, even though they still needed packing/delivery today.
+let viewDate=CALENDAR_TODAY;
+const VIEW_DATE_MIN=addDays(CALENDAR_TODAY,-15);
+const VIEW_DATE_MAX=addDays(CALENDAR_TODAY,1);
 
-// No count on this pill — it's not worth a network round trip on every load
-// just to show a number nobody acts on. switchTab('today') already triggers
-// loadTodaysOrders itself, so this doesn't also await a second load.
-function toggleTomorrowView(){
-  viewingTomorrow=!viewingTomorrow;
-  updateTomorrowPillLabel();
-  switchTab('today');
+function syncViewDatePickers(){
+  [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker')].forEach(el=>{
+    if(!el)return;
+    el.min=VIEW_DATE_MIN;
+    el.max=VIEW_DATE_MAX;
+    el.value=viewDate;
+  });
 }
 
-function updateTomorrowPillLabel(){
-  const pill=document.getElementById('tomorrow-pill');
-  pill.textContent=viewingTomorrow?'← Back to Today':'Tomorrow';
-  pill.classList.toggle('active',viewingTomorrow);
+// Drives both Today's Orders and Packer — the two date pickers stay in
+// sync and whichever tab is active reloads. Clamped to the last 15 days
+// (corrections/cancellations on older orders) through one day ahead
+// (tomorrow's incoming queue) — all data older than that is still in
+// Supabase, just not reachable from this picker.
+function setViewDate(dateStr){
+  if(!dateStr)return;
+  if(dateStr<VIEW_DATE_MIN)dateStr=VIEW_DATE_MIN;
+  if(dateStr>VIEW_DATE_MAX)dateStr=VIEW_DATE_MAX;
+  viewDate=dateStr;
+  syncViewDatePickers();
+  if(document.getElementById('panel-today').classList.contains('active'))loadTodaysOrders();
+  if(document.getElementById('panel-packer').classList.contains('active'))loadPackerView();
 }
 
 async function loadTodaysOrders(){
   const list=document.getElementById('to-list');
-  const viewDate=viewingTomorrow?TOMORROW:TODAY;
-  document.getElementById('to-label').textContent=viewingTomorrow?"Tomorrow's orders":"Today's orders";
+  const tomorrowDate=addDays(CALENDAR_TODAY,1);
+  document.getElementById('to-label').textContent=
+    viewDate===CALENDAR_TODAY?"Today's orders":(viewDate===tomorrowDate?"Tomorrow's orders":'Orders — '+viewDate);
   list.innerHTML='<div class="to-empty">Loading…</div>';
   const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%'));
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
@@ -1186,7 +1204,7 @@ async function loadTodaysOrders(){
   if(!data||!data.length){
     currentOrdersById={};
     currentItemsById={};
-    list.innerHTML='<div class="to-empty">No orders yet'+(viewingTomorrow?' for tomorrow':' today')+'</div>';
+    list.innerHTML='<div class="to-empty">No orders for '+viewDate+'</div>';
     return;
   }
 
@@ -1291,9 +1309,14 @@ function renderOrdersList(){
               // previously-cancelled items stay cancelled as history, the new
               // item comes in fresh/open).
               '<a class="or-link" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
-              (cancelled?'':(viewingTomorrow
-                ?'<a class="or-link" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
-                :'<a class="or-link" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'))+
+              // Move-by-a-day only makes sense relative to today/tomorrow —
+              // viewing an older date via the date picker just omits this,
+              // rather than guessing what "move" should mean N days back.
+              (cancelled?'':(
+                viewDate===addDays(CALENDAR_TODAY,1)?'<a class="or-link" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
+                :viewDate===CALENDAR_TODAY?'<a class="or-link" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'
+                :''
+              ))+
             '</span>'+
           '</div>'+
         '</div>';
@@ -1939,8 +1962,11 @@ const packerFilters={search:'',fruits:new Set(),statuses:new Set()};
 
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
+  const tomorrowDate=addDays(CALENDAR_TODAY,1);
+  document.getElementById('pk-label').textContent=
+    viewDate===CALENDAR_TODAY?'To pack':(viewDate===tomorrowDate?'To pack (Tomorrow)':'To pack — '+viewDate);
   grid.innerHTML='<div class="to-empty">Loading…</div>';
-  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',TODAY+'-%'));
+  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%'));
   if(error){grid.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
   packerItems=data||[];
 
