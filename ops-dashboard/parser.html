@@ -1316,13 +1316,23 @@ function pillClick(id){
   }
 }
 
-// Whenever an already-invoiced order is touched (item added/edited), the
-// existing Zoho invoice no longer reflects reality — delete it right away
-// (payments preserved as Zoho customer credit) instead of leaving a stale
-// invoice sitting there until the next explicit "generate invoice" click.
+// Whenever an already-invoiced order is touched (item added/edited/packed),
+// the existing Zoho invoice no longer reflects reality — delete it right
+// away (payments preserved as Zoho customer credit) instead of leaving a
+// stale invoice sitting there until the next explicit "generate invoice"
+// click. Called from both Today's Orders and Packer, which keep separate
+// (differently-shaped) local caches of the order's invoice_status, so check
+// whichever one actually has this order loaded.
+function lookupInvoiceStatus(salesOrderId){
+  const fromToday=currentOrdersById[salesOrderId];
+  if(fromToday)return fromToday.invoiceStatus;
+  const fromPacker=packerCustomerMap[salesOrderId];
+  if(fromPacker)return fromPacker.invoice_status;
+  return null;
+}
+
 async function invalidateOrderInvoiceIfNeeded(salesOrderId){
-  const order=currentOrdersById[salesOrderId];
-  if(!order||order.invoiceStatus!=='done')return;
+  if(lookupInvoiceStatus(salesOrderId)!=='done')return;
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/invalidate-order-invoice',{
       method:'POST',
@@ -1998,12 +2008,16 @@ async function savePackedQty(id){
   const val=document.getElementById('pk-qty-'+id).value;
   const qty=parseFloat(val);
   if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
+  const item=packerItems.find(i=>i.id===id);
+  if(item)await invalidateOrderInvoiceIfNeeded(item.sales_order_id);
   const{error}=await sb.from('order_items').update({final_quantity:qty,status:'packed'}).eq('id',id);
   if(error){alert('Failed to save: '+error.message);return;}
   await loadPackerView();
 }
 
 async function markFinal(id){
+  const item=packerItems.find(i=>i.id===id);
+  if(item)await invalidateOrderInvoiceIfNeeded(item.sales_order_id);
   const{error}=await sb.from('order_items').update({status:'final'}).eq('id',id);
   if(error){alert('Failed to mark final: '+error.message);return;}
   await loadPackerView();
