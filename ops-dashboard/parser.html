@@ -1680,7 +1680,7 @@ function isFullyInvoiced(order){
 // summarize at a glance. Returns null when there's nothing to show one for
 // (no non-cancelled items).
 const ITEM_STATUS_RANK={open:0,held:1,packed:2,final:3,invoiced:4};
-const ITEM_STATUS_LABEL={open:'Open',held:'Held',packed:'Packed',final:'Final',invoiced:'Invoiced'};
+const ITEM_STATUS_LABEL={open:'Open',held:'Held',packed:'Packed- not Final',final:'Final',invoiced:'Invoiced',cancelled:'Cancelled'};
 function orderOverallStatus(order){
   const active=(order&&order.items||[]).filter(i=>i.status!=='cancelled');
   if(!active.length)return null;
@@ -1927,7 +1927,7 @@ function renderPackerFilterPills(){
   document.getElementById('pk-status-pills').innerHTML=
     '<span class="filter-pill'+(packerFilters.statuses.size===0?' active':'')+'" onclick="clearPackerStatusFilter()">All</span>'+
     ALL_ORDER_STATUSES.map(s=>
-      '<span class="filter-pill'+(packerFilters.statuses.has(s)?' active':'')+'" onclick="togglePackerStatusPill('+escH(JSON.stringify(s))+')">'+escH(s)+'</span>'
+      '<span class="filter-pill'+(packerFilters.statuses.has(s)?' active':'')+'" onclick="togglePackerStatusPill('+escH(JSON.stringify(s))+')">'+escH(ITEM_STATUS_LABEL[s]||s)+'</span>'
     ).join('');
 }
 
@@ -1982,7 +1982,7 @@ function renderPackerGrid(){
 
   grid.innerHTML=filtered.map(item=>
     '<div class="pack-card status-'+item.status+'" data-id="'+item.id+'">'+
-      '<div class="pk-status-badge status-'+item.status+'">'+escH(item.status)+'</div>'+
+      '<div class="pk-status-badge status-'+item.status+'">'+escH(ITEM_STATUS_LABEL[item.status]||item.status)+'</div>'+
       '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+'</div>'+
       '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+
         (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
