@@ -1357,15 +1357,25 @@ async function invalidateOrderInvoiceIfNeeded(salesOrderId){
   }
 }
 
+// Appends a note to whatever description already exists instead of
+// overwriting it, so an auto-generated note ("Required quantity changed",
+// "Item deleted") never clobbers a packer's own instructions.
+function appendAddendum(existingDescription,addendum){
+  const base=(existingDescription||'').trim();
+  return base?base+'; '+addendum:addendum;
+}
+
 async function updateQty(id,qty,description){
   const current=currentItemsById[id];
-  // Editing an already-invoiced item is treated as a final correction (packer
-  // already finished it once) — goes straight back to final/blue with the
-  // edited qty as the new final_quantity, ready to re-invoice immediately.
-  // Anything earlier in the pipeline just reverts to open — it needs (re)packing.
-  const update=(current&&current.status==='invoiced')
-    ? {requested_quantity:qty,description:description||null,status:'final',final_quantity:qty}
-    : {requested_quantity:qty,description:description||null,status:'open'};
+  // Always goes back to 'open', however far along it was — a requested-
+  // quantity change means the packer needs to (re)pack the actual physical
+  // amount again, it can't just be assumed to match the last packed/final
+  // quantity (that used to silently copy the new qty straight into
+  // final_quantity for already-invoiced items without anyone re-verifying
+  // it was actually packed that way).
+  const qtyChanged=current&&Number(current.requested_quantity)!==Number(qty);
+  const finalDescription=qtyChanged?appendAddendum(description,'Required quantity changed'):(description||'');
+  const update={requested_quantity:qty,description:finalDescription||null,status:'open'};
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
   const{error}=await sb.from('order_items').update(update).eq('id',id);
   if(error){alert('Failed to update: '+error.message);}
@@ -1877,12 +1887,18 @@ async function approveHeldItem(id){
   await loadTodaysOrders();
 }
 
+// Soft-remove, matching cancel-order's philosophy — never hard-delete an
+// order_items row, since that's history a packer/admin may need later.
+// Marks the item 'cancelled' (same greyed-out, struck-through treatment as
+// an item on a cancelled order, both in Today's Orders pills and Packer)
+// with a note appended to its description instead.
 async function deleteItem(id){
-  if(!confirm('Delete this line item? This cannot be undone.'))return;
+  if(!confirm('Remove this item? It will be marked cancelled and kept as a record, not deleted.'))return;
   const current=currentItemsById[id];
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
-  const{error}=await sb.from('order_items').delete().eq('id',id);
-  if(error){alert('Failed to delete: '+error.message);return;}
+  const description=appendAddendum(current?.description,'Item deleted');
+  const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',id);
+  if(error){alert('Failed to remove item: '+error.message);return;}
   if(document.getElementById('panel-packer').classList.contains('active'))await loadPackerView();
   else await loadTodaysOrders();
 }
