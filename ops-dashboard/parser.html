@@ -41,8 +41,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    longest label (Generate Selected Invoices) still fits its third of the row
    on a phone screen. */
 .bulk-actions-row button{font-size:11px;padding:10px 4px;line-height:1.25}
-.btn-tomorrow{width:auto;flex:0 0 auto;padding:0 14px;border-radius:10px;border:1.5px solid #f5c896;background:#fdead9;color:#b45f0e;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
-.btn-tomorrow:disabled{opacity:0.5;cursor:not-allowed}
 .push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#8a7a6a}
 .push-status.ok{color:#3f7a34}.push-status.err{color:#b3261e}
 .to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px}
@@ -233,6 +231,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="header-btn" id="sync-customers">👥 Customers</button>
     <button class="header-btn" onclick="switchTab('config')">⚙️ Config</button>
   </div>
+  <div class="section-label">Entry date <span style="font-weight:400;text-transform:none;letter-spacing:normal">— which day new orders below go into</span></div>
+  <input type="date" class="date-picker" id="entry-date-picker" onchange="setEntryDate(this.value)">
   <div class="section-label">📸 Upload &amp; Parse</div>
   <div class="drop-zone" id="dz">
     <input type="file" id="fi" accept="image/*" multiple>
@@ -248,10 +248,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div id="fb"></div>
     <div class="section-label">Parsed rows <span id="rc"></span></div>
     <div class="tsv-box" id="tb"></div>
-    <div class="push-row">
-      <button class="btn-push" id="pushb">📤 Push to Operations</button>
-      <button class="btn-tomorrow" id="push-tomorrow">📤→ Tomorrow</button>
-    </div>
+    <button class="btn-push" id="pushb">📤 Push to Operations</button>
     <div class="push-status" id="ps"></div>
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
     <button class="btn-sec" id="xb">🔄 Clear</button>
@@ -431,6 +428,7 @@ async function initAppAfterLogin(){
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   syncViewDatePickers();
+  syncEntryDatePicker();
   ensureCustomerNameOptions();
   addQoBlock();
 }
@@ -527,6 +525,31 @@ function formatCustomerName(name){
 // Plain IST calendar date (no 7pm business-day shift) — used to check whether
 // the catalog has been synced from Zoho yet today.
 const CALENDAR_TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
+
+// Which day new orders (parser push + Quick Order Entry) get filed under —
+// defaults to the 7pm-aware business date, but can be pointed at any day
+// within range, e.g. backdating a late WhatsApp entry or pre-loading an
+// order for a few days out.
+let entryDate=TODAY;
+const ENTRY_DATE_MIN=addDays(CALENDAR_TODAY,-15);
+const ENTRY_DATE_MAX=addDays(CALENDAR_TODAY,15);
+
+function syncEntryDatePicker(){
+  const el=document.getElementById('entry-date-picker');
+  if(!el)return;
+  el.min=ENTRY_DATE_MIN;
+  el.max=ENTRY_DATE_MAX;
+  el.value=entryDate;
+}
+
+function setEntryDate(dateStr){
+  if(!dateStr)return;
+  if(dateStr<ENTRY_DATE_MIN)dateStr=ENTRY_DATE_MIN;
+  if(dateStr>ENTRY_DATE_MAX)dateStr=ENTRY_DATE_MAX;
+  entryDate=dateStr;
+  syncEntryDatePicker();
+}
+
 let imgs=[];
 const dz=document.getElementById('dz'),fi=document.getElementById('fi'),pv=document.getElementById('pv');
 const pb=document.getElementById('pb'),sbEl=document.getElementById('sb'),rw=document.getElementById('rw');
@@ -801,13 +824,13 @@ xb.addEventListener('click',()=>{
 });
 
 // ── Push to order_items ──────────────────────────────────────────────────────
-const pushb=document.getElementById('pushb'),pushTomorrowBtn=document.getElementById('push-tomorrow'),ps=document.getElementById('ps');
+const pushb=document.getElementById('pushb'),ps=document.getElementById('ps');
 function setPush(msg,cls){ps.textContent=msg;ps.className='push-status'+(cls?' '+cls:'');}
 
-// salesOrderIdFor lets the same push logic target either today's date
-// (the parser's own embedded TODAY) or tomorrow's, for the separate
-// "push to tomorrow" action — same header-create + held-duplicate-check
-// flow either way, just a different sales_order_id per row.
+// salesOrderIdFor lets the same push logic target whichever date the
+// operator picked in the entry-date picker, regardless of what date the
+// parse itself detected — same header-create + held-duplicate-check flow
+// either way, just a different sales_order_id per row.
 async function pushRows(rows,salesOrderIdFor){
   // 1. Header row per unique customer — create if missing, never overwrite an existing one
   const headers=new Map();
@@ -860,35 +883,20 @@ async function pushRows(rows,salesOrderIdFor){
 pushb.addEventListener('click',async()=>{
   const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
   if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
+  if(entryDate!==TODAY&&!confirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to '+entryDate+' instead of today?'))return;
   pushb.disabled=true;pushb.textContent='Pushing…';setPush('');
   try{
-    const{opened,held}=await pushRows(rows,r=>r.sales_order);
+    // r.sales_order is <parsed-date>-CustomerName (first 10 chars are the
+    // date) — always swapped for the entry-date picker's value, so the
+    // final destination is always exactly what's showing there, regardless
+    // of what date the parse itself guessed.
+    const{opened,held}=await pushRows(rows,r=>entryDate+r.sales_order.slice(10));
     setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':''),'ok');
     pushb.textContent='✅ Pushed';
   }catch(e){
     setPush('❌ '+e.message,'err');
     pushb.disabled=false;pushb.textContent='📤 Push to Operations';
   }
-});
-
-pushTomorrowBtn.addEventListener('click',async()=>{
-  const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
-  if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
-  if(!confirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to TOMORROW\'s orders instead of today\'s?'))return;
-  pushTomorrowBtn.disabled=true;pushTomorrowBtn.textContent='Pushing…';setPush('');
-  let ok=false;
-  try{
-    // r.sales_order is TODAY-CustomerName (first 10 chars are the date) —
-    // swap in TOMORROW's date, keep the same customer suffix.
-    const{opened,held}=await pushRows(rows,r=>TOMORROW+r.sales_order.slice(10));
-    setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed to tomorrow'+(held?' ('+held+' held as duplicate)':''),'ok');
-    ok=true;
-  }catch(e){
-    setPush('❌ '+e.message,'err');
-  }
-  pushTomorrowBtn.disabled=false;
-  pushTomorrowBtn.textContent=ok?'✅ Pushed':'📤→ Tomorrow';
-  if(ok)setTimeout(()=>{pushTomorrowBtn.textContent='📤→ Tomorrow';},3000);
 });
 
 // ── Today's Orders ──────────────────────────────────────────────────────────
@@ -1064,10 +1072,11 @@ qoSubmitBtn.addEventListener('click',async()=>{
     });
   });
   if(!rows.length){setQoStatus('Add at least one customer with an item and quantity','err');return;}
+  if(entryDate!==TODAY&&!confirm('Submit to '+entryDate+' instead of today?'))return;
 
   qoSubmitBtn.disabled=true;qoSubmitBtn.textContent='Submitting…';setQoStatus('');
   try{
-    const{opened,held}=await pushRows(rows,r=>TODAY+'-'+canonicalCustomerKey(r.customer_name));
+    const{opened,held}=await pushRows(rows,r=>entryDate+'-'+canonicalCustomerKey(r.customer_name));
     setQoStatus('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':''),'ok');
     qoBlocksEl.innerHTML='';qoBlockCount=0;
     await addQoBlock();
