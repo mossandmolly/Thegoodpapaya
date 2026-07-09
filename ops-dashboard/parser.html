@@ -1332,8 +1332,13 @@ function lookupInvoiceStatus(salesOrderId){
   return null;
 }
 
+// Returns true if it actually invalidated something (meaning sibling items
+// on the same order may have just changed status server-side too, so a
+// caller relying on locally-patched state should do a full reload instead
+// of trusting its own cache) — false for the common case where the order
+// was never invoiced and there was nothing to do.
 async function invalidateOrderInvoiceIfNeeded(salesOrderId){
-  if(lookupInvoiceStatus(salesOrderId)!=='done')return;
+  if(lookupInvoiceStatus(salesOrderId)!=='done')return false;
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/invalidate-order-invoice',{
       method:'POST',
@@ -1352,8 +1357,10 @@ async function invalidateOrderInvoiceIfNeeded(salesOrderId){
     const{error:itemsErr}=await sb.from('order_items')
       .update({status:'final'}).eq('sales_order_id',salesOrderId).eq('status','invoiced');
     if(itemsErr)throw new Error(itemsErr.message);
+    return true;
   }catch(e){
     alert('Warning: could not clear the old Zoho invoice automatically ('+e.message+'). You may need to regenerate it manually.');
+    return true; // unknown state — safer to force a full reload than trust local cache
   }
 }
 
@@ -1499,12 +1506,13 @@ function addDays(dateStr,n){
 
 function openMoveDateModal(salesOrderId,direction){
   const order=currentOrdersById[salesOrderId];
-  if(!order||!order.items.length){alert('No items to move');return;}
+  const movable=activeItems(order);
+  if(!order||!movable.length){alert('No items to move');return;}
   mtTargetOrder=salesOrderId;
   mtDirection=direction;
   mtTitle.textContent=direction>0?'Move to tomorrow':"Add to today's orders";
   mtMoveBtn.textContent=direction>0?'Move to Tomorrow':"Add to Today's Orders";
-  mtItems.innerHTML=order.items.map(item=>
+  mtItems.innerHTML=movable.map(item=>
     '<label class="mt-item-row"><input type="checkbox" value="'+item.id+'" checked>'+
       escH(item.item_name)+' × '+item.requested_quantity+
     '</label>'
@@ -2036,18 +2044,32 @@ async function savePackedQty(id){
   const qty=parseFloat(val);
   if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
   const item=packerItems.find(i=>i.id===id);
-  if(item)await invalidateOrderInvoiceIfNeeded(item.sales_order_id);
+  const invalidated=item?await invalidateOrderInvoiceIfNeeded(item.sales_order_id):false;
   const{error}=await sb.from('order_items').update({final_quantity:qty,status:'packed'}).eq('id',id);
   if(error){alert('Failed to save: '+error.message);return;}
-  await loadPackerView();
+  // Common case: nothing else on the order changed, so just patch this one
+  // item locally and redraw — no need for the full network round trip
+  // (refetch every item today + the whole catalog) that loadPackerView does.
+  // Only fall back to that when invalidation touched sibling items too.
+  if(invalidated){
+    await loadPackerView();
+  }else{
+    if(item){item.final_quantity=qty;item.status='packed';}
+    renderPackerGrid();
+  }
 }
 
 async function markFinal(id){
   const item=packerItems.find(i=>i.id===id);
-  if(item)await invalidateOrderInvoiceIfNeeded(item.sales_order_id);
+  const invalidated=item?await invalidateOrderInvoiceIfNeeded(item.sales_order_id):false;
   const{error}=await sb.from('order_items').update({status:'final'}).eq('id',id);
   if(error){alert('Failed to mark final: '+error.message);return;}
-  await loadPackerView();
+  if(invalidated){
+    await loadPackerView();
+  }else{
+    if(item)item.status='final';
+    renderPackerGrid();
+  }
 }
 
 </script>
