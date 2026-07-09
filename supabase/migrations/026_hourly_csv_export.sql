@@ -9,14 +9,22 @@
 --   3. Set a CRON_SECRET env var on that edge function (any random string
 --      you generate yourself) — Settings → Edge Functions → export-csv →
 --      Secrets.
---   4. Replace the two <CRON_SECRET_HERE> placeholders below with that same
---      value before running this file in the SQL editor.
+--   4. Replace <CRON_SECRET_HERE> below with that same value, and
+--      <SERVICE_ROLE_KEY_HERE> with your project's service_role key
+--      (Settings → API → service_role secret), before running this file
+--      in the SQL editor.
+--
+-- The Authorization header below is required — every Edge Function sits
+-- behind Supabase's own JWT verification gate regardless of any custom
+-- auth check inside the function itself, so a call with no Authorization
+-- header at all gets rejected as 401 UNAUTHORIZED_NO_AUTH_HEADER before it
+-- ever reaches export-csv's own CRON_SECRET check.
 
 create extension if not exists pg_cron with schema extensions;
 create extension if not exists pg_net  with schema extensions;
 
 -- cron.schedule() upserts by job name, so re-running this migration (e.g.
--- after changing the secret) safely replaces the existing schedule rather
+-- after changing a secret) safely replaces the existing schedule rather
 -- than creating a duplicate.
 select cron.schedule(
   'hourly-csv-export',
@@ -26,6 +34,7 @@ select cron.schedule(
     url     := 'https://fykqprogzqcfzrgwlrem.supabase.co/functions/v1/export-csv',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
+      'Authorization', 'Bearer <SERVICE_ROLE_KEY_HERE>',
       'x-cron-secret', '<CRON_SECRET_HERE>'
     ),
     body    := '{}'::jsonb
