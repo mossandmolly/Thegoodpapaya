@@ -10,6 +10,8 @@
 // Output: uploads two files per run —
 //   orders/orders-<ISO-timestamp>.csv
 //   orders/order_items-<ISO-timestamp>.csv
+// then purges any export files older than 30 days, so storage usage
+// doesn't grow unbounded from an hourly job running forever.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
@@ -46,6 +48,44 @@ async function fetchAll(supabase: any, table: string, orderCol: string): Promise
     from += PAGE_SIZE;
   }
   return rows;
+}
+
+// Deletes export files whose Storage-reported created_at is older than 30
+// days. Lists in one pass (paginated) before deleting anything, rather than
+// deleting mid-list, so shifting offsets from removed items can't cause a
+// file to be skipped.
+const RETENTION_DAYS = 30;
+async function purgeOldExports(supabase: any): Promise<number> {
+  const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const stalePaths: string[] = [];
+  const PAGE = 1000;
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase.storage.from('exports').list('orders', {
+      limit: PAGE,
+      offset,
+      sortBy: { column: 'created_at', order: 'asc' },
+    });
+    if (error) throw new Error(`List exports failed: ${error.message}`);
+    if (!data || !data.length) break;
+    for (const f of data) {
+      if (f.created_at && new Date(f.created_at).getTime() < cutoff) stalePaths.push(`orders/${f.name}`);
+    }
+    if (data.length < PAGE) break;
+    offset += PAGE;
+  }
+  if (!stalePaths.length) return 0;
+
+  // Storage's remove() also has a practical batch-size ceiling — chunk defensively.
+  const CHUNK = 100;
+  let removed = 0;
+  for (let i = 0; i < stalePaths.length; i += CHUNK) {
+    const chunk = stalePaths.slice(i, i + CHUNK);
+    const { error } = await supabase.storage.from('exports').remove(chunk);
+    if (error) throw new Error(`Remove exports failed: ${error.message}`);
+    removed += chunk.length;
+  }
+  return removed;
 }
 
 function toCsv(rows: any[]): string {
@@ -88,8 +128,16 @@ Deno.serve(async (req) => {
     const uploadErrors = uploads.filter(u => u.error).map(u => u.error?.message);
     if (uploadErrors.length) throw new Error('Storage upload failed: ' + uploadErrors.join('; '));
 
+    // Best-effort — a purge failure shouldn't mark this run's actual export as failed.
+    let purged = 0;
+    try {
+      purged = await purgeOldExports(supabase);
+    } catch (_e) {
+      // swallow — next hour's run will catch up on the purge
+    }
+
     return new Response(
-      JSON.stringify({ ok: true, stamp, orders: orders.length, order_items: orderItems.length }),
+      JSON.stringify({ ok: true, stamp, orders: orders.length, order_items: orderItems.length, purged }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
