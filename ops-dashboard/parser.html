@@ -1432,7 +1432,7 @@ attachItemAutocomplete(aiItemSel,aiItemAc);
 
 async function ensureCatalogItems(){
   if(catalogItems)return catalogItems;
-  const{data,error}=await sb.from('catalog').select('item_name').order('item_name');
+  const{data,error}=await sb.from('catalog').select('item_name,unit').order('item_name');
   if(error)throw new Error('Could not load catalog: '+error.message);
   catalogItems=data||[];
   return catalogItems;
@@ -1945,9 +1945,12 @@ async function loadPackerView(){
   packerItems=data||[];
 
   const uniqueIds=[...new Set(packerItems.map(i=>i.sales_order_id))];
-  const[{map},{data:catalog}]=await Promise.all([
+  const[{map},catalog]=await Promise.all([
     fetchCustomerMap(uniqueIds),
-    sb.from('catalog').select('item_name,unit'),
+    // Shares the same cache the add-item autocomplete uses — no more
+    // re-fetching the whole catalog on every single Packer load. Falls back
+    // to no unit labels rather than blocking the whole view if it fails.
+    ensureCatalogItems().catch(e=>{console.error(e);return[];}),
   ]);
   packerCustomerMap=map||{};
   packerUnitByItem={};
