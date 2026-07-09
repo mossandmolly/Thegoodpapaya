@@ -1367,18 +1367,38 @@ function renderOrdersList(){
 // Society name = everything before the door number, not just the first
 // word — "Sobha Eternia B-1204" and "Sobha Iris 302" are different
 // societies that happen to share a builder name, so grouping on just the
-// first word ("Sobha") would wrongly merge them. The door number is
-// assumed to be the first token containing a digit (covers plain numbers
-// like "302" and alphanumeric ones like "B-1204" or "12-098"); everything
-// before that token is the society name. Falls back to the full name if no
-// token has a digit in it at all (no discernible door number).
+// first word ("Sobha") would wrongly merge them.
+//
+// Checked in two passes:
+//  1. Does the name start with one of the known SOCIETIES entries? Some
+//     society names contain digits themselves (e.g. "77degree"), which
+//     would otherwise get misread as the door number with nothing left as
+//     a valid society prefix. Longest match wins so "Sobha Eternia" beats
+//     plain "Sobha" when both are in the list.
+//  2. Otherwise, every leading word that's purely alphabetic is the
+//     society name, up to (not including) the first word containing a
+//     digit — that word is assumed to be the door number. If the very
+//     first word already has a digit in it and step 1 didn't match
+//     anything, there's no reliable society prefix to extract, so that
+//     first word alone is used rather than the whole (customer-specific,
+//     ungroupable) string.
 function deriveSociety(customerName){
   const name=(customerName||'').trim();
   if(!name)return name;
+
+  const lower=name.toLowerCase();
+  let bestMatch='';
+  for(const soc of SOCIETIES){
+    const socLower=soc.toLowerCase();
+    if((lower===socLower||lower.startsWith(socLower+' '))&&soc.length>bestMatch.length)bestMatch=soc;
+  }
+  if(bestMatch)return name.slice(0,bestMatch.length);
+
   const tokens=name.split(/\s+/);
   const doorIdx=tokens.findIndex(t=>/\d/.test(t));
-  const societyTokens=doorIdx===-1?tokens:tokens.slice(0,doorIdx);
-  return societyTokens.length?societyTokens.join(' '):name;
+  if(doorIdx===-1)return name;
+  if(doorIdx===0)return tokens[0];
+  return tokens.slice(0,doorIdx).join(' ');
 }
 
 function pillClick(id){
