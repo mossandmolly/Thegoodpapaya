@@ -1302,9 +1302,21 @@ function renderOrdersList(){
   updateBulkButtons();
 }
 
+// Society name = everything before the door number, not just the first
+// word — "Sobha Eternia B-1204" and "Sobha Iris 302" are different
+// societies that happen to share a builder name, so grouping on just the
+// first word ("Sobha") would wrongly merge them. The door number is
+// assumed to be the first token containing a digit (covers plain numbers
+// like "302" and alphanumeric ones like "B-1204" or "12-098"); everything
+// before that token is the society name. Falls back to the full name if no
+// token has a digit in it at all (no discernible door number).
 function deriveSociety(customerName){
   const name=(customerName||'').trim();
-  return name.split(' ')[0]||name;
+  if(!name)return name;
+  const tokens=name.split(/\s+/);
+  const doorIdx=tokens.findIndex(t=>/\d/.test(t));
+  const societyTokens=doorIdx===-1?tokens:tokens.slice(0,doorIdx);
+  return societyTokens.length?societyTokens.join(' '):name;
 }
 
 function pillClick(id){
