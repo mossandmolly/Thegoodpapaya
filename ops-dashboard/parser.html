@@ -101,6 +101,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pill-x{background:none;border:none;cursor:pointer;font-size:12px;line-height:1;padding:2px;color:inherit;opacity:0.6}
 .pill-x:hover{opacity:1}
 .section-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#8a7a6a;margin:16px 0 6px}
+/* Tucked into the top-right, small and muted — this isn't something the
+   team needs day-to-day, unlike the entry-date picker on the Parser page. */
+.date-header-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.date-picker-compact{width:auto;text-transform:none;letter-spacing:normal;padding:4px 8px;font-size:11px;border:1px solid #eee0d0;border-radius:6px;background:#fdf8f3;color:#5c4f42;font-family:inherit;margin-bottom:0}
 .flags-box{background:#fdf6d9;border:1px solid #f0dd8a;border-radius:8px;padding:10px 14px;font-size:12px;color:#8a6d0a;line-height:1.8;white-space:pre-wrap}
 .flags-ok{background:#e5f3e3;border:1px solid #bfe0b8;border-radius:8px;padding:10px 14px;font-size:12px;color:#3f7a34}
 .tsv-box{background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#5c4f42;overflow-x:auto;white-space:pre;line-height:1.6;max-height:300px;overflow-y:auto;margin-bottom:10px}
@@ -222,7 +226,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 </div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
-  <button class="tab" onclick="switchTab('today')">📋 Today's Orders</button>
+  <button class="tab" onclick="switchTab('today')">📋 Order overview</button>
   <button class="tab" onclick="switchTab('packer')">📦 Packer</button>
 </div>
 
@@ -271,10 +275,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
-<!-- TODAY'S ORDERS -->
+<!-- ORDER OVERVIEW -->
 <div class="panel" id="panel-today">
-  <div class="section-label"><span id="to-label">Today's orders</span> <span id="to-rc"></span></div>
-  <input type="date" class="date-picker" id="to-date-picker" onchange="setViewDate(this.value)">
+  <div class="section-label date-header-row">
+    <span><span id="to-label">Order overview</span> <span id="to-rc"></span></span>
+    <input type="date" class="date-picker-compact" id="to-date-picker" onchange="setViewDate(this.value)">
+  </div>
   <div class="push-row bulk-actions-row" style="margin-bottom:12px">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Selected Invoices (0)</button>
     <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
@@ -285,8 +291,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
 <!-- PACKER -->
 <div class="panel" id="panel-packer">
-  <div class="section-label"><span id="pk-label">To pack</span> <span id="pk-rc"></span></div>
-  <input type="date" class="date-picker" id="pk-date-picker" onchange="setViewDate(this.value)">
+  <div class="section-label date-header-row">
+    <span><span id="pk-label">To pack</span> <span id="pk-rc"></span></span>
+    <input type="date" class="date-picker-compact" id="pk-date-picker" onchange="setViewDate(this.value)">
+  </div>
   <input type="text" class="pk-search" id="pk-search" placeholder="🔍 Search society or fruit...">
   <div class="filter-group-label">Fruit</div>
   <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
@@ -502,17 +510,6 @@ function addAlias(){const f=document.getElementById('new-alias-from').value.trim
 function delAlias(k){delete ALIASES[k];renderConfig();}
 
 // ── Parser ────────────────────────────────────────────────────────────────
-// Business day, not calendar day: orders placed 7pm–midnight are next-day
-// deliveries, so they (and Today's Orders / Packer) should bucket under
-// tomorrow's date, same as orders placed after midnight already do.
-function computeBusinessDate(){
-  const ist=new Date(Date.now()+330*60*1000); // IST wall-clock via UTC getters
-  if(ist.getUTCHours()>=19)ist.setUTCDate(ist.getUTCDate()+1);
-  return ist.toISOString().slice(0,10);
-}
-const TODAY=computeBusinessDate();
-const TOMORROW=addDays(TODAY,1);
-
 // Customer identity must not depend on case or punctuation — "Dhavala A502",
 // "dhavala a502" and "Dhavala-A502" are the same customer/order. This key
 // (not the display name) is what goes into sales_order_id, so typing
@@ -527,15 +524,18 @@ function formatCustomerName(name){
   const trimmed=(name||'').trim().replace(/\s+/g,' ');
   return trimmed?trimmed.charAt(0).toUpperCase()+trimmed.slice(1):trimmed;
 }
-// Plain IST calendar date (no 7pm business-day shift) — used to check whether
-// the catalog has been synced from Zoho yet today.
+// Plain IST calendar date — the single definition of "today" everywhere in
+// the app now (parsing, order entry, viewing). There used to be a separate
+// 7pm-shifted "business date" that silently meant tomorrow once it got
+// late enough, which just made "today" ambiguous depending on where you
+// looked — the explicit date pickers made that shortcut unnecessary.
 const CALENDAR_TODAY=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
 
-// Which day new orders (parser push + Quick Order Entry) get filed under —
-// defaults to the 7pm-aware business date, but can be pointed at any day
-// within range, e.g. backdating a late WhatsApp entry or pre-loading an
-// order for a few days out.
-let entryDate=TODAY;
+// Which day new orders (parser push + Quick Order Entry) get filed under.
+// Can be pointed at any day within range, e.g. backdating a late WhatsApp
+// entry or pre-loading an order for a few days out — the dedicated Push to Tomorrow
+// button already covers the "evening order, send to tomorrow" shortcut.
+let entryDate=CALENDAR_TODAY;
 const ENTRY_DATE_MIN=addDays(CALENDAR_TODAY,-15);
 const ENTRY_DATE_MAX=addDays(CALENDAR_TODAY,15);
 
@@ -653,7 +653,7 @@ pb.addEventListener('click',async()=>{
 
   const SYS=`You are an order parser for Good Papaya, a fresh produce delivery business in Bengaluru.
 
-TODAY: ${TODAY}
+TODAY: ${CALENDAR_TODAY}
 
 CANONICAL ITEMS: ${FRUITS.join(', ')}
 
@@ -688,7 +688,7 @@ RULES:
    - Rambutan with piece count → qty = raw count, flag (no conversion yet), add "N pieces" to description
    - no quantity → qty = 1, flag yellow
 
-6. sales_order = ${TODAY}-CustomerNameNoSpaces
+6. sales_order = ${CALENDAR_TODAY}-CustomerNameNoSpaces
 
 7. final_quantity and status = always empty string ""
 
@@ -730,7 +730,7 @@ CRITICAL:
 - "orange" = Mandarin orange always, never mango
 
 Return ONLY valid compact JSON, no markdown fences:
-{"rows":[{"order_date":"${TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"sales_order":""}],"flags":[]}`;
+{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"sales_order":""}],"flags":[]}`;
 
   try{
     const compressStart = Date.now();
@@ -805,7 +805,7 @@ function render(p){
   // always lands on the same sales_order_id.
   const rows=rawRows.map(r=>{
     const customer_name=formatCustomerName(r.customer_name);
-    return{...r,customer_name,sales_order:(r.order_date||TODAY)+'-'+canonicalCustomerKey(customer_name)};
+    return{...r,customer_name,sales_order:(r.order_date||CALENDAR_TODAY)+'-'+canonicalCustomerKey(customer_name)};
   });
   lastRows=rows;
   if(flags.length){fb.className='flags-box';fb.textContent=flags.join('\n');}
@@ -891,7 +891,7 @@ async function pushRows(rows,salesOrderIdFor){
 pushb.addEventListener('click',async()=>{
   const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
   if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
-  if(entryDate!==TODAY&&!confirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to '+entryDate+' instead of today?'))return;
+  if(entryDate!==CALENDAR_TODAY&&!confirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to '+entryDate+' instead of today?'))return;
   pushb.disabled=true;pushb.textContent='Pushing…';setPush('');
   try{
     // r.sales_order is <parsed-date>-CustomerName (first 10 chars are the
@@ -915,10 +915,11 @@ pushTomorrowBtn.addEventListener('click',async()=>{
   let ok=false;
   try{
     // r.sales_order is <parsed-date>-CustomerName (first 10 chars are the
-    // date) — swap in business-TOMORROW, keep the same customer suffix.
-    // Deliberately ignores the entry-date picker — this is a fixed "send
-    // today's whole batch to tomorrow" shortcut, not tied to it.
-    const{opened,held}=await pushRows(rows,r=>TOMORROW+r.sales_order.slice(10));
+    // date) — swap in the actual next calendar day (never the 7pm-shifted
+    // TOMORROW, which would double-jump to two days out once it's already
+    // past 7pm). Deliberately ignores the entry-date picker — this is a
+    // fixed "send today's whole batch to tomorrow" shortcut, not tied to it.
+    const{opened,held}=await pushRows(rows,r=>addDays(CALENDAR_TODAY,1)+r.sales_order.slice(10));
     setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed to tomorrow'+(held?' ('+held+' held as duplicate)':''),'ok');
     ok=true;
   }catch(e){
@@ -1102,7 +1103,7 @@ qoSubmitBtn.addEventListener('click',async()=>{
     });
   });
   if(!rows.length){setQoStatus('Add at least one customer with an item and quantity','err');return;}
-  if(entryDate!==TODAY&&!confirm('Submit to '+entryDate+' instead of today?'))return;
+  if(entryDate!==CALENDAR_TODAY&&!confirm('Submit to '+entryDate+' instead of today?'))return;
 
   qoSubmitBtn.disabled=true;qoSubmitBtn.textContent='Submitting…';setQoStatus('');
   try{
@@ -1190,12 +1191,8 @@ function computeDuplicateItemIds(items){
   return dupIds;
 }
 
-// Viewing always uses the real calendar date, never the 7pm business-day
-// shift (see computeBusinessDate/TODAY/TOMORROW below) — that shift only
-// decides which day's bucket a brand-new order goes into (parser push,
-// Quick Order Entry). Applying it to viewing too meant orders placed
-// earlier today silently vanished from "Today's Orders" the moment the
-// clock crossed 7pm, even though they still needed packing/delivery today.
+// Viewing always uses the plain calendar date — there is no more business-
+// day shift anywhere in the app (see CALENDAR_TODAY above).
 let viewDate=CALENDAR_TODAY;
 const VIEW_DATE_MIN=addDays(CALENDAR_TODAY,-15);
 // Matches ENTRY_DATE_MAX — a future-dated order created via the entry-date
@@ -1231,7 +1228,7 @@ async function loadTodaysOrders(){
   const list=document.getElementById('to-list');
   const tomorrowDate=addDays(CALENDAR_TODAY,1);
   document.getElementById('to-label').textContent=
-    viewDate===CALENDAR_TODAY?"Today's orders":(viewDate===tomorrowDate?"Tomorrow's orders":'Orders — '+viewDate);
+    viewDate===CALENDAR_TODAY?'Order overview':(viewDate===tomorrowDate?'Order overview (Tomorrow)':'Order overview — '+viewDate);
   list.innerHTML='<div class="to-empty">Loading…</div>';
   const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%'));
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
