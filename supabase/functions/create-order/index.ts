@@ -4,9 +4,10 @@
 // real Zoho invoice / Razorpay payment state), so the parser can't upsert
 // it directly with the public anon key. This function is the write path.
 //
-// Also derives the society/community name from each customer_name (first
-// token before the first space, e.g. "Dhavala A502" -> "Dhavala") and
-// upserts it into `communities` — grows that reference table from real
+// Also derives the society/community name from each customer_name (see
+// deriveSociety below — mirrors the identical function in
+// ops-dashboard/parser.html, keep both in sync if the rule ever changes)
+// and upserts it into `communities` — grows that reference table from real
 // order data instead of maintaining a static list.
 //
 // Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status? }] }
@@ -36,6 +37,34 @@ function sbHeaders() {
     'apikey':        env('SUPABASE_SERVICE_ROLE_KEY'),
     'Content-Type':  'application/json',
   };
+}
+
+// Known society names that contain digits themselves (e.g. "77degree") —
+// without this list those would get misread as already being the door
+// number, leaving nothing valid before it.
+const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
+
+// Society name = everything before the door number, not just the first
+// word. Checks the known SOCIETIES list first (longest match wins, handles
+// names that contain digits themselves), then falls back to every leading
+// purely-alphabetic word up to the first word containing a digit.
+function deriveSociety(customerName: string): string {
+  const name = (customerName || '').trim();
+  if (!name) return name;
+
+  const lower = name.toLowerCase();
+  let bestMatch = '';
+  for (const soc of SOCIETIES) {
+    const socLower = soc.toLowerCase();
+    if ((lower === socLower || lower.startsWith(socLower + ' ')) && soc.length > bestMatch.length) bestMatch = soc;
+  }
+  if (bestMatch) return name.slice(0, bestMatch.length);
+
+  const tokens = name.split(/\s+/);
+  const doorIdx = tokens.findIndex(t => /\d/.test(t));
+  if (doorIdx === -1) return name;
+  if (doorIdx === 0) return tokens[0];
+  return tokens.slice(0, doorIdx).join(' ');
 }
 
 // This function uses the service role internally, so it bypasses RLS
@@ -84,7 +113,7 @@ Deno.serve(async (req) => {
     // Never fails the request — a name-check pattern miss shouldn't block order creation.
     try {
       const societies = [...new Set(
-        rows.map(r => (r.customer_name || '').trim().split(' ')[0]).filter(Boolean),
+        rows.map(r => deriveSociety(r.customer_name)).filter(Boolean),
       )].map(name => ({ name }));
 
       if (societies.length) {

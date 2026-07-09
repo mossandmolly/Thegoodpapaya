@@ -1,5 +1,11 @@
 // Supabase Edge Function — sync-customers
-// Pulls active customer contacts from Zoho Books → customers table.
+// Pulls active customer contacts from Zoho Books → customers table. Also
+// derives each customer's society/community name (see deriveSociety below
+// — mirrors the identical function in ops-dashboard/parser.html, keep both
+// in sync if the rule ever changes) and upserts it into `communities`.
+// Since this pulls the FULL active contact list from Zoho every run (not
+// incremental), this is what backfills communities for every customer
+// already synced, not just ones who happen to place a new order.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -39,6 +45,34 @@ function cleanCustomerName(raw: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/\S+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+}
+
+// Known society names that contain digits themselves (e.g. "77degree") —
+// without this list those would get misread as already being the door
+// number, leaving nothing valid before it.
+const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
+
+// Society name = everything before the door number, not just the first
+// word. Checks the known SOCIETIES list first (longest match wins, handles
+// names that contain digits themselves), then falls back to every leading
+// purely-alphabetic word up to the first word containing a digit.
+function deriveSociety(customerName: string): string {
+  const name = (customerName || '').trim();
+  if (!name) return name;
+
+  const lower = name.toLowerCase();
+  let bestMatch = '';
+  for (const soc of SOCIETIES) {
+    const socLower = soc.toLowerCase();
+    if ((lower === socLower || lower.startsWith(socLower + ' ')) && soc.length > bestMatch.length) bestMatch = soc;
+  }
+  if (bestMatch) return name.slice(0, bestMatch.length);
+
+  const tokens = name.split(/\s+/);
+  const doorIdx = tokens.findIndex(t => /\d/.test(t));
+  if (doorIdx === -1) return name;
+  if (doorIdx === 0) return tokens[0];
+  return tokens.slice(0, doorIdx).join(' ');
 }
 
 // How many chars in the original already match the cleaned (proper-cased) version.
@@ -131,8 +165,25 @@ Deno.serve(async (req) => {
 
     if (error) throw new Error(`Sync failed: ${error.message}`);
 
+    // Best-effort: backfill communities from every synced customer name.
+    // Never fails the sync — a name-pattern miss shouldn't block it.
+    let communitiesUpserted = 0;
+    try {
+      const societies = [...new Set(
+        rows.map(r => deriveSociety(r.customer_name)).filter(Boolean),
+      )].map(name => ({ name }));
+      if (societies.length) {
+        const { error: commErr } = await supabase
+          .from('communities')
+          .upsert(societies, { onConflict: 'name', ignoreDuplicates: true });
+        if (!commErr) communitiesUpserted = societies.length;
+      }
+    } catch (_e) {
+      // swallow — communities is a nice-to-have, not load-bearing for this sync
+    }
+
     return new Response(
-      JSON.stringify({ synced: rows.length, org_id: orgId }),
+      JSON.stringify({ synced: rows.length, communities: communitiesUpserted, org_id: orgId }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     );
   } catch (err: any) {
