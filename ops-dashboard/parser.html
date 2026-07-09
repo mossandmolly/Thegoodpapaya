@@ -41,6 +41,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    longest label (Generate Selected Invoices) still fits its third of the row
    on a phone screen. */
 .bulk-actions-row button{font-size:11px;padding:10px 4px;line-height:1.25}
+.btn-tomorrow{width:auto;flex:0 0 auto;padding:0 14px;border-radius:10px;border:1.5px solid #f5c896;background:#fdead9;color:#b45f0e;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn-tomorrow:disabled{opacity:0.5;cursor:not-allowed}
 .push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#8a7a6a}
 .push-status.ok{color:#3f7a34}.push-status.err{color:#b3261e}
 .to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px}
@@ -248,7 +250,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div id="fb"></div>
     <div class="section-label">Parsed rows <span id="rc"></span></div>
     <div class="tsv-box" id="tb"></div>
-    <button class="btn-push" id="pushb">📤 Push to Operations</button>
+    <div class="push-row">
+      <button class="btn-push" id="pushb">📤 Push to Operations</button>
+      <button class="btn-tomorrow" id="push-tomorrow">📤→ Tomorrow</button>
+    </div>
     <div class="push-status" id="ps"></div>
     <button class="btn-sec" id="cb">📋 Copy TSV</button>
     <button class="btn-sec" id="xb">🔄 Clear</button>
@@ -824,13 +829,16 @@ xb.addEventListener('click',()=>{
 });
 
 // ── Push to order_items ──────────────────────────────────────────────────────
-const pushb=document.getElementById('pushb'),ps=document.getElementById('ps');
+const pushb=document.getElementById('pushb'),pushTomorrowBtn=document.getElementById('push-tomorrow'),ps=document.getElementById('ps');
 function setPush(msg,cls){ps.textContent=msg;ps.className='push-status'+(cls?' '+cls:'');}
 
 // salesOrderIdFor lets the same push logic target whichever date the
-// operator picked in the entry-date picker, regardless of what date the
-// parse itself detected — same header-create + held-duplicate-check flow
-// either way, just a different sales_order_id per row.
+// operator picked in the entry-date picker (pushb), or a fixed one-click
+// shortcut to tomorrow regardless of the picker (pushTomorrowBtn — used
+// when today's stock is short on an item and the whole freshly-parsed
+// batch should just go straight to tomorrow instead) — same header-create
+// + held-duplicate-check flow either way, just a different sales_order_id
+// per row.
 async function pushRows(rows,salesOrderIdFor){
   // 1. Header row per unique customer — create if missing, never overwrite an existing one
   const headers=new Map();
@@ -897,6 +905,28 @@ pushb.addEventListener('click',async()=>{
     setPush('❌ '+e.message,'err');
     pushb.disabled=false;pushb.textContent='📤 Push to Operations';
   }
+});
+
+pushTomorrowBtn.addEventListener('click',async()=>{
+  const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
+  if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
+  if(!confirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to TOMORROW\'s orders instead of today\'s?'))return;
+  pushTomorrowBtn.disabled=true;pushTomorrowBtn.textContent='Pushing…';setPush('');
+  let ok=false;
+  try{
+    // r.sales_order is <parsed-date>-CustomerName (first 10 chars are the
+    // date) — swap in business-TOMORROW, keep the same customer suffix.
+    // Deliberately ignores the entry-date picker — this is a fixed "send
+    // today's whole batch to tomorrow" shortcut, not tied to it.
+    const{opened,held}=await pushRows(rows,r=>TOMORROW+r.sales_order.slice(10));
+    setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed to tomorrow'+(held?' ('+held+' held as duplicate)':''),'ok');
+    ok=true;
+  }catch(e){
+    setPush('❌ '+e.message,'err');
+  }
+  pushTomorrowBtn.disabled=false;
+  pushTomorrowBtn.textContent=ok?'✅ Pushed':'📤→ Tomorrow';
+  if(ok)setTimeout(()=>{pushTomorrowBtn.textContent='📤→ Tomorrow';},3000);
 });
 
 // ── Today's Orders ──────────────────────────────────────────────────────────
@@ -1168,7 +1198,10 @@ function computeDuplicateItemIds(items){
 // clock crossed 7pm, even though they still needed packing/delivery today.
 let viewDate=CALENDAR_TODAY;
 const VIEW_DATE_MIN=addDays(CALENDAR_TODAY,-15);
-const VIEW_DATE_MAX=addDays(CALENDAR_TODAY,1);
+// Matches ENTRY_DATE_MAX — a future-dated order created via the entry-date
+// picker (e.g. pre-loading a day 5 days out) needs to be reachable here
+// immediately, not just once the calendar actually catches up to it.
+const VIEW_DATE_MAX=ENTRY_DATE_MAX;
 
 function syncViewDatePickers(){
   [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker')].forEach(el=>{
