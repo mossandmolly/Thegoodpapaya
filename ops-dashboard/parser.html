@@ -38,6 +38,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .push-row{display:flex;gap:8px;margin-bottom:10px}
 .push-row .btn-push{width:auto;flex:1;margin-bottom:0}
 .push-row .btn-sec{width:auto;flex:1;margin-bottom:0}
+/* Three bulk actions on one line — smaller text/padding than usual so the
+   longest label (Generate Selected Invoices) still fits its third of the row
+   on a phone screen. */
+.bulk-actions-row button{font-size:11px;padding:10px 4px;line-height:1.25}
 .btn-tomorrow{width:auto;flex:0 0 auto;padding:0 14px;border-radius:10px;border:1.5px solid #f5c896;background:#fdead9;color:#b45f0e;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
 .btn-tomorrow:disabled{opacity:0.5;cursor:not-allowed}
 .push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#8a7a6a}
@@ -203,8 +207,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="top-header">
   <div class="logo">good<span>papaya</span> · parser</div>
   <div class="top-header-actions">
-    <button class="header-btn" id="to-sync-catalog">💰 Catalog</button>
-    <button class="header-btn" id="sync-customers">👥 Customers</button>
     <span class="tomorrow-pill" id="tomorrow-pill" onclick="toggleTomorrowView()">Tomorrow</span>
     <a class="signout-link" onclick="signOut()">Sign out</a>
   </div>
@@ -213,11 +215,15 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
   <button class="tab" onclick="switchTab('today')">📋 Today's Orders</button>
   <button class="tab" onclick="switchTab('packer')">📦 Packer</button>
-  <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
 </div>
 
 <!-- PARSER -->
 <div class="panel active" id="panel-parser">
+  <div class="push-row" style="margin-bottom:14px">
+    <button class="header-btn" id="to-sync-catalog">💰 Catalog</button>
+    <button class="header-btn" id="sync-customers">👥 Customers</button>
+    <button class="header-btn" onclick="switchTab('config')">⚙️ Config</button>
+  </div>
   <div class="section-label">📸 Upload &amp; Parse</div>
   <div class="drop-zone" id="dz">
     <input type="file" id="fi" accept="image/*" multiple>
@@ -257,8 +263,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <!-- TODAY'S ORDERS -->
 <div class="panel" id="panel-today">
   <div class="section-label"><span id="to-label">Today's orders</span> <span id="to-rc"></span></div>
-  <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:8px" disabled>🧾 Generate Selected Invoices (0)</button>
-  <div class="push-row" style="margin-bottom:12px">
+  <div class="push-row bulk-actions-row" style="margin-bottom:12px">
+    <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Selected Invoices (0)</button>
     <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
     <button class="btn-sec cancel-link" id="to-bulk-cancel" disabled>🚫 Cancel Selected (0)</button>
   </div>
@@ -460,7 +466,7 @@ let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orang
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','today','packer','config'][i]===name));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','today','packer'][i]===name));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='config')renderConfig();
@@ -891,6 +897,7 @@ async function syncCustomers(){
 
 const syncCustomersBtn=document.getElementById('sync-customers');
 syncCustomersBtn.addEventListener('click',async()=>{
+  if(!confirm('Sync customers from Zoho now?'))return;
   syncCustomersBtn.disabled=true;syncCustomersBtn.textContent='Syncing…';
   try{
     const{synced}=await syncCustomers();
@@ -1545,6 +1552,7 @@ async function ensureCatalogSyncedToday(){
 
 const syncCatalogBtn=document.getElementById('to-sync-catalog');
 syncCatalogBtn.addEventListener('click',async()=>{
+  if(!confirm('Sync catalog prices from Zoho now?'))return;
   syncCatalogBtn.disabled=true;syncCatalogBtn.textContent='Syncing…';
   try{
     const{synced}=await syncCatalog();
