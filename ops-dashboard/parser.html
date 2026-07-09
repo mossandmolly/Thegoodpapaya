@@ -86,6 +86,16 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .item-pill.status-invoiced{background:#e5f3e3;border-color:#bfe0b8;color:#3f7a34}
 .item-pill.dup-item{color:#b3261e;font-weight:700}
 .item-pill.status-cancelled{background:#f1efec;border-color:#e0dad0;color:#a39a8c;text-decoration:line-through}
+/* Order-level summary badge — same hues as the item pills above, but as a
+   solid dark fill (the pill text colors, promoted to backgrounds) with
+   white text so the overall order status reads at a glance instead of
+   needing to scan every item pill. */
+.order-status-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff}
+.order-status-badge.status-open{background:#a8860a}
+.order-status-badge.status-held{background:#b45f0e}
+.order-status-badge.status-packed{background:#2f6690}
+.order-status-badge.status-final{background:#6b3fa0}
+.order-status-badge.status-invoiced{background:#2d6b2d}
 .order-cancelled{opacity:0.75}
 .cancelled-badge{background:#726a60;color:#ffffff;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
 .inv-select{vertical-align:middle;margin-right:2px}
@@ -1245,11 +1255,13 @@ function renderOrdersList(){
         // round-tripped through invalidate-order-invoice can't leave this
         // showing a payment link for an amount that's now stale.
         const fullyInvoiced=isFullyInvoiced(order);
+        const overallStatus=cancelled?null:orderOverallStatus(order);
         return '<div class="order-row'+(cancelled?' order-cancelled':'')+'">'+
           '<div class="or-top"><span class="or-cust">'+
             (!cancelled?'<input type="checkbox" class="inv-select" '+(selectedOrders.has(order.soid)?'checked ':'')+'onchange="toggleOrderSelect('+escH(JSON.stringify(order.soid))+',this.checked)"> ':'')+
             escH(order.customer)+
             (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
+            (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
             (!cancelled&&fullyInvoiced?(order.razorpayUrl
               ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
               :' <span class="pay-missing">Payment link not generated</span>'
@@ -1649,6 +1661,19 @@ function isReadyToInvoice(order){
 // still needs a fresh/updated invoice.
 function isFullyInvoiced(order){
   return !!(order&&order.items.length&&order.items.every(i=>i.status==='invoiced'));
+}
+
+// Order-level status badge = the least-advanced status among its non-
+// cancelled items (open < held < packed < final < invoiced) — an order is
+// only as far along as its slowest item, so that's what the card should
+// summarize at a glance. Returns null when there's nothing to show one for
+// (no non-cancelled items).
+const ITEM_STATUS_RANK={open:0,held:1,packed:2,final:3,invoiced:4};
+const ITEM_STATUS_LABEL={open:'Open',held:'Held',packed:'Packed',final:'Final',invoiced:'Invoiced'};
+function orderOverallStatus(order){
+  const active=(order&&order.items||[]).filter(i=>i.status!=='cancelled');
+  if(!active.length)return null;
+  return active.reduce((worst,i)=>ITEM_STATUS_RANK[i.status]<ITEM_STATUS_RANK[worst]?i.status:worst,active[0].status);
 }
 
 // One shared checkbox selection drives all three bulk actions — each button
