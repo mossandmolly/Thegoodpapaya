@@ -1446,7 +1446,7 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
   // to skip the pack cycle entirely and mark it ready to invoice on the
   // typed-in quantity alone, with nobody ever verifying it was packed).
   const order=currentOrdersById[aiTargetOrder];
-  const orderWasInvoiced=order&&order.items.length&&order.items.every(i=>i.status==='invoiced');
+  const orderWasInvoiced=isFullyInvoiced(order);
   const row={
     sales_order_id: aiTargetOrder,
     item_name:      itemName,
@@ -1668,20 +1668,30 @@ function toggleSocietySelectAll(soids,checked){
   renderOrdersList();
 }
 
-// True only while there's actually something to invoice: nothing left
-// open/held/packed, AND at least one item not yet 'invoiced'. Once every
-// item reads 'invoiced' the last invoice already covers the order exactly
-// as it stands, so there's nothing left to (re)generate.
-function isReadyToInvoice(order){
-  return !!(order&&order.items.length&&order.items.every(i=>i.status==='final'||i.status==='invoiced')&&!isFullyInvoiced(order));
+// Cancelled items are excluded everywhere below — a cancelled line item is
+// permanently done and should never block (or count toward) the rest of
+// the order being ready to invoice, otherwise a single deleted/cancelled
+// item would freeze an otherwise-fully-final order forever.
+function activeItems(order){
+  return (order&&order.items||[]).filter(i=>i.status!=='cancelled');
 }
 
-// Every item actually invoiced, none still sitting at 'final' — driven by
-// the freshly-fetched order_items pipeline, not the (cached) orders row's
-// invoice_status, so a payment link can never be offered for an order that
-// still needs a fresh/updated invoice.
+// True only while there's actually something to invoice: nothing left
+// open/held/packed, AND at least one item not yet 'invoiced'. Once every
+// (non-cancelled) item reads 'invoiced' the last invoice already covers the
+// order exactly as it stands, so there's nothing left to (re)generate.
+function isReadyToInvoice(order){
+  const active=activeItems(order);
+  return !!(active.length&&active.every(i=>i.status==='final'||i.status==='invoiced')&&!isFullyInvoiced(order));
+}
+
+// Every non-cancelled item actually invoiced, none still sitting at 'final'
+// — driven by the freshly-fetched order_items pipeline, not the (cached)
+// orders row's invoice_status, so a payment link can never be offered for
+// an order that still needs a fresh/updated invoice.
 function isFullyInvoiced(order){
-  return !!(order&&order.items.length&&order.items.every(i=>i.status==='invoiced'));
+  const active=activeItems(order);
+  return !!(active.length&&active.every(i=>i.status==='invoiced'));
 }
 
 // Order-level status badge = the least-advanced status among its non-
@@ -1692,7 +1702,7 @@ function isFullyInvoiced(order){
 const ITEM_STATUS_RANK={open:0,held:1,packed:2,final:3,invoiced:4};
 const ITEM_STATUS_LABEL={open:'Open',held:'Held',packed:'Packed- not Final',final:'Final',invoiced:'Invoiced',cancelled:'Cancelled'};
 function orderOverallStatus(order){
-  const active=(order&&order.items||[]).filter(i=>i.status!=='cancelled');
+  const active=activeItems(order);
   if(!active.length)return null;
   return active.reduce((worst,i)=>ITEM_STATUS_RANK[i.status]<ITEM_STATUS_RANK[worst]?i.status:worst,active[0].status);
 }
