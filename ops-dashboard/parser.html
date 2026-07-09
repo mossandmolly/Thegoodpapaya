@@ -1440,19 +1440,19 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
   if(!itemName){alert('Choose an item');return;}
   if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
   if(!confirm('Add '+itemName+' × '+qty+' to this order?'))return;
-  // Adding to an order that's already fully invoiced is treated the same as
-  // editing an invoiced item — goes straight in as final/blue with this qty
-  // as its final_quantity, so "generate invoice" re-enables immediately
-  // instead of needing a full pack cycle first.
+  // Always enters as 'open', however far along the rest of the order is —
+  // a newly added item hasn't actually been packed yet, so it can't be
+  // assumed final just because the order was already invoiced (that used
+  // to skip the pack cycle entirely and mark it ready to invoice on the
+  // typed-in quantity alone, with nobody ever verifying it was packed).
   const order=currentOrdersById[aiTargetOrder];
   const orderWasInvoiced=order&&order.items.length&&order.items.every(i=>i.status==='invoiced');
   const row={
     sales_order_id: aiTargetOrder,
     item_name:      itemName,
     requested_quantity: qty,
-    status:         orderWasInvoiced?'final':'open',
+    status:         'open',
   };
-  if(orderWasInvoiced)row.final_quantity=qty;
   if(orderWasInvoiced)await invalidateOrderInvoiceIfNeeded(aiTargetOrder);
 
   // Adding an item to a cancelled order reopens it: order goes back to
