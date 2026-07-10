@@ -10,7 +10,8 @@
 // session (that bucket's policies allow any signed-in session to do so);
 // this function only records the resulting path against the order.
 //
-// Input:  { sales_order_id: string, delivered: boolean, notes?: string, photo_path?: string }
+// Input:  { sales_order_id: string, delivered: boolean, notes?: string, photo_path?: string,
+//           payment_collected?: boolean, payment_collected_method?: 'cash'|'online'|null }
 // Output: { sales_order_id, delivery_status, delivered_at }
 //
 // Required env vars:
@@ -51,15 +52,22 @@ Deno.serve(async (req) => {
 
   try {
     await requireAuth(req);
-    const { sales_order_id, delivered, notes, photo_path } = await req.json();
+    const { sales_order_id, delivered, notes, photo_path, payment_collected, payment_collected_method } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
     if (typeof delivered !== 'boolean') throw new Error('Missing delivered (boolean)');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
+    // payment_collected/_method/_at travel with delivered_at, not with
+    // notes/photo — un-marking a delivery means the payment the rider
+    // claimed to have collected at that (now-undone) delivery is undone
+    // too, whereas a remark/photo already attached stays as history.
     const update: Record<string, unknown> = {
-      delivery_status: delivered ? 'delivered' : 'pending',
-      delivered_at:    delivered ? new Date().toISOString() : null,
+      delivery_status:           delivered ? 'delivered' : 'pending',
+      delivered_at:              delivered ? new Date().toISOString() : null,
+      payment_collected:         delivered ? !!payment_collected : false,
+      payment_collected_method:  delivered && payment_collected ? (payment_collected_method || null) : null,
+      payment_collected_at:      delivered && payment_collected ? new Date().toISOString() : null,
     };
     // Only touch notes/photo when actually provided, so un-marking a
     // delivery (delivered: false) doesn't wipe out a remark/photo that was
@@ -71,7 +79,7 @@ Deno.serve(async (req) => {
       .from('orders')
       .update(update)
       .eq('sales_order_id', sales_order_id)
-      .select('sales_order_id, delivery_status, delivered_at')
+      .select('sales_order_id, delivery_status, delivered_at, payment_collected, payment_collected_method')
       .single();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);

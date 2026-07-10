@@ -103,6 +103,24 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-phone:hover{text-decoration:underline}
 .dv-notes{font-size:12px;color:#5c4f42;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;margin-bottom:10px;white-space:pre-wrap}
 .dv-notes-edit textarea{width:100%;padding:8px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:12px;color:#2b2320;font-family:inherit;margin-bottom:6px;background:#ffffff;resize:vertical}
+.dv-item-table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:12px}
+.dv-item-table td{padding:6px 4px;border-bottom:1px solid #f5efe6;color:#2b2320;vertical-align:top}
+.dv-item-table td:last-child{text-align:right;white-space:nowrap;font-weight:600}
+.dv-item-table tr:last-of-type td{border-bottom:none}
+.dv-item-nd{display:block;font-size:10px;color:#b3261e;cursor:pointer;text-decoration:none;margin-top:2px}
+.dv-item-nd:hover{text-decoration:underline}
+.dv-free-badge{font-size:9px;font-weight:700;color:#3f7a34;background:#e5f3e3;border-radius:4px;padding:1px 5px}
+.dv-total-row td{font-weight:700;font-size:14px;color:#ffffff;background:#e8720c;padding:8px 6px}
+.dv-total-row td:first-child{border-radius:6px 0 0 6px}
+.dv-total-row td:last-child{border-radius:0 6px 6px 0}
+.dv-qr-block{display:flex;flex-direction:column;align-items:center;gap:6px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:10px}
+.dv-qr-label{font-size:12px;font-weight:600;color:#5c4f42}
+.dv-pay-toggle{display:flex;gap:8px;margin-bottom:10px}
+.dv-pay-btn{flex:1;padding:9px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
+.dv-pay-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
+.dv-cash-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#5c4f42;margin-bottom:12px}
+.dv-cash-row.hidden{display:none}
+.dv-cash-row input{width:auto;margin:0}
 .inv-select{vertical-align:middle;margin-right:2px}
 .pill-x{background:none;border:none;cursor:pointer;font-size:12px;line-height:1;padding:2px;color:inherit;opacity:0.6}
 .pill-x:hover{opacity:1}
@@ -325,6 +343,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="modal-overlay hidden" id="dv-modal">
   <div class="modal-box">
     <h3>Mark delivered</h3>
+    <label class="modal-label">Payment</label>
+    <div class="dv-pay-toggle">
+      <button type="button" class="dv-pay-btn" id="dv-pay-unpaid" onclick="setDvPaymentChoice(false)">Delivered — Not Paid</button>
+      <button type="button" class="dv-pay-btn" id="dv-pay-paid" onclick="setDvPaymentChoice(true)">Delivered &amp; Paid</button>
+    </div>
+    <label class="dv-cash-row hidden" id="dv-cash-row">
+      <input type="checkbox" id="dv-cash-toggle"> Paid in cash
+    </label>
     <label class="modal-label">Remarks (optional)</label>
     <textarea id="dv-notes" rows="3" placeholder="e.g. left at gate, handed to security..."></textarea>
     <label class="modal-label">Photo (optional)</label>
@@ -450,6 +476,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<!-- Renders the Razorpay payment link as a scannable QR on the Delivery card
+     entirely client-side (canvas), so the link itself is never sent to a
+     third-party QR-image API. -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script>
 const SUPABASE_URL  = 'https://fykqprogzqcfzrgwlrem.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5a3Fwcm9nenFjZnpyZ3dscmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NDkzMzEsImV4cCI6MjA5MTIyNTMzMX0.FseaaYNbN-QLhzdQF5rcImLvvoWRHOiGcZcbiFaIplQ';
@@ -1241,7 +1271,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,delivery_status,delivered_at,delivery_notes,delivery_photo_path')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -1577,6 +1607,8 @@ function lookupInvoiceStatus(salesOrderId){
   if(fromToday)return fromToday.invoiceStatus;
   const fromPacker=packerCustomerMap[salesOrderId];
   if(fromPacker)return fromPacker.invoice_status;
+  const fromDelivery=deliveryOrders[salesOrderId];
+  if(fromDelivery)return fromDelivery.invoiceStatus;
   return null;
 }
 
@@ -1668,7 +1700,10 @@ attachItemAutocomplete(aiItemSel,aiItemAc);
 
 async function ensureCatalogItems(){
   if(catalogItems)return catalogItems;
-  const{data,error}=await sb.from('catalog').select('item_name,unit').order('item_name');
+  // unit_price is only used by the Delivery tab (per-item amount + total),
+  // but it's harmless to carry along for every other caller of this shared,
+  // session-cached fetch too.
+  const{data,error}=await sb.from('catalog').select('item_name,unit,unit_price').order('item_name');
   if(error)throw new Error('Could not load catalog: '+error.message);
   catalogItems=data||[];
   return catalogItems;
@@ -2333,6 +2368,12 @@ async function markFinal(id){
 let deliveryOrders={};
 let revealedPhones=new Set();
 let dvEditingNotes=null;
+let deliveryCatalogByItem={};
+
+// Same rule generate-invoice bills at ₹0 by — an item whose description
+// flags it as a replacement/free sample shouldn't show a rate/amount that
+// contradicts what actually gets billed.
+const FREE_ITEM_RE=/\b(replacement|free sample|free)\b/i;
 
 async function loadDeliveryView(){
   const list=document.getElementById('dv-list');
@@ -2345,7 +2386,13 @@ async function loadDeliveryView(){
   // (rather than fetching everything and filtering client-side like Today's
   // Orders does) keeps this view's own isFullyInvoiced check accurate
   // without needing activeItems as a second pass.
-  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%').neq('status','cancelled'));
+  const[{data,error},catalog]=await Promise.all([
+    fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%').neq('status','cancelled')),
+    ensureCatalogItems().catch(e=>{console.error(e);return[];}),
+  ]);
+  deliveryCatalogByItem={};
+  (catalog||[]).forEach(c=>{deliveryCatalogByItem[c.item_name.toLowerCase()]={unit:c.unit||'',rate:c.unit_price||0};});
+
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
   if(!data||!data.length){
     deliveryOrders={};
@@ -2364,13 +2411,18 @@ async function loadDeliveryView(){
     if(!bySalesOrder[key]){
       const o=customerMap[key];
       bySalesOrder[key]={
-        customer:          o?.customer_name||key,
-        phone:             o?.phone||null,
-        orderStatus:       o?.status||'active',
-        deliveryStatus:    o?.delivery_status||'pending',
-        deliveredAt:       o?.delivered_at||null,
-        deliveryNotes:     o?.delivery_notes||null,
-        deliveryPhotoPath: o?.delivery_photo_path||null,
+        customer:              o?.customer_name||key,
+        phone:                 o?.phone||null,
+        orderStatus:           o?.status||'active',
+        invoiceStatus:         o?.invoice_status||null,
+        invoiceTotal:          o?.invoice_total??null,
+        razorpayUrl:           o?.razorpay_url||null,
+        deliveryStatus:        o?.delivery_status||'pending',
+        deliveredAt:           o?.delivered_at||null,
+        deliveryNotes:         o?.delivery_notes||null,
+        deliveryPhotoPath:     o?.delivery_photo_path||null,
+        paymentCollected:      !!o?.payment_collected,
+        paymentCollectedMethod:o?.payment_collected_method||null,
         items:[],
       };
     }
@@ -2384,6 +2436,18 @@ async function loadDeliveryView(){
 
   deliveryOrders=bySalesOrder;
   renderDeliveryList();
+}
+
+// qty*rate per item, ₹0 for anything description-flagged as free/replacement
+// — mirrors generate-invoice's own FREE_ITEM_RE so the amount shown here
+// doesn't disagree with what was actually billed. Returns null (shown as
+// "—") only if the item name isn't in the catalog at all.
+function deliveryItemAmount(item){
+  if(FREE_ITEM_RE.test(item.description||''))return 0;
+  const cat=deliveryCatalogByItem[item.item_name.toLowerCase()];
+  if(!cat)return null;
+  const qty=item.final_quantity??item.requested_quantity;
+  return qty*cat.rate;
 }
 
 // Display-level mask only — cosmetic, not a hardened secret (the full
@@ -2454,6 +2518,8 @@ function renderDeliveryList(){
     return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
       orders.map(order=>renderDeliveryCard(order)).join('');
   }).join('');
+
+  renderDeliveryQrCodes(socNames.flatMap(soc=>bySociety[soc]));
 }
 
 function renderDeliveryCard(order){
@@ -2481,14 +2547,55 @@ function renderDeliveryCard(order){
       :'<div class="or-links" style="margin-bottom:10px"><a class="or-link" onclick="editDeliveryInstructions(\''+order.soid+'\')">+ add delivery instructions</a></div>'
     );
 
+  // Item list as a compact table (qty + amount), not pills — a delivery
+  // card needs to double as a bill summary, pills don't carry a column for
+  // that. Each row also carries a "not delivered" escape hatch for a
+  // spoiled/refused item without having to undo the whole order.
+  const computedTotal=order.items.reduce((sum,item)=>sum+(deliveryItemAmount(item)||0),0);
+  const total=order.invoiceTotal!=null?order.invoiceTotal:computedTotal;
+  const itemsTable=
+    '<table class="dv-item-table"><tbody>'+
+      order.items.map(item=>{
+        const qty=item.final_quantity??item.requested_quantity;
+        const cat=deliveryCatalogByItem[item.item_name.toLowerCase()];
+        const amount=deliveryItemAmount(item);
+        const isFree=FREE_ITEM_RE.test(item.description||'');
+        return '<tr>'+
+          '<td>'+escH(item.item_name)+
+            '<a class="dv-item-nd" onclick="markItemNotDelivered(\''+item.id+'\',\''+order.soid+'\')">✕ not delivered</a>'+
+          '</td>'+
+          '<td>'+qty+' '+escH(cat?.unit||'')+'</td>'+
+          '<td>'+(isFree?'<span class="dv-free-badge">FREE</span>':(amount==null?'—':'₹'+amount.toFixed(0)))+'</td>'+
+        '</tr>';
+      }).join('')+
+      '<tr class="dv-total-row"><td colspan="2">Total</td><td>₹'+total.toFixed(0)+'</td></tr>'+
+    '</tbody></table>';
+
+  // Only worth showing while there's still money to collect — once the
+  // rider's confirmed payment, or there's no payment link on file at all,
+  // a scan-to-pay QR has nothing to add.
+  const qrBlock=(order.razorpayUrl&&!order.paymentCollected)
+    ?'<div class="dv-qr-block">'+
+        '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+'</div>'+
+        '<canvas id="dv-qr-'+order.soid+'"></canvas>'+
+        '<a class="or-link" href="'+escH(order.razorpayUrl)+'" target="_blank">or open payment link</a>'+
+      '</div>'
+    :'';
+
+  const paymentBadge=delivered
+    ?(order.paymentCollected
+      ?' <span class="order-status-badge" style="background:#2f6690">PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
+      :' <span class="order-status-badge" style="background:#b3261e">NOT PAID</span>')
+    :'';
+
   return '<div class="order-row'+(delivered?' dv-delivered':'')+'">'+
     '<div class="or-top"><span class="or-cust">'+escH(order.customer)+
       (delivered?' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>':'')+
+      paymentBadge+
     '</span></div>'+
     '<div class="dv-phone-row">📞 '+phoneDisplay+'</div>'+
-    '<div class="or-pills">'+order.items.map(item=>
-      '<span class="item-pill status-'+item.status+'">'+escH(item.item_name)+' × '+(item.final_quantity??item.requested_quantity)+'</span>'
-    ).join('')+'</div>'+
+    itemsTable+
+    qrBlock+
     notesBlock+
     (delivered&&order.deliveryNotes?'<div class="dv-notes">📝 '+escH(order.deliveryNotes)+'</div>':'')+
     '<div class="or-actions"><span class="or-count">'+order.items.length+' item'+(order.items.length!==1?'s':'')+'</span>'+
@@ -2501,6 +2608,39 @@ function renderDeliveryCard(order){
   '</div>';
 }
 
+// One canvas per order that still needs a QR (see qrBlock above) — has to
+// run after the innerHTML swap since the canvas elements don't exist until
+// then. QRCode comes from the qrcode.js CDN script tag in <head>.
+function renderDeliveryQrCodes(orders){
+  orders.forEach(order=>{
+    if(!order.razorpayUrl||order.paymentCollected)return;
+    const canvas=document.getElementById('dv-qr-'+order.soid);
+    if(!canvas||typeof QRCode==='undefined')return;
+    QRCode.toCanvas(canvas,order.razorpayUrl,{width:140,margin:1},err=>{
+      if(err)console.error('QR render failed for',order.soid,err);
+    });
+  });
+}
+
+// Cancels the one item (soft — matches deleteItem's philosophy, never hard-
+// delete) with the rider's reason appended to its description, and — since
+// this only ever fires on an already-invoiced order — invalidates the
+// existing Zoho invoice first so the remaining items fall back to 'final'.
+// That's what makes "generate invoice" reappear on Today's Orders as the
+// cue for an admin to regenerate it without this item.
+async function markItemNotDelivered(itemId,soid){
+  const reason=prompt('Reason this item was not delivered (e.g. spoiled, customer refused):');
+  if(reason===null)return;
+  if(!reason.trim()){alert('Enter a reason');return;}
+  if(!confirm('Mark this item as not delivered? It will be cancelled and the order will need its invoice regenerated.'))return;
+  await invalidateOrderInvoiceIfNeeded(soid);
+  const item=(deliveryOrders[soid]?.items||[]).find(i=>i.id===itemId);
+  const description=appendAddendum(item?.description,'Not delivered: '+reason.trim());
+  const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',itemId);
+  if(error){alert('Failed to update item: '+error.message);return;}
+  await loadDeliveryView();
+}
+
 document.getElementById('dv-search').addEventListener('input',()=>{
   renderDeliveryList();
 });
@@ -2508,11 +2648,24 @@ document.getElementById('dv-search').addEventListener('input',()=>{
 // ── Mark delivered modal ─────────────────────────────────────────────────
 const dvModal=document.getElementById('dv-modal'),dvNotesEl=document.getElementById('dv-notes'),dvPhotoInput=document.getElementById('dv-photo');
 let dvTargetOrder=null;
+let dvPaymentCollected=false;
+
+// Defaults to "Not Paid" every time the modal opens — the rider has to
+// actively toggle to "Paid", rather than a stray tap silently recording
+// payment that was never actually collected.
+function setDvPaymentChoice(paid){
+  dvPaymentCollected=paid;
+  document.getElementById('dv-pay-unpaid').classList.toggle('active',!paid);
+  document.getElementById('dv-pay-paid').classList.toggle('active',paid);
+  document.getElementById('dv-cash-row').classList.toggle('hidden',!paid);
+  if(!paid)document.getElementById('dv-cash-toggle').checked=false;
+}
 
 function openMarkDeliveredModal(soid){
   dvTargetOrder=soid;
   dvNotesEl.value='';
   dvPhotoInput.value='';
+  setDvPaymentChoice(false);
   dvModal.classList.remove('hidden');
 }
 
@@ -2523,6 +2676,8 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
   if(!soid)return;
   const notes=dvNotesEl.value.trim();
   const file=dvPhotoInput.files[0];
+  const paymentCollected=dvPaymentCollected;
+  const paymentMethod=paymentCollected?(document.getElementById('dv-cash-toggle').checked?'cash':'online'):null;
   const confirmBtn=document.getElementById('dv-confirm');
   confirmBtn.disabled=true;
   confirmBtn.textContent='Saving…';
@@ -2540,7 +2695,7 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
     const res=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:soid,delivered:true,notes,photo_path:photoPath}),
+      body:JSON.stringify({sales_order_id:soid,delivered:true,notes,photo_path:photoPath,payment_collected:paymentCollected,payment_collected_method:paymentMethod}),
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not mark delivered');
