@@ -1,16 +1,16 @@
 // Supabase Edge Function — mark-delivered
 //
-// Toggles an order's delivery status, with an optional remark and photo
-// path captured at the same time. orders' RLS locks writes to
+// Toggles an order's delivery status, with an optional remark and one or
+// more photos captured at the same time. orders' RLS locks writes to
 // service-role only, so this is the write path for the Delivery tab —
 // same pattern as every other orders mutation in this app.
 //
-// The photo itself is uploaded directly from the frontend to the
+// The photos themselves are uploaded directly from the frontend to the
 // "delivery-photos" Storage bucket using the caller's own authenticated
 // session (that bucket's policies allow any signed-in session to do so);
-// this function only records the resulting path against the order.
+// this function only records the resulting paths against the order.
 //
-// Input:  { sales_order_id: string, delivered: boolean, notes?: string, photo_path?: string,
+// Input:  { sales_order_id: string, delivered: boolean, notes?: string, photo_paths?: string[],
 //           payment_collected?: boolean, payment_collected_method?: 'cash'|'online'|null }
 // Output: { sales_order_id, delivery_status, delivered_at }
 //
@@ -52,16 +52,16 @@ Deno.serve(async (req) => {
 
   try {
     await requireAuth(req);
-    const { sales_order_id, delivered, notes, photo_path, payment_collected, payment_collected_method } = await req.json();
+    const { sales_order_id, delivered, notes, photo_paths, payment_collected, payment_collected_method } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
     if (typeof delivered !== 'boolean') throw new Error('Missing delivered (boolean)');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
     // payment_collected/_method/_at travel with delivered_at, not with
-    // notes/photo — un-marking a delivery means the payment the rider
+    // notes/photos — un-marking a delivery means the payment the rider
     // claimed to have collected at that (now-undone) delivery is undone
-    // too, whereas a remark/photo already attached stays as history.
+    // too, whereas remarks/photos already attached stay as history.
     const update: Record<string, unknown> = {
       delivery_status:           delivered ? 'delivered' : 'pending',
       delivered_at:              delivered ? new Date().toISOString() : null,
@@ -69,11 +69,11 @@ Deno.serve(async (req) => {
       payment_collected_method:  delivered && payment_collected ? (payment_collected_method || null) : null,
       payment_collected_at:      delivered && payment_collected ? new Date().toISOString() : null,
     };
-    // Only touch notes/photo when actually provided, so un-marking a
-    // delivery (delivered: false) doesn't wipe out a remark/photo that was
+    // Only touch notes/photos when actually provided, so un-marking a
+    // delivery (delivered: false) doesn't wipe out remarks/photos that were
     // already attached — those stay as history until explicitly replaced.
-    if (notes !== undefined)      update.delivery_notes = notes || null;
-    if (photo_path !== undefined) update.delivery_photo_path = photo_path || null;
+    if (notes !== undefined)       update.delivery_notes = notes || null;
+    if (photo_paths !== undefined) update.delivery_photo_paths = photo_paths || [];
 
     const { data, error } = await supabase
       .from('orders')

@@ -117,7 +117,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-qr-block{display:flex;flex-direction:column;align-items:center;gap:6px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:10px}
 .dv-qr-label{font-size:12px;font-weight:600;color:#5c4f42}
 .dv-qr-block img{border-radius:8px;background:#ffffff}
-.dv-photo-thumb{width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid #eee0d0;margin-bottom:10px}
+.dv-photo-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.dv-photo-thumb{width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid #eee0d0}
+.dv-scope-tabs,.dv-status-tabs{display:flex;gap:8px;margin-bottom:10px}
+.dv-scope-btn,.dv-status-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
+.dv-scope-btn.active,.dv-status-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
+.dv-assigned-tag{font-size:10px;font-weight:600;color:#8a7a6a;margin-left:6px}
+.dv-cancelled-card{opacity:0.7}
+.dv-cancelled-items{font-size:12px;color:#8a7a6a;text-decoration:line-through}
+.rider-badge{font-size:12px;color:#5c4f42;cursor:pointer;margin-right:14px}
+.rider-badge:hover{text-decoration:underline}
+.rider-badge.hidden{display:none}
 .dv-pay-toggle{display:flex;gap:8px;margin-bottom:10px}
 .dv-pay-btn{flex:1;padding:9px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
 .dv-pay-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
@@ -249,6 +259,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="top-header">
   <div class="logo">good<span>papaya</span> · parser</div>
   <div class="top-header-actions">
+    <span class="rider-badge hidden" id="rider-badge" onclick="changeRiderName()"></span>
     <a class="signout-link" onclick="signOut()">Sign out</a>
   </div>
 </div>
@@ -338,7 +349,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <span><span id="dv-label">Delivery</span> <span id="dv-rc"></span></span>
     <input type="date" class="date-picker-compact" id="dv-date-picker" onchange="setViewDate(this.value)">
   </div>
+  <div class="dv-scope-tabs">
+    <button class="dv-scope-btn active" id="dv-scope-all" onclick="setDeliveryScope('all')">All orders</button>
+    <button class="dv-scope-btn" id="dv-scope-mine" onclick="setDeliveryScope('mine')">My orders</button>
+  </div>
+  <div class="dv-status-tabs">
+    <button class="dv-status-btn active" id="dv-status-pending" onclick="setDeliveryStatusFilter('pending')">Pending</button>
+    <button class="dv-status-btn" id="dv-status-delivered" onclick="setDeliveryStatusFilter('delivered')">Delivered</button>
+  </div>
   <input type="text" class="pk-search" id="dv-search" placeholder="🔍 Search society or customer...">
+  <div class="push-row bulk-actions-row hidden" id="dv-assign-row" style="margin-bottom:12px">
+    <button class="btn-push" id="dv-assign-me" disabled>🙋 Assign to me (0)</button>
+  </div>
   <div id="dv-list"><div class="to-empty">Loading…</div></div>
 </div>
 
@@ -356,8 +378,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </label>
     <label class="modal-label">Remarks (optional)</label>
     <textarea id="dv-notes" rows="3" placeholder="e.g. left at gate, handed to security..."></textarea>
-    <label class="modal-label">Photo (optional)</label>
-    <input type="file" id="dv-photo" accept="image/*" capture="environment">
+    <label class="modal-label">Photos (optional)</label>
+    <input type="file" id="dv-photo" accept="image/*" capture="environment" multiple>
     <div class="modal-actions">
       <button class="btn-sec" id="dv-cancel" style="margin-bottom:0">Cancel</button>
       <button class="btn-parse" id="dv-confirm" style="margin-bottom:0">Confirm Delivered</button>
@@ -529,6 +551,42 @@ async function authToken(){
 // keeps the normal workflow confined to the one relevant tab.
 let isDeliveryRole=false;
 
+// The delivery login is one shared account across every rider — there's no
+// per-person auth to tell them apart, so instead each rider types their own
+// name once into their own device/browser and it's remembered from then on
+// (localStorage, not a real device ID — the browser has no API for one, and
+// this is a fine stand-in since each rider consistently uses the same
+// phone). That name is what "assign to me" and the top-right badge use.
+const RIDER_NAME_KEY='gp_rider_name';
+let riderName=localStorage.getItem(RIDER_NAME_KEY)||null;
+
+function ensureRiderName(){
+  if(!riderName){
+    const entered=(prompt('Your name (so the app remembers who you are on this device):')||'').trim();
+    if(entered){
+      riderName=entered;
+      localStorage.setItem(RIDER_NAME_KEY,riderName);
+    }
+  }
+  renderRiderBadge();
+}
+
+function changeRiderName(){
+  const entered=(prompt('Your name:',riderName||'')||'').trim();
+  if(!entered)return;
+  riderName=entered;
+  localStorage.setItem(RIDER_NAME_KEY,riderName);
+  renderRiderBadge();
+  if(document.getElementById('panel-delivery').classList.contains('active'))renderDeliveryList();
+}
+
+function renderRiderBadge(){
+  const el=document.getElementById('rider-badge');
+  if(!el)return;
+  el.textContent=riderName?('👤 '+riderName):'';
+  el.classList.toggle('hidden',!riderName);
+}
+
 function applyRoleRestrictions(){
   if(!isDeliveryRole)return;
   ['tab-parser','tab-today','tab-packer'].forEach(id=>{
@@ -546,6 +604,7 @@ async function initAppAfterLogin(){
   const{data:{session}}=await sb.auth.getSession();
   isDeliveryRole=session?.user?.user_metadata?.role==='delivery';
   applyRoleRestrictions();
+  ensureRiderName();
   syncViewDatePickers();
   syncEntryDatePicker();
 
@@ -1295,7 +1354,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -2386,18 +2445,28 @@ async function markFinal(id){
 }
 
 // ── Delivery ──────────────────────────────────────────────────────────────
-// An order only shows up here once it's fully invoiced — that's the signal
-// it's actually ready for the delivery boy to start bagging, same gate used
-// to offer the payment link on Today's Orders (isFullyInvoiced).
+// An order shows up here once it's fully invoiced (isFullyInvoiced, same
+// gate used to offer the payment link on Today's Orders) OR once it's been
+// cancelled outright — a whole-order cancellation still needs to be visible
+// to a rider who might already be en route, same as Today's Orders shows a
+// cancelled order rather than just hiding it.
 let deliveryOrders={};
 let revealedPhones=new Set();
 let dvEditingNotes=null;
 let deliveryCatalogByItem={};
+let deliveryScope='all'; // 'all' | 'mine'
+let deliveryStatusFilter='pending'; // 'pending' | 'delivered'
+let selectedDeliveryOrders=new Set();
 
 // Same rule generate-invoice bills at ₹0 by — an item whose description
 // flags it as a replacement/free sample shouldn't show a rate/amount that
 // contradicts what actually gets billed.
 const FREE_ITEM_RE=/\b(replacement|free sample|free)\b/i;
+
+// order.items includes cancelled items now (loadDeliveryView no longer
+// filters them out at the query level, so a whole-order cancellation still
+// has rows to build a card from) — anywhere the card shows "what's actually
+// in this order" needs the existing activeItems() filter first.
 
 async function loadDeliveryView(){
   const list=document.getElementById('dv-list');
@@ -2405,13 +2474,10 @@ async function loadDeliveryView(){
   document.getElementById('dv-label').textContent=
     viewDate===CALENDAR_TODAY?'Delivery':(viewDate===tomorrowDate?'Delivery (Tomorrow)':'Delivery — '+viewDate);
   list.innerHTML='<div class="to-empty">Loading…</div>';
+  selectedDeliveryOrders=new Set();
 
-  // Cancelled items are never delivery-relevant, and excluding them here
-  // (rather than fetching everything and filtering client-side like Today's
-  // Orders does) keeps this view's own isFullyInvoiced check accurate
-  // without needing activeItems as a second pass.
   const[{data,error},catalog]=await Promise.all([
-    fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%').neq('status','cancelled')),
+    fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
   ]);
   deliveryCatalogByItem={};
@@ -2444,9 +2510,10 @@ async function loadDeliveryView(){
         deliveryStatus:        o?.delivery_status||'pending',
         deliveredAt:           o?.delivered_at||null,
         deliveryNotes:         o?.delivery_notes||null,
-        deliveryPhotoPath:     o?.delivery_photo_path||null,
+        deliveryPhotoPaths:    o?.delivery_photo_paths||[],
         paymentCollected:      !!o?.payment_collected,
         paymentCollectedMethod:o?.payment_collected_method||null,
+        assignedRider:         o?.assigned_rider||null,
         items:[],
       };
     }
@@ -2455,10 +2522,27 @@ async function loadDeliveryView(){
 
   Object.keys(bySalesOrder).forEach(soid=>{
     const order=bySalesOrder[soid];
-    if(order.orderStatus==='cancelled'||!isFullyInvoiced(order))delete bySalesOrder[soid];
+    const isCancelled=order.orderStatus==='cancelled';
+    if(!isCancelled&&!isFullyInvoiced(order))delete bySalesOrder[soid];
   });
 
   deliveryOrders=bySalesOrder;
+  renderDeliveryList();
+}
+
+function setDeliveryScope(scope){
+  deliveryScope=scope;
+  document.getElementById('dv-scope-all').classList.toggle('active',scope==='all');
+  document.getElementById('dv-scope-mine').classList.toggle('active',scope==='mine');
+  selectedDeliveryOrders=new Set();
+  renderDeliveryList();
+}
+
+function setDeliveryStatusFilter(status){
+  deliveryStatusFilter=status;
+  document.getElementById('dv-status-pending').classList.toggle('active',status==='pending');
+  document.getElementById('dv-status-delivered').classList.toggle('active',status==='delivered');
+  selectedDeliveryOrders=new Set();
   renderDeliveryList();
 }
 
@@ -2516,13 +2600,26 @@ async function saveDeliveryInstructions(soid){
 // Pure re-render from the already-fetched deliveryOrders — no network calls
 // — so revealing a phone number or opening the instructions editor just
 // redraws instantly instead of re-fetching.
+// Selection ("assign to me") only makes sense over undelivered orders you
+// don't already own — offering it under My/Delivered would just be
+// confusing busywork.
+function deliverySelectionModeActive(){
+  return deliveryScope==='all'&&deliveryStatusFilter==='pending';
+}
+
 function renderDeliveryList(){
   const list=document.getElementById('dv-list');
   const search=document.getElementById('dv-search').value.trim().toLowerCase();
+  const selectionMode=deliverySelectionModeActive();
 
   const bySociety={};
   Object.entries(deliveryOrders).forEach(([soid,order])=>{
     if(search&&!order.customer.toLowerCase().includes(search))return;
+    if(deliveryScope==='mine'&&order.assignedRider!==riderName)return;
+    const cancelled=order.orderStatus==='cancelled';
+    const isDelivered=order.deliveryStatus==='delivered';
+    if(deliveryStatusFilter==='delivered'&&!isDelivered)return;
+    if(deliveryStatusFilter==='pending'&&isDelivered)return;
     const soc=deriveSociety(order.customer);
     if(!bySociety[soc])bySociety[soc]=[];
     bySociety[soc].push({soid,...order});
@@ -2530,24 +2627,56 @@ function renderDeliveryList(){
 
   const socNames=Object.keys(bySociety).sort();
   const totalLoaded=Object.keys(deliveryOrders).length;
-  document.getElementById('dv-rc').textContent=totalLoaded?'— '+totalLoaded+' order'+(totalLoaded!==1?'s':''):'';
+  const shown=socNames.reduce((n,soc)=>n+bySociety[soc].length,0);
+  document.getElementById('dv-rc').textContent=shown?'— '+shown+' order'+(shown!==1?'s':''):'';
+
+  document.getElementById('dv-assign-row').classList.toggle('hidden',!selectionMode);
+  updateDeliveryAssignButton();
 
   if(!socNames.length){
-    list.innerHTML='<div class="to-empty">'+(totalLoaded?'No orders match this search':'Nothing ready for delivery yet — orders appear here once fully invoiced')+'</div>';
+    list.innerHTML='<div class="to-empty">'+(totalLoaded?'No orders match this view':'Nothing ready for delivery yet — orders appear here once fully invoiced')+'</div>';
     return;
   }
 
   list.innerHTML=socNames.map(soc=>{
     const orders=bySociety[soc];
     return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
-      orders.map(order=>renderDeliveryCard(order)).join('');
+      orders.map(order=>renderDeliveryCard(order,selectionMode)).join('');
   }).join('');
 
   renderDeliveryPhotos(socNames.flatMap(soc=>bySociety[soc]));
 }
 
-function renderDeliveryCard(order){
+function toggleDeliverySelect(soid,checked){
+  if(checked)selectedDeliveryOrders.add(soid);
+  else selectedDeliveryOrders.delete(soid);
+  updateDeliveryAssignButton();
+}
+
+function updateDeliveryAssignButton(){
+  const btn=document.getElementById('dv-assign-me');
+  btn.textContent='🙋 Assign to me ('+selectedDeliveryOrders.size+')';
+  btn.disabled=selectedDeliveryOrders.size===0;
+}
+
+function renderDeliveryCard(order,selectionMode){
+  const cancelled=order.orderStatus==='cancelled';
+
+  // A whole-order cancellation (customer refused everything, admin
+  // cancelled it outright) gets a compact, non-actionable card — same
+  // "greyed out, clearly marked" treatment Today's Orders gives a cancelled
+  // order, just without the bill/QR/mark-delivered machinery that no
+  // longer applies to it.
+  if(cancelled){
+    const items=activeItems(order);
+    return '<div class="order-row dv-cancelled-card">'+
+      '<div class="or-top"><span class="or-cust">'+escH(order.customer)+' <span class="cancelled-badge">CANCELLED</span></span></div>'+
+      '<div class="dv-cancelled-items">'+items.map(i=>escH(i.item_name)).join(', ')+'</div>'+
+    '</div>';
+  }
+
   const delivered=order.deliveryStatus==='delivered';
+  const items=activeItems(order);
   const revealed=revealedPhones.has(order.soid);
   const phoneDisplay=order.phone
     ?(revealed
@@ -2555,7 +2684,7 @@ function renderDeliveryCard(order){
       :'<a class="dv-phone" onclick="toggleRevealPhone(\''+order.soid+'\')">'+escH(maskPhone(order.phone))+' · tap to reveal</a>')
     :'<span style="color:#a39a8c">no phone on file</span>';
 
-  const instructions=[...new Set(order.items.map(i=>(i.delivery_instructions||'').trim()).filter(Boolean))].join(' · ');
+  const instructions=[...new Set(items.map(i=>(i.delivery_instructions||'').trim()).filter(Boolean))].join(' · ');
   const editingNotes=dvEditingNotes===order.soid;
 
   const notesBlock=editingNotes
@@ -2575,11 +2704,11 @@ function renderDeliveryCard(order){
   // card needs to double as a bill summary, pills don't carry a column for
   // that. Each row also carries a "not delivered" escape hatch for a
   // spoiled/refused item without having to undo the whole order.
-  const computedTotal=order.items.reduce((sum,item)=>sum+(deliveryItemAmount(item)||0),0);
+  const computedTotal=items.reduce((sum,item)=>sum+(deliveryItemAmount(item)||0),0);
   const total=order.invoiceTotal!=null?order.invoiceTotal:computedTotal;
   const itemsTable=
     '<table class="dv-item-table"><tbody>'+
-      order.items.map(item=>{
+      items.map(item=>{
         const qty=item.final_quantity??item.requested_quantity;
         const cat=deliveryCatalogByItem[item.item_name.toLowerCase()];
         const amount=deliveryItemAmount(item);
@@ -2615,26 +2744,37 @@ function renderDeliveryCard(order){
       :' <span class="order-status-badge" style="background:#b3261e">NOT PAID</span>')
     :'';
 
-  // Signed URL is fetched async after this HTML is in the DOM (see
+  const assignedTag=(deliveryScope==='all'&&order.assignedRider)
+    ?'<span class="dv-assigned-tag">assigned: '+escH(order.assignedRider)+'</span>'
+    :'';
+
+  const selectCheckbox=selectionMode
+    ?'<input type="checkbox" class="inv-select" '+(selectedDeliveryOrders.has(order.soid)?'checked ':'')+'onchange="toggleDeliverySelect(\''+order.soid+'\',this.checked)"> '
+    :'';
+
+  // Signed URLs are fetched async after this HTML is in the DOM (see
   // renderDeliveryPhotos) since Storage reads can't happen synchronously
-  // inside a string-building render pass — this placeholder just reserves
-  // the spot and stays hidden until that resolves.
-  const photoThumb=(delivered&&order.deliveryPhotoPath)
-    ?'<img class="dv-photo-thumb hidden" id="dv-photo-'+order.soid+'" onclick="openImgLightbox(this.src)">'
+  // inside a string-building render pass — these placeholders just reserve
+  // the spot and stay hidden until that resolves. One thumbnail per photo,
+  // since a delivery can now have more than one.
+  const photoGrid=(delivered&&order.deliveryPhotoPaths&&order.deliveryPhotoPaths.length)
+    ?'<div class="dv-photo-grid">'+order.deliveryPhotoPaths.map((path,idx)=>
+        '<img class="dv-photo-thumb hidden" id="dv-photo-'+order.soid+'-'+idx+'" data-path="'+escH(path)+'" onclick="openImgLightbox(this.src)">'
+      ).join('')+'</div>'
     :'';
 
   return '<div class="order-row'+(delivered?' dv-delivered':'')+'">'+
-    '<div class="or-top"><span class="or-cust">'+escH(order.customer)+
+    '<div class="or-top"><span class="or-cust">'+selectCheckbox+escH(order.customer)+
       (delivered?' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>':'')+
-      paymentBadge+
+      paymentBadge+assignedTag+
     '</span></div>'+
     '<div class="dv-phone-row">📞 '+phoneDisplay+'</div>'+
     itemsTable+
     qrBlock+
     notesBlock+
     (delivered&&order.deliveryNotes?'<div class="dv-notes">📝 '+escH(order.deliveryNotes)+'</div>':'')+
-    photoThumb+
-    '<div class="or-actions"><span class="or-count">'+order.items.length+' item'+(order.items.length!==1?'s':'')+'</span>'+
+    photoGrid+
+    '<div class="or-actions"><span class="or-count">'+items.length+' item'+(items.length!==1?'s':'')+'</span>'+
       '<span class="or-links">'+
         (delivered
           ?'<a class="or-link" onclick="undoDelivered(\''+order.soid+'\')">undo delivered</a>'
@@ -2644,20 +2784,22 @@ function renderDeliveryCard(order){
   '</div>';
 }
 
-// One signed URL fetch per delivered order that has a photo — has to run
-// after the innerHTML swap since the <img> placeholders don't exist until
-// then. delivery-photos is a private bucket, so a plain public URL won't
-// work; this session's own authenticated read access (granted to any
-// signed-in session) is what lets createSignedUrl succeed here.
+// One signed URL fetch per photo on a delivered order — has to run after
+// the innerHTML swap since the <img> placeholders don't exist until then.
+// delivery-photos is a private bucket, so a plain public URL won't work;
+// this session's own authenticated read access (granted to any signed-in
+// session) is what lets createSignedUrl succeed here.
 function renderDeliveryPhotos(orders){
   orders.forEach(order=>{
-    if(!(order.deliveryStatus==='delivered'&&order.deliveryPhotoPath))return;
-    const img=document.getElementById('dv-photo-'+order.soid);
-    if(!img)return;
-    sb.storage.from('delivery-photos').createSignedUrl(order.deliveryPhotoPath,3600).then(({data,error})=>{
-      if(error||!data)return;
-      img.src=data.signedUrl;
-      img.classList.remove('hidden');
+    if(!(order.deliveryStatus==='delivered'&&order.deliveryPhotoPaths&&order.deliveryPhotoPaths.length))return;
+    order.deliveryPhotoPaths.forEach((path,idx)=>{
+      const img=document.getElementById('dv-photo-'+order.soid+'-'+idx);
+      if(!img)return;
+      sb.storage.from('delivery-photos').createSignedUrl(path,3600).then(({data,error})=>{
+        if(error||!data)return;
+        img.src=data.signedUrl;
+        img.classList.remove('hidden');
+      });
     });
   });
 }
@@ -2714,6 +2856,35 @@ document.getElementById('dv-search').addEventListener('input',()=>{
   renderDeliveryList();
 });
 
+// Self-assignment under the one shared delivery login — "who" is just
+// whatever name this device has stored (see ensureRiderName), sent straight
+// through to the assign-rider function which is the only write path since
+// orders is locked to service-role-only writes.
+document.getElementById('dv-assign-me').addEventListener('click',async()=>{
+  const ids=[...selectedDeliveryOrders];
+  if(!ids.length)return;
+  if(!riderName){alert('Enter your name first (tap the badge in the top-right corner).');return;}
+  if(!confirm('Assign '+ids.length+' order'+(ids.length!==1?'s':'')+' to '+riderName+'?'))return;
+  const btn=document.getElementById('dv-assign-me');
+  btn.disabled=true;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/assign-rider',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_ids:ids,rider:riderName}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not assign orders');
+    ids.forEach(evictCustomerLookupCache);
+    selectedDeliveryOrders=new Set();
+    await loadDeliveryView();
+  }catch(e){
+    alert(e.message);
+  }finally{
+    btn.disabled=selectedDeliveryOrders.size===0;
+  }
+});
+
 // ── Mark delivered modal ─────────────────────────────────────────────────
 const dvModal=document.getElementById('dv-modal'),dvNotesEl=document.getElementById('dv-notes'),dvPhotoInput=document.getElementById('dv-photo');
 let dvTargetOrder=null;
@@ -2744,7 +2915,7 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
   const soid=dvTargetOrder;
   if(!soid)return;
   const notes=dvNotesEl.value.trim();
-  const file=dvPhotoInput.files[0];
+  const files=Array.from(dvPhotoInput.files||[]);
   const paymentCollected=dvPaymentCollected;
   const paymentMethod=paymentCollected?(document.getElementById('dv-cash-toggle').checked?'cash':'online'):null;
   const confirmBtn=document.getElementById('dv-confirm');
@@ -2753,18 +2924,23 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
   try{
     // Uploaded directly to Storage with the caller's own session (its
     // policies allow any signed-in session onto this bucket) — mark-delivered
-    // only ever receives the resulting path, never the file itself.
-    let photoPath=null;
-    if(file){
+    // only ever receives the resulting paths, never the files themselves.
+    // Each photo needs its own unique path, hence the index suffix.
+    const photoPaths=[];
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
       const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
-      photoPath=soid+'/'+Date.now()+'.'+ext;
-      const{error:upErr}=await sb.storage.from('delivery-photos').upload(photoPath,file,{upsert:false});
+      const path=soid+'/'+Date.now()+'-'+i+'.'+ext;
+      const{error:upErr}=await sb.storage.from('delivery-photos').upload(path,file,{upsert:false});
       if(upErr)throw new Error('Photo upload failed: '+upErr.message);
+      photoPaths.push(path);
     }
+    const body={sales_order_id:soid,delivered:true,notes,payment_collected:paymentCollected,payment_collected_method:paymentMethod};
+    if(photoPaths.length)body.photo_paths=photoPaths;
     const res=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:soid,delivered:true,notes,photo_path:photoPath,payment_collected:paymentCollected,payment_collected_method:paymentMethod}),
+      body:JSON.stringify(body),
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not mark delivered');
