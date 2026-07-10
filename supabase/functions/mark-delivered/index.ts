@@ -62,8 +62,12 @@ Deno.serve(async (req) => {
     // notes/photos — un-marking a delivery means the payment the rider
     // claimed to have collected at that (now-undone) delivery is undone
     // too, whereas remarks/photos already attached stay as history.
+    // Undoing a delivered order reverts to 'ofd', not all the way back to
+    // 'not_dispatched' — the items were already collected into the bag
+    // (that's how it reached 'delivered' in the first place), it just
+    // hasn't actually been handed over, so it's still out with the rider.
     const update: Record<string, unknown> = {
-      delivery_status:           delivered ? 'delivered' : 'pending',
+      delivery_status:           delivered ? 'delivered' : 'ofd',
       delivered_at:              delivered ? new Date().toISOString() : null,
       payment_collected:         delivered ? !!payment_collected : false,
       payment_collected_method:  delivered && payment_collected ? (payment_collected_method || null) : null,

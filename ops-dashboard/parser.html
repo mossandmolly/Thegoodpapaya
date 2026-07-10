@@ -110,6 +110,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-item-name-cell{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 .dv-item-nd{display:inline-flex;align-items:center;padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;color:#b3261e;background:#fbe9e7;border:1px solid #f3c6c0;cursor:pointer;text-decoration:none;white-space:nowrap}
 .dv-item-nd:hover{background:#f6d3ce}
+.dv-collected-cb{width:auto;margin:0}
+.dv-collected-tick{color:#3f7a34;font-weight:700}
+.dv-awaiting-collection{font-size:11px;color:#8a7a6a;font-style:italic}
 .dv-free-badge{font-size:9px;font-weight:700;color:#3f7a34;background:#e5f3e3;border-radius:4px;padding:1px 5px}
 .dv-total-row td{font-weight:700;font-size:14px;color:#ffffff;background:#e8720c;padding:8px 6px}
 .dv-total-row td:first-child{border-radius:6px 0 0 6px}
@@ -119,9 +122,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-qr-block img{border-radius:8px;background:#ffffff}
 .dv-photo-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 .dv-photo-thumb{width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid #eee0d0}
-.dv-scope-tabs,.dv-status-tabs{display:flex;gap:8px;margin-bottom:10px}
-.dv-scope-btn,.dv-status-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
-.dv-scope-btn.active,.dv-status-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
+.dv-scope-tabs{display:flex;gap:8px;margin-bottom:10px}
+.dv-scope-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
+.dv-scope-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
 .dv-assigned-tag{font-size:10px;font-weight:600;color:#8a7a6a;margin-left:6px}
 .dv-cancelled-card{opacity:0.7}
 .dv-cancelled-items{font-size:12px;color:#8a7a6a;text-decoration:line-through}
@@ -131,9 +134,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-pay-toggle{display:flex;gap:8px;margin-bottom:10px}
 .dv-pay-btn{flex:1;padding:9px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
 .dv-pay-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
-.dv-cash-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#5c4f42;margin-bottom:12px}
+.dv-cash-row{display:flex;align-items:center;gap:8px;font-size:13px;color:#5c4f42;margin:-2px 0 14px 4px;padding-left:14px;border-left:2px solid #eee0d0}
 .dv-cash-row.hidden{display:none}
-.dv-cash-row input{width:auto;margin:0}
 .inv-select{vertical-align:middle;margin-right:2px}
 .pill-x{background:none;border:none;cursor:pointer;font-size:12px;line-height:1;padding:2px;color:inherit;opacity:0.6}
 .pill-x:hover{opacity:1}
@@ -164,7 +166,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .modal-box{background:#ffffff;border-radius:12px;padding:20px;width:100%;max-width:340px;box-shadow:0 8px 30px rgba(43,35,32,0.2)}
 .modal-box h3{font-size:15px;font-weight:700;color:#2b2320;margin-bottom:14px}
 .modal-label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:4px}
-.modal-box select,.modal-box input,.modal-box textarea{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
+.modal-box select,.modal-box input:not([type="checkbox"]),.modal-box textarea{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
+.modal-box input[type="checkbox"]{width:auto;margin:0}
 .modal-box textarea{resize:vertical}
 .ac-wrap{position:relative}
 .ac-list{position:absolute;top:100%;left:0;right:0;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;margin-top:2px;max-height:240px;overflow-y:auto;z-index:50;box-shadow:0 4px 12px rgba(43,35,32,0.15)}
@@ -321,6 +324,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <span><span id="to-label">Order overview</span> <span id="to-rc"></span></span>
     <input type="date" class="date-picker-compact" id="to-date-picker" onchange="setViewDate(this.value)">
   </div>
+  <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div class="push-row bulk-actions-row" style="margin-bottom:12px">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Selected Invoices (0)</button>
     <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
@@ -353,10 +357,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="dv-scope-btn active" id="dv-scope-all" onclick="setDeliveryScope('all')">All orders</button>
     <button class="dv-scope-btn" id="dv-scope-mine" onclick="setDeliveryScope('mine')">My orders</button>
   </div>
-  <div class="dv-status-tabs">
-    <button class="dv-status-btn active" id="dv-status-pending" onclick="setDeliveryStatusFilter('pending')">Pending</button>
-    <button class="dv-status-btn" id="dv-status-delivered" onclick="setDeliveryStatusFilter('delivered')">Delivered</button>
-  </div>
+  <div id="dv-summary-pills" class="filter-pills status-pills"></div>
   <input type="text" class="pk-search" id="dv-search" placeholder="🔍 Search society or customer...">
   <div class="push-row bulk-actions-row hidden" id="dv-assign-row" style="margin-bottom:12px">
     <button class="btn-push" id="dv-assign-me" disabled>🙋 Assign to me (0)</button>
@@ -1315,7 +1316,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
@@ -1475,15 +1476,23 @@ function renderOrdersList(){
   const list=document.getElementById('to-list');
   const dupIds=computeDuplicateItemIds(Object.values(currentItemsById));
 
+  renderOverviewSummaryPills();
+
   // Group orders by society — first token of customer_name before the first space
   const bySociety={};
   Object.entries(currentOrdersById).forEach(([soid,order])=>{
+    if(!orderMatchesOverviewFilter(order))return;
     const soc=deriveSociety(order.customer);
     if(!bySociety[soc])bySociety[soc]=[];
     bySociety[soc].push({soid,...order});
   });
 
   const socNames=Object.keys(bySociety).sort();
+  if(!socNames.length){
+    list.innerHTML='<div class="to-empty">'+(Object.keys(currentOrdersById).length?'No orders match this filter':'No orders for '+viewDate)+'</div>';
+    updateBulkButtons();
+    return;
+  }
   list.innerHTML=socNames.map(soc=>{
     const orders=bySociety[soc];
     const selectableSoids=orders.filter(o=>o.orderStatus!=='cancelled').map(o=>o.soid);
@@ -1745,7 +1754,10 @@ async function updateQty(id,qty,description){
   // it was actually packed that way).
   const qtyChanged=current&&Number(current.requested_quantity)!==Number(qty);
   const finalDescription=qtyChanged?appendAddendum(description,'Required quantity changed'):(description||'');
-  const update={requested_quantity:qty,description:finalDescription||null,status:'open'};
+  // A quantity change also un-collects the item for delivery, same
+  // reasoning as resetting to 'open' — whatever the rider already bagged
+  // no longer matches what's actually owed.
+  const update={requested_quantity:qty,description:finalDescription||null,status:'open',collected:false};
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
   const{error}=await sb.from('order_items').update(update).eq('id',id);
   if(error){alert('Failed to update: '+error.message);}
@@ -1987,6 +1999,33 @@ async function generateInvoiceCore(salesOrderId,overrides){
   return data;
 }
 
+// Cancelling an item on an already-invoiced order (item deleted from Today's
+// Orders, or a rider marking one "not delivered") used to just invalidate
+// the stale invoice and leave the order sitting in a manual "generate
+// invoice" queue. Now it rebills automatically whenever the remaining
+// (non-cancelled) items are immediately ready — which they normally are,
+// since invalidateOrderInvoiceIfNeeded just knocked them from 'invoiced'
+// back to 'final' — so a fresh payment link/QR is available in the
+// Delivery panel right away instead of waiting on an admin. Reads fresh
+// from the DB rather than any of the three views' own (differently-shaped)
+// local caches, since this is called from all of them.
+async function autoRegenerateInvoiceIfReady(salesOrderId){
+  const{data:items,error}=await sb.from('order_items')
+    .select('status').eq('sales_order_id',salesOrderId).neq('status','cancelled');
+  if(error||!items||!items.length)return;
+  const ready=items.every(i=>i.status==='final'||i.status==='invoiced')&&!items.every(i=>i.status==='invoiced');
+  if(!ready)return;
+  try{
+    await ensureCatalogSyncedToday();
+    await generateInvoiceCore(salesOrderId);
+  }catch(e){
+    console.error('Auto-regenerate invoice failed for '+salesOrderId,e);
+    // Best-effort — falls back to the existing manual "generate invoice"
+    // button on Today's Orders if this doesn't succeed (e.g. a catalog rate
+    // mismatch that needs manual resolution).
+  }
+}
+
 async function generateInvoice(salesOrderId,btnEl,overrides){
   if(!overrides&&!confirm('Generate invoice for '+salesOrderId+'?'))return;
   const original=btnEl.textContent;
@@ -2079,6 +2118,40 @@ function orderOverallStatus(order){
   const active=activeItems(order);
   if(!active.length)return null;
   return active.reduce((worst,i)=>ITEM_STATUS_RANK[i.status]<ITEM_STATUS_RANK[worst]?i.status:worst,active[0].status);
+}
+
+// ── Order overview summary pills (top-level status filter) ──────────────
+let toOverviewFilter='all'; // 'all' | 'invoiced' | 'inprogress' | 'cancelled'
+
+function orderMatchesOverviewFilter(order){
+  if(toOverviewFilter==='all')return true;
+  if(toOverviewFilter==='cancelled')return order.orderStatus==='cancelled';
+  if(order.orderStatus==='cancelled')return false;
+  if(toOverviewFilter==='invoiced')return isFullyInvoiced(order);
+  return !isFullyInvoiced(order); // 'inprogress' — active, not yet fully invoiced
+}
+
+function setOverviewFilter(key){
+  toOverviewFilter=key;
+  renderOrdersList();
+}
+
+function renderOverviewSummaryPills(){
+  const orders=Object.values(currentOrdersById);
+  const total=orders.length;
+  const cancelled=orders.filter(o=>o.orderStatus==='cancelled').length;
+  const active=orders.filter(o=>o.orderStatus!=='cancelled');
+  const invoiced=active.filter(isFullyInvoiced).length;
+  const inprogress=active.length-invoiced;
+  const pills=[
+    {key:'all',label:'All',count:total},
+    {key:'invoiced',label:'Invoiced',count:invoiced},
+    {key:'inprogress',label:'Open/Packed',count:inprogress},
+    {key:'cancelled',label:'Cancelled',count:cancelled},
+  ];
+  document.getElementById('to-summary-pills').innerHTML=pills.map(p=>
+    '<span class="filter-pill'+(toOverviewFilter===p.key?' active':'')+'" onclick="setOverviewFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join('');
 }
 
 // One shared checkbox selection drives all three bulk actions — each button
@@ -2283,6 +2356,7 @@ async function deleteItem(id){
   const description=appendAddendum(current?.description,'Item deleted');
   const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',id);
   if(error){alert('Failed to remove item: '+error.message);return;}
+  if(current)await autoRegenerateInvoiceIfReady(current.sales_order_id);
   if(document.getElementById('panel-packer').classList.contains('active'))await loadPackerView();
   else await loadTodaysOrders();
 }
@@ -2455,7 +2529,7 @@ let revealedPhones=new Set();
 let dvEditingNotes=null;
 let deliveryCatalogByItem={};
 let deliveryScope='all'; // 'all' | 'mine'
-let deliveryStatusFilter='pending'; // 'pending' | 'delivered'
+let deliveryStatusFilter='pending'; // 'all' | 'pending' | 'delivered' | 'cancelled' — 'pending' covers both not_dispatched and ofd (not yet delivered, not cancelled)
 let selectedDeliveryOrders=new Set();
 
 // Same rule generate-invoice bills at ₹0 by — an item whose description
@@ -2540,10 +2614,35 @@ function setDeliveryScope(scope){
 
 function setDeliveryStatusFilter(status){
   deliveryStatusFilter=status;
-  document.getElementById('dv-status-pending').classList.toggle('active',status==='pending');
-  document.getElementById('dv-status-delivered').classList.toggle('active',status==='delivered');
   selectedDeliveryOrders=new Set();
   renderDeliveryList();
+}
+
+function deliveryOrderMatchesStatusFilter(order){
+  const cancelled=order.orderStatus==='cancelled';
+  if(deliveryStatusFilter==='all')return true;
+  if(deliveryStatusFilter==='cancelled')return cancelled;
+  if(cancelled)return false;
+  if(deliveryStatusFilter==='delivered')return order.deliveryStatus==='delivered';
+  return order.deliveryStatus!=='delivered'; // 'pending' — not_dispatched or ofd
+}
+
+// Counts reflect whichever scope (All/My) is currently active, so the
+// numbers on the pills always match what a click on them will show.
+function renderDeliverySummaryPills(scopedOrders){
+  const total=scopedOrders.length;
+  const cancelled=scopedOrders.filter(o=>o.orderStatus==='cancelled').length;
+  const delivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='delivered').length;
+  const pending=total-cancelled-delivered;
+  const pills=[
+    {key:'all',label:'Total',count:total},
+    {key:'delivered',label:'Delivered',count:delivered},
+    {key:'pending',label:'Pending',count:pending},
+    {key:'cancelled',label:'Cancelled',count:cancelled},
+  ];
+  document.getElementById('dv-summary-pills').innerHTML=pills.map(p=>
+    '<span class="filter-pill'+(deliveryStatusFilter===p.key?' active':'')+'" onclick="setDeliveryStatusFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join('');
 }
 
 // qty*rate per item, ₹0 for anything description-flagged as free/replacement
@@ -2612,17 +2711,22 @@ function renderDeliveryList(){
   const search=document.getElementById('dv-search').value.trim().toLowerCase();
   const selectionMode=deliverySelectionModeActive();
 
+  // Scope (All/My) narrows the pool the summary pills count over; the
+  // status pill (Total/Delivered/Pending/Cancelled) then narrows further
+  // to what's actually shown — so "Pending (2)" always means "2 pending
+  // orders within whichever scope is active."
+  const scoped=Object.entries(deliveryOrders)
+    .map(([soid,order])=>({soid,...order}))
+    .filter(order=>deliveryScope==='all'||order.assignedRider===riderName);
+  renderDeliverySummaryPills(scoped);
+
   const bySociety={};
-  Object.entries(deliveryOrders).forEach(([soid,order])=>{
+  scoped.forEach(order=>{
     if(search&&!order.customer.toLowerCase().includes(search))return;
-    if(deliveryScope==='mine'&&order.assignedRider!==riderName)return;
-    const cancelled=order.orderStatus==='cancelled';
-    const isDelivered=order.deliveryStatus==='delivered';
-    if(deliveryStatusFilter==='delivered'&&!isDelivered)return;
-    if(deliveryStatusFilter==='pending'&&isDelivered)return;
+    if(!deliveryOrderMatchesStatusFilter(order))return;
     const soc=deriveSociety(order.customer);
     if(!bySociety[soc])bySociety[soc]=[];
-    bySociety[soc].push({soid,...order});
+    bySociety[soc].push(order);
   });
 
   const socNames=Object.keys(bySociety).sort();
@@ -2659,6 +2763,44 @@ function updateDeliveryAssignButton(){
   btn.disabled=selectedDeliveryOrders.size===0;
 }
 
+// order_items writes are unrestricted (unlike orders), so the per-item
+// "collected into bag" checkbox is a direct write — no edge function
+// needed for that part. Once every non-cancelled item on the order is
+// collected, the order itself needs to flip to 'ofd', and that DOES need
+// dispatch-order (orders is service-role-only) since delivery_status lives
+// there, not on order_items.
+async function toggleItemCollected(itemId,soid,checked){
+  const{error}=await sb.from('order_items').update({collected:checked}).eq('id',itemId);
+  if(error){alert('Failed to update: '+error.message);return;}
+  const order=deliveryOrders[soid];
+  if(order){
+    const item=order.items.find(i=>i.id===itemId);
+    if(item)item.collected=checked;
+    const active=activeItems(order);
+    if(checked&&order.deliveryStatus==='not_dispatched'&&active.length&&active.every(i=>i.collected)){
+      await dispatchOrder(soid);
+      return; // dispatchOrder reloads the whole view itself
+    }
+  }
+  renderDeliveryList();
+}
+
+async function dispatchOrder(soid){
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/dispatch-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not dispatch order');
+    evictCustomerLookupCache(soid);
+  }catch(e){
+    alert(e.message);
+  }
+  await loadDeliveryView();
+}
+
 function renderDeliveryCard(order,selectionMode){
   const cancelled=order.orderStatus==='cancelled';
 
@@ -2669,14 +2811,18 @@ function renderDeliveryCard(order,selectionMode){
   // longer applies to it.
   if(cancelled){
     const items=activeItems(order);
+    const assignedTag=order.assignedRider?'<span class="dv-assigned-tag">rider: '+escH(order.assignedRider)+'</span>':'';
     return '<div class="order-row dv-cancelled-card">'+
-      '<div class="or-top"><span class="or-cust">'+escH(order.customer)+' <span class="cancelled-badge">CANCELLED</span></span></div>'+
+      '<div class="or-top"><span class="or-cust">'+escH(order.customer)+' <span class="cancelled-badge">CANCELLED</span>'+assignedTag+'</span></div>'+
       '<div class="dv-cancelled-items">'+items.map(i=>escH(i.item_name)).join(', ')+'</div>'+
     '</div>';
   }
 
+  const notDispatched=order.deliveryStatus==='not_dispatched';
+  const ofd=order.deliveryStatus==='ofd';
   const delivered=order.deliveryStatus==='delivered';
   const items=activeItems(order);
+  const collectedCount=items.filter(i=>i.collected).length;
   const revealed=revealedPhones.has(order.soid);
   const phoneDisplay=order.phone
     ?(revealed
@@ -2713,8 +2859,14 @@ function renderDeliveryCard(order,selectionMode){
         const cat=deliveryCatalogByItem[item.item_name.toLowerCase()];
         const amount=deliveryItemAmount(item);
         const isFree=FREE_ITEM_RE.test(item.description||'');
+        // "Collected" (physically bagged) is only ever toggled before
+        // dispatch — once the order's OFD or delivered, it's shown as a
+        // plain checkmark, not editable.
+        const collectedControl=notDispatched
+          ?'<input type="checkbox" class="dv-collected-cb" '+(item.collected?'checked ':'')+'onchange="toggleItemCollected(\''+item.id+'\',\''+order.soid+'\',this.checked)" title="Collected into bag">'
+          :(item.collected?'<span class="dv-collected-tick" title="Collected">✓</span>':'');
         return '<tr>'+
-          '<td><div class="dv-item-name-cell">'+escH(item.item_name)+
+          '<td><div class="dv-item-name-cell">'+collectedControl+escH(item.item_name)+
             '<a class="dv-item-nd" onclick="openNotDeliveredModal(\''+item.id+'\',\''+order.soid+'\')">✕ not delivered</a>'+
           '</div></td>'+
           '<td>'+qty+' '+escH(cat?.unit||'')+'</td>'+
@@ -2738,14 +2890,20 @@ function renderDeliveryCard(order,selectionMode){
       '</div>'
     :'';
 
+  const deliveryStatusBadge=delivered
+    ?' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>'
+    :ofd
+      ?' <span class="order-status-badge" style="background:#2f6690">OUT FOR DELIVERY</span>'
+      :' <span class="order-status-badge" style="background:#8a7a6a">NOT DISPATCHED</span>';
+
   const paymentBadge=delivered
     ?(order.paymentCollected
       ?' <span class="order-status-badge" style="background:#2f6690">PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
       :' <span class="order-status-badge" style="background:#b3261e">NOT PAID</span>')
     :'';
 
-  const assignedTag=(deliveryScope==='all'&&order.assignedRider)
-    ?'<span class="dv-assigned-tag">assigned: '+escH(order.assignedRider)+'</span>'
+  const assignedTag=order.assignedRider
+    ?'<span class="dv-assigned-tag">rider: '+escH(order.assignedRider)+'</span>'
     :'';
 
   const selectCheckbox=selectionMode
@@ -2765,7 +2923,7 @@ function renderDeliveryCard(order,selectionMode){
 
   return '<div class="order-row'+(delivered?' dv-delivered':'')+'">'+
     '<div class="or-top"><span class="or-cust">'+selectCheckbox+escH(order.customer)+
-      (delivered?' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>':'')+
+      deliveryStatusBadge+
       paymentBadge+assignedTag+
     '</span></div>'+
     '<div class="dv-phone-row">📞 '+phoneDisplay+'</div>'+
@@ -2774,11 +2932,15 @@ function renderDeliveryCard(order,selectionMode){
     notesBlock+
     (delivered&&order.deliveryNotes?'<div class="dv-notes">📝 '+escH(order.deliveryNotes)+'</div>':'')+
     photoGrid+
-    '<div class="or-actions"><span class="or-count">'+items.length+' item'+(items.length!==1?'s':'')+'</span>'+
+    '<div class="or-actions"><span class="or-count">'+items.length+' item'+(items.length!==1?'s':'')+
+      (notDispatched?' · '+collectedCount+'/'+items.length+' collected':'')+
+    '</span>'+
       '<span class="or-links">'+
         (delivered
           ?'<a class="or-link" onclick="undoDelivered(\''+order.soid+'\')">undo delivered</a>'
-          :'<a class="or-cta primary" onclick="openMarkDeliveredModal(\''+order.soid+'\')">✅ mark delivered</a>')+
+          :ofd
+            ?'<a class="or-cta primary" onclick="openMarkDeliveredModal(\''+order.soid+'\')">✅ mark delivered</a>'
+            :'<span class="dv-awaiting-collection">check off items to dispatch</span>')+
       '</span>'+
     '</div>'+
   '</div>';
@@ -2849,6 +3011,7 @@ document.getElementById('nd-confirm').addEventListener('click',async()=>{
   const description=appendAddendum(item?.description,'Not delivered: '+reason);
   const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',itemId);
   if(error){alert('Failed to update item: '+error.message);return;}
+  await autoRegenerateInvoiceIfReady(soid);
   await loadDeliveryView();
 });
 
