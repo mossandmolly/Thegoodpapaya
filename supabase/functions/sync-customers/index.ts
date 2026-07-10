@@ -52,27 +52,54 @@ function cleanCustomerName(raw: string): string {
 // number, leaving nothing valid before it.
 const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
 
+// Community identity must be agnostic of case AND special characters — "77
+// degree", "77degree" and "77-degree" are all the same place and must
+// always resolve to exactly one community, never three. Matching and
+// deduping happen on a canonical key (lowercase, letters/digits only);
+// display casing is always "first letter capital, everything else
+// lowercase" — mirrors the identical logic in ops-dashboard/parser.html,
+// keep both in sync if this rule ever changes.
+function communityCanonicalKey(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+function formatCommunityName(s: string): string {
+  const t = (s || '').trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t;
+}
+
+// Built once from SOCIETIES — groups synonym spellings ("77degree" / "77
+// degree") under one canonical key, each mapped to a single display name,
+// so every variant a customer might have typed always derives to the exact
+// same community. Longest key first so a shorter entry can't shadow a more
+// specific one that starts the same way.
+const SOCIETY_DISPLAY_BY_KEY: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const soc of SOCIETIES) {
+    const key = communityCanonicalKey(soc);
+    if (key && !map[key]) map[key] = formatCommunityName(soc);
+  }
+  return map;
+})();
+const SOCIETY_KEYS_BY_LENGTH = Object.keys(SOCIETY_DISPLAY_BY_KEY).sort((a, b) => b.length - a.length);
+
 // Society name = everything before the door number, not just the first
-// word. Checks the known SOCIETIES list first (longest match wins, handles
-// names that contain digits themselves), then falls back to every leading
-// purely-alphabetic word up to the first word containing a digit.
+// word. Checks the known SOCIETIES list first (via canonical-key prefix
+// match, handles names that contain digits themselves), then falls back to
+// every leading purely-alphabetic word up to the first word containing a
+// digit.
 function deriveSociety(customerName: string): string {
   const name = (customerName || '').trim();
   if (!name) return name;
 
-  const lower = name.toLowerCase();
-  let bestMatch = '';
-  for (const soc of SOCIETIES) {
-    const socLower = soc.toLowerCase();
-    if ((lower === socLower || lower.startsWith(socLower + ' ')) && soc.length > bestMatch.length) bestMatch = soc;
+  const canonicalName = communityCanonicalKey(name);
+  for (const key of SOCIETY_KEYS_BY_LENGTH) {
+    if (canonicalName.startsWith(key)) return SOCIETY_DISPLAY_BY_KEY[key];
   }
-  if (bestMatch) return name.slice(0, bestMatch.length);
 
   const tokens = name.split(/\s+/);
   const doorIdx = tokens.findIndex(t => /\d/.test(t));
-  if (doorIdx === -1) return name;
-  if (doorIdx === 0) return tokens[0];
-  return tokens.slice(0, doorIdx).join(' ');
+  const raw = doorIdx === -1 ? name : (doorIdx === 0 ? tokens[0] : tokens.slice(0, doorIdx).join(' '));
+  return formatCommunityName(raw);
 }
 
 // How many chars in the original already match the cleaned (proper-cased) version.

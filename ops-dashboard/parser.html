@@ -1364,17 +1364,46 @@ function renderOrdersList(){
   updateBulkButtons();
 }
 
+// Community identity must be agnostic of case AND special characters —
+// "77 degree", "77degree" and "77-degree" are all the same place and must
+// always resolve to exactly one community, never three. Matching and
+// deduping happen on a canonical key (lowercase, letters/digits only);
+// display casing is always "first letter capital, everything else
+// lowercase" (mirrors formatCustomerName's rule for consistency).
+function communityCanonicalKey(s){
+  return (s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+function formatCommunityName(s){
+  const t=(s||'').trim();
+  return t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():t;
+}
+
+// Built once from SOCIETIES — groups synonym spellings ("77degree" / "77
+// degree") under one canonical key, each mapped to a single display name,
+// so every variant a customer might have typed always derives to the
+// exact same community. Longest key first so e.g. a hypothetical "sobha"
+// entry couldn't shadow the more specific "sobhaeternia".
+const SOCIETY_DISPLAY_BY_KEY=(()=>{
+  const map={};
+  for(const soc of SOCIETIES){
+    const key=communityCanonicalKey(soc);
+    if(key&&!map[key])map[key]=formatCommunityName(soc);
+  }
+  return map;
+})();
+const SOCIETY_KEYS_BY_LENGTH=Object.keys(SOCIETY_DISPLAY_BY_KEY).sort((a,b)=>b.length-a.length);
+
 // Society name = everything before the door number, not just the first
 // word — "Sobha Eternia B-1204" and "Sobha Iris 302" are different
 // societies that happen to share a builder name, so grouping on just the
 // first word ("Sobha") would wrongly merge them.
 //
 // Checked in two passes:
-//  1. Does the name start with one of the known SOCIETIES entries? Some
-//     society names contain digits themselves (e.g. "77degree"), which
-//     would otherwise get misread as the door number with nothing left as
-//     a valid society prefix. Longest match wins so "Sobha Eternia" beats
-//     plain "Sobha" when both are in the list.
+//  1. Does the name's canonical form start with one of the known
+//     SOCIETIES entries' canonical forms? Some society names contain
+//     digits themselves (e.g. "77degree"), which would otherwise get
+//     misread as the door number with nothing left as a valid society
+//     prefix.
 //  2. Otherwise, every leading word that's purely alphabetic is the
 //     society name, up to (not including) the first word containing a
 //     digit — that word is assumed to be the door number. If the very
@@ -1386,19 +1415,15 @@ function deriveSociety(customerName){
   const name=(customerName||'').trim();
   if(!name)return name;
 
-  const lower=name.toLowerCase();
-  let bestMatch='';
-  for(const soc of SOCIETIES){
-    const socLower=soc.toLowerCase();
-    if((lower===socLower||lower.startsWith(socLower+' '))&&soc.length>bestMatch.length)bestMatch=soc;
+  const canonicalName=communityCanonicalKey(name);
+  for(const key of SOCIETY_KEYS_BY_LENGTH){
+    if(canonicalName.startsWith(key))return SOCIETY_DISPLAY_BY_KEY[key];
   }
-  if(bestMatch)return name.slice(0,bestMatch.length);
 
   const tokens=name.split(/\s+/);
   const doorIdx=tokens.findIndex(t=>/\d/.test(t));
-  if(doorIdx===-1)return name;
-  if(doorIdx===0)return tokens[0];
-  return tokens.slice(0,doorIdx).join(' ');
+  const raw=doorIdx===-1?name:(doorIdx===0?tokens[0]:tokens.slice(0,doorIdx).join(' '));
+  return formatCommunityName(raw);
 }
 
 function pillClick(id){
