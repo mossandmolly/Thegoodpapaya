@@ -1,11 +1,14 @@
 // Supabase Edge Function — sync-customers
 // Pulls active customer contacts from Zoho Books → customers table. Also
-// derives each customer's society/community name (see deriveSociety below
-// — mirrors the identical function in ops-dashboard/parser.html, keep both
-// in sync if the rule ever changes) and upserts it into `communities`.
-// Since this pulls the FULL active contact list from Zoho every run (not
-// incremental), this is what backfills communities for every customer
-// already synced, not just ones who happen to place a new order.
+// derives each customer's society/community name (see deriveSocietyDetailed
+// below — the core matching rule mirrors ops-dashboard/parser.html and
+// create-order, keep all three in sync if it ever changes) and upserts it
+// into `communities`. Since this pulls the FULL active contact list from
+// Zoho every run (not incremental), this is what backfills communities for
+// every customer already synced, not just ones who happen to place a new
+// order — and, uniquely to this function, it's also the only place with
+// enough of the full picture to frequency-correct typos in unlisted
+// community names (see clusterAndCorrect below).
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -82,24 +85,121 @@ const SOCIETY_DISPLAY_BY_KEY: Record<string, string> = (() => {
 })();
 const SOCIETY_KEYS_BY_LENGTH = Object.keys(SOCIETY_DISPLAY_BY_KEY).sort((a, b) => b.length - a.length);
 
+// Classic edit-distance DP — used to catch a typo'd society name ("out of
+// 10 customers, 8 spell it right and 2 don't") instead of letting each
+// misspelling mint its own separate community.
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+// A handful of edits tolerated, scaled to the known name's length (skips
+// anything under 4 chars — a 1-edit tolerance on "Kew" or "Ivy" would
+// swallow unrelated short names).
+function fuzzyThreshold(len: number): number {
+  return len < 4 ? 0 : Math.max(1, Math.min(3, Math.floor(len * 0.2)));
+}
+
+// Best-effort fuzzy match against the known SOCIETIES keys — a typo like
+// "Krishvigavakhi" (missing the 's') should still resolve to the one
+// correctly-spelled "Krishvigavakshi" entry rather than becoming its own
+// junk community.
+function fuzzySocietyMatch(canonicalKey: string): string | null {
+  if (!canonicalKey) return null;
+  let best: string | null = null, bestDist = Infinity;
+  for (const key of SOCIETY_KEYS_BY_LENGTH) {
+    const threshold = fuzzyThreshold(key.length);
+    if (!threshold) continue;
+    const dist = levenshtein(canonicalKey, key);
+    if (dist <= threshold && dist < bestDist) { bestDist = dist; best = key; }
+  }
+  return best;
+}
+
 // Society name = everything before the door number, not just the first
 // word. Checks the known SOCIETIES list first (via canonical-key prefix
 // match, handles names that contain digits themselves), then falls back to
 // every leading purely-alphabetic word up to the first word containing a
-// digit.
-function deriveSociety(customerName: string): string {
+// digit — before accepting that fallback, it's checked against the known
+// list once more by edit distance in case it's a typo of a real society
+// (the exact-prefix check above only catches correctly-spelled names).
+//
+// `matched` tells the caller whether this came from the known SOCIETIES
+// list (already guaranteed consistent) or the raw fallback guess (still
+// vulnerable to a handful of customers typo-ing a name that isn't in the
+// list at all) — only the latter needs the frequency-based clustering
+// below, since re-clustering already-known societies risks accidentally
+// merging two genuinely different ones that happen to look similar.
+function deriveSocietyDetailed(customerName: string): { name: string; matched: boolean } {
   const name = (customerName || '').trim();
-  if (!name) return name;
+  if (!name) return { name, matched: false };
 
   const canonicalName = communityCanonicalKey(name);
   for (const key of SOCIETY_KEYS_BY_LENGTH) {
-    if (canonicalName.startsWith(key)) return SOCIETY_DISPLAY_BY_KEY[key];
+    if (canonicalName.startsWith(key)) return { name: SOCIETY_DISPLAY_BY_KEY[key], matched: true };
   }
 
   const tokens = name.split(/\s+/);
   const doorIdx = tokens.findIndex(t => /\d/.test(t));
   const raw = doorIdx === -1 ? name : (doorIdx === 0 ? tokens[0] : tokens.slice(0, doorIdx).join(' '));
-  return formatCommunityName(raw);
+
+  const fuzzyKey = fuzzySocietyMatch(communityCanonicalKey(raw));
+  if (fuzzyKey) return { name: SOCIETY_DISPLAY_BY_KEY[fuzzyKey], matched: true };
+
+  return { name: formatCommunityName(raw), matched: false };
+}
+
+// For communities NOT in the known SOCIETIES list at all: cluster the
+// distinct derived names by edit distance (single-linkage via union-find),
+// then within each cluster pick whichever exact spelling occurred most
+// often among customers as canonical, remapping the rest to it. This is
+// only reliable with the full customer list in view (this function
+// re-pulls it every run), unlike per-order derivation elsewhere which only
+// ever sees one small batch at a time.
+function clusterAndCorrect(counts: Map<string, number>): Map<string, string> {
+  const names = [...counts.keys()];
+  const parent = new Map<string, string>(names.map(n => [n, n]));
+  function find(n: string): string {
+    while (parent.get(n) !== n) { parent.set(n, parent.get(parent.get(n)!)!); n = parent.get(n)!; }
+    return n;
+  }
+  function union(a: string, b: string) {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const a = names[i], b = names[j];
+      const keyA = communityCanonicalKey(a), keyB = communityCanonicalKey(b);
+      const threshold = fuzzyThreshold(Math.max(keyA.length, keyB.length));
+      if (threshold && levenshtein(keyA, keyB) <= threshold) union(a, b);
+    }
+  }
+  const clusters = new Map<string, string[]>();
+  for (const n of names) {
+    const root = find(n);
+    if (!clusters.has(root)) clusters.set(root, []);
+    clusters.get(root)!.push(n);
+  }
+  const remap = new Map<string, string>();
+  for (const members of clusters.values()) {
+    const canonical = members.reduce((best, n) => (counts.get(n)! > counts.get(best)! ? n : best), members[0]);
+    for (const n of members) remap.set(n, canonical);
+  }
+  return remap;
 }
 
 // How many chars in the original already match the cleaned (proper-cased) version.
@@ -196,9 +296,22 @@ Deno.serve(async (req) => {
     // Never fails the sync — a name-pattern miss shouldn't block it.
     let communitiesUpserted = 0;
     try {
+      const derived = rows.map(r => deriveSocietyDetailed(r.customer_name));
+
+      // Frequency-correct only the unlisted (fallback-derived) names — if
+      // 8 customers in a cluster spell it one way and 2 spell it another,
+      // the 2 typos get remapped to the 8's spelling rather than minting
+      // their own junk community.
+      const unmatchedCounts = new Map<string, number>();
+      for (const d of derived) {
+        if (d.name && !d.matched) unmatchedCounts.set(d.name, (unmatchedCounts.get(d.name) ?? 0) + 1);
+      }
+      const remap = clusterAndCorrect(unmatchedCounts);
+
       const societies = [...new Set(
-        rows.map(r => deriveSociety(r.customer_name)).filter(Boolean),
+        derived.map(d => d.name ? (remap.get(d.name) ?? d.name) : d.name).filter(Boolean),
       )].map(name => ({ name }));
+
       if (societies.length) {
         const { error: commErr } = await supabase
           .from('communities')

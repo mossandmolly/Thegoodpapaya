@@ -74,11 +74,57 @@ const SOCIETY_DISPLAY_BY_KEY: Record<string, string> = (() => {
 })();
 const SOCIETY_KEYS_BY_LENGTH = Object.keys(SOCIETY_DISPLAY_BY_KEY).sort((a, b) => b.length - a.length);
 
+// Classic edit-distance DP — used to catch a typo'd society name ("out of
+// 10 customers, 8 spell it right and 2 don't") instead of letting each
+// misspelling mint its own separate community.
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+// A handful of edits tolerated, scaled to the known name's length (skips
+// anything under 4 chars — a 1-edit tolerance on "Kew" or "Ivy" would
+// swallow unrelated short names).
+function fuzzyThreshold(len: number): number {
+  return len < 4 ? 0 : Math.max(1, Math.min(3, Math.floor(len * 0.2)));
+}
+
+// Best-effort fuzzy match against the known SOCIETIES keys — a typo like
+// "Krishvigavakhi" (missing the 's') should still resolve to the one
+// correctly-spelled "Krishvigavakshi" entry rather than becoming its own
+// junk community.
+function fuzzySocietyMatch(canonicalKey: string): string | null {
+  if (!canonicalKey) return null;
+  let best: string | null = null, bestDist = Infinity;
+  for (const key of SOCIETY_KEYS_BY_LENGTH) {
+    const threshold = fuzzyThreshold(key.length);
+    if (!threshold) continue;
+    const dist = levenshtein(canonicalKey, key);
+    if (dist <= threshold && dist < bestDist) { bestDist = dist; best = key; }
+  }
+  return best;
+}
+
 // Society name = everything before the door number, not just the first
 // word. Checks the known SOCIETIES list first (via canonical-key prefix
 // match, handles names that contain digits themselves), then falls back to
 // every leading purely-alphabetic word up to the first word containing a
-// digit.
+// digit — before accepting that fallback, it's checked against the known
+// list once more by edit distance in case it's a typo of a real society
+// (the exact-prefix check above only catches correctly-spelled names).
 function deriveSociety(customerName: string): string {
   const name = (customerName || '').trim();
   if (!name) return name;
@@ -91,6 +137,10 @@ function deriveSociety(customerName: string): string {
   const tokens = name.split(/\s+/);
   const doorIdx = tokens.findIndex(t => /\d/.test(t));
   const raw = doorIdx === -1 ? name : (doorIdx === 0 ? tokens[0] : tokens.slice(0, doorIdx).join(' '));
+
+  const fuzzyKey = fuzzySocietyMatch(communityCanonicalKey(raw));
+  if (fuzzyKey) return SOCIETY_DISPLAY_BY_KEY[fuzzyKey];
+
   return formatCommunityName(raw);
 }
 
