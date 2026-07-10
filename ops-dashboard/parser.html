@@ -107,14 +107,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-item-table td{padding:6px 4px;border-bottom:1px solid #f5efe6;color:#2b2320;vertical-align:top}
 .dv-item-table td:last-child{text-align:right;white-space:nowrap;font-weight:600}
 .dv-item-table tr:last-of-type td{border-bottom:none}
-.dv-item-nd{display:block;font-size:10px;color:#b3261e;cursor:pointer;text-decoration:none;margin-top:2px}
-.dv-item-nd:hover{text-decoration:underline}
+.dv-item-name-cell{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.dv-item-nd{display:inline-flex;align-items:center;padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;color:#b3261e;background:#fbe9e7;border:1px solid #f3c6c0;cursor:pointer;text-decoration:none;white-space:nowrap}
+.dv-item-nd:hover{background:#f6d3ce}
 .dv-free-badge{font-size:9px;font-weight:700;color:#3f7a34;background:#e5f3e3;border-radius:4px;padding:1px 5px}
 .dv-total-row td{font-weight:700;font-size:14px;color:#ffffff;background:#e8720c;padding:8px 6px}
 .dv-total-row td:first-child{border-radius:6px 0 0 6px}
 .dv-total-row td:last-child{border-radius:0 6px 6px 0}
 .dv-qr-block{display:flex;flex-direction:column;align-items:center;gap:6px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:10px}
 .dv-qr-label{font-size:12px;font-weight:600;color:#5c4f42}
+.dv-qr-block img{border-radius:8px;background:#ffffff}
+.dv-photo-thumb{width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid #eee0d0;margin-bottom:10px}
 .dv-pay-toggle{display:flex;gap:8px;margin-bottom:10px}
 .dv-pay-btn{flex:1;padding:9px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
 .dv-pay-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
@@ -362,6 +365,31 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
+<!-- NOT DELIVERED (ITEM RETURN) MODAL -->
+<div class="modal-overlay hidden" id="nd-modal">
+  <div class="modal-box">
+    <h3>Item not delivered</h3>
+    <label class="modal-label">Reason</label>
+    <select id="nd-reason">
+      <option>Customer returned, not required</option>
+      <option>Customer returned, quality issue</option>
+      <option>Damaged</option>
+      <option>Not ordered</option>
+      <option value="Other">Other</option>
+    </select>
+    <textarea id="nd-other" rows="2" placeholder="Describe the reason..." class="hidden"></textarea>
+    <div class="modal-actions">
+      <button class="btn-sec" id="nd-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="nd-confirm" style="margin-bottom:0">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- PHOTO LIGHTBOX -->
+<div class="modal-overlay hidden" id="img-lightbox" onclick="closeImgLightbox()">
+  <img id="img-lightbox-img" style="max-width:92vw;max-height:92vh;border-radius:8px" alt="Delivery photo">
+</div>
+
 <!-- ADD ITEM MODAL -->
 <div class="modal-overlay hidden" id="ai-modal">
   <div class="modal-box">
@@ -476,10 +504,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<!-- Renders the Razorpay payment link as a scannable QR on the Delivery card
-     entirely client-side (canvas), so the link itself is never sent to a
-     third-party QR-image API. -->
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script>
 const SUPABASE_URL  = 'https://fykqprogzqcfzrgwlrem.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5a3Fwcm9nenFjZnpyZ3dscmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NDkzMzEsImV4cCI6MjA5MTIyNTMzMX0.FseaaYNbN-QLhzdQF5rcImLvvoWRHOiGcZcbiFaIplQ';
@@ -2519,7 +2543,7 @@ function renderDeliveryList(){
       orders.map(order=>renderDeliveryCard(order)).join('');
   }).join('');
 
-  renderDeliveryQrCodes(socNames.flatMap(soc=>bySociety[soc]));
+  renderDeliveryPhotos(socNames.flatMap(soc=>bySociety[soc]));
 }
 
 function renderDeliveryCard(order){
@@ -2561,9 +2585,9 @@ function renderDeliveryCard(order){
         const amount=deliveryItemAmount(item);
         const isFree=FREE_ITEM_RE.test(item.description||'');
         return '<tr>'+
-          '<td>'+escH(item.item_name)+
-            '<a class="dv-item-nd" onclick="markItemNotDelivered(\''+item.id+'\',\''+order.soid+'\')">✕ not delivered</a>'+
-          '</td>'+
+          '<td><div class="dv-item-name-cell">'+escH(item.item_name)+
+            '<a class="dv-item-nd" onclick="openNotDeliveredModal(\''+item.id+'\',\''+order.soid+'\')">✕ not delivered</a>'+
+          '</div></td>'+
           '<td>'+qty+' '+escH(cat?.unit||'')+'</td>'+
           '<td>'+(isFree?'<span class="dv-free-badge">FREE</span>':(amount==null?'—':'₹'+amount.toFixed(0)))+'</td>'+
         '</tr>';
@@ -2573,11 +2597,14 @@ function renderDeliveryCard(order){
 
   // Only worth showing while there's still money to collect — once the
   // rider's confirmed payment, or there's no payment link on file at all,
-  // a scan-to-pay QR has nothing to add.
+  // a scan-to-pay QR has nothing to add. Rendered via a public QR-image API
+  // (a plain <img>, no extra JS dependency to fail silently) — the payment
+  // link only lets someone pay this one invoice, not a secret worth hiding
+  // from that API.
   const qrBlock=(order.razorpayUrl&&!order.paymentCollected)
     ?'<div class="dv-qr-block">'+
         '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+'</div>'+
-        '<canvas id="dv-qr-'+order.soid+'"></canvas>'+
+        '<img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data='+encodeURIComponent(order.razorpayUrl)+'" width="160" height="160" alt="Payment QR">'+
         '<a class="or-link" href="'+escH(order.razorpayUrl)+'" target="_blank">or open payment link</a>'+
       '</div>'
     :'';
@@ -2586,6 +2613,14 @@ function renderDeliveryCard(order){
     ?(order.paymentCollected
       ?' <span class="order-status-badge" style="background:#2f6690">PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
       :' <span class="order-status-badge" style="background:#b3261e">NOT PAID</span>')
+    :'';
+
+  // Signed URL is fetched async after this HTML is in the DOM (see
+  // renderDeliveryPhotos) since Storage reads can't happen synchronously
+  // inside a string-building render pass — this placeholder just reserves
+  // the spot and stays hidden until that resolves.
+  const photoThumb=(delivered&&order.deliveryPhotoPath)
+    ?'<img class="dv-photo-thumb hidden" id="dv-photo-'+order.soid+'" onclick="openImgLightbox(this.src)">'
     :'';
 
   return '<div class="order-row'+(delivered?' dv-delivered':'')+'">'+
@@ -2598,6 +2633,7 @@ function renderDeliveryCard(order){
     qrBlock+
     notesBlock+
     (delivered&&order.deliveryNotes?'<div class="dv-notes">📝 '+escH(order.deliveryNotes)+'</div>':'')+
+    photoThumb+
     '<div class="or-actions"><span class="or-count">'+order.items.length+' item'+(order.items.length!==1?'s':'')+'</span>'+
       '<span class="or-links">'+
         (delivered
@@ -2608,19 +2644,51 @@ function renderDeliveryCard(order){
   '</div>';
 }
 
-// One canvas per order that still needs a QR (see qrBlock above) — has to
-// run after the innerHTML swap since the canvas elements don't exist until
-// then. QRCode comes from the qrcode.js CDN script tag in <head>.
-function renderDeliveryQrCodes(orders){
+// One signed URL fetch per delivered order that has a photo — has to run
+// after the innerHTML swap since the <img> placeholders don't exist until
+// then. delivery-photos is a private bucket, so a plain public URL won't
+// work; this session's own authenticated read access (granted to any
+// signed-in session) is what lets createSignedUrl succeed here.
+function renderDeliveryPhotos(orders){
   orders.forEach(order=>{
-    if(!order.razorpayUrl||order.paymentCollected)return;
-    const canvas=document.getElementById('dv-qr-'+order.soid);
-    if(!canvas||typeof QRCode==='undefined')return;
-    QRCode.toCanvas(canvas,order.razorpayUrl,{width:140,margin:1},err=>{
-      if(err)console.error('QR render failed for',order.soid,err);
+    if(!(order.deliveryStatus==='delivered'&&order.deliveryPhotoPath))return;
+    const img=document.getElementById('dv-photo-'+order.soid);
+    if(!img)return;
+    sb.storage.from('delivery-photos').createSignedUrl(order.deliveryPhotoPath,3600).then(({data,error})=>{
+      if(error||!data)return;
+      img.src=data.signedUrl;
+      img.classList.remove('hidden');
     });
   });
 }
+
+function openImgLightbox(url){
+  if(!url)return;
+  document.getElementById('img-lightbox-img').src=url;
+  document.getElementById('img-lightbox').classList.remove('hidden');
+}
+function closeImgLightbox(){
+  document.getElementById('img-lightbox').classList.add('hidden');
+}
+
+// ── Not-delivered (item return) modal ────────────────────────────────────
+const ndModal=document.getElementById('nd-modal'),ndReasonSel=document.getElementById('nd-reason'),ndOtherInput=document.getElementById('nd-other');
+let ndTargetItem=null,ndTargetOrder=null;
+
+ndReasonSel.addEventListener('change',()=>{
+  ndOtherInput.classList.toggle('hidden',ndReasonSel.value!=='Other');
+});
+
+function openNotDeliveredModal(itemId,soid){
+  ndTargetItem=itemId;
+  ndTargetOrder=soid;
+  ndReasonSel.value='Customer returned, not required';
+  ndOtherInput.value='';
+  ndOtherInput.classList.add('hidden');
+  ndModal.classList.remove('hidden');
+}
+
+document.getElementById('nd-cancel').addEventListener('click',()=>{ndModal.classList.add('hidden');});
 
 // Cancels the one item (soft — matches deleteItem's philosophy, never hard-
 // delete) with the rider's reason appended to its description, and — since
@@ -2628,18 +2696,19 @@ function renderDeliveryQrCodes(orders){
 // existing Zoho invoice first so the remaining items fall back to 'final'.
 // That's what makes "generate invoice" reappear on Today's Orders as the
 // cue for an admin to regenerate it without this item.
-async function markItemNotDelivered(itemId,soid){
-  const reason=prompt('Reason this item was not delivered (e.g. spoiled, customer refused):');
-  if(reason===null)return;
-  if(!reason.trim()){alert('Enter a reason');return;}
-  if(!confirm('Mark this item as not delivered? It will be cancelled and the order will need its invoice regenerated.'))return;
+document.getElementById('nd-confirm').addEventListener('click',async()=>{
+  const reason=ndReasonSel.value==='Other'?ndOtherInput.value.trim():ndReasonSel.value;
+  if(!reason){alert('Enter a reason');return;}
+  const itemId=ndTargetItem,soid=ndTargetOrder;
+  if(!itemId||!soid)return;
+  ndModal.classList.add('hidden');
   await invalidateOrderInvoiceIfNeeded(soid);
   const item=(deliveryOrders[soid]?.items||[]).find(i=>i.id===itemId);
-  const description=appendAddendum(item?.description,'Not delivered: '+reason.trim());
+  const description=appendAddendum(item?.description,'Not delivered: '+reason);
   const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',itemId);
   if(error){alert('Failed to update item: '+error.message);return;}
   await loadDeliveryView();
-}
+});
 
 document.getElementById('dv-search').addEventListener('input',()=>{
   renderDeliveryList();
