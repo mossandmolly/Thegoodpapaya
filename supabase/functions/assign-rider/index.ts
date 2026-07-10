@@ -7,8 +7,15 @@
 // and stored on the order. orders' RLS locks writes to service-role only,
 // so this is the write path.
 //
-// Input:  { sales_order_ids: string[], rider: string | null }
-// Output: { updated: number }
+// This is a claim, not a plain overwrite: the update only touches rows
+// where assigned_rider is still null, in one atomic UPDATE...WHERE, so two
+// riders selecting the same unassigned order at nearly the same moment
+// can't silently clobber each other — whichever request's UPDATE commits
+// first wins that row, and the loser gets it back in already_taken instead
+// of quietly overwriting the winner's claim.
+//
+// Input:  { sales_order_ids: string[], rider: string }
+// Output: { updated: number, claimed: string[], already_taken: string[] }
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -49,17 +56,28 @@ Deno.serve(async (req) => {
     if (!Array.isArray(sales_order_ids) || !sales_order_ids.length) {
       throw new Error('Missing sales_order_ids');
     }
+    if (!rider) throw new Error('Missing rider');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
-    const { error, count } = await supabase
+    // .select() after an update returns exactly the rows the WHERE clause
+    // actually matched and updated — i.e. exactly the ones that were still
+    // unclaimed a moment ago. Anything in sales_order_ids that isn't in
+    // that result was already assigned to someone else before this request
+    // landed.
+    const { data, error } = await supabase
       .from('orders')
-      .update({ assigned_rider: rider || null }, { count: 'exact' })
-      .in('sales_order_id', sales_order_ids);
+      .update({ assigned_rider: rider })
+      .in('sales_order_id', sales_order_ids)
+      .is('assigned_rider', null)
+      .select('sales_order_id');
     if (error) throw new Error(error.message);
 
+    const claimed = (data ?? []).map((r: any) => r.sales_order_id as string);
+    const alreadyTaken = sales_order_ids.filter((id: string) => !claimed.includes(id));
+
     return new Response(
-      JSON.stringify({ updated: count ?? sales_order_ids.length }),
+      JSON.stringify({ updated: claimed.length, claimed, already_taken: alreadyTaken }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
