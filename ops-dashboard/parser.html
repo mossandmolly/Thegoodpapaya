@@ -97,6 +97,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .order-status-badge.status-invoiced{background:#2d6b2d}
 .order-cancelled{opacity:0.75}
 .cancelled-badge{background:#726a60;color:#ffffff;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
+.dv-delivered{opacity:0.7}
+.dv-phone-row{font-size:12px;color:#5c4f42;margin-bottom:8px}
+.dv-phone{color:#1a73e8;cursor:pointer;text-decoration:none;font-weight:600}
+.dv-phone:hover{text-decoration:underline}
+.dv-notes{font-size:12px;color:#5c4f42;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;margin-bottom:10px;white-space:pre-wrap}
+.dv-notes-edit textarea{width:100%;padding:8px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:12px;color:#2b2320;font-family:inherit;margin-bottom:6px;background:#ffffff;resize:vertical}
 .inv-select{vertical-align:middle;margin-right:2px}
 .pill-x{background:none;border:none;cursor:pointer;font-size:12px;line-height:1;padding:2px;color:inherit;opacity:0.6}
 .pill-x:hover{opacity:1}
@@ -127,7 +133,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .modal-box{background:#ffffff;border-radius:12px;padding:20px;width:100%;max-width:340px;box-shadow:0 8px 30px rgba(43,35,32,0.2)}
 .modal-box h3{font-size:15px;font-weight:700;color:#2b2320;margin-bottom:14px}
 .modal-label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:4px}
-.modal-box select,.modal-box input{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
+.modal-box select,.modal-box input,.modal-box textarea{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
+.modal-box textarea{resize:vertical}
 .ac-wrap{position:relative}
 .ac-list{position:absolute;top:100%;left:0;right:0;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;margin-top:2px;max-height:240px;overflow-y:auto;z-index:50;box-shadow:0 4px 12px rgba(43,35,32,0.15)}
 .ac-list.hidden{display:none}
@@ -225,9 +232,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 <div class="tabs">
-  <button class="tab active" onclick="switchTab('parser')">📸 Parser</button>
-  <button class="tab" onclick="switchTab('today')">📋 Order overview</button>
-  <button class="tab" onclick="switchTab('packer')">📦 Packer</button>
+  <button class="tab active" onclick="switchTab('parser')" id="tab-parser">📸 Parser</button>
+  <button class="tab" onclick="switchTab('today')" id="tab-today">📋 Order overview</button>
+  <button class="tab" onclick="switchTab('packer')" id="tab-packer">📦 Packer</button>
+  <button class="tab" onclick="switchTab('delivery')" id="tab-delivery">🚚 Delivery</button>
 </div>
 
 <!-- PARSER -->
@@ -301,6 +309,31 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="filter-group-label">Status</div>
   <div id="pk-status-pills" class="filter-pills status-pills"></div>
   <div id="pk-grid" class="pack-grid"><div class="to-empty">Loading…</div></div>
+</div>
+
+<!-- DELIVERY -->
+<div class="panel" id="panel-delivery">
+  <div class="section-label date-header-row">
+    <span><span id="dv-label">Delivery</span> <span id="dv-rc"></span></span>
+    <input type="date" class="date-picker-compact" id="dv-date-picker" onchange="setViewDate(this.value)">
+  </div>
+  <input type="text" class="pk-search" id="dv-search" placeholder="🔍 Search society or customer...">
+  <div id="dv-list"><div class="to-empty">Loading…</div></div>
+</div>
+
+<!-- MARK DELIVERED MODAL -->
+<div class="modal-overlay hidden" id="dv-modal">
+  <div class="modal-box">
+    <h3>Mark delivered</h3>
+    <label class="modal-label">Remarks (optional)</label>
+    <textarea id="dv-notes" rows="3" placeholder="e.g. left at gate, handed to security..."></textarea>
+    <label class="modal-label">Photo (optional)</label>
+    <input type="file" id="dv-photo" accept="image/*" capture="environment">
+    <div class="modal-actions">
+      <button class="btn-sec" id="dv-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="dv-confirm" style="margin-bottom:0">Confirm Delivered</button>
+    </div>
+  </div>
 </div>
 
 <!-- ADD ITEM MODAL -->
@@ -434,16 +467,42 @@ async function authToken(){
   return session?.access_token||SUPABASE_ANON;
 }
 
+// Delivery sessions are confined to the Delivery tab — a UI-level
+// restriction only. It's driven by the shared delivery login's Supabase
+// Auth user_metadata (role: "delivery"), set once in the dashboard. This
+// doesn't touch RLS: any authenticated session (delivery included) can
+// still read order data directly if someone went looking for it — it just
+// keeps the normal workflow confined to the one relevant tab.
+let isDeliveryRole=false;
+
+function applyRoleRestrictions(){
+  if(!isDeliveryRole)return;
+  ['tab-parser','tab-today','tab-packer'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.style.display='none';
+  });
+}
+
 let appInitialized=false;
 async function initAppAfterLogin(){
   if(appInitialized)return;
   appInitialized=true;
   document.getElementById('login-screen').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
+
+  const{data:{session}}=await sb.auth.getSession();
+  isDeliveryRole=session?.user?.user_metadata?.role==='delivery';
+  applyRoleRestrictions();
   syncViewDatePickers();
   syncEntryDatePicker();
-  ensureCustomerNameOptions();
-  addQoBlock();
+
+  if(isDeliveryRole){
+    switchTab('delivery');
+  }else{
+    ensureCustomerNameOptions();
+    addQoBlock();
+  }
+
+  document.getElementById('app').classList.remove('hidden');
 }
 
 sb.auth.onAuthStateChange((_event,session)=>{
@@ -488,12 +547,18 @@ let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orang
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','today','packer'][i]===name));
+  // A delivery-role session only ever has the Delivery tab visible, but
+  // guard the actual switch here too — the other tab buttons are hidden via
+  // CSS, not removed, so anything that still calls switchTab() directly
+  // (e.g. a stray onclick) can't escape into a tab this session shouldn't see.
+  if(isDeliveryRole)name='delivery';
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','today','packer','delivery'][i]===name));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='config')renderConfig();
   if(name==='today')loadTodaysOrders();
   if(name==='packer')loadPackerView();
+  if(name==='delivery')loadDeliveryView();
 }
 
 // ── Config UI ─────────────────────────────────────────────────────────────
@@ -681,6 +746,15 @@ RULES:
    - Piece count: ALWAYS include "N pieces" when order is by count e.g. "2 pieces", "ripe, 3 pieces", "ready to eat, 1 piece"
    - Complaints or special requests also go here
 
+4a. delivery_instructions = a SEPARATE copy of anything from the message
+    that's specifically an instruction for the delivery person, not the
+    packer — e.g. "deliver after 4pm", "before 10am only", "don't ring the
+    bell", "leave with security", "don't collect money" / "already paid" /
+    COD notes, gate codes, "call before coming up". This is IN ADDITION to
+    also including that same text in description per rule 4 above — it's
+    not a replacement, both fields get it. Empty string "" if the message
+    has nothing delivery-specific (most orders won't).
+
 5. Quantity rules:
    - g/gm/gms/kg stated → convert to kg decimal (500g=0.5, 300gm=0.3, half kg=0.5, 1/2kg=0.5, 2kg=2)
    - N pc / N pieces / plain N → if fruit in KG/PC table: qty = N × kg/pc, add "N pieces" to description
@@ -730,7 +804,7 @@ CRITICAL:
 - "orange" = Mandarin orange always, never mango
 
 Return ONLY valid compact JSON, no markdown fences:
-{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","quantity":0,"sales_order":""}],"flags":[]}`;
+{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","delivery_instructions":"","quantity":0,"sales_order":""}],"flags":[]}`;
 
   try{
     const compressStart = Date.now();
@@ -879,6 +953,7 @@ async function pushRows(rows,salesOrderIdFor){
       sales_order_id:     soid,
       item_name:          r.item_name,
       description:        r.description||null,
+      delivery_instructions: r.delivery_instructions||null,
       requested_quantity: qty,
       status,
     });
@@ -1127,7 +1202,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
@@ -1166,7 +1241,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,delivery_status,delivered_at,delivery_notes,delivery_photo_path')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -1201,7 +1276,7 @@ const VIEW_DATE_MIN=addDays(CALENDAR_TODAY,-15);
 const VIEW_DATE_MAX=ENTRY_DATE_MAX;
 
 function syncViewDatePickers(){
-  [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker')].forEach(el=>{
+  [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker'),document.getElementById('dv-date-picker')].forEach(el=>{
     if(!el)return;
     el.min=VIEW_DATE_MIN;
     el.max=VIEW_DATE_MAX;
@@ -1209,8 +1284,8 @@ function syncViewDatePickers(){
   });
 }
 
-// Drives both Today's Orders and Packer — the two date pickers stay in
-// sync and whichever tab is active reloads. Clamped to the last 15 days
+// Drives Today's Orders, Packer and Delivery — the three date pickers stay
+// in sync and whichever tab is active reloads. Clamped to the last 15 days
 // (corrections/cancellations on older orders) through one day ahead
 // (tomorrow's incoming queue) — all data older than that is still in
 // Supabase, just not reachable from this picker.
@@ -1222,6 +1297,7 @@ function setViewDate(dateStr){
   syncViewDatePickers();
   if(document.getElementById('panel-today').classList.contains('active'))loadTodaysOrders();
   if(document.getElementById('panel-packer').classList.contains('active'))loadPackerView();
+  if(document.getElementById('panel-delivery').classList.contains('active'))loadDeliveryView();
 }
 
 async function loadTodaysOrders(){
@@ -2247,6 +2323,252 @@ async function markFinal(id){
   }else{
     if(item)item.status='final';
     renderPackerGrid();
+  }
+}
+
+// ── Delivery ──────────────────────────────────────────────────────────────
+// An order only shows up here once it's fully invoiced — that's the signal
+// it's actually ready for the delivery boy to start bagging, same gate used
+// to offer the payment link on Today's Orders (isFullyInvoiced).
+let deliveryOrders={};
+let revealedPhones=new Set();
+let dvEditingNotes=null;
+
+async function loadDeliveryView(){
+  const list=document.getElementById('dv-list');
+  const tomorrowDate=addDays(CALENDAR_TODAY,1);
+  document.getElementById('dv-label').textContent=
+    viewDate===CALENDAR_TODAY?'Delivery':(viewDate===tomorrowDate?'Delivery (Tomorrow)':'Delivery — '+viewDate);
+  list.innerHTML='<div class="to-empty">Loading…</div>';
+
+  // Cancelled items are never delivery-relevant, and excluding them here
+  // (rather than fetching everything and filtering client-side like Today's
+  // Orders does) keeps this view's own isFullyInvoiced check accurate
+  // without needing activeItems as a second pass.
+  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%').neq('status','cancelled'));
+  if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  if(!data||!data.length){
+    deliveryOrders={};
+    document.getElementById('dv-rc').textContent='';
+    list.innerHTML='<div class="to-empty">No orders for '+viewDate+'</div>';
+    return;
+  }
+
+  const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
+  const{map:customerMap,error:custErr}=await fetchCustomerMap(uniqueIds);
+  if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
+
+  const bySalesOrder={};
+  data.forEach(item=>{
+    const key=item.sales_order_id;
+    if(!bySalesOrder[key]){
+      const o=customerMap[key];
+      bySalesOrder[key]={
+        customer:          o?.customer_name||key,
+        phone:             o?.phone||null,
+        orderStatus:       o?.status||'active',
+        deliveryStatus:    o?.delivery_status||'pending',
+        deliveredAt:       o?.delivered_at||null,
+        deliveryNotes:     o?.delivery_notes||null,
+        deliveryPhotoPath: o?.delivery_photo_path||null,
+        items:[],
+      };
+    }
+    bySalesOrder[key].items.push(item);
+  });
+
+  Object.keys(bySalesOrder).forEach(soid=>{
+    const order=bySalesOrder[soid];
+    if(order.orderStatus==='cancelled'||!isFullyInvoiced(order))delete bySalesOrder[soid];
+  });
+
+  deliveryOrders=bySalesOrder;
+  renderDeliveryList();
+}
+
+// Display-level mask only — cosmetic, not a hardened secret (the full
+// number is already present in the fetched page data either way). Shows
+// the last 2 digits so a delivery boy can still eyeball "is this the right
+// customer" without the full number sitting exposed on the card.
+function maskPhone(phone){
+  const digits=String(phone||'').replace(/\D/g,'');
+  if(!digits)return '';
+  if(digits.length<=2)return '••'+digits;
+  return '•'.repeat(digits.length-2)+digits.slice(-2);
+}
+
+function toggleRevealPhone(soid){
+  if(revealedPhones.has(soid))revealedPhones.delete(soid);
+  else revealedPhones.add(soid);
+  renderDeliveryList();
+}
+
+function editDeliveryInstructions(soid){
+  dvEditingNotes=soid;
+  renderDeliveryList();
+}
+function cancelEditDeliveryInstructions(){
+  dvEditingNotes=null;
+  renderDeliveryList();
+}
+
+// delivery_instructions lives per-item, but the card is per-order — saving
+// from here writes the same text onto every non-cancelled item of the
+// order so the whole order reads consistently, no matter which item(s) the
+// parser originally attached it to.
+async function saveDeliveryInstructions(soid){
+  const el=document.getElementById('dv-notes-edit-'+soid);
+  const val=el?el.value.trim():'';
+  const{error}=await sb.from('order_items').update({delivery_instructions:val||null}).eq('sales_order_id',soid).neq('status','cancelled');
+  if(error){alert('Failed to save: '+error.message);return;}
+  dvEditingNotes=null;
+  await loadDeliveryView();
+}
+
+// Pure re-render from the already-fetched deliveryOrders — no network calls
+// — so revealing a phone number or opening the instructions editor just
+// redraws instantly instead of re-fetching.
+function renderDeliveryList(){
+  const list=document.getElementById('dv-list');
+  const search=document.getElementById('dv-search').value.trim().toLowerCase();
+
+  const bySociety={};
+  Object.entries(deliveryOrders).forEach(([soid,order])=>{
+    if(search&&!order.customer.toLowerCase().includes(search))return;
+    const soc=deriveSociety(order.customer);
+    if(!bySociety[soc])bySociety[soc]=[];
+    bySociety[soc].push({soid,...order});
+  });
+
+  const socNames=Object.keys(bySociety).sort();
+  const totalLoaded=Object.keys(deliveryOrders).length;
+  document.getElementById('dv-rc').textContent=totalLoaded?'— '+totalLoaded+' order'+(totalLoaded!==1?'s':''):'';
+
+  if(!socNames.length){
+    list.innerHTML='<div class="to-empty">'+(totalLoaded?'No orders match this search':'Nothing ready for delivery yet — orders appear here once fully invoiced')+'</div>';
+    return;
+  }
+
+  list.innerHTML=socNames.map(soc=>{
+    const orders=bySociety[soc];
+    return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
+      orders.map(order=>renderDeliveryCard(order)).join('');
+  }).join('');
+}
+
+function renderDeliveryCard(order){
+  const delivered=order.deliveryStatus==='delivered';
+  const revealed=revealedPhones.has(order.soid);
+  const phoneDisplay=order.phone
+    ?(revealed
+      ?'<a class="dv-phone" href="tel:'+escH(order.phone)+'">'+escH(order.phone)+'</a> <a class="or-link" onclick="toggleRevealPhone(\''+order.soid+'\')">hide</a>'
+      :'<a class="dv-phone" onclick="toggleRevealPhone(\''+order.soid+'\')">'+escH(maskPhone(order.phone))+' · tap to reveal</a>')
+    :'<span style="color:#a39a8c">no phone on file</span>';
+
+  const instructions=[...new Set(order.items.map(i=>(i.delivery_instructions||'').trim()).filter(Boolean))].join(' · ');
+  const editingNotes=dvEditingNotes===order.soid;
+
+  const notesBlock=editingNotes
+    ?'<div class="dv-notes-edit">'+
+        '<textarea id="dv-notes-edit-'+order.soid+'" rows="2" placeholder="e.g. deliver after 4pm, don\'t ring bell, don\'t collect money...">'+escH(instructions)+'</textarea>'+
+        '<div class="or-links" style="margin-bottom:10px">'+
+          '<a class="or-link" onclick="saveDeliveryInstructions(\''+order.soid+'\')">save</a>'+
+          '<a class="or-link" onclick="cancelEditDeliveryInstructions()">cancel</a>'+
+        '</div>'+
+      '</div>'
+    :(instructions
+      ?'<div class="dv-notes">🚚 '+escH(instructions)+' <a class="or-link" onclick="editDeliveryInstructions(\''+order.soid+'\')">edit</a></div>'
+      :'<div class="or-links" style="margin-bottom:10px"><a class="or-link" onclick="editDeliveryInstructions(\''+order.soid+'\')">+ add delivery instructions</a></div>'
+    );
+
+  return '<div class="order-row'+(delivered?' dv-delivered':'')+'">'+
+    '<div class="or-top"><span class="or-cust">'+escH(order.customer)+
+      (delivered?' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>':'')+
+    '</span></div>'+
+    '<div class="dv-phone-row">📞 '+phoneDisplay+'</div>'+
+    '<div class="or-pills">'+order.items.map(item=>
+      '<span class="item-pill status-'+item.status+'">'+escH(item.item_name)+' × '+(item.final_quantity??item.requested_quantity)+'</span>'
+    ).join('')+'</div>'+
+    notesBlock+
+    (delivered&&order.deliveryNotes?'<div class="dv-notes">📝 '+escH(order.deliveryNotes)+'</div>':'')+
+    '<div class="or-actions"><span class="or-count">'+order.items.length+' item'+(order.items.length!==1?'s':'')+'</span>'+
+      '<span class="or-links">'+
+        (delivered
+          ?'<a class="or-link" onclick="undoDelivered(\''+order.soid+'\')">undo delivered</a>'
+          :'<a class="or-cta primary" onclick="openMarkDeliveredModal(\''+order.soid+'\')">✅ mark delivered</a>')+
+      '</span>'+
+    '</div>'+
+  '</div>';
+}
+
+document.getElementById('dv-search').addEventListener('input',()=>{
+  renderDeliveryList();
+});
+
+// ── Mark delivered modal ─────────────────────────────────────────────────
+const dvModal=document.getElementById('dv-modal'),dvNotesEl=document.getElementById('dv-notes'),dvPhotoInput=document.getElementById('dv-photo');
+let dvTargetOrder=null;
+
+function openMarkDeliveredModal(soid){
+  dvTargetOrder=soid;
+  dvNotesEl.value='';
+  dvPhotoInput.value='';
+  dvModal.classList.remove('hidden');
+}
+
+document.getElementById('dv-cancel').addEventListener('click',()=>{dvModal.classList.add('hidden');});
+
+document.getElementById('dv-confirm').addEventListener('click',async()=>{
+  const soid=dvTargetOrder;
+  if(!soid)return;
+  const notes=dvNotesEl.value.trim();
+  const file=dvPhotoInput.files[0];
+  const confirmBtn=document.getElementById('dv-confirm');
+  confirmBtn.disabled=true;
+  confirmBtn.textContent='Saving…';
+  try{
+    // Uploaded directly to Storage with the caller's own session (its
+    // policies allow any signed-in session onto this bucket) — mark-delivered
+    // only ever receives the resulting path, never the file itself.
+    let photoPath=null;
+    if(file){
+      const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
+      photoPath=soid+'/'+Date.now()+'.'+ext;
+      const{error:upErr}=await sb.storage.from('delivery-photos').upload(photoPath,file,{upsert:false});
+      if(upErr)throw new Error('Photo upload failed: '+upErr.message);
+    }
+    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,delivered:true,notes,photo_path:photoPath}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not mark delivered');
+    evictCustomerLookupCache(soid);
+    dvModal.classList.add('hidden');
+    await loadDeliveryView();
+  }catch(e){
+    alert(e.message);
+  }finally{
+    confirmBtn.disabled=false;
+    confirmBtn.textContent='Confirm Delivered';
+  }
+});
+
+async function undoDelivered(soid){
+  if(!confirm('Mark this order as not-yet-delivered?'))return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,delivered:false}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not undo delivery');
+    evictCustomerLookupCache(soid);
+    await loadDeliveryView();
+  }catch(e){
+    alert(e.message);
   }
 }
 
