@@ -126,6 +126,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-scope-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
 .dv-scope-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
 .dv-assigned-tag{font-size:10px;font-weight:600;color:#8a7a6a;margin-left:6px}
+.deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
 .dv-queue-badge.hidden{display:none}
 .dv-cancelled-card{opacity:0.7}
@@ -191,6 +192,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .qo-block{border:1px solid #eee0d0;border-radius:8px;padding:10px;margin-bottom:10px;background:#ffffff}
 .qo-block-header{display:flex;gap:6px;margin-bottom:8px}
 .qo-block-header input{flex:1;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
+.qo-block-header input.qo-deliverby{flex:none;width:110px}
 .qo-block-header button{background:none;border:none;color:#b3261e;font-size:16px;cursor:pointer;padding:0 4px;flex-shrink:0}
 .qo-row{display:flex;gap:6px;margin-bottom:6px}
 .qo-row input{padding:8px 9px;border:1px solid #eee0d0;border-radius:8px;font-size:12px;color:#2b2320;font-family:inherit;background:#ffffff;width:100%}
@@ -968,6 +970,15 @@ RULES:
     not a replacement, both fields get it. Empty string "" if the message
     has nothing delivery-specific (most orders won't).
 
+4b. deliver_by = a structured "HH:MM" (24-hour) deadline ONLY if the
+    customer stated a hard latest-time to receive the order — e.g. "need by
+    4pm"→"16:00", "before 10am"→"10:00", "by 6:30pm"→"18:30". This drives
+    real packing/dispatch scheduling, so only fill it in when a specific
+    clock time is actually stated — NOT for vague urgency ("asap", "soon",
+    "whenever") and NOT for "deliver after Xpm" (that's an earliest time,
+    goes in delivery_instructions instead, not a deadline). Empty string ""
+    if no explicit latest-time was given (most orders won't have one).
+
 5. Quantity rules:
    - g/gm/gms/kg stated → convert to kg decimal (500g=0.5, 300gm=0.3, half kg=0.5, 1/2kg=0.5, 2kg=2)
    - N pc / N pieces / plain N → if fruit in KG/PC table: qty = N × kg/pc, add "N pieces" to description
@@ -1017,7 +1028,7 @@ CRITICAL:
 - "orange" = Mandarin orange always, never mango
 
 Return ONLY valid compact JSON, no markdown fences:
-{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","delivery_instructions":"","quantity":0,"sales_order":""}],"flags":[]}`;
+{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","quantity":0,"sales_order":""}],"flags":[]}`;
 
   try{
     const compressStart = Date.now();
@@ -1138,7 +1149,10 @@ async function pushRows(rows,salesOrderIdFor){
         source:         'manual',
         payment_method: 'cod',
         invoice_status: 'pending',
+        deliver_by:     r.deliver_by||null,
       });
+    }else if(r.deliver_by&&!headers.get(soid).deliver_by){
+      headers.get(soid).deliver_by=r.deliver_by; // any row in this customer's batch may carry it
     }
   });
   const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
@@ -1360,6 +1374,7 @@ async function addQoBlock(){
           '<input type="text" class="qo-customer" placeholder="Customer name (e.g. Dhavala A502)" autocomplete="off">'+
           '<div class="ac-list hidden"></div>'+
         '</div>'+
+        '<input type="time" class="qo-deliverby" title="Deliver by (optional) — a hard deadline, not just preference">'+
         '<button type="button" onclick="this.closest(\'.qo-block\').remove()" title="Remove customer">✕</button>'+
       '</div>'+
       '<div class="qo-rows"></div>'+
@@ -1381,12 +1396,13 @@ qoSubmitBtn.addEventListener('click',async()=>{
   qoBlocksEl.querySelectorAll('.qo-block').forEach(block=>{
     const customerName=formatCustomerName(block.querySelector('.qo-customer').value);
     if(!customerName)return;
+    const deliverBy=block.querySelector('.qo-deliverby').value||'';
     block.querySelectorAll('.qo-row').forEach(row=>{
       const itemName=row.querySelector('.qo-item').value.trim();
       const qty=parseFloat(row.querySelector('.qo-qty').value);
       const description=row.querySelector('.qo-desc').value.trim();
       if(itemName&&!isNaN(qty)&&qty>0){
-        rows.push({customer_name:customerName,item_name:itemName,quantity:qty,description});
+        rows.push({customer_name:customerName,item_name:itemName,quantity:qty,description,deliver_by:deliverBy});
       }
     });
   });
@@ -1454,7 +1470,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -1556,6 +1572,7 @@ async function loadTodaysOrders(){
         razorpayUrl:   o?.razorpay_url||null,
         invoiceStatus: o?.invoice_status||null,
         orderStatus:   o?.status||'active',
+        deliverBy:     o?.deliver_by||null,
         items:[],
       };
     }
@@ -1617,6 +1634,7 @@ function renderOrdersList(){
             escH(order.customer)+
             (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
             (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
+            (!cancelled&&order.deliverBy?' <span class="deliver-by-badge">⏰ by '+escH(order.deliverBy.slice(0,5))+'</span>':'')+
             (!cancelled&&fullyInvoiced?(order.razorpayUrl
               ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
               :' <span class="pay-missing">Payment link not generated</span>'
@@ -2808,6 +2826,7 @@ async function loadDeliveryView(){
         paymentCollected:      !!o?.payment_collected,
         paymentCollectedMethod:o?.payment_collected_method||null,
         assignedRider:         o?.assigned_rider||null,
+        deliverBy:             o?.deliver_by||null,
         items:[],
       };
     }
@@ -3151,6 +3170,10 @@ function renderDeliveryCard(order,selectionMode){
     ?'<span class="dv-assigned-tag">rider: '+escH(order.assignedRider)+'</span>'
     :'';
 
+  const deliverByTag=(!delivered&&order.deliverBy)
+    ?' <span class="deliver-by-badge">⏰ by '+escH(order.deliverBy.slice(0,5))+'</span>'
+    :'';
+
   const selectCheckbox=selectionMode
     ?'<input type="checkbox" class="inv-select" '+(selectedDeliveryOrders.has(order.soid)?'checked ':'')+'onchange="toggleDeliverySelect(\''+order.soid+'\',this.checked)"> '
     :'';
@@ -3171,7 +3194,7 @@ function renderDeliveryCard(order,selectionMode){
   return '<div class="order-row'+(delivered?' dv-delivered':'')+'">'+
     '<div class="or-top"><span class="or-cust">'+selectCheckbox+escH(order.customer)+
       deliveryStatusBadge+
-      paymentBadge+assignedTag+
+      paymentBadge+assignedTag+deliverByTag+
     '</span></div>'+
     '<div class="dv-phone-row">📞 '+phoneDisplay+'</div>'+
     itemsTable+
