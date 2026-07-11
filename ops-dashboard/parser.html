@@ -2745,6 +2745,12 @@ async function flushDvQueue(){
 
 window.addEventListener('online',flushDvQueue);
 setInterval(flushDvQueue,30000);
+// Mobile browsers throttle/pause timers while a tab is backgrounded, so the
+// 30s interval above can't be relied on the moment a rider switches back to
+// this tab after a while in another app — catch that moment explicitly too.
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible')flushDvQueue();
+});
 
 // Same rule generate-invoice bills at ₹0 by — an item whose description
 // flags it as a replacement/free sample shouldn't show a rate/amount that
