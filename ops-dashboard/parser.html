@@ -413,6 +413,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <img id="img-lightbox-img" style="max-width:92vw;max-height:92vh;border-radius:8px" alt="Delivery photo">
 </div>
 
+<!-- GENERIC ALERT / CONFIRM / PROMPT MODAL — replaces native browser
+     dialogs everywhere in this app (those always show as "<site> says",
+     which no page script can change; this is our own popup instead) -->
+<div class="modal-overlay hidden" id="ux-modal">
+  <div class="modal-box">
+    <div id="ux-modal-message" style="font-size:14px;color:#2b2320;white-space:pre-wrap;margin-bottom:14px"></div>
+    <input type="text" id="ux-modal-input" class="hidden">
+    <div class="modal-actions">
+      <button class="btn-sec hidden" id="ux-modal-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="ux-modal-ok" style="margin-bottom:0">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- ADD ITEM MODAL -->
 <div class="modal-overlay hidden" id="ai-modal">
   <div class="modal-box">
@@ -532,6 +546,69 @@ const SUPABASE_URL  = 'https://fykqprogzqcfzrgwlrem.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5a3Fwcm9nenFjZnpyZ3dscmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NDkzMzEsImV4cCI6MjA5MTIyNTMzMX0.FseaaYNbN-QLhzdQF5rcImLvvoWRHOiGcZcbiFaIplQ';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
+// ── Custom alert/confirm/prompt ──────────────────────────────────────────
+// Replaces every native alert()/confirm()/prompt() in this app — a native
+// dialog always shows the browser's own "<site> says" chrome, which no page
+// script can remove or restyle. These use the same modal-box look as every
+// other popup here instead, so they read as part of the app, not the browser.
+const uxModal=document.getElementById('ux-modal'),
+      uxModalMsg=document.getElementById('ux-modal-message'),
+      uxModalInput=document.getElementById('ux-modal-input'),
+      uxModalCancelBtn=document.getElementById('ux-modal-cancel'),
+      uxModalOkBtn=document.getElementById('ux-modal-ok');
+let uxModalResolve=null;
+
+function uxAlert(message){
+  return new Promise(resolve=>{
+    uxModalMsg.textContent=message;
+    uxModalInput.classList.add('hidden');
+    uxModalCancelBtn.classList.add('hidden');
+    uxModalOkBtn.textContent='OK';
+    uxModal.classList.remove('hidden');
+    uxModalResolve=()=>resolve();
+  });
+}
+
+function uxConfirm(message){
+  return new Promise(resolve=>{
+    uxModalMsg.textContent=message;
+    uxModalInput.classList.add('hidden');
+    uxModalCancelBtn.classList.remove('hidden');
+    uxModalCancelBtn.textContent='Cancel';
+    uxModalOkBtn.textContent='Yes';
+    uxModal.classList.remove('hidden');
+    uxModalResolve=ok=>resolve(!!ok);
+  });
+}
+
+// Mirrors native prompt()'s contract: resolves the typed text on OK, or
+// null if cancelled (callers already check `=== null` to detect that).
+function uxPrompt(message,defaultValue){
+  return new Promise(resolve=>{
+    uxModalMsg.textContent=message;
+    uxModalInput.classList.remove('hidden');
+    uxModalInput.value=defaultValue||'';
+    uxModalCancelBtn.classList.remove('hidden');
+    uxModalCancelBtn.textContent='Cancel';
+    uxModalOkBtn.textContent='OK';
+    uxModal.classList.remove('hidden');
+    uxModalInput.focus();
+    uxModalResolve=ok=>resolve(ok?uxModalInput.value:null);
+  });
+}
+
+uxModalOkBtn.addEventListener('click',()=>{
+  uxModal.classList.add('hidden');
+  if(uxModalResolve)uxModalResolve(true);
+});
+uxModalCancelBtn.addEventListener('click',()=>{
+  uxModal.classList.add('hidden');
+  if(uxModalResolve)uxModalResolve(false);
+});
+uxModalInput.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();uxModalOkBtn.click();}
+});
+
 // ── Auth ──────────────────────────────────────────────────────────────────
 // supabase-js persists the session in localStorage and auto-refreshes the
 // access token by default, so a signed-in session survives reloads and
@@ -561,9 +638,9 @@ let isDeliveryRole=false;
 const RIDER_NAME_KEY='gp_rider_name';
 let riderName=localStorage.getItem(RIDER_NAME_KEY)||null;
 
-function ensureRiderName(){
+async function ensureRiderName(){
   if(!riderName){
-    const entered=(prompt('Your name (so the app remembers who you are on this device):')||'').trim();
+    const entered=((await uxPrompt('What\'s your name? We\'ll remember it on this device.'))||'').trim();
     if(entered){
       riderName=entered;
       localStorage.setItem(RIDER_NAME_KEY,riderName);
@@ -572,8 +649,8 @@ function ensureRiderName(){
   renderRiderBadge();
 }
 
-function changeRiderName(){
-  const entered=(prompt('Your name:',riderName||'')||'').trim();
+async function changeRiderName(){
+  const entered=((await uxPrompt('What\'s your name?',riderName||''))||'').trim();
   if(!entered)return;
   riderName=entered;
   localStorage.setItem(RIDER_NAME_KEY,riderName);
@@ -605,7 +682,7 @@ async function initAppAfterLogin(){
   const{data:{session}}=await sb.auth.getSession();
   isDeliveryRole=session?.user?.user_metadata?.role==='delivery';
   applyRoleRestrictions();
-  ensureRiderName();
+  await ensureRiderName();
   syncViewDatePickers();
   syncEntryDatePicker();
 
@@ -1080,7 +1157,7 @@ async function pushRows(rows,salesOrderIdFor){
 pushb.addEventListener('click',async()=>{
   const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
   if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
-  if(entryDate!==CALENDAR_TODAY&&!confirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to '+entryDate+' instead of today?'))return;
+  if(entryDate!==CALENDAR_TODAY&&!await uxConfirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to '+entryDate+' instead of today?'))return;
   pushb.disabled=true;pushb.textContent='Pushing…';setPush('');
   try{
     // r.sales_order is <parsed-date>-CustomerName (first 10 chars are the
@@ -1099,7 +1176,7 @@ pushb.addEventListener('click',async()=>{
 pushTomorrowBtn.addEventListener('click',async()=>{
   const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
   if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
-  if(!confirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to TOMORROW\'s orders instead of today\'s?'))return;
+  if(!await uxConfirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to TOMORROW\'s orders instead of today\'s?'))return;
   pushTomorrowBtn.disabled=true;pushTomorrowBtn.textContent='Pushing…';setPush('');
   let ok=false;
   try{
@@ -1136,13 +1213,13 @@ async function syncCustomers(){
 
 const syncCustomersBtn=document.getElementById('sync-customers');
 syncCustomersBtn.addEventListener('click',async()=>{
-  if(!confirm('Sync customers from Zoho now?'))return;
+  if(!await uxConfirm('Sync customers from Zoho now?'))return;
   syncCustomersBtn.disabled=true;syncCustomersBtn.textContent='Syncing…';
   try{
     const{synced}=await syncCustomers();
     syncCustomersBtn.textContent='✅ Synced ('+synced+')';
   }catch(e){
-    alert('Customer sync failed: '+e.message);
+    uxAlert('Customer sync failed: '+e.message);
     syncCustomersBtn.textContent='👥 Customers';
   }finally{
     syncCustomersBtn.disabled=false;
@@ -1249,7 +1326,7 @@ async function addQoRow(blockIdx){
   );
   const row=rowsEl.querySelector('.qo-row[data-ridx="'+rowIdx+'"]');
   attachItemAutocomplete(row.querySelector('.qo-item'),row.querySelector('.ac-list'));
-  ensureCatalogItems().catch(e=>alert(e.message));
+  ensureCatalogItems().catch(e=>uxAlert(e.message));
 }
 
 async function addQoBlock(){
@@ -1292,7 +1369,7 @@ qoSubmitBtn.addEventListener('click',async()=>{
     });
   });
   if(!rows.length){setQoStatus('Add at least one customer with an item and quantity','err');return;}
-  if(entryDate!==CALENDAR_TODAY&&!confirm('Submit to '+entryDate+' instead of today?'))return;
+  if(entryDate!==CALENDAR_TODAY&&!await uxConfirm('Submit to '+entryDate+' instead of today?'))return;
 
   qoSubmitBtn.disabled=true;qoSubmitBtn.textContent='Submitting…';setQoStatus('');
   try{
@@ -1677,11 +1754,11 @@ function deriveSociety(customerName){
   return formatCommunityName(raw);
 }
 
-function pillClick(id){
+async function pillClick(id){
   const item=currentItemsById[id];
   if(!item)return;
   if(item.status==='held'){
-    if(confirm('Approve this held item? It will move to open.'))approveHeldItem(id);
+    if(await uxConfirm('Approve this item? It will move to packing.'))approveHeldItem(id);
   }else{
     editItemPrompt(id);
   }
@@ -1731,7 +1808,7 @@ async function invalidateOrderInvoiceIfNeeded(salesOrderId){
     if(itemsErr)throw new Error(itemsErr.message);
     return true;
   }catch(e){
-    alert('Warning: could not clear the old Zoho invoice automatically ('+e.message+'). You may need to regenerate it manually.');
+    uxAlert('Warning: could not clear the old Zoho invoice automatically ('+e.message+'). You may need to regenerate it manually.');
     return true; // unknown state — safer to force a full reload than trust local cache
   }
 }
@@ -1760,7 +1837,7 @@ async function updateQty(id,qty,description){
   const update={requested_quantity:qty,description:finalDescription||null,status:'open',collected:false};
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
   const{error}=await sb.from('order_items').update(update).eq('id',id);
-  if(error){alert('Failed to update: '+error.message);}
+  if(error){uxAlert('Failed to update: '+error.message);}
   await loadTodaysOrders();
 }
 
@@ -1781,8 +1858,8 @@ document.getElementById('ei-cancel').addEventListener('click',()=>{eiModal.class
 
 document.getElementById('ei-save').addEventListener('click',async()=>{
   const qty=parseFloat(eiQty.value);
-  if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
-  if(!confirm('Save this change to the order?'))return;
+  if(isNaN(qty)||qty<0){uxAlert('Enter a valid quantity');return;}
+  if(!await uxConfirm('Save this change to the order?'))return;
   eiModal.classList.add('hidden');
   await updateQty(eiTargetItem,qty,eiDesc.value.trim());
 });
@@ -1813,7 +1890,7 @@ async function addItemPrompt(salesOrderId){
     await ensureCatalogItems();
   }catch(e){
     aiModal.classList.add('hidden');
-    alert(e.message);
+    uxAlert(e.message);
   }
 }
 
@@ -1822,9 +1899,9 @@ document.getElementById('ai-cancel').addEventListener('click',()=>{aiModal.class
 document.getElementById('ai-add').addEventListener('click',async()=>{
   const itemName=aiItemSel.value.trim();
   const qty=parseFloat(aiQty.value);
-  if(!itemName){alert('Choose an item');return;}
-  if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
-  if(!confirm('Add '+itemName+' × '+qty+' to this order?'))return;
+  if(!itemName){uxAlert('Choose an item');return;}
+  if(isNaN(qty)||qty<0){uxAlert('Enter a valid quantity');return;}
+  if(!await uxConfirm('Add '+itemName+' × '+qty+' to this order?'))return;
   // Always enters as 'open', however far along the rest of the order is —
   // a newly added item hasn't actually been packed yet, so it can't be
   // assumed final just because the order was already invoiced (that used
@@ -1854,12 +1931,12 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
       if(!res.ok)throw new Error(data.error||'Could not reopen order');
       evictCustomerLookupCache(aiTargetOrder);
     }catch(e){
-      alert('Warning: could not reopen the order automatically ('+e.message+').');
+      uxAlert('Warning: could not reopen the order automatically ('+e.message+').');
     }
   }
 
   const{error}=await sb.from('order_items').insert(row);
-  if(error){alert('Failed to add item: '+error.message);return;}
+  if(error){uxAlert('Failed to add item: '+error.message);return;}
   aiModal.classList.add('hidden');
   await loadTodaysOrders();
 });
@@ -1885,7 +1962,7 @@ function addDays(dateStr,n){
 function openMoveDateModal(salesOrderId,direction){
   const order=currentOrdersById[salesOrderId];
   const movable=activeItems(order);
-  if(!order||!movable.length){alert('No items to move');return;}
+  if(!order||!movable.length){uxAlert('No items to move');return;}
   mtTargetOrder=salesOrderId;
   mtDirection=direction;
   mtTitle.textContent=direction>0?'Move to tomorrow':"Add to today's orders";
@@ -1905,8 +1982,8 @@ document.getElementById('mt-cancel').addEventListener('click',()=>{mtModal.class
 
 document.getElementById('mt-move').addEventListener('click',async()=>{
   const ids=[...mtItems.querySelectorAll('input:checked')].map(cb=>cb.value);
-  if(!ids.length){alert('Select at least one item');return;}
-  if(!confirm((mtDirection>0?'Move':'Add')+' '+ids.length+' item'+(ids.length!==1?'s':'')+' to '+(mtDirection>0?"tomorrow's":"today's")+' orders?'))return;
+  if(!ids.length){uxAlert('Select at least one item');return;}
+  if(!await uxConfirm((mtDirection>0?'Move':'Add')+' '+ids.length+' item'+(ids.length!==1?'s':'')+' to '+(mtDirection>0?"tomorrow's":"today's")+' orders?'))return;
 
   const order=currentOrdersById[mtTargetOrder];
   const newSalesOrderId=addDays(mtTargetOrder.slice(0,10),mtDirection)+mtTargetOrder.slice(10);
@@ -1938,7 +2015,7 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
     const{error}=await sb.from('order_items').update(update).in('id',ids);
     if(error)throw new Error(error.message);
   }catch(e){
-    alert('Failed to move order: '+e.message);
+    uxAlert('Failed to move order: '+e.message);
     return;
   }finally{
     mtModal.classList.add('hidden');
@@ -1971,13 +2048,13 @@ async function ensureCatalogSyncedToday(){
 
 const syncCatalogBtn=document.getElementById('to-sync-catalog');
 syncCatalogBtn.addEventListener('click',async()=>{
-  if(!confirm('Sync catalog prices from Zoho now?'))return;
+  if(!await uxConfirm('Sync catalog prices from Zoho now?'))return;
   syncCatalogBtn.disabled=true;syncCatalogBtn.textContent='Syncing…';
   try{
     const{synced}=await syncCatalog();
     syncCatalogBtn.textContent='✅ Synced ('+synced+')';
   }catch(e){
-    alert('Catalog sync failed: '+e.message);
+    uxAlert('Catalog sync failed: '+e.message);
     syncCatalogBtn.textContent='💰 Catalog';
   }finally{
     syncCatalogBtn.disabled=false;
@@ -2027,7 +2104,7 @@ async function autoRegenerateInvoiceIfReady(salesOrderId){
 }
 
 async function generateInvoice(salesOrderId,btnEl,overrides){
-  if(!overrides&&!confirm('Generate invoice for '+salesOrderId+'?'))return;
+  if(!overrides&&!await uxConfirm('Generate invoice for '+salesOrderId+'?'))return;
   const original=btnEl.textContent;
   btnEl.textContent='Generating…';
   btnEl.style.pointerEvents='none';
@@ -2051,9 +2128,9 @@ async function generateInvoice(salesOrderId,btnEl,overrides){
     }else{
       msg+='\n\nPayment link not generated — no phone number on file. Use "Generate Payment Link" on the order to add one.';
     }
-    alert(msg);
+    uxAlert(msg);
   }catch(e){
-    alert('Failed to generate invoice: '+e.message);
+    uxAlert('Failed to generate invoice: '+e.message);
     btnEl.textContent=original;
     btnEl.style.pointerEvents='';
     return;
@@ -2178,8 +2255,8 @@ function updateBulkButtons(){
 }
 
 async function generateInvoicesBulk(salesOrderIds){
-  if(!salesOrderIds.length){alert('Nothing selected that\'s ready to invoice');return;}
-  if(!confirm('Generate/regenerate Zoho invoices for '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'? Rate mismatches will be skipped for individual follow-up.'))return;
+  if(!salesOrderIds.length){uxAlert('Nothing selected that\'s ready to invoice');return;}
+  if(!await uxConfirm('Generate/regenerate Zoho invoices for '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'? Rate mismatches will be skipped for individual follow-up.'))return;
 
   const btn=document.getElementById('to-bulk-invoice');
   btn.disabled=true;
@@ -2200,7 +2277,7 @@ async function generateInvoicesBulk(salesOrderIds){
     let msg='Generated '+succeeded.length+' invoice'+(succeeded.length!==1?'s':'')+'.';
     if(needsResolution.length)msg+='\n\nNeeds manual catalog match (generate individually): '+needsResolution.join(', ');
     if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
-    alert(msg);
+    uxAlert(msg);
   }finally{
     updateBulkButtons();
   }
@@ -2215,8 +2292,8 @@ document.getElementById('to-bulk-invoice').addEventListener('click',()=>{
 // ── Bulk payment links — uses the phone already on file where possible,
 // otherwise prompts per order (leave blank to skip that one) ────────────────
 async function generatePaymentLinksBulk(salesOrderIds){
-  if(!salesOrderIds.length){alert('Nothing selected that needs a payment link');return;}
-  if(!confirm('Generate Razorpay payment links for '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'?'))return;
+  if(!salesOrderIds.length){uxAlert('Nothing selected that needs a payment link');return;}
+  if(!await uxConfirm('Generate Razorpay payment links for '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'?'))return;
 
   const btn=document.getElementById('to-bulk-paylink');
   btn.disabled=true;
@@ -2227,7 +2304,7 @@ async function generatePaymentLinksBulk(salesOrderIds){
       const order=currentOrdersById[soid];
       let phone=order?.phone;
       if(!phone){
-        const entered=prompt('Phone number for '+soid+' (10 digits) — leave blank to skip:');
+        const entered=await uxPrompt('Phone number for '+soid+' (10 digits) — leave blank to skip:');
         if(!entered||!entered.trim()){skipped.push(soid);continue;}
         phone=entered.trim();
       }
@@ -2249,7 +2326,7 @@ async function generatePaymentLinksBulk(salesOrderIds){
     let msg='Generated '+succeeded.length+' payment link'+(succeeded.length!==1?'s':'')+'.';
     if(skipped.length)msg+='\n\nSkipped (no phone given): '+skipped.join(', ');
     if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
-    alert(msg);
+    uxAlert(msg);
   }finally{
     updateBulkButtons();
   }
@@ -2267,8 +2344,8 @@ document.getElementById('to-bulk-paylink').addEventListener('click',()=>{
 // cleans up invoice_queue/invoice_line_items, and sets the order + every one
 // of its items to 'cancelled'.
 async function cancelOrdersBulk(salesOrderIds){
-  if(!salesOrderIds.length){alert('Nothing selected');return;}
-  if(!confirm('Cancel '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'?\n\nThis deletes each one\'s Zoho invoice (if any) and Razorpay link — any payment already made is kept as customer credit in Zoho, not refunded. This cannot be undone from here.'))return;
+  if(!salesOrderIds.length){uxAlert('Nothing selected');return;}
+  if(!await uxConfirm('Cancel '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+'?\n\nThis deletes each one\'s Zoho invoice (if any) and Razorpay link — any payment already made is kept as customer credit in Zoho, not refunded. This cannot be undone from here.'))return;
 
   const btn=document.getElementById('to-bulk-cancel');
   btn.disabled=true;
@@ -2293,7 +2370,7 @@ async function cancelOrdersBulk(salesOrderIds){
     }
     let msg='Cancelled '+succeeded.length+' order'+(succeeded.length!==1?'s':'')+'.';
     if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
-    alert(msg);
+    uxAlert(msg);
   }finally{
     updateBulkButtons();
   }
@@ -2316,7 +2393,7 @@ async function openRateResolutionModal(salesOrderId,btnEl,unresolved){
   giTargetOrder=salesOrderId;
   giTargetBtn=btnEl;
   let items=[];
-  try{ items=await ensureCatalogItems(); }catch(e){ alert(e.message); }
+  try{ items=await ensureCatalogItems(); }catch(e){ uxAlert(e.message); }
   giItemsEl.innerHTML=unresolved.map((u,i)=>{
     const options=[...new Set([...u.suggestions,...items.map(c=>c.item_name)])];
     return '<div class="gi-row" data-item="'+escH(u.item_name)+'">'+
@@ -2340,7 +2417,7 @@ document.getElementById('gi-continue').addEventListener('click',async()=>{
 
 async function approveHeldItem(id){
   const{error}=await sb.from('order_items').update({status:'open'}).eq('id',id);
-  if(error){alert('Failed to approve: '+error.message);return;}
+  if(error){uxAlert('Failed to approve: '+error.message);return;}
   await loadTodaysOrders();
 }
 
@@ -2350,12 +2427,12 @@ async function approveHeldItem(id){
 // an item on a cancelled order, both in Today's Orders pills and Packer)
 // with a note appended to its description instead.
 async function deleteItem(id){
-  if(!confirm('Remove this item? It will be marked cancelled and kept as a record, not deleted.'))return;
+  if(!await uxConfirm('Remove this item? It will be marked cancelled and kept as a record, not deleted.'))return;
   const current=currentItemsById[id];
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
   const description=appendAddendum(current?.description,'Item deleted');
   const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',id);
-  if(error){alert('Failed to remove item: '+error.message);return;}
+  if(error){uxAlert('Failed to remove item: '+error.message);return;}
   if(current)await autoRegenerateInvoiceIfReady(current.sales_order_id);
   if(document.getElementById('panel-packer').classList.contains('active'))await loadPackerView();
   else await loadTodaysOrders();
@@ -2488,11 +2565,11 @@ document.getElementById('pk-search').addEventListener('input',e=>{
 async function savePackedQty(id){
   const val=document.getElementById('pk-qty-'+id).value;
   const qty=parseFloat(val);
-  if(isNaN(qty)||qty<0){alert('Enter a valid quantity');return;}
+  if(isNaN(qty)||qty<0){uxAlert('Enter a valid quantity');return;}
   const item=packerItems.find(i=>i.id===id);
   const invalidated=item?await invalidateOrderInvoiceIfNeeded(item.sales_order_id):false;
   const{error}=await sb.from('order_items').update({final_quantity:qty,status:'packed'}).eq('id',id);
-  if(error){alert('Failed to save: '+error.message);return;}
+  if(error){uxAlert('Failed to save: '+error.message);return;}
   // Common case: nothing else on the order changed, so just patch this one
   // item locally and redraw — no need for the full network round trip
   // (refetch every item today + the whole catalog) that loadPackerView does.
@@ -2509,7 +2586,7 @@ async function markFinal(id){
   const item=packerItems.find(i=>i.id===id);
   const invalidated=item?await invalidateOrderInvoiceIfNeeded(item.sales_order_id):false;
   const{error}=await sb.from('order_items').update({status:'final'}).eq('id',id);
-  if(error){alert('Failed to mark final: '+error.message);return;}
+  if(error){uxAlert('Failed to mark final: '+error.message);return;}
   if(invalidated){
     await loadPackerView();
   }else{
@@ -2691,7 +2768,7 @@ async function saveDeliveryInstructions(soid){
   const el=document.getElementById('dv-notes-edit-'+soid);
   const val=el?el.value.trim():'';
   const{error}=await sb.from('order_items').update({delivery_instructions:val||null}).eq('sales_order_id',soid).neq('status','cancelled');
-  if(error){alert('Failed to save: '+error.message);return;}
+  if(error){uxAlert('Failed to save: '+error.message);return;}
   dvEditingNotes=null;
   await loadDeliveryView();
 }
@@ -2771,7 +2848,7 @@ function updateDeliveryAssignButton(){
 // there, not on order_items.
 async function toggleItemCollected(itemId,soid,checked){
   const{error}=await sb.from('order_items').update({collected:checked}).eq('id',itemId);
-  if(error){alert('Failed to update: '+error.message);return;}
+  if(error){uxAlert('Failed to update: '+error.message);return;}
   const order=deliveryOrders[soid];
   if(order){
     const item=order.items.find(i=>i.id===itemId);
@@ -2796,7 +2873,7 @@ async function dispatchOrder(soid){
     if(!res.ok)throw new Error(data.error||'Could not dispatch order');
     evictCustomerLookupCache(soid);
   }catch(e){
-    alert(e.message);
+    uxAlert(e.message);
   }
   await loadDeliveryView();
 }
@@ -3002,7 +3079,7 @@ document.getElementById('nd-cancel').addEventListener('click',()=>{ndModal.class
 // cue for an admin to regenerate it without this item.
 document.getElementById('nd-confirm').addEventListener('click',async()=>{
   const reason=ndReasonSel.value==='Other'?ndOtherInput.value.trim():ndReasonSel.value;
-  if(!reason){alert('Enter a reason');return;}
+  if(!reason){uxAlert('Enter a reason');return;}
   const itemId=ndTargetItem,soid=ndTargetOrder;
   if(!itemId||!soid)return;
   ndModal.classList.add('hidden');
@@ -3010,7 +3087,7 @@ document.getElementById('nd-confirm').addEventListener('click',async()=>{
   const item=(deliveryOrders[soid]?.items||[]).find(i=>i.id===itemId);
   const description=appendAddendum(item?.description,'Not delivered: '+reason);
   const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',itemId);
-  if(error){alert('Failed to update item: '+error.message);return;}
+  if(error){uxAlert('Failed to update item: '+error.message);return;}
   await autoRegenerateInvoiceIfReady(soid);
   await loadDeliveryView();
 });
@@ -3026,8 +3103,8 @@ document.getElementById('dv-search').addEventListener('input',()=>{
 document.getElementById('dv-assign-me').addEventListener('click',async()=>{
   const ids=[...selectedDeliveryOrders];
   if(!ids.length)return;
-  if(!riderName){alert('Enter your name first (tap the badge in the top-right corner).');return;}
-  if(!confirm('Assign '+ids.length+' order'+(ids.length!==1?'s':'')+' to '+riderName+'?'))return;
+  if(!riderName){uxAlert('Enter your name first (tap the badge in the top-right corner).');return;}
+  if(!await uxConfirm('Assign '+ids.length+' order'+(ids.length!==1?'s':'')+' to '+riderName+'?'))return;
   const btn=document.getElementById('dv-assign-me');
   btn.disabled=true;
   try{
@@ -3044,11 +3121,11 @@ document.getElementById('dv-assign-me').addEventListener('click',async()=>{
     // runs — if another rider grabbed one of these first, it comes back in
     // already_taken instead of being silently overwritten.
     if(data.already_taken&&data.already_taken.length){
-      alert('Assigned '+data.updated+' order'+(data.updated!==1?'s':'')+' to you.\n'+data.already_taken.length+' '+(data.already_taken.length!==1?'were':'was')+' already claimed by someone else and skipped.');
+      uxAlert('Assigned '+data.updated+' order'+(data.updated!==1?'s':'')+' to you.\n'+data.already_taken.length+' '+(data.already_taken.length!==1?'were':'was')+' already claimed by someone else and skipped.');
     }
     await loadDeliveryView();
   }catch(e){
-    alert(e.message);
+    uxAlert(e.message);
   }finally{
     btn.disabled=selectedDeliveryOrders.size===0;
   }
@@ -3149,7 +3226,7 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
     dvModal.classList.add('hidden');
     await loadDeliveryView();
   }catch(e){
-    alert(e.message);
+    uxAlert(e.message);
   }finally{
     confirmBtn.disabled=false;
     confirmBtn.textContent='Confirm Delivered';
@@ -3157,7 +3234,7 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
 });
 
 async function undoDelivered(soid){
-  if(!confirm('Mark this order as not-yet-delivered?'))return;
+  if(!await uxConfirm('Undo delivery for this order?'))return;
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
       method:'POST',
@@ -3169,7 +3246,7 @@ async function undoDelivered(soid){
     evictCustomerLookupCache(soid);
     await loadDeliveryView();
   }catch(e){
-    alert(e.message);
+    uxAlert(e.message);
   }
 }
 
