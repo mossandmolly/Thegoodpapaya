@@ -126,6 +126,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-scope-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
 .dv-scope-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
 .dv-assigned-tag{font-size:10px;font-weight:600;color:#8a7a6a;margin-left:6px}
+.dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
+.dv-queue-badge.hidden{display:none}
 .dv-cancelled-card{opacity:0.7}
 .dv-cancelled-items{font-size:12px;color:#8a7a6a;text-decoration:line-through}
 .rider-badge{font-size:12px;color:#5c4f42;cursor:pointer;margin-right:14px}
@@ -353,6 +355,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <span><span id="dv-label">Delivery</span> <span id="dv-rc"></span></span>
     <input type="date" class="date-picker-compact" id="dv-date-picker" onchange="setViewDate(this.value)">
   </div>
+  <div class="dv-queue-badge hidden" id="dv-queue-badge"></div>
   <div class="dv-scope-tabs">
     <button class="dv-scope-btn active" id="dv-scope-all" onclick="setDeliveryScope('all')">All orders</button>
     <button class="dv-scope-btn" id="dv-scope-mine" onclick="setDeliveryScope('mine')">My orders</button>
@@ -380,7 +383,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <label class="modal-label">Remarks (optional)</label>
     <textarea id="dv-notes" rows="3" placeholder="e.g. left at gate, handed to security..."></textarea>
     <label class="modal-label">Photos (optional)</label>
-    <input type="file" id="dv-photo" accept="image/*" capture="environment" multiple>
+    <input type="file" id="dv-photo" accept="image/*" multiple>
     <div class="modal-actions">
       <button class="btn-sec" id="dv-cancel" style="margin-bottom:0">Cancel</button>
       <button class="btn-parse" id="dv-confirm" style="margin-bottom:0">Confirm Delivered</button>
@@ -407,6 +410,23 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
   </div>
 </div>
+
+<!-- ADD REMARK MODAL — usable any time, independent of mark-delivered -->
+<div class="modal-overlay hidden" id="dv-remark-modal">
+  <div class="modal-box">
+    <h3>Add remark</h3>
+    <textarea id="dv-remark-input" rows="3" placeholder="e.g. customer paid extra against the QR, note for admin..."></textarea>
+    <div class="modal-actions">
+      <button class="btn-sec" id="dv-remark-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="dv-remark-save" style="margin-bottom:0">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden file input reused by every card's "+ add photo" action — no
+     capture attribute, so the device's normal picker (camera OR photo
+     library) shows up rather than jumping straight into the camera. -->
+<input type="file" id="dv-addphoto-input" accept="image/*" multiple class="hidden">
 
 <!-- PHOTO LIGHTBOX -->
 <div class="modal-overlay hidden" id="img-lightbox" onclick="closeImgLightbox()">
@@ -685,6 +705,8 @@ async function initAppAfterLogin(){
   await ensureRiderName();
   syncViewDatePickers();
   syncEntryDatePicker();
+  renderDvQueueBadge();
+  flushDvQueue();
 
   if(isDeliveryRole){
     switchTab('delivery');
@@ -1786,8 +1808,20 @@ function lookupInvoiceStatus(salesOrderId){
 // caller relying on locally-patched state should do a full reload instead
 // of trusting its own cache) — false for the common case where the order
 // was never invoiced and there was nothing to do.
-async function invalidateOrderInvoiceIfNeeded(salesOrderId){
-  if(lookupInvoiceStatus(salesOrderId)!=='done')return false;
+// opts.silent (used by the Delivery tab, where a rider may be offline):
+// on a connectivity failure specifically, re-throws instead of alerting so
+// the caller can queue the whole action for later instead of interrupting
+// the rider — a genuine (non-connectivity) error still alerts as usual,
+// since retrying that later wouldn't help either.
+// opts.force skips the lookupInvoiceStatus cache check — needed when
+// replaying a queued offline action, since by then none of the three
+// views' local caches may actually be populated (e.g. the page was
+// reloaded while still offline) even though the order genuinely is
+// invoiced server-side. The invalidate-order-invoice call itself is
+// idempotent either way (a no-op if there was nothing to clear).
+async function invalidateOrderInvoiceIfNeeded(salesOrderId,opts){
+  const silent=opts&&opts.silent;
+  if(!(opts&&opts.force)&&lookupInvoiceStatus(salesOrderId)!=='done')return false;
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/invalidate-order-invoice',{
       method:'POST',
@@ -1808,6 +1842,7 @@ async function invalidateOrderInvoiceIfNeeded(salesOrderId){
     if(itemsErr)throw new Error(itemsErr.message);
     return true;
   }catch(e){
+    if(silent&&isNetworkFailure(e))throw e;
     uxAlert('Warning: could not clear the old Zoho invoice automatically ('+e.message+'). You may need to regenerate it manually.');
     return true; // unknown state — safer to force a full reload than trust local cache
   }
@@ -2609,6 +2644,108 @@ let deliveryScope='all'; // 'all' | 'mine'
 let deliveryStatusFilter='pending'; // 'all' | 'pending' | 'delivered' | 'cancelled' — 'pending' covers both not_dispatched and ofd (not yet delivered, not cancelled)
 let selectedDeliveryOrders=new Set();
 
+// ── Offline queue ─────────────────────────────────────────────────────────
+// A rider's phone commonly loses signal inside a building/basement/lift —
+// but only AFTER the Delivery tab was already loaded while still online.
+// Plain database writes (mark delivered, undo, the collected checkbox, the
+// not-delivered item cancel) can be queued locally and replayed once
+// connectivity returns — the rider sees the action as done immediately
+// either way. What can NEVER be queued is anything needing a live external
+// round-trip (regenerating a Zoho invoice + Razorpay link): that either
+// completes the moment the request reaches our edge function, or never
+// starts at all with no signal — there's no partial/resumable state to
+// save, so those fail gracefully instead and finish once back online.
+const DV_QUEUE_KEY='gp_dv_offline_queue';
+
+function loadDvQueue(){
+  try{return JSON.parse(localStorage.getItem(DV_QUEUE_KEY)||'[]');}catch{return[];}
+}
+function saveDvQueue(q){localStorage.setItem(DV_QUEUE_KEY,JSON.stringify(q));}
+
+// Distinguishes "couldn't reach the server at all" from a real error the
+// server sent back — only the former is worth queueing/retrying, since
+// retrying a genuine validation failure would just fail again forever.
+function isNetworkFailure(e){
+  return !navigator.onLine||e instanceof TypeError;
+}
+
+function queueDvAction(type,payload){
+  const q=loadDvQueue();
+  q.push({id:Date.now()+'-'+Math.random().toString(36).slice(2),type,payload});
+  saveDvQueue(q);
+  renderDvQueueBadge();
+}
+
+function renderDvQueueBadge(){
+  const el=document.getElementById('dv-queue-badge');
+  if(!el)return;
+  const n=loadDvQueue().length;
+  el.textContent=n?'⏳ '+n+' change'+(n!==1?'s':'')+' waiting to sync':'';
+  el.classList.toggle('hidden',!n);
+}
+
+// The one place that actually performs each queueable action's write —
+// used for both the live, first-attempt path and for replaying a queued
+// one later, so the two can never drift out of sync with each other.
+async function performDvAction(type,payload){
+  if(type==='mark_delivered'){
+    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify(payload),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not update delivery');
+    evictCustomerLookupCache(payload.sales_order_id);
+  }else if(type==='dispatch_order'){
+    const res=await fetch(SUPABASE_URL+'/functions/v1/dispatch-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:payload.soid}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not dispatch order');
+    evictCustomerLookupCache(payload.soid);
+  }else if(type==='toggle_collected'){
+    const{error}=await sb.from('order_items').update({collected:payload.checked}).eq('id',payload.itemId);
+    if(error)throw new Error(error.message);
+  }else if(type==='not_delivered'){
+    // Best-effort — silent mode means a connectivity failure here just
+    // rethrows instead of alerting, letting the whole action re-queue for
+    // next time instead of leaving the item cancelled but the invoice
+    // still stale forever.
+    await invalidateOrderInvoiceIfNeeded(payload.soid,{silent:true,force:true});
+    const{error}=await sb.from('order_items').update({status:'cancelled',description:payload.description}).eq('id',payload.itemId);
+    if(error)throw new Error(error.message);
+    await autoRegenerateInvoiceIfReady(payload.soid);
+  }
+}
+
+async function flushDvQueue(){
+  if(!navigator.onLine)return;
+  const q=loadDvQueue();
+  if(!q.length)return;
+  let anySynced=false;
+  const remaining=[];
+  for(const action of q){
+    try{
+      await performDvAction(action.type,action.payload);
+      anySynced=true;
+    }catch(e){
+      if(isNetworkFailure(e))remaining.push(action);
+      // else: a genuine server error on replay — drop it rather than
+      // retry forever (this shouldn't normally happen, since the same
+      // action already made sense locally before it was queued).
+    }
+  }
+  saveDvQueue(remaining);
+  renderDvQueueBadge();
+  if(anySynced&&document.getElementById('panel-delivery').classList.contains('active'))await loadDeliveryView();
+}
+
+window.addEventListener('online',flushDvQueue);
+setInterval(flushDvQueue,30000);
+
 // Same rule generate-invoice bills at ₹0 by — an item whose description
 // flags it as a replacement/free sample shouldn't show a rate/amount that
 // contradicts what actually gets billed.
@@ -2847,23 +2984,45 @@ function updateDeliveryAssignButton(){
 // dispatch-order (orders is service-role-only) since delivery_status lives
 // there, not on order_items.
 async function toggleItemCollected(itemId,soid,checked){
-  const{error}=await sb.from('order_items').update({collected:checked}).eq('id',itemId);
-  if(error){uxAlert('Failed to update: '+error.message);return;}
+  // Optimistic first — the rider sees the tick land immediately regardless
+  // of connectivity; the write itself is queued below if it can't go
+  // through right away.
   const order=deliveryOrders[soid];
+  const item=order?order.items.find(i=>i.id===itemId):null;
+  if(item)item.collected=checked;
+  renderDeliveryList();
+
+  try{
+    if(!navigator.onLine)throw new TypeError('offline');
+    const{error}=await sb.from('order_items').update({collected:checked}).eq('id',itemId);
+    if(error)throw new Error(error.message);
+  }catch(e){
+    if(isNetworkFailure(e)){
+      queueDvAction('toggle_collected',{itemId,checked});
+    }else{
+      uxAlert('Failed to update: '+e.message);
+      if(item)item.collected=!checked; // revert the optimistic tick — this was a real failure, not just offline
+      renderDeliveryList();
+      return;
+    }
+  }
+
   if(order){
-    const item=order.items.find(i=>i.id===itemId);
-    if(item)item.collected=checked;
     const active=activeItems(order);
     if(checked&&order.deliveryStatus==='not_dispatched'&&active.length&&active.every(i=>i.collected)){
       await dispatchOrder(soid);
-      return; // dispatchOrder reloads the whole view itself
     }
   }
-  renderDeliveryList();
 }
 
 async function dispatchOrder(soid){
+  // Optimistic: the card already reads "OFD" for the rider immediately.
+  const order=deliveryOrders[soid];
+  if(order)order.deliveryStatus='ofd';
+  renderDeliveryList();
+
   try{
+    if(!navigator.onLine)throw new TypeError('offline');
     const res=await fetch(SUPABASE_URL+'/functions/v1/dispatch-order',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
@@ -2873,9 +3032,12 @@ async function dispatchOrder(soid){
     if(!res.ok)throw new Error(data.error||'Could not dispatch order');
     evictCustomerLookupCache(soid);
   }catch(e){
-    uxAlert(e.message);
+    if(isNetworkFailure(e)){
+      queueDvAction('dispatch_order',{soid});
+    }else{
+      uxAlert(e.message);
+    }
   }
-  await loadDeliveryView();
 }
 
 function renderDeliveryCard(order,selectionMode){
@@ -2991,8 +3153,10 @@ function renderDeliveryCard(order,selectionMode){
   // renderDeliveryPhotos) since Storage reads can't happen synchronously
   // inside a string-building render pass — these placeholders just reserve
   // the spot and stay hidden until that resolves. One thumbnail per photo,
-  // since a delivery can now have more than one.
-  const photoGrid=(delivered&&order.deliveryPhotoPaths&&order.deliveryPhotoPaths.length)
+  // since a delivery can now have more than one. Shown regardless of
+  // delivery status — a photo can be attached at any stage now, not just
+  // at the moment of marking delivered.
+  const photoGrid=(order.deliveryPhotoPaths&&order.deliveryPhotoPaths.length)
     ?'<div class="dv-photo-grid">'+order.deliveryPhotoPaths.map((path,idx)=>
         '<img class="dv-photo-thumb hidden" id="dv-photo-'+order.soid+'-'+idx+'" data-path="'+escH(path)+'" onclick="openImgLightbox(this.src)">'
       ).join('')+'</div>'
@@ -3007,12 +3171,14 @@ function renderDeliveryCard(order,selectionMode){
     itemsTable+
     qrBlock+
     notesBlock+
-    (delivered&&order.deliveryNotes?'<div class="dv-notes">📝 '+escH(order.deliveryNotes)+'</div>':'')+
+    (order.deliveryNotes?'<div class="dv-notes">📝 '+escH(order.deliveryNotes)+'</div>':'')+
     photoGrid+
     '<div class="or-actions"><span class="or-count">'+items.length+' item'+(items.length!==1?'s':'')+
       (notDispatched?' · '+collectedCount+'/'+items.length+' collected':'')+
     '</span>'+
       '<span class="or-links">'+
+        '<a class="or-link" onclick="openAddRemark(\''+order.soid+'\')">+ remark</a>'+
+        '<a class="or-link" onclick="openAddPhoto(\''+order.soid+'\')">+ photo</a>'+
         (delivered
           ?'<a class="or-link" onclick="undoDelivered(\''+order.soid+'\')">undo delivered</a>'
           :ofd
@@ -3023,14 +3189,14 @@ function renderDeliveryCard(order,selectionMode){
   '</div>';
 }
 
-// One signed URL fetch per photo on a delivered order — has to run after
-// the innerHTML swap since the <img> placeholders don't exist until then.
-// delivery-photos is a private bucket, so a plain public URL won't work;
-// this session's own authenticated read access (granted to any signed-in
-// session) is what lets createSignedUrl succeed here.
+// One signed URL fetch per photo on any order that has one — has to run
+// after the innerHTML swap since the <img> placeholders don't exist until
+// then. delivery-photos is a private bucket, so a plain public URL won't
+// work; this session's own authenticated read access (granted to any
+// signed-in session) is what lets createSignedUrl succeed here.
 function renderDeliveryPhotos(orders){
   orders.forEach(order=>{
-    if(!(order.deliveryStatus==='delivered'&&order.deliveryPhotoPaths&&order.deliveryPhotoPaths.length))return;
+    if(!(order.deliveryPhotoPaths&&order.deliveryPhotoPaths.length))return;
     order.deliveryPhotoPaths.forEach((path,idx)=>{
       const img=document.getElementById('dv-photo-'+order.soid+'-'+idx);
       if(!img)return;
@@ -3083,17 +3249,115 @@ document.getElementById('nd-confirm').addEventListener('click',async()=>{
   const itemId=ndTargetItem,soid=ndTargetOrder;
   if(!itemId||!soid)return;
   ndModal.classList.add('hidden');
-  await invalidateOrderInvoiceIfNeeded(soid);
+
   const item=(deliveryOrders[soid]?.items||[]).find(i=>i.id===itemId);
   const description=appendAddendum(item?.description,'Not delivered: '+reason);
-  const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',itemId);
-  if(error){uxAlert('Failed to update item: '+error.message);return;}
-  await autoRegenerateInvoiceIfReady(soid);
-  await loadDeliveryView();
+
+  // Optimistic — the item shows cancelled immediately either way.
+  if(item){item.status='cancelled';item.description=description;}
+  renderDeliveryList();
+
+  const payload={itemId,soid,description};
+  try{
+    if(!navigator.onLine)throw new TypeError('offline');
+    await performDvAction('not_delivered',payload);
+    await loadDeliveryView();
+  }catch(e){
+    if(isNetworkFailure(e)){
+      // The item cancel itself is saved locally and will replay once back
+      // online — but the invoice/QR regeneration this normally triggers
+      // needs a live round-trip to Zoho/Razorpay and simply can't happen
+      // without one. The existing (now slightly stale) QR is still valid
+      // to show the customer meanwhile; "add a remark" on the card is
+      // there to note anything like an overpayment against it.
+      queueDvAction('not_delivered',payload);
+      uxAlert('No connection — saved. The invoice update will finish once you\'re back online. The existing payment QR (if any) is still fine to use for now — add a remark on the card if the customer paid extra against it.');
+    }else{
+      uxAlert(e.message);
+      await loadDeliveryView();
+    }
+  }
 });
 
 document.getElementById('dv-search').addEventListener('input',()=>{
   renderDeliveryList();
+});
+
+// ── Add remark (any time, independent of mark-delivered) ────────────────
+// Queueable — a remark is a plain text field on the order, same as notes.
+let dvRemarkTargetOrder=null;
+const dvRemarkModal=document.getElementById('dv-remark-modal'),dvRemarkInput=document.getElementById('dv-remark-input');
+
+function openAddRemark(soid){
+  dvRemarkTargetOrder=soid;
+  dvRemarkInput.value=deliveryOrders[soid]?.deliveryNotes||'';
+  dvRemarkModal.classList.remove('hidden');
+}
+
+document.getElementById('dv-remark-cancel').addEventListener('click',()=>{dvRemarkModal.classList.add('hidden');});
+
+document.getElementById('dv-remark-save').addEventListener('click',async()=>{
+  const soid=dvRemarkTargetOrder;
+  if(!soid)return;
+  const notes=dvRemarkInput.value.trim();
+  dvRemarkModal.classList.add('hidden');
+
+  const order=deliveryOrders[soid];
+  if(order)order.deliveryNotes=notes;
+  renderDeliveryList();
+
+  const payload={sales_order_id:soid,notes};
+  try{
+    if(!navigator.onLine)throw new TypeError('offline');
+    await performDvAction('mark_delivered',payload);
+    await loadDeliveryView();
+  }catch(e){
+    if(isNetworkFailure(e)){
+      queueDvAction('mark_delivered',payload);
+      uxAlert('No connection — saved, and will sync once you\'re back online.');
+    }else{
+      uxAlert(e.message);
+      await loadDeliveryView();
+    }
+  }
+});
+
+// ── Add photo (any time, independent of mark-delivered) ──────────────────
+// NOT queueable — an upload needs a live connection at the moment it's
+// sent, no matter when the rider taps this. If there's no signal right
+// now, they're told to try again later rather than losing the photo
+// silently or having it "stuck" in a queue that can never actually finish.
+let dvAddPhotoTargetOrder=null;
+const dvAddPhotoInput=document.getElementById('dv-addphoto-input');
+
+function openAddPhoto(soid){
+  dvAddPhotoTargetOrder=soid;
+  dvAddPhotoInput.value='';
+  dvAddPhotoInput.click();
+}
+
+dvAddPhotoInput.addEventListener('change',async()=>{
+  const soid=dvAddPhotoTargetOrder;
+  const files=Array.from(dvAddPhotoInput.files||[]);
+  if(!soid||!files.length)return;
+  if(!navigator.onLine){
+    uxAlert('No connection — photos need a live connection to upload. Try again once you have signal.');
+    return;
+  }
+  try{
+    const photoPaths=[];
+    for(let i=0;i<files.length;i++){
+      const blob=await compressImage(files[i]);
+      const path=soid+'/'+Date.now()+'-'+i+'.jpg';
+      const{error:upErr}=await sb.storage.from('delivery-photos').upload(path,blob,{upsert:false,contentType:'image/jpeg'});
+      if(upErr)throw new Error(upErr.message);
+      photoPaths.push(path);
+    }
+    await performDvAction('mark_delivered',{sales_order_id:soid,photo_paths:photoPaths});
+    await loadDeliveryView();
+  }catch(e){
+    uxAlert(isNetworkFailure(e)?'No connection — try again once you have signal.':e.message);
+  }
 });
 
 // Self-assignment under the one shared delivery login — "who" is just
@@ -3198,35 +3462,61 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
   const confirmBtn=document.getElementById('dv-confirm');
   confirmBtn.disabled=true;
   confirmBtn.textContent='Saving…';
-  try{
-    // Uploaded directly to Storage with the caller's own session (its
-    // policies allow any signed-in session onto this bucket) — mark-delivered
-    // only ever receives the resulting paths, never the files themselves.
-    // Each photo needs its own unique path, hence the index suffix. Always
-    // .jpg since compressImage always re-encodes to JPEG (or hands back the
-    // original file untouched on failure, whatever format that was).
-    const photoPaths=[];
-    for(let i=0;i<files.length;i++){
-      const blob=await compressImage(files[i]);
-      const path=soid+'/'+Date.now()+'-'+i+'.jpg';
-      const{error:upErr}=await sb.storage.from('delivery-photos').upload(path,blob,{upsert:false,contentType:'image/jpeg'});
-      if(upErr)throw new Error('Photo upload failed: '+upErr.message);
-      photoPaths.push(path);
+
+  // Optimistic — the rider sees this order as delivered right away,
+  // regardless of connectivity; the actual write is queued below if it
+  // can't go through immediately.
+  const order=deliveryOrders[soid];
+  if(order){
+    order.deliveryStatus='delivered';
+    order.paymentCollected=paymentCollected;
+    order.paymentCollectedMethod=paymentMethod;
+    if(notes)order.deliveryNotes=notes;
+  }
+  dvModal.classList.add('hidden');
+  renderDeliveryList();
+
+  // Photos always need a live upload at the moment they're sent — there's
+  // no queueing a multi-MB file the way a status change can be queued. If
+  // that's not possible right now, skip them here (not the whole action)
+  // and let the rider attach them later via "+ add photo" on the card once
+  // they're back online.
+  const photoPaths=[];
+  let photosSkipped=false;
+  if(files.length){
+    if(!navigator.onLine){
+      photosSkipped=true;
+    }else{
+      try{
+        for(let i=0;i<files.length;i++){
+          const blob=await compressImage(files[i]);
+          const path=soid+'/'+Date.now()+'-'+i+'.jpg';
+          const{error:upErr}=await sb.storage.from('delivery-photos').upload(path,blob,{upsert:false,contentType:'image/jpeg'});
+          if(upErr)throw new Error(upErr.message);
+          photoPaths.push(path);
+        }
+      }catch(e){
+        photosSkipped=true;
+      }
     }
-    const body={sales_order_id:soid,delivered:true,notes,payment_collected:paymentCollected,payment_collected_method:paymentMethod};
-    if(photoPaths.length)body.photo_paths=photoPaths;
-    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify(body),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Could not mark delivered');
-    evictCustomerLookupCache(soid);
-    dvModal.classList.add('hidden');
+  }
+
+  const payload={sales_order_id:soid,delivered:true,notes,payment_collected:paymentCollected,payment_collected_method:paymentMethod};
+  if(photoPaths.length)payload.photo_paths=photoPaths;
+
+  try{
+    if(!navigator.onLine)throw new TypeError('offline');
+    await performDvAction('mark_delivered',payload);
     await loadDeliveryView();
+    if(photosSkipped)uxAlert('Delivered. Photos weren\'t attached — you can add them later from the order card once you have signal.');
   }catch(e){
-    uxAlert(e.message);
+    if(isNetworkFailure(e)){
+      queueDvAction('mark_delivered',payload);
+      uxAlert('No connection — saved, and will sync once you\'re back online.'+(photosSkipped?' Photos weren\'t attached — add them later from the order card.':''));
+    }else{
+      uxAlert(e.message);
+      await loadDeliveryView(); // resync with the server's actual state
+    }
   }finally{
     confirmBtn.disabled=false;
     confirmBtn.textContent='Confirm Delivered';
@@ -3235,18 +3525,24 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
 
 async function undoDelivered(soid){
   if(!await uxConfirm('Undo delivery for this order?'))return;
+
+  const order=deliveryOrders[soid];
+  if(order)order.deliveryStatus='ofd';
+  renderDeliveryList();
+
+  const payload={sales_order_id:soid,delivered:false};
   try{
-    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:soid,delivered:false}),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Could not undo delivery');
-    evictCustomerLookupCache(soid);
+    if(!navigator.onLine)throw new TypeError('offline');
+    await performDvAction('mark_delivered',payload);
     await loadDeliveryView();
   }catch(e){
-    uxAlert(e.message);
+    if(isNetworkFailure(e)){
+      queueDvAction('mark_delivered',payload);
+      uxAlert('No connection — saved, and will sync once you\'re back online.');
+    }else{
+      uxAlert(e.message);
+      await loadDeliveryView();
+    }
   }
 }
 

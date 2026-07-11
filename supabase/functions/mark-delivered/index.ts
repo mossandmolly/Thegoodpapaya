@@ -5,12 +5,22 @@
 // service-role only, so this is the write path for the Delivery tab —
 // same pattern as every other orders mutation in this app.
 //
+// `delivered` is optional — omit it to use this purely as an "attach more
+// evidence" call (add a remark and/or photos to an order) without touching
+// its delivery status at all. This is what lets a rider add a photo or a
+// note to an order that's already delivered (or has a returned item),
+// something that previously only happened inside the one-shot "mark
+// delivered" flow.
+//
 // The photos themselves are uploaded directly from the frontend to the
 // "delivery-photos" Storage bucket using the caller's own authenticated
 // session (that bucket's policies allow any signed-in session to do so);
 // this function only records the resulting paths against the order.
+// photo_paths is always merged with whatever's already on the order, never
+// a wholesale replace — a rider attaching one more photo later should
+// never risk wiping out earlier ones.
 //
-// Input:  { sales_order_id: string, delivered: boolean, notes?: string, photo_paths?: string[],
+// Input:  { sales_order_id: string, delivered?: boolean, notes?: string, photo_paths?: string[],
 //           payment_collected?: boolean, payment_collected_method?: 'cash'|'online'|null }
 // Output: { sales_order_id, delivery_status, delivered_at }
 //
@@ -54,30 +64,45 @@ Deno.serve(async (req) => {
     await requireAuth(req);
     const { sales_order_id, delivered, notes, photo_paths, payment_collected, payment_collected_method } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
-    if (typeof delivered !== 'boolean') throw new Error('Missing delivered (boolean)');
+    if (delivered !== undefined && typeof delivered !== 'boolean') throw new Error('delivered must be a boolean if provided');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
-    // payment_collected/_method/_at travel with delivered_at, not with
-    // notes/photos — un-marking a delivery means the payment the rider
-    // claimed to have collected at that (now-undone) delivery is undone
-    // too, whereas remarks/photos already attached stay as history.
-    // Undoing a delivered order reverts to 'ofd', not all the way back to
-    // 'not_dispatched' — the items were already collected into the bag
-    // (that's how it reached 'delivered' in the first place), it just
-    // hasn't actually been handed over, so it's still out with the rider.
-    const update: Record<string, unknown> = {
-      delivery_status:           delivered ? 'delivered' : 'ofd',
-      delivered_at:              delivered ? new Date().toISOString() : null,
-      payment_collected:         delivered ? !!payment_collected : false,
-      payment_collected_method:  delivered && payment_collected ? (payment_collected_method || null) : null,
-      payment_collected_at:      delivered && payment_collected ? new Date().toISOString() : null,
-    };
-    // Only touch notes/photos when actually provided, so un-marking a
-    // delivery (delivered: false) doesn't wipe out remarks/photos that were
-    // already attached — those stay as history until explicitly replaced.
-    if (notes !== undefined)       update.delivery_notes = notes || null;
-    if (photo_paths !== undefined) update.delivery_photo_paths = photo_paths || [];
+    const update: Record<string, unknown> = {};
+
+    // Only touch delivery_status/delivered_at/payment fields when `delivered`
+    // is actually provided — an "attach more evidence" call (photos/notes
+    // only, delivered omitted) must leave the order's current status alone.
+    if (delivered !== undefined) {
+      // payment_collected/_method/_at travel with delivered_at, not with
+      // notes/photos — un-marking a delivery means the payment the rider
+      // claimed to have collected at that (now-undone) delivery is undone
+      // too, whereas remarks/photos already attached stay as history.
+      // Undoing a delivered order reverts to 'ofd', not all the way back to
+      // 'not_dispatched' — the items were already collected into the bag
+      // (that's how it reached 'delivered' in the first place), it just
+      // hasn't actually been handed over, so it's still out with the rider.
+      update.delivery_status          = delivered ? 'delivered' : 'ofd';
+      update.delivered_at             = delivered ? new Date().toISOString() : null;
+      update.payment_collected        = delivered ? !!payment_collected : false;
+      update.payment_collected_method = delivered && payment_collected ? (payment_collected_method || null) : null;
+      update.payment_collected_at     = delivered && payment_collected ? new Date().toISOString() : null;
+    }
+    // Only touch notes when actually provided, so un-marking a delivery
+    // (delivered: false) doesn't wipe out a remark that was already
+    // attached — those stay as history until explicitly replaced.
+    if (notes !== undefined) update.delivery_notes = notes || null;
+
+    if (photo_paths !== undefined && photo_paths.length) {
+      const { data: existing, error: fetchErr } = await supabase
+        .from('orders').select('delivery_photo_paths')
+        .eq('sales_order_id', sales_order_id).single();
+      if (fetchErr) throw new Error(fetchErr.message);
+      const current: string[] = existing?.delivery_photo_paths ?? [];
+      update.delivery_photo_paths = [...new Set([...current, ...photo_paths])];
+    }
+
+    if (!Object.keys(update).length) throw new Error('Nothing to update');
 
     const { data, error } = await supabase
       .from('orders')
