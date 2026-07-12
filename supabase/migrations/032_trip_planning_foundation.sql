@@ -49,6 +49,15 @@ create table if not exists public.app_settings (
   value text
 );
 
+-- Explicit RLS rather than relying on whatever this project's default
+-- table grants happen to be — same open-to-any-signed-in-session pattern
+-- used for packers/packer_assignments (migration 006) and other
+-- non-financial config in this app.
+alter table public.app_settings enable row level security;
+drop policy if exists "app_settings_authenticated_all" on public.app_settings;
+create policy "app_settings_authenticated_all" on public.app_settings
+  for all to authenticated using (true) with check (true);
+
 insert into public.app_settings (key, value)
 values ('rider_capacity_kg', '15')
 on conflict (key) do nothing;
