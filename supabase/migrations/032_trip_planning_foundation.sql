@@ -8,11 +8,16 @@
 --   2. orders.deliver_by — a structured "deliver by HH:MM" deadline,
 --      separate from the free-text delivery_instructions field, so the
 --      scheduler can read it directly instead of parsing natural language.
---   3. societies — one row per society: location (for OSRM distance
---      lookups), your manual combinable_group tag (societies you say can
---      share a trip), stack_rank (your rough delivery-order priority), and
---      no_later_than (the "customers here expect delivery by" cutoff).
---      Empty until you give me the society list + groupings to fill in.
+--   3. society_locations — one row per society: location (for OSRM
+--      distance lookups), your manual combinable_group tag (societies you
+--      say can share a trip), stack_rank (your rough delivery-order
+--      priority), and no_later_than (the "customers here expect delivery
+--      by" cutoff). Empty until you give me the society list + groupings
+--      to fill in. Deliberately NOT named "societies" — that table already
+--      exists (migration 017, id/canonical_name/aliases, used by an older
+--      version of the society-matching logic) with a completely different
+--      shape; reusing the name would have made this migration's own
+--      CREATE TABLE IF NOT EXISTS silently no-op against the old table.
 --   4. app_settings — a plain key/value table for the one setting needed
 --      so far (rider_capacity_kg), extensible for whatever else comes up.
 
@@ -33,7 +38,7 @@ update public.catalog set weight_kg = 0.50 where lower(item_name) in ('mango','k
 alter table public.orders
   add column if not exists deliver_by time;
 
-create table if not exists public.societies (
+create table if not exists public.society_locations (
   name             text primary key,
   lat              double precision,
   lng              double precision,
