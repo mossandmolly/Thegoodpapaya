@@ -343,6 +343,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <span><span id="pk-label">To pack</span> <span id="pk-rc"></span></span>
     <input type="date" class="date-picker-compact" id="pk-date-picker" onchange="setViewDate(this.value)">
   </div>
+  <div class="dv-scope-tabs">
+    <button class="dv-scope-btn active" id="pk-scope-all" onclick="setPackerScope('all')">All orders</button>
+    <button class="dv-scope-btn" id="pk-scope-mine" onclick="setPackerScope('mine')">My orders</button>
+  </div>
   <input type="text" class="pk-search" id="pk-search" placeholder="🔍 Search society or fruit...">
   <div class="filter-group-label">Fruit</div>
   <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
@@ -495,6 +499,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
+<!-- ORDER NOTES MODAL (admin-facing note + deliver-by deadline) -->
+<div class="modal-overlay hidden" id="on-modal">
+  <div class="modal-box">
+    <h3>Order notes</h3>
+    <label class="modal-label">Note</label>
+    <textarea id="on-notes" rows="3" placeholder="e.g. customer called, needs by 5pm now"></textarea>
+    <label class="modal-label">Deliver by (optional deadline)</label>
+    <input type="time" id="on-deliverby">
+    <div class="modal-actions">
+      <button class="btn-sec" id="on-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="on-save" style="margin-bottom:0">Save</button>
+    </div>
+  </div>
+</div>
 
 <!-- GENERATE INVOICE — RATE RESOLUTION MODAL -->
 <div class="modal-overlay hidden" id="gi-modal">
@@ -557,6 +575,16 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <input type="text" id="new-alias-from" placeholder="What customer types e.g. litchee">
       <input type="text" id="new-alias-to" placeholder="Canonical name e.g. Lychee">
       <button onclick="addAlias()">Add</button>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>📦 Packer Fruit Assignments <span style="font-size:11px;color:#8a7a6a;font-weight:400">(saved — drives Packer tab's My Orders)</span></h3>
+    <ul class="config-list" id="packer-list"></ul>
+    <div class="add-row">
+      <input type="text" id="new-packer-name" placeholder="Packer name">
+      <input type="text" id="new-packer-fruits" placeholder="Assigned fruits, comma-separated (optional)" style="flex:2">
+      <button onclick="addPacker()">Add</button>
     </div>
   </div>
 </div>
@@ -651,12 +679,16 @@ async function authToken(){
 // keeps the normal workflow confined to the one relevant tab.
 let isDeliveryRole=false;
 
-// The delivery login is one shared account across every rider — there's no
-// per-person auth to tell them apart, so instead each rider types their own
-// name once into their own device/browser and it's remembered from then on
-// (localStorage, not a real device ID — the browser has no API for one, and
-// this is a fine stand-in since each rider consistently uses the same
-// phone). That name is what "assign to me" and the top-right badge use.
+// Neither the delivery login nor the shared packer/admin login distinguish
+// individual people — there's no per-person auth for either role, so
+// instead whoever's on a given device types their own name once and it's
+// remembered from then on (localStorage, not a real device ID — the
+// browser has no API for one, and this is a fine stand-in since the same
+// person consistently uses the same phone/desk). Despite the "rider" name,
+// this identity is used for BOTH roles — it's just "who is this device"
+// generically, driving delivery self-assignment, the top-right badge, AND
+// packed_by attribution in the Packer tab (same person, same device,
+// regardless of which tab they happen to be using).
 const RIDER_NAME_KEY='gp_rider_name';
 let riderName=localStorage.getItem(RIDER_NAME_KEY)||null;
 
@@ -781,6 +813,7 @@ function renderConfig(){
   document.getElementById('fruit-list').innerHTML=FRUITS.map((f,i)=>`<li>${f}<button class="del-btn" onclick="delFruit(${i})">✕</button></li>`).join('');
   document.getElementById('pkg-list').innerHTML=Object.entries(PKG).map(([k,v])=>`<li>${k}<span>${v} kg/pc</span><button class="del-btn" onclick="delPkg('${k}')">✕</button></li>`).join('');
   document.getElementById('alias-list').innerHTML=Object.entries(ALIASES).map(([k,v])=>`<li>${k}<span>→ ${v}</span><button class="del-btn" onclick="delAlias('${k}')">✕</button></li>`).join('');
+  loadPackersConfig();
 }
 function addFruit(){const v=document.getElementById('new-fruit').value.trim();if(!v)return;FRUITS.push(v);document.getElementById('new-fruit').value='';renderConfig();}
 function delFruit(i){FRUITS.splice(i,1);renderConfig();}
@@ -788,6 +821,37 @@ function addPkg(){const f=document.getElementById('new-pkg-fruit').value.trim().
 function delPkg(k){delete PKG[k];renderConfig();}
 function addAlias(){const f=document.getElementById('new-alias-from').value.trim().toLowerCase();const t=document.getElementById('new-alias-to').value.trim();if(!f||!t)return;ALIASES[f]=t;document.getElementById('new-alias-from').value='';document.getElementById('new-alias-to').value='';renderConfig();}
 function delAlias(k){delete ALIASES[k];renderConfig();}
+
+// ── Packer fruit assignments (DB-backed, unlike the session-only config
+// above) — drives the Packer tab's My Orders filter: "mine" = any item
+// whose fruit is in the current device's packer's assigned_fruits list.
+let packersCache=[];
+async function loadPackersConfig(){
+  const{data,error}=await sb.from('packers').select('name,assigned_fruits').order('name');
+  if(error){console.error(error);return;}
+  packersCache=data||[];
+  const list=document.getElementById('packer-list');
+  if(list)list.innerHTML=packersCache.map(p=>
+    '<li>'+escH(p.name)+'<span>'+escH((p.assigned_fruits||[]).join(', ')||'no fruits assigned')+'</span><button class="del-btn" onclick="deletePacker('+JSON.stringify(escH(p.name))+')">✕</button></li>'
+  ).join('');
+}
+async function addPacker(){
+  const name=document.getElementById('new-packer-name').value.trim();
+  const fruitsRaw=document.getElementById('new-packer-fruits').value.trim();
+  if(!name)return;
+  const assigned_fruits=fruitsRaw?fruitsRaw.split(',').map(s=>s.trim()).filter(Boolean):[];
+  const{error}=await sb.from('packers').upsert({name,assigned_fruits});
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  document.getElementById('new-packer-name').value='';
+  document.getElementById('new-packer-fruits').value='';
+  await loadPackersConfig();
+}
+async function deletePacker(name){
+  if(!await uxConfirm('Remove packer "'+name+'"?'))return;
+  const{error}=await sb.from('packers').delete().eq('name',name);
+  if(error){uxAlert('Failed: '+error.message);return;}
+  await loadPackersConfig();
+}
 
 // ── Parser ────────────────────────────────────────────────────────────────
 // Customer identity must not depend on case or punctuation — "Dhavala A502",
@@ -1470,7 +1534,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -1573,6 +1637,7 @@ async function loadTodaysOrders(){
         invoiceStatus: o?.invoice_status||null,
         orderStatus:   o?.status||'active',
         deliverBy:     o?.deliver_by||null,
+        adminNotes:    o?.admin_notes||null,
         items:[],
       };
     }
@@ -1640,6 +1705,7 @@ function renderOrdersList(){
               :' <span class="pay-missing">Payment link not generated</span>'
             ):'')+
           '</span></div>'+
+          (order.adminNotes?'<div class="dv-notes">📝 '+escH(order.adminNotes)+'</div>':'')+
           '<div class="or-pills">'+order.items.map(item=>{
             const itemCancelled=item.status==='cancelled';
             return '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'"'+(itemCancelled?'':' onclick="pillClick(\''+item.id+'\')"')+'>'+
@@ -1663,6 +1729,7 @@ function renderOrdersList(){
               // previously-cancelled items stay cancelled as history, the new
               // item comes in fresh/open).
               '<a class="or-link" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
+              '<a class="or-link" onclick="openOrderNotesModal(\''+order.soid+'\')">+ notes</a>'+
               // Move-by-a-day only makes sense relative to today/tomorrow —
               // viewing an older date via the date picker just omits this,
               // rather than guessing what "move" should mean N days back.
@@ -1915,6 +1982,49 @@ document.getElementById('ei-save').addEventListener('click',async()=>{
   if(!await uxConfirm('Save this change to the order?'))return;
   eiModal.classList.add('hidden');
   await updateQty(eiTargetItem,qty,eiDesc.value.trim());
+});
+
+// ── Order notes modal (admin note + deliver-by deadline) ─────────────────
+let onTargetOrder=null;
+const onModal=document.getElementById('on-modal'),onNotesEl=document.getElementById('on-notes'),onDeliverByEl=document.getElementById('on-deliverby');
+
+function openOrderNotesModal(soid){
+  onTargetOrder=soid;
+  const order=currentOrdersById[soid];
+  onNotesEl.value=order?.adminNotes||'';
+  onDeliverByEl.value=order?.deliverBy?order.deliverBy.slice(0,5):'';
+  onModal.classList.remove('hidden');
+}
+
+document.getElementById('on-cancel').addEventListener('click',()=>{onModal.classList.add('hidden');});
+
+document.getElementById('on-save').addEventListener('click',async()=>{
+  const soid=onTargetOrder;
+  if(!soid)return;
+  const notes=onNotesEl.value.trim();
+  const deliverBy=onDeliverByEl.value||null;
+  const order=currentOrdersById[soid];
+  const deliverByChanged=order&&(order.deliverBy||null)!==deliverBy;
+  onModal.classList.add('hidden');
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/update-order-notes',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,admin_notes:notes,deliver_by:deliverBy}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not save notes');
+    evictCustomerLookupCache(soid);
+    // A new/changed deadline may need this order moved to a different
+    // packing trip — the actual re-routing logic slots in once trip
+    // planning exists; for now this is just a flag point for that.
+    if(deliverByChanged){
+      console.log('deliver_by changed for '+soid+' — trip re-routing not yet implemented');
+    }
+    await loadTodaysOrders();
+  }catch(e){
+    uxAlert(e.message);
+  }
 });
 
 // ── Add-item modal (catalog autocomplete + qty in one form) ─────────────────
@@ -2494,6 +2604,14 @@ async function deleteItem(id){
 // ── Packer ────────────────────────────────────────────────────────────────
 let packerItems=[],packerCustomerMap={},packerUnitByItem={};
 const packerFilters={search:'',fruits:new Set(),statuses:new Set()};
+let packerScope='all'; // 'all' | 'mine' — 'mine' = items whose fruit is in this device's packer's assigned_fruits (packers config table)
+
+function setPackerScope(scope){
+  packerScope=scope;
+  document.getElementById('pk-scope-all').classList.toggle('active',scope==='all');
+  document.getElementById('pk-scope-mine').classList.toggle('active',scope==='mine');
+  renderPackerGrid();
+}
 
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
@@ -2512,6 +2630,7 @@ async function loadPackerView(){
     // re-fetching the whole catalog on every single Packer load. Falls back
     // to no unit labels rather than blocking the whole view if it fails.
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
+    loadPackersConfig(),
   ]);
   packerCustomerMap=map||{};
   packerUnitByItem={};
@@ -2570,8 +2689,10 @@ function togglePackerStatusPill(status){
 function renderPackerGrid(){
   const grid=document.getElementById('pk-grid');
   const search=packerFilters.search.trim().toLowerCase();
+  const myFruits=riderName?(packersCache.find(p=>p.name===riderName)?.assigned_fruits||[]):[];
 
   const filtered=packerItems.filter(item=>{
+    if(packerScope==='mine'&&!myFruits.includes(item.item_name))return false;
     if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
     if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
     const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
@@ -2584,7 +2705,8 @@ function renderPackerGrid(){
 
   document.getElementById('pk-rc').textContent=filtered.length?'— '+filtered.length+' item'+(filtered.length!==1?'s':''):'';
   if(!filtered.length){
-    grid.innerHTML='<div class="to-empty">'+(packerItems.length?'No items match these filters':'Nothing left to pack ✓')+'</div>';
+    const mineButNoFruits=packerScope==='mine'&&!myFruits.length;
+    grid.innerHTML='<div class="to-empty">'+(mineButNoFruits?'No fruits assigned to "'+escH(riderName||'you')+'" yet — set that up in Config, or switch to All orders':(packerItems.length?'No items match these filters':'Nothing left to pack ✓'))+'</div>';
     return;
   }
 
@@ -2638,12 +2760,17 @@ async function savePackedQty(id){
 async function markFinal(id){
   const item=packerItems.find(i=>i.id===id);
   const invalidated=item?await invalidateOrderInvoiceIfNeeded(item.sales_order_id):false;
-  const{error}=await sb.from('order_items').update({status:'final'}).eq('id',id);
+  // packed_by/packed_at attribute this item to whoever's device actually
+  // finished it — not whichever packer it might have been assigned to via
+  // the packers fruit-assignment table — since the same "All orders" view
+  // lets any packer finish any item. packed_at is also what a future
+  // average-time-per-item metric gets computed from.
+  const{error}=await sb.from('order_items').update({status:'final',packed_by:riderName||null,packed_at:new Date().toISOString()}).eq('id',id);
   if(error){uxAlert('Failed to mark final: '+error.message);return;}
   if(invalidated){
     await loadPackerView();
   }else{
-    if(item)item.status='final';
+    if(item){item.status='final';item.packed_by=riderName||null;}
     renderPackerGrid();
   }
 }
@@ -3124,13 +3251,14 @@ function renderDeliveryCard(order,selectionMode){
         const amount=deliveryItemAmount(item);
         const isFree=FREE_ITEM_RE.test(item.description||'');
         // "Collected" (physically bagged) is only ever toggled before
-        // dispatch — once the order's OFD or delivered, it's shown as a
-        // plain checkmark, not editable.
+        // dispatch — once the order's OFD or delivered, each collected item
+        // instead shows an "OFD" tag (not just a bare checkmark), so it's
+        // obvious at a glance this item actually went out with the rider.
         const collectedControl=notDispatched
           ?'<input type="checkbox" class="dv-collected-cb" '+(item.collected?'checked ':'')+'onchange="toggleItemCollected(\''+item.id+'\',\''+order.soid+'\',this.checked)" title="Collected into bag">'
-          :(item.collected?'<span class="dv-collected-tick" title="Collected">✓</span>':'');
+          :(item.collected?'<span class="dv-collected-tick" title="Collected, out for delivery">OFD ✓</span>':'');
         return '<tr>'+
-          '<td><div class="dv-item-name-cell">'+collectedControl+escH(item.item_name)+
+          '<td><div class="dv-item-name-cell">'+collectedControl+'<span>'+escH(item.item_name)+'</span>'+
             '<a class="dv-item-nd" onclick="openNotDeliveredModal(\''+item.id+'\',\''+order.soid+'\')">✕ not delivered</a>'+
           '</div></td>'+
           '<td>'+qty+' '+escH(cat?.unit||'')+'</td>'+
@@ -3530,7 +3658,7 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
     }
   }
 
-  const payload={sales_order_id:soid,delivered:true,notes,payment_collected:paymentCollected,payment_collected_method:paymentMethod};
+  const payload={sales_order_id:soid,delivered:true,notes,payment_collected:paymentCollected,payment_collected_method:paymentMethod,rider:riderName||null};
   if(photoPaths.length)payload.photo_paths=photoPaths;
 
   try{

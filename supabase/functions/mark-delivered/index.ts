@@ -21,8 +21,14 @@
 // never risk wiping out earlier ones.
 //
 // Input:  { sales_order_id: string, delivered?: boolean, notes?: string, photo_paths?: string[],
-//           payment_collected?: boolean, payment_collected_method?: 'cash'|'online'|null }
+//           payment_collected?: boolean, payment_collected_method?: 'cash'|'online'|null, rider?: string }
 // Output: { sales_order_id, delivery_status, delivered_at }
+//
+// `rider` (only meaningful when delivered: true) records who actually
+// marked this delivered — attribution for performance tracking, distinct
+// from assigned_rider (who the order was assigned to; the same "All
+// orders" pattern that lets any packer finish someone else's item lets any
+// rider deliver an order they weren't personally assigned).
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -62,7 +68,7 @@ Deno.serve(async (req) => {
 
   try {
     await requireAuth(req);
-    const { sales_order_id, delivered, notes, photo_paths, payment_collected, payment_collected_method } = await req.json();
+    const { sales_order_id, delivered, notes, photo_paths, payment_collected, payment_collected_method, rider } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
     if (delivered !== undefined && typeof delivered !== 'boolean') throw new Error('delivered must be a boolean if provided');
 
@@ -84,6 +90,7 @@ Deno.serve(async (req) => {
       // hasn't actually been handed over, so it's still out with the rider.
       update.delivery_status          = delivered ? 'delivered' : 'ofd';
       update.delivered_at             = delivered ? new Date().toISOString() : null;
+      update.delivered_by             = delivered ? (rider || null) : null;
       update.payment_collected        = delivered ? !!payment_collected : false;
       update.payment_collected_method = delivered && payment_collected ? (payment_collected_method || null) : null;
       update.payment_collected_at     = delivered && payment_collected ? new Date().toISOString() : null;
@@ -108,7 +115,7 @@ Deno.serve(async (req) => {
       .from('orders')
       .update(update)
       .eq('sales_order_id', sales_order_id)
-      .select('sales_order_id, delivery_status, delivered_at, payment_collected, payment_collected_method')
+      .select('sales_order_id, delivery_status, delivered_at, delivered_by, payment_collected, payment_collected_method')
       .single();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);
