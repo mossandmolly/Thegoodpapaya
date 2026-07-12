@@ -2682,6 +2682,56 @@ async function loadPackerView(){
 
   renderPackerFilterPills();
   renderPackerGrid();
+  backfillDeliverByFromDescriptions();
+}
+
+// Best-effort safety net: if a deadline is stated in an item's description
+// text (the parser missed it, the order predates the deliver_by rule, or
+// it was hand-typed) but orders.deliver_by is still empty, backfill it
+// from that text. This supplements, not replaces, the structured
+// deliver_by capture in the parser/Quick Order Entry — a regex guess is
+// never as reliable as an explicit field, so it only ever fills in an
+// empty deliver_by, never overrides one that's already set.
+function extractDeliverByFromText(text){
+  if(!text)return null;
+  const m=text.match(/\b(?:by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  if(!m)return null;
+  let hour=parseInt(m[1],10);
+  const min=m[2]?parseInt(m[2],10):0;
+  const ampm=(m[3]||'').toLowerCase();
+  if(hour>12||min>59)return null; // implausible as a 12-hour clock reading — don't guess
+  if(ampm==='pm'&&hour<12)hour+=12;
+  if(ampm==='am'&&hour===12)hour=0;
+  if(!ampm&&hour>=1&&hour<=7)hour+=12; // "by 4" with no am/pm — same-day grocery delivery, almost always means the afternoon
+  return String(hour).padStart(2,'0')+':'+String(min).padStart(2,'0');
+}
+
+async function backfillDeliverByFromDescriptions(){
+  const bySoid={};
+  packerItems.forEach(item=>{
+    if(item.status==='cancelled')return;
+    if(packerCustomerMap[item.sales_order_id]?.deliver_by)return; // already set, never override
+    if(bySoid[item.sales_order_id])return; // already found one for this order this pass
+    const found=extractDeliverByFromText(item.description);
+    if(found)bySoid[item.sales_order_id]=found;
+  });
+  const entries=Object.entries(bySoid);
+  if(!entries.length)return;
+  await Promise.all(entries.map(async([soid,deliverBy])=>{
+    try{
+      const res=await fetch(SUPABASE_URL+'/functions/v1/update-order-notes',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+        body:JSON.stringify({sales_order_id:soid,deliver_by:deliverBy}),
+      });
+      if(res.ok){
+        evictCustomerLookupCache(soid);
+        if(packerCustomerMap[soid])packerCustomerMap[soid].deliver_by=deliverBy;
+      }
+    }catch(_e){
+      // best-effort — a failed backfill just leaves it empty for manual entry
+    }
+  }));
 }
 
 // Fixed list, not derived from packerItems — otherwise a status with no
