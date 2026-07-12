@@ -1,6 +1,6 @@
 // Supabase Edge Function — purge-delivery-photos
 //
-// Deletes delivery photos older than 30 days from the private
+// Deletes delivery photos older than 7 days from the private
 // delivery-photos Storage bucket, then clears orders.delivery_photo_paths
 // for those orders so tomorrow's run doesn't keep rescanning them forever.
 // Orders/order_items data itself (and the hourly CSV exports) are kept
@@ -27,7 +27,7 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-cron-secret',
 };
 
-const RETENTION_DAYS = 30;
+const RETENTION_DAYS = 7;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
