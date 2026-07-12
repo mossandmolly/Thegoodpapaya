@@ -505,6 +505,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <h3>Order notes</h3>
     <label class="modal-label">Note</label>
     <textarea id="on-notes" rows="3" placeholder="e.g. customer called, needs by 5pm now"></textarea>
+    <label class="dv-cash-row" style="margin-left:0;padding-left:0;border-left:none">
+      <input type="checkbox" id="on-delivery-related"> Also show to delivery boy (delivery-related)
+    </label>
     <label class="modal-label">Deliver by (optional deadline)</label>
     <input type="time" id="on-deliverby">
     <div class="modal-actions">
@@ -1941,6 +1944,21 @@ function appendAddendum(existingDescription,addendum){
   return base?base+'; '+addendum:addendum;
 }
 
+// Order notes (admin_notes) are a single current value, re-editable any
+// time — not an append-only log like appendAddendum's callers. Pushing
+// that into an item's description/delivery_instructions needs the same
+// "current value, not a growing log" behavior: this replaces whatever
+// bracketed copy of a previous note is already there (if any) rather than
+// appending a fresh copy on every single save, and removes it entirely
+// when the note is cleared (or, for delivery_instructions, when the
+// "delivery-related" checkbox gets unticked).
+function upsertBracketedNote(text,label,newValue){
+  const marker=new RegExp('\\s*\\['+label+':[^\\]]*\\]','g');
+  const stripped=(text||'').replace(marker,'').trim();
+  if(!newValue)return stripped||null;
+  return (stripped?stripped+' ':'')+'['+label+': '+newValue+']';
+}
+
 async function updateQty(id,qty,description){
   const current=currentItemsById[id];
   // Always goes back to 'open', however far along it was — a requested-
@@ -1985,14 +2003,26 @@ document.getElementById('ei-save').addEventListener('click',async()=>{
 });
 
 // ── Order notes modal (admin note + deliver-by deadline) ─────────────────
+// The note always lands in every non-cancelled item's description (so
+// packers see it by default, same as any parsed instruction) and, only
+// when explicitly marked delivery-related, also in delivery_instructions
+// (so it shows on the Delivery panel too). Both use upsertBracketedNote so
+// re-editing the note replaces its own bracketed copy instead of piling up
+// duplicates, and unticking "delivery-related" removes it from
+// delivery_instructions cleanly.
 let onTargetOrder=null;
-const onModal=document.getElementById('on-modal'),onNotesEl=document.getElementById('on-notes'),onDeliverByEl=document.getElementById('on-deliverby');
+const onModal=document.getElementById('on-modal'),onNotesEl=document.getElementById('on-notes'),onDeliverByEl=document.getElementById('on-deliverby'),onDeliveryRelatedEl=document.getElementById('on-delivery-related');
 
-function openOrderNotesModal(soid){
+async function openOrderNotesModal(soid){
   onTargetOrder=soid;
   const order=currentOrdersById[soid];
   onNotesEl.value=order?.adminNotes||'';
   onDeliverByEl.value=order?.deliverBy?order.deliverBy.slice(0,5):'';
+  // Best-effort guess at the checkbox's starting state: was this note
+  // already pushed into delivery_instructions last time it was saved?
+  const{data:items}=await sb.from('order_items')
+    .select('delivery_instructions').eq('sales_order_id',soid).neq('status','cancelled').limit(1);
+  onDeliveryRelatedEl.checked=!!(items&&items[0]&&/\[Note:/.test(items[0].delivery_instructions||''));
   onModal.classList.remove('hidden');
 }
 
@@ -2003,6 +2033,7 @@ document.getElementById('on-save').addEventListener('click',async()=>{
   if(!soid)return;
   const notes=onNotesEl.value.trim();
   const deliverBy=onDeliverByEl.value||null;
+  const deliveryRelated=onDeliveryRelatedEl.checked;
   const order=currentOrdersById[soid];
   const deliverByChanged=order&&(order.deliverBy||null)!==deliverBy;
   onModal.classList.add('hidden');
@@ -2015,6 +2046,19 @@ document.getElementById('on-save').addEventListener('click',async()=>{
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not save notes');
     evictCustomerLookupCache(soid);
+
+    // order_items writes are unrestricted (unlike orders) — no edge
+    // function needed for this part.
+    const{data:items,error:itemsErr}=await sb.from('order_items')
+      .select('id,description,delivery_instructions').eq('sales_order_id',soid).neq('status','cancelled');
+    if(itemsErr)throw new Error(itemsErr.message);
+    await Promise.all((items||[]).map(it=>
+      sb.from('order_items').update({
+        description: upsertBracketedNote(it.description,'Note',notes),
+        delivery_instructions: upsertBracketedNote(it.delivery_instructions,'Note',deliveryRelated?notes:''),
+      }).eq('id',it.id)
+    ));
+
     // A new/changed deadline may need this order moved to a different
     // packing trip — the actual re-routing logic slots in once trip
     // planning exists; for now this is just a flag point for that.
