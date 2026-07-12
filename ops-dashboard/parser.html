@@ -828,30 +828,50 @@ function delAlias(k){delete ALIASES[k];renderConfig();}
 // ── Packer fruit assignments (DB-backed, unlike the session-only config
 // above) — drives the Packer tab's My Orders filter: "mine" = any item
 // whose fruit is in the current device's packer's assigned_fruits list.
+// Uses the packers + packer_assignments tables that already existed
+// (migration 005) rather than a new one — packersCache is reshaped
+// client-side into [{id,name,assigned_fruits:[...]}] by joining the two.
 let packersCache=[];
 async function loadPackersConfig(){
-  const{data,error}=await sb.from('packers').select('name,assigned_fruits').order('name');
-  if(error){console.error(error);return;}
-  packersCache=data||[];
+  const[{data:packers,error:pErr},{data:assignments,error:aErr}]=await Promise.all([
+    sb.from('packers').select('id,name').order('name'),
+    sb.from('packer_assignments').select('packer_id,item_name'),
+  ]);
+  if(pErr||aErr){console.error(pErr||aErr);return;}
+  const fruitsByPacker={};
+  (assignments||[]).forEach(a=>{
+    (fruitsByPacker[a.packer_id]=fruitsByPacker[a.packer_id]||[]).push(a.item_name);
+  });
+  packersCache=(packers||[]).map(p=>({id:p.id,name:p.name,assigned_fruits:fruitsByPacker[p.id]||[]}));
   const list=document.getElementById('packer-list');
   if(list)list.innerHTML=packersCache.map(p=>
-    '<li>'+escH(p.name)+'<span>'+escH((p.assigned_fruits||[]).join(', ')||'no fruits assigned')+'</span><button class="del-btn" onclick="deletePacker('+JSON.stringify(escH(p.name))+')">✕</button></li>'
+    '<li>'+escH(p.name)+'<span>'+escH(p.assigned_fruits.join(', ')||'no fruits assigned')+'</span><button class="del-btn" onclick="deletePacker('+JSON.stringify(p.id)+')">✕</button></li>'
   ).join('');
 }
 async function addPacker(){
   const name=document.getElementById('new-packer-name').value.trim();
   const fruitsRaw=document.getElementById('new-packer-fruits').value.trim();
   if(!name)return;
-  const assigned_fruits=fruitsRaw?fruitsRaw.split(',').map(s=>s.trim()).filter(Boolean):[];
-  const{error}=await sb.from('packers').upsert({name,assigned_fruits});
+  const assignedFruits=fruitsRaw?fruitsRaw.split(',').map(s=>s.trim()).filter(Boolean):[];
+  const{data,error}=await sb.from('packers').upsert({name},{onConflict:'name'}).select('id').single();
   if(error){uxAlert('Failed to save: '+error.message);return;}
+  // Replace this packer's whole assignment set rather than merge — the
+  // fruits box is meant to reflect exactly what's typed in it.
+  const{error:delErr}=await sb.from('packer_assignments').delete().eq('packer_id',data.id);
+  if(delErr){uxAlert('Failed to save: '+delErr.message);return;}
+  if(assignedFruits.length){
+    const{error:insErr}=await sb.from('packer_assignments').insert(assignedFruits.map(item_name=>({packer_id:data.id,item_name})));
+    if(insErr){uxAlert('Failed to save: '+insErr.message);return;}
+  }
   document.getElementById('new-packer-name').value='';
   document.getElementById('new-packer-fruits').value='';
   await loadPackersConfig();
 }
-async function deletePacker(name){
-  if(!await uxConfirm('Remove packer "'+name+'"?'))return;
-  const{error}=await sb.from('packers').delete().eq('name',name);
+async function deletePacker(id){
+  const packer=packersCache.find(p=>p.id===id);
+  if(!await uxConfirm('Remove packer "'+(packer?.name||id)+'"?'))return;
+  // packer_assignments rows are cleaned up automatically (on delete cascade).
+  const{error}=await sb.from('packers').delete().eq('id',id);
   if(error){uxAlert('Failed: '+error.message);return;}
   await loadPackersConfig();
 }

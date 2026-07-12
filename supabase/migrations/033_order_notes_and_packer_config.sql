@@ -1,33 +1,23 @@
 -- Two independent additions (neither needs the trip-planning data still
 -- pending): an admin-facing order notes field distinct from the
 -- rider-facing delivery_notes and the parsed per-item delivery_instructions,
--- and a manual packer-to-fruit assignment table for the new Packer
--- All/My orders split.
+-- and packer-to-fruit assignment for the new Packer All/My orders split —
+-- using the packers + packer_assignments tables migration 005 already
+-- created for exactly this (id/name/active, and a packer_id/item_name join
+-- table with its own RLS already open to any authenticated session via
+-- migration 006) rather than a new table; nothing else in the app used
+-- them yet, but no need to duplicate what's already there.
 
 alter table public.orders
   add column if not exists admin_notes text;
 
-create table if not exists public.packers (
-  name            text primary key,
-  assigned_fruits text[] not null default '{}'
-);
-
--- No separate packer auth role exists (packers share the same login as
--- admin, same as this app's other non-financial config) — any signed-in
--- session can read (needed client-side to filter "my orders" by fruit)
--- and write (Config page management) this table.
-alter table public.packers enable row level security;
-drop policy if exists "packers_authenticated_all" on public.packers;
-create policy "packers_authenticated_all" on public.packers
-  for all to authenticated using (true) with check (true);
-
 -- Performance attribution: WHO actually packed/delivered something, as
 -- opposed to who it was merely assigned to (assigned_rider, or a packer's
--- fruit assignment in the packers table above) — a packer working from
--- "All orders" can pack an item nobody assigned them, and this is what
--- lets that get credited to whoever actually did it. Both are plain typed
--- names (see gp_rider_name/gp_packer_name in the frontend — no separate
--- per-person auth exists), not foreign keys to any auth table.
+-- fruit assignment via packer_assignments) — a packer working from "All
+-- orders" can pack an item nobody assigned them, and this is what lets
+-- that get credited to whoever actually did it. Both are plain typed
+-- names (see gp_rider_name in the frontend — no separate per-person auth
+-- exists for either role), not foreign keys to any auth table.
 -- packed_at is what "average time to pack an item" is computed from (the
 -- gap between one item's packed_at and the next one the same packer
 -- finished), so it's set at the same moment as packed_by, every time.

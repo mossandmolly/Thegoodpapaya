@@ -8,16 +8,15 @@
 --   2. orders.deliver_by — a structured "deliver by HH:MM" deadline,
 --      separate from the free-text delivery_instructions field, so the
 --      scheduler can read it directly instead of parsing natural language.
---   3. society_locations — one row per society: location (for OSRM
---      distance lookups), your manual combinable_group tag (societies you
---      say can share a trip), stack_rank (your rough delivery-order
---      priority), and no_later_than (the "customers here expect delivery
---      by" cutoff). Empty until you give me the society list + groupings
---      to fill in. Deliberately NOT named "societies" — that table already
---      exists (migration 017, id/canonical_name/aliases, used by an older
---      version of the society-matching logic) with a completely different
---      shape; reusing the name would have made this migration's own
---      CREATE TABLE IF NOT EXISTS silently no-op against the old table.
+--   3. communities gets the trip-planning columns added directly (lat/lng
+--      for OSRM distance lookups, your manual combinable_group tag,
+--      stack_rank, no_later_than) rather than a new table — communities is
+--      already the canonical, continuously-grown list of every society
+--      real orders have used, so it's the right home for this rather than
+--      a second parallel list. (The old migration 017 "societies" table —
+--      id/canonical_name/aliases — is a different, unused, pre-communities
+--      approach; left alone here.) All new columns null/empty until you
+--      give me the location + grouping data to fill in.
 --   4. app_settings — a plain key/value table for the one setting needed
 --      so far (rider_capacity_kg), extensible for whatever else comes up.
 
@@ -38,14 +37,12 @@ update public.catalog set weight_kg = 0.50 where lower(item_name) in ('mango','k
 alter table public.orders
   add column if not exists deliver_by time;
 
-create table if not exists public.society_locations (
-  name             text primary key,
-  lat              double precision,
-  lng              double precision,
-  combinable_group text,
-  stack_rank       integer,
-  no_later_than    time
-);
+alter table public.communities
+  add column if not exists lat              double precision,
+  add column if not exists lng              double precision,
+  add column if not exists combinable_group text,
+  add column if not exists stack_rank       integer,
+  add column if not exists no_later_than    time;
 
 create table if not exists public.app_settings (
   key   text primary key,
