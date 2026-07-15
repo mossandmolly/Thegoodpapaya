@@ -40,28 +40,162 @@
  *   - recovery-log-<stamp>.json      next to --orders: invoiced/skipped/
  *     errored orders with reasons.
  *
- * Easy mode (recommended): run with no --orders/--items/--catalog at all —
- * it auto-downloads the latest orders/order_items/catalog CSVs straight
- * from the exports Storage bucket using SUPABASE_URL +
- * SUPABASE_SERVICE_ROLE_KEY (already in .env for the rest of sync-service),
- * caching them under ./exports-cache/, and defaults --date to today:
+ * ONE-TIME SETUP (do this today, not mid-emergency): put a file named
+ * ".env" next to this script (same folder) with these lines filled in —
+ * see .env.example in this same folder for the full list:
+ *   ZOHO_CLIENT_ID=...
+ *   ZOHO_CLIENT_SECRET=...
+ *   ZOHO_REFRESH_TOKEN=...
+ *   ZOHO_ORGANIZATION_ID=...
+ *   ZOHO_BASE_URL=https://www.zohoapis.in/books/v3
+ *   RAZORPAY_KEY_ID=...
+ *   RAZORPAY_KEY_SECRET=...
+ *   SUPABASE_URL=...                 (only needed for auto-fetch mode)
+ *   SUPABASE_SERVICE_ROLE_KEY=...    (only needed for auto-fetch mode)
+ * That's it — no `npm install` (this file has zero dependencies, just
+ * plain Node), and the .env is found next to the script regardless of
+ * which directory you run the command from.
  *
- *   node recover-invoices.js            (dry run, today)
- *   node recover-invoices.js --live     (actually invoice today's ready orders)
- *   node recover-invoices.js --date 2026-07-14 --live
+ * EMERGENCY USE (the only part that matters when it's actually urgent) —
+ * one line, run from anywhere, using the CSVs you already have on disk:
  *
- * Manual mode — point at CSVs you already downloaded yourself (e.g. the
- * DB/Storage itself is down and only a local copy exists):
- *   node recover-invoices.js --orders ./orders.csv --items ./order_items.csv --catalog ./catalog.csv [--date 2026-07-15] [--live]
+ *   node /path/to/recover-invoices.js --orders orders.csv --items order_items.csv --catalog catalog.csv
  *
- * Requires the same .env as the rest of sync-service (ZOHO_*, RAZORPAY_*,
- * plus SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY for easy-mode auto-fetch).
+ * That's a dry run for today's date — it prints what it would invoice and
+ * writes a recovery-plan-<stamp>.json next to your orders.csv, no Zoho/
+ * Razorpay calls made. Once it looks right, add --live to actually create
+ * the invoices + payment links:
+ *
+ *   node /path/to/recover-invoices.js --orders orders.csv --items order_items.csv --catalog catalog.csv --live
+ *
+ * Don't have the CSVs yet? Omit --orders/--items/--catalog entirely and it
+ * auto-downloads the latest ones from the exports Storage bucket instead
+ * (needs SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY in .env):
+ *
+ *   node /path/to/recover-invoices.js --live
+ *
+ * Add --date 2026-07-14 to target a day other than today.
  */
-require('dotenv').config();
 const fs   = require('fs');
 const path = require('path');
-const zoho = require('./zoho');
-const rp   = require('./razorpay');
+
+// ── Load .env from next to THIS script (not the current directory) so it
+// works no matter where you run the command from — no `cd` needed, and no
+// dotenv dependency to install. Real environment variables, if already
+// exported, always win over the file. ─────────────────────────────────────
+(function loadDotEnvNextToScript() {
+  const envPath = path.join(__dirname, '.env');
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+    if (!(key in process.env)) process.env[key] = val;
+  }
+})();
+
+// ── Minimal Zoho Books + Razorpay calls, inlined with plain fetch (built
+// into Node 18+) instead of pulling in zoho.js/razorpay.js — those require
+// axios, which would mean an `npm install` before this script can even
+// run. Duplicated logic on purpose: this file must work standalone. ──────
+function env(key) {
+  const val = process.env[key];
+  if (!val) throw new Error(`Missing ${key} — fill it into the .env next to this script`);
+  return val;
+}
+
+async function zohoAccessToken() {
+  const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type:    'refresh_token',
+      client_id:     env('ZOHO_CLIENT_ID'),
+      client_secret: env('ZOHO_CLIENT_SECRET'),
+      refresh_token: env('ZOHO_REFRESH_TOKEN'),
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(data)}`);
+  return data.access_token;
+}
+
+function zohoUrl(path_) {
+  const sep = path_.includes('?') ? '&' : '?';
+  return `${env('ZOHO_BASE_URL')}${path_}${sep}organization_id=${env('ZOHO_ORGANIZATION_ID')}`;
+}
+
+function canonicalKey(name) {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+async function getOrCreateContact(name, phone, token) {
+  const search = await fetch(zohoUrl(`/contacts?contact_name=${encodeURIComponent(name)}`), {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+  const sd = await search.json();
+  const targetKey = canonicalKey(name);
+  const existing = (sd.contacts || []).find(c => canonicalKey(c.contact_name) === targetKey);
+  if (existing) return existing.contact_id;
+
+  const body = { contact_name: name, contact_type: 'customer' };
+  if (phone) body.contact_persons = [{ phone }];
+  const create = await fetch(zohoUrl('/contacts'), {
+    method: 'POST',
+    headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const cd = await create.json();
+  if (cd.code !== 0) throw new Error(`Zoho create contact failed: ${cd.message}`);
+  return cd.contact.contact_id;
+}
+
+async function createZohoInvoice(contactId, salesOrderId, date, lineItems, token) {
+  const body = {
+    customer_id:      contactId,
+    reference_number: salesOrderId,
+    date,
+    line_items: lineItems.map(i => ({
+      name:        i.name,
+      description: i.description || '',
+      quantity:    i.qty,
+      rate:        i.rate,
+      custom_fields: [{ api_name: 'cf_requested_quantity', value: i.requestedQty }],
+    })),
+  };
+  const res = await fetch(zohoUrl('/invoices'), {
+    method: 'POST',
+    headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (data.code !== 0) throw new Error(`Zoho create invoice failed: ${data.message}`);
+  const inv = data.invoice;
+  return { invoice_id: inv.invoice_id, invoice_number: inv.invoice_number, invoice_total: parseFloat(inv.total ?? '0') };
+}
+
+async function createPaymentLink(amountPaise, customerName, phone, salesOrderId) {
+  const auth = Buffer.from(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`).toString('base64');
+  const res = await fetch('https://api.razorpay.com/v1/payment_links', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount: amountPaise,
+      currency: 'INR',
+      description: `The Good Papaya — order ${salesOrderId}`,
+      customer: { name: customerName, contact: phone },
+      notify: { sms: true, email: false },
+      reminder_enable: false,
+      notes: { sales_order_id: salesOrderId, source: 'recovery-script' },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.description || 'Razorpay error');
+  return { id: data.id, short_url: data.short_url };
+}
 
 // ── tiny CSV parser/writer — matches export-csv's escaping (quote fields
 // containing a comma/quote/newline, double up embedded quotes) ───────────
@@ -289,21 +423,19 @@ async function main() {
 
   const invoiced = [];
   const errors = [];
+  const zohoToken = await zohoAccessToken();
 
   for (const order of eligible) {
     try {
-      const contactId = await zoho.getOrCreateContact(order.customer_name, order.phone);
-      const invoice = await zoho.createInvoice(contactId, order.sales_order_id, date, order.line_items);
+      const contactId = await getOrCreateContact(order.customer_name, order.phone, zohoToken);
+      const invoice = await createZohoInvoice(contactId, order.sales_order_id, date, order.line_items, zohoToken);
 
       let paymentLink = null, paymentLinkId = null;
       if (order.phone) {
         try {
-          const link = await rp.createPaymentLink({
-            invoiceNumber: invoice.invoice_number,
-            customerName:  order.customer_name,
-            phone:         order.phone,
-            amountInPaise: Math.round(invoice.invoice_total * 100),
-          });
+          const link = await createPaymentLink(
+            Math.round(invoice.invoice_total * 100), order.customer_name, order.phone, order.sales_order_id,
+          );
           paymentLink = link.short_url;
           paymentLinkId = link.id;
         } catch (linkErr) {
