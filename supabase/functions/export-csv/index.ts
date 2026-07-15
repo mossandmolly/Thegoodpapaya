@@ -1,15 +1,21 @@
 // Supabase Edge Function — export-csv
 //
-// Exports the full orders and order_items tables as CSV files into a
-// private Storage bucket ("exports"), timestamped per run. Meant to be
-// triggered on a schedule (see migration 026_hourly_csv_export.sql, which
-// sets up a pg_cron job calling this every hour via pg_net) rather than
-// from the frontend — there's no logged-in-user auth check here, just a
-// shared secret, since pg_cron has no session token to send.
+// Exports the full orders, order_items, and catalog tables as CSV files
+// into a private Storage bucket ("exports"), timestamped per run. Meant to
+// be triggered on a schedule (see migration 026_hourly_csv_export.sql,
+// which sets up a pg_cron job calling this every hour via pg_net) rather
+// than from the frontend — there's no logged-in-user auth check here, just
+// a shared secret, since pg_cron has no session token to send.
 //
-// Output: uploads two files per run —
+// catalog is included alongside orders/order_items so a from-CSV recovery
+// (see sync-service/recover-invoices.js) has everything it needs to price
+// line items without depending on Supabase being reachable — orders and
+// order_items alone aren't enough for that.
+//
+// Output: uploads three files per run —
 //   orders/orders-<ISO-timestamp>.csv
 //   orders/order_items-<ISO-timestamp>.csv
+//   orders/catalog-<ISO-timestamp>.csv
 // kept indefinitely — no retention/purge (see storage-growth note in the
 // commit that removed it if this needs revisiting later).
 //
@@ -72,26 +78,30 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
-    const [orders, orderItems] = await Promise.all([
+    const [orders, orderItems, catalog] = await Promise.all([
       fetchAll(supabase, 'orders', 'sales_order_id'),
       fetchAll(supabase, 'order_items', 'id'),
+      fetchAll(supabase, 'catalog', 'item_name'),
     ]);
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const ordersCsv = toCsv(orders);
-    const itemsCsv  = toCsv(orderItems);
+    const ordersCsv  = toCsv(orders);
+    const itemsCsv   = toCsv(orderItems);
+    const catalogCsv = toCsv(catalog);
 
     const uploads = await Promise.all([
       supabase.storage.from('exports')
         .upload(`orders/orders-${stamp}.csv`, new Blob([ordersCsv], { type: 'text/csv' }), { upsert: true }),
       supabase.storage.from('exports')
         .upload(`orders/order_items-${stamp}.csv`, new Blob([itemsCsv], { type: 'text/csv' }), { upsert: true }),
+      supabase.storage.from('exports')
+        .upload(`orders/catalog-${stamp}.csv`, new Blob([catalogCsv], { type: 'text/csv' }), { upsert: true }),
     ]);
     const uploadErrors = uploads.filter(u => u.error).map(u => u.error?.message);
     if (uploadErrors.length) throw new Error('Storage upload failed: ' + uploadErrors.join('; '));
 
     return new Response(
-      JSON.stringify({ ok: true, stamp, orders: orders.length, order_items: orderItems.length }),
+      JSON.stringify({ ok: true, stamp, orders: orders.length, order_items: orderItems.length, catalog: catalog.length }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
