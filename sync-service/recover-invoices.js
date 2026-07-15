@@ -40,10 +40,22 @@
  *   - recovery-log-<stamp>.json      next to --orders: invoiced/skipped/
  *     errored orders with reasons.
  *
- * Usage:
+ * Easy mode (recommended): run with no --orders/--items/--catalog at all —
+ * it auto-downloads the latest orders/order_items/catalog CSVs straight
+ * from the exports Storage bucket using SUPABASE_URL +
+ * SUPABASE_SERVICE_ROLE_KEY (already in .env for the rest of sync-service),
+ * caching them under ./exports-cache/, and defaults --date to today:
+ *
+ *   node recover-invoices.js            (dry run, today)
+ *   node recover-invoices.js --live     (actually invoice today's ready orders)
+ *   node recover-invoices.js --date 2026-07-14 --live
+ *
+ * Manual mode — point at CSVs you already downloaded yourself (e.g. the
+ * DB/Storage itself is down and only a local copy exists):
  *   node recover-invoices.js --orders ./orders.csv --items ./order_items.csv --catalog ./catalog.csv [--date 2026-07-15] [--live]
  *
- * Requires the same .env as the rest of sync-service (ZOHO_*, RAZORPAY_*).
+ * Requires the same .env as the rest of sync-service (ZOHO_*, RAZORPAY_*,
+ * plus SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY for easy-mode auto-fetch).
  */
 require('dotenv').config();
 const fs   = require('fs');
@@ -100,12 +112,64 @@ function parseArgs() {
     else if (a === '--live') out.live = true;
     else throw new Error(`Unknown arg: ${a}`);
   }
-  if (!out.orders || !out.items || !out.catalog) {
-    throw new Error(
-      'Usage: node recover-invoices.js --orders <path> --items <path> --catalog <path> [--date YYYY-MM-DD] [--live]'
-    );
+  // Partial manual overrides aren't supported — either give all three paths
+  // yourself, or none and let auto-fetch grab all three together.
+  const manualCount = [out.orders, out.items, out.catalog].filter(Boolean).length;
+  if (manualCount !== 0 && manualCount !== 3) {
+    throw new Error('Pass all three of --orders/--items/--catalog, or none to auto-fetch the latest.');
   }
   return out;
+}
+
+// ── Easy mode: pull the latest exports/orders/{orders,order_items,catalog}
+// CSVs straight from Storage instead of making you find/download them ─────
+async function fetchLatestExports() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error(
+      'No --orders/--items/--catalog given, and SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY ' +
+      'aren\'t set for auto-fetch — either fill those into .env, or pass all three CSV paths manually.'
+    );
+  }
+
+  const listRes = await fetch(`${url}/storage/v1/object/list/exports`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix: 'orders/', limit: 1000, sortBy: { column: 'name', order: 'desc' } }),
+  });
+  if (!listRes.ok) throw new Error(`Storage list failed: ${listRes.status} ${await listRes.text()}`);
+  const files = await listRes.json();
+
+  const latestOf = prefix => {
+    // Filenames are "<prefix>-<ISO-timestamp-with-dashes>.csv" — sorts
+    // correctly as plain strings, so the first match after a desc sort is
+    // the newest without needing to parse anything.
+    const match = files.find(f => f.name.startsWith(`${prefix}-`));
+    if (!match) throw new Error(`No ${prefix}-*.csv found in exports/orders/ — has export-csv run since it started producing catalog CSVs?`);
+    return match.name;
+  };
+
+  const cacheDir = path.join(__dirname, 'exports-cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
+
+  const download = async name => {
+    const res = await fetch(`${url}/storage/v1/object/exports/orders/${name}`, {
+      headers: { Authorization: `Bearer ${key}`, apikey: key },
+    });
+    if (!res.ok) throw new Error(`Download failed for ${name}: ${res.status}`);
+    const dest = path.join(cacheDir, name);
+    fs.writeFileSync(dest, await res.text());
+    return dest;
+  };
+
+  const [orders, items, catalog] = await Promise.all([
+    download(latestOf('orders')),
+    download(latestOf('order_items')),
+    download(latestOf('catalog')),
+  ]);
+  console.log(`[recover] auto-fetched latest exports into ${cacheDir}`);
+  return { orders, items, catalog };
 }
 
 const FREE_ITEM_RE = /\b(replacement|free sample|free)\b/i;
@@ -197,7 +261,11 @@ function buildPlan(orders, items, catalog, date) {
 }
 
 async function main() {
-  const { orders: ordersPath, items: itemsPath, catalog: catalogPath, date, live } = parseArgs();
+  const parsed = parseArgs();
+  const { date, live } = parsed;
+  const { orders: ordersPath, items: itemsPath, catalog: catalogPath } =
+    parsed.orders ? parsed : await fetchLatestExports();
+
   const dir = path.dirname(path.resolve(ordersPath));
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
