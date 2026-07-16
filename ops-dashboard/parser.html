@@ -590,8 +590,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div class="add-row">
       <input type="text" id="new-packer-name" placeholder="Packer name">
       <input type="text" id="new-packer-fruits" placeholder="Assigned fruits, comma-separated (optional)" style="flex:2">
+      <select id="new-packer-fruit-picker" style="flex:1">
+        <option value="">+ pick a fruit…</option>
+      </select>
+      <button type="button" onclick="addFruitToPackerInput()">+</button>
       <button onclick="addPacker()">Add</button>
     </div>
+    <p class="note">Editing an existing packer replaces their whole fruit list with whatever's in the box above when you click Add — the dropdown just adds one to the list instead of typing it, it doesn't merge with what they already have saved.</p>
   </div>
 </div>
 </div>
@@ -826,7 +831,34 @@ function renderConfig(){
   document.getElementById('fruit-list').innerHTML=FRUITS.map((f,i)=>`<li>${f}<button class="del-btn" onclick="delFruit(${i})">✕</button></li>`).join('');
   document.getElementById('pkg-list').innerHTML=Object.entries(PKG).map(([k,v])=>`<li>${k}<span>${v} kg/pc</span><button class="del-btn" onclick="delPkg('${k}')">✕</button></li>`).join('');
   document.getElementById('alias-list').innerHTML=Object.entries(ALIASES).map(([k,v])=>`<li>${k}<span>→ ${v}</span><button class="del-btn" onclick="delAlias('${k}')">✕</button></li>`).join('');
+  populatePackerFruitPicker();
   loadPackersConfig();
+}
+
+// Quick-pick dropdown for the packer-assignment fruits box — sourced from
+// the same FRUITS list as the Fruits config section above, so it stays in
+// sync whenever a fruit is added/removed there (renderConfig calls this
+// every time, including right after addFruit/delFruit).
+function populatePackerFruitPicker(){
+  const sel=document.getElementById('new-packer-fruit-picker');
+  if(!sel)return;
+  sel.innerHTML='<option value="">+ pick a fruit…</option>'+
+    [...FRUITS].sort().map(f=>'<option value="'+escH(f)+'">'+escH(f)+'</option>').join('');
+}
+
+// Appends the picked fruit into the comma-separated box rather than
+// requiring it to be typed by hand — doesn't touch what's already saved for
+// a packer until "Add" is actually clicked (see the note in the HTML: Add
+// still replaces the whole list with whatever's in the box at that point).
+function addFruitToPackerInput(){
+  const sel=document.getElementById('new-packer-fruit-picker');
+  const fruit=sel.value;
+  if(!fruit)return;
+  const box=document.getElementById('new-packer-fruits');
+  const existing=box.value.split(',').map(s=>s.trim()).filter(Boolean);
+  if(!existing.includes(fruit))existing.push(fruit);
+  box.value=existing.join(', ');
+  sel.value='';
 }
 function addFruit(){const v=document.getElementById('new-fruit').value.trim();if(!v)return;FRUITS.push(v);document.getElementById('new-fruit').value='';renderConfig();}
 function delFruit(i){FRUITS.splice(i,1);renderConfig();}
@@ -855,7 +887,11 @@ async function loadPackersConfig(){
   packersCache=(packers||[]).map(p=>({id:p.id,name:p.name,assigned_fruits:fruitsByPacker[p.id]||[]}));
   const list=document.getElementById('packer-list');
   if(list)list.innerHTML=packersCache.map(p=>
-    '<li>'+escH(p.name)+'<span>'+escH(p.assigned_fruits.join(', ')||'no fruits assigned')+'</span><button class="del-btn" onclick="deletePacker('+JSON.stringify(p.id)+')">✕</button></li>'
+    // JSON.stringify(p.id) alone produces "abc-123" — nested double-quotes
+    // inside this attribute's own double-quoted onclick="..." string, which
+    // breaks the HTML parse and silently kills the click handler. escH()
+    // turns those into &quot; so the attribute stays intact.
+    '<li>'+escH(p.name)+'<span>'+escH(p.assigned_fruits.join(', ')||'no fruits assigned')+'</span><button class="del-btn" onclick="deletePacker('+escH(JSON.stringify(p.id))+')">✕</button></li>'
   ).join('');
 }
 async function addPacker(){
