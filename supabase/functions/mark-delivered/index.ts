@@ -80,15 +80,36 @@ Deno.serve(async (req) => {
     // is actually provided — an "attach more evidence" call (photos/notes
     // only, delivered omitted) must leave the order's current status alone.
     if (delivered !== undefined) {
+      // A rider confirming delivery doesn't mean every originally-requested
+      // item made it — one or more may have been rejected/not-delivered
+      // along the way (order_items already marked 'cancelled', either just
+      // now via the Delivery tab or earlier in Today's Orders). If any
+      // survive as cancelled alongside at least one still-active item, this
+      // was only a partial delivery, not a full one — distinct from
+      // 'delivered' so ops can spot it. (An order with ZERO active items
+      // left is cancelled outright at the order level instead — see
+      // autoRegenerateInvoiceIfReady/cancel-order on the frontend — so this
+      // check never needs to consider that case.)
+      let deliveryStatus = 'ofd';
+      if (delivered) {
+        const { data: cancelledItems } = await supabase
+          .from('order_items')
+          .select('id')
+          .eq('sales_order_id', sales_order_id)
+          .eq('status', 'cancelled')
+          .limit(1);
+        deliveryStatus = (cancelledItems && cancelledItems.length) ? 'partially_delivered' : 'delivered';
+      }
       // payment_collected/_method/_at travel with delivered_at, not with
       // notes/photos — un-marking a delivery means the payment the rider
       // claimed to have collected at that (now-undone) delivery is undone
       // too, whereas remarks/photos already attached stay as history.
-      // Undoing a delivered order reverts to 'ofd', not all the way back to
-      // 'not_dispatched' — the items were already collected into the bag
-      // (that's how it reached 'delivered' in the first place), it just
-      // hasn't actually been handed over, so it's still out with the rider.
-      update.delivery_status          = delivered ? 'delivered' : 'ofd';
+      // Undoing a delivered (or partially-delivered) order reverts to 'ofd',
+      // not all the way back to 'not_dispatched' — the items were already
+      // collected into the bag (that's how it reached this state in the
+      // first place), it just hasn't actually been handed over, so it's
+      // still out with the rider.
+      update.delivery_status          = deliveryStatus;
       update.delivered_at             = delivered ? new Date().toISOString() : null;
       update.delivered_by             = delivered ? (rider || null) : null;
       update.payment_collected        = delivered ? !!payment_collected : false;

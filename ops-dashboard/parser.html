@@ -2316,7 +2316,33 @@ async function generateInvoiceCore(salesOrderId,overrides){
 async function autoRegenerateInvoiceIfReady(salesOrderId){
   const{data:items,error}=await sb.from('order_items')
     .select('status').eq('sales_order_id',salesOrderId).neq('status','cancelled');
-  if(error||!items||!items.length)return;
+  if(error)return;
+  if(!items||!items.length){
+    // Every item on this order ended up cancelled (Today's Orders "remove
+    // item", or the Delivery tab's "not delivered" whittling it down one at
+    // a time) — nothing left to bill, so the order itself needs to become
+    // cancelled too, not sit at whatever invoice_status it happened to have
+    // before the last item went. Reuses cancel-order's full cleanup
+    // (unapply payments, delete stale Zoho invoice/Razorpay link, set
+    // orders.status/invoice_status='cancelled') instead of duplicating it
+    // here — items are already all cancelled, so its item-update step is a
+    // no-op.
+    try{
+      const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+        body:JSON.stringify({sales_order_id:salesOrderId}),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Could not auto-cancel order');
+      evictCustomerLookupCache(salesOrderId);
+    }catch(e){
+      console.error('Auto-cancel failed for '+salesOrderId,e);
+      // Best-effort — falls back to the existing manual "Cancel Order"
+      // action on Today's Orders if this doesn't succeed.
+    }
+    return;
+  }
   const ready=items.every(i=>i.status==='final'||i.status==='invoiced')&&!items.every(i=>i.status==='invoiced');
   if(!ready)return;
   try{
@@ -3115,8 +3141,12 @@ function deliveryOrderMatchesStatusFilter(order){
   if(deliveryStatusFilter==='all')return true;
   if(deliveryStatusFilter==='cancelled')return cancelled;
   if(cancelled)return false;
-  if(deliveryStatusFilter==='delivered')return order.deliveryStatus==='delivered';
-  return order.deliveryStatus!=='delivered'; // 'pending' — not_dispatched or ofd
+  // partially_delivered counts as "delivered" here — the delivery action
+  // itself is done, it just came with a not-delivered item along the way;
+  // the badge on the card itself is what distinguishes the two, not this
+  // filter bucket.
+  if(deliveryStatusFilter==='delivered')return order.deliveryStatus==='delivered'||order.deliveryStatus==='partially_delivered';
+  return order.deliveryStatus!=='delivered'&&order.deliveryStatus!=='partially_delivered'; // 'pending' — not_dispatched or ofd
 }
 
 // Counts reflect whichever scope (All/My) is currently active, so the
@@ -3124,7 +3154,7 @@ function deliveryOrderMatchesStatusFilter(order){
 function renderDeliverySummaryPills(scopedOrders){
   const total=scopedOrders.length;
   const cancelled=scopedOrders.filter(o=>o.orderStatus==='cancelled').length;
-  const delivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='delivered').length;
+  const delivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&(o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered')).length;
   const pending=total-cancelled-delivered;
   const pills=[
     {key:'all',label:'Total',count:total},
@@ -3337,7 +3367,12 @@ function renderDeliveryCard(order,selectionMode){
 
   const notDispatched=order.deliveryStatus==='not_dispatched';
   const ofd=order.deliveryStatus==='ofd';
-  const delivered=order.deliveryStatus==='delivered';
+  const partiallyDelivered=order.deliveryStatus==='partially_delivered';
+  // Folded into one flag for every "delivery action is done" behavior below
+  // (undo button, payment badge, hiding the collected checkboxes, etc.) —
+  // partiallyDelivered gets its own distinct badge text further down, but
+  // otherwise behaves exactly like a full delivery everywhere else on the card.
+  const delivered=order.deliveryStatus==='delivered'||partiallyDelivered;
   const items=activeItems(order);
   const collectedCount=items.filter(i=>i.collected).length;
   const revealed=revealedPhones.has(order.soid);
@@ -3408,11 +3443,13 @@ function renderDeliveryCard(order,selectionMode){
       '</div>'
     :'';
 
-  const deliveryStatusBadge=delivered
-    ?' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>'
-    :ofd
-      ?' <span class="order-status-badge" style="background:#2f6690">OUT FOR DELIVERY</span>'
-      :' <span class="order-status-badge" style="background:#8a7a6a">NOT DISPATCHED</span>';
+  const deliveryStatusBadge=partiallyDelivered
+    ?' <span class="order-status-badge" style="background:#a0522d">PARTIALLY DELIVERED</span>'
+    :delivered
+      ?' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>'
+      :ofd
+        ?' <span class="order-status-badge" style="background:#2f6690">OUT FOR DELIVERY</span>'
+        :' <span class="order-status-badge" style="background:#8a7a6a">NOT DISPATCHED</span>';
 
   const paymentBadge=delivered
     ?(order.paymentCollected
