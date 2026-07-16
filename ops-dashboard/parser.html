@@ -267,22 +267,25 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="logo">good<span>papaya</span> · parser</div>
   <div class="top-header-actions">
     <span class="rider-badge hidden" id="rider-badge" onclick="changeRiderName()"></span>
+    <!-- Small, secondary links (not main tabs) — the packing team has no
+         reason to use either of these day to day, so they're sized/placed
+         like utility actions rather than a primary nav tab. -->
+    <button class="header-btn" onclick="switchTab('parser')" id="tab-parser">📸 Parser</button>
+    <button class="header-btn" onclick="switchTab('config')">⚙️ Config</button>
     <a class="signout-link" onclick="signOut()">Sign out</a>
   </div>
 </div>
 <div class="tabs">
-  <button class="tab active" onclick="switchTab('parser')" id="tab-parser">📸 Parser</button>
-  <button class="tab" onclick="switchTab('today')" id="tab-today">📋 Order overview</button>
+  <button class="tab active" onclick="switchTab('today')" id="tab-today">📋 Order overview</button>
   <button class="tab" onclick="switchTab('packer')" id="tab-packer">📦 Packer</button>
   <button class="tab" onclick="switchTab('delivery')" id="tab-delivery">🚚 Delivery</button>
 </div>
 
 <!-- PARSER -->
-<div class="panel active" id="panel-parser">
+<div class="panel" id="panel-parser">
   <div class="push-row" style="margin-bottom:14px">
     <button class="header-btn" id="to-sync-catalog">💰 Catalog</button>
     <button class="header-btn" id="sync-customers">👥 Customers</button>
-    <button class="header-btn" onclick="switchTab('config')">⚙️ Config</button>
   </div>
   <div class="section-label">Entry date <span style="font-weight:400;text-transform:none;letter-spacing:normal">— which day new orders below go into</span></div>
   <input type="date" class="date-picker" id="entry-date-picker" onchange="setEntryDate(this.value)">
@@ -323,7 +326,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 </div>
 
 <!-- ORDER OVERVIEW -->
-<div class="panel" id="panel-today">
+<div class="panel active" id="panel-today">
   <div class="section-label date-header-row">
     <span><span id="to-label">Order overview</span> <span id="to-rc"></span></span>
     <input type="date" class="date-picker-compact" id="to-date-picker" onchange="setViewDate(this.value)">
@@ -750,6 +753,10 @@ async function initAppAfterLogin(){
   }else{
     ensureCustomerNameOptions();
     addQoBlock();
+    // Order overview is the default landing panel now that Parser moved out
+    // of the main tabs — it needs its data loaded explicitly on init, since
+    // that previously only happened when switchTab('today') was clicked.
+    loadTodaysOrders();
   }
 
   document.getElementById('app').classList.remove('hidden');
@@ -802,7 +809,10 @@ function switchTab(name){
   // CSS, not removed, so anything that still calls switchTab() directly
   // (e.g. a stray onclick) can't escape into a tab this session shouldn't see.
   if(isDeliveryRole)name='delivery';
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['parser','today','packer','delivery'][i]===name));
+  // Matched by id, not position — Parser/Config are header-btn links now,
+  // not part of the main .tabs row, so the old fixed-index array no longer
+  // lines up with what's actually in there.
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.id==='tab-'+name));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='config')renderConfig();
