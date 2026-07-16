@@ -56,6 +56,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    wrapped it awkwardly. */
 .or-top{display:flex;flex-direction:column;gap:2px;font-size:13px;margin-bottom:8px}
 .or-cust{font-weight:600;color:#2b2320;font-size:14px;white-space:normal}
+/* Delivery card header — customer/status/timeline on one side, an expand/
+   collapse caret on the other, the whole row clickable to toggle (the
+   checkbox inside stops propagation so checking it doesn't also toggle). */
+.dv-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px;cursor:pointer}
+.dv-expand-caret{color:#8a7a6a;font-size:13px;flex-shrink:0;padding:2px 2px}
+.dv-collapsed-card{padding:12px 14px}
+.dv-collapsed-card .dv-card-header{margin-bottom:0}
 .pay-missing{font-size:11px;font-weight:700;color:#b3261e}
 .pay-link{font-size:11px;color:#3f7a34;text-decoration:none}
 .pay-link:hover{text-decoration:underline}
@@ -3247,6 +3254,16 @@ let deliveryCatalogByItem={};
 let deliveryScope='all'; // 'all' | 'mine'
 let deliveryStatusFilter='pending'; // 'all' | 'pending' | 'delivered' | 'cancelled' — 'pending' covers both not_dispatched and ofd (not yet delivered, not cancelled)
 let selectedDeliveryOrders=new Set();
+// Per-order card collapse — tracks which orders are EXPANDED (empty by
+// default = everything starts collapsed), not which are collapsed, so a
+// fresh day's orders are collapsed automatically without needing to be
+// pre-populated into any set. Session-only, resets on refresh.
+let expandedDeliveryOrders=new Set();
+function toggleDeliveryOrderExpanded(soid){
+  if(expandedDeliveryOrders.has(soid))expandedDeliveryOrders.delete(soid);
+  else expandedDeliveryOrders.add(soid);
+  renderDeliveryList();
+}
 
 // ── Offline queue ─────────────────────────────────────────────────────────
 // A rider's phone commonly loses signal inside a building/basement/lift —
@@ -3826,11 +3843,34 @@ function renderDeliveryCard(order,selectionMode){
       ).join('')+'</div>'
     :'';
 
+  // Collapsed by default — a compact one-line summary (customer name +
+  // status + timeline, if any) instead of the full card, so a rider/admin
+  // scanning a long list isn't scrolling past every phone/item table/QR
+  // block for orders they're not working on right now. Tap to expand.
+  const expanded=expandedDeliveryOrders.has(order.soid);
+  if(!expanded){
+    return '<div class="order-row dv-collapsed-card">'+
+      '<div class="dv-card-header" onclick="toggleDeliveryOrderExpanded(\''+order.soid+'\')">'+
+        '<span class="or-cust">'+
+          '<span onclick="event.stopPropagation()">'+selectCheckbox+'</span>'+
+          escH(order.customer)+
+          deliveryStatusBadge+
+          deliverByTag+
+        '</span>'+
+        '<span class="dv-expand-caret">▸</span>'+
+      '</div>'+
+    '</div>';
+  }
+
   return '<div class="order-row'+(delivered?' dv-delivered':'')+'">'+
-    '<div class="or-top"><span class="or-cust">'+selectCheckbox+escH(order.customer)+
+    '<div class="dv-card-header" onclick="toggleDeliveryOrderExpanded(\''+order.soid+'\')"><span class="or-cust">'+
+      '<span onclick="event.stopPropagation()">'+selectCheckbox+'</span>'+
+      escH(order.customer)+
       deliveryStatusBadge+
       paymentBadge+assignedTag+deliverByTag+
-    '</span></div>'+
+    '</span>'+
+    '<span class="dv-expand-caret">▾</span>'+
+    '</div>'+
     notesBlock+
     '<div class="dv-phone-row">📞 '+phoneDisplay+'</div>'+
     itemsTable+
