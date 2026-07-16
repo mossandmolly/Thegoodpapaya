@@ -3141,11 +3141,11 @@ function deliveryOrderMatchesStatusFilter(order){
   if(deliveryStatusFilter==='all')return true;
   if(deliveryStatusFilter==='cancelled')return cancelled;
   if(cancelled)return false;
-  // partially_delivered counts as "delivered" here — the delivery action
-  // itself is done, it just came with a not-delivered item along the way;
-  // the badge on the card itself is what distinguishes the two, not this
-  // filter bucket.
-  if(deliveryStatusFilter==='delivered')return order.deliveryStatus==='delivered'||order.deliveryStatus==='partially_delivered';
+  // Its own bucket, not folded into "Delivered" — a store manager wants to
+  // isolate exactly the orders that came back with a not-delivered item,
+  // not have them buried inside the fully-clean deliveries.
+  if(deliveryStatusFilter==='delivered')return order.deliveryStatus==='delivered';
+  if(deliveryStatusFilter==='partially_delivered')return order.deliveryStatus==='partially_delivered';
   return order.deliveryStatus!=='delivered'&&order.deliveryStatus!=='partially_delivered'; // 'pending' — not_dispatched or ofd
 }
 
@@ -3154,11 +3154,13 @@ function deliveryOrderMatchesStatusFilter(order){
 function renderDeliverySummaryPills(scopedOrders){
   const total=scopedOrders.length;
   const cancelled=scopedOrders.filter(o=>o.orderStatus==='cancelled').length;
-  const delivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&(o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered')).length;
-  const pending=total-cancelled-delivered;
+  const delivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='delivered').length;
+  const partiallyDelivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='partially_delivered').length;
+  const pending=total-cancelled-delivered-partiallyDelivered;
   const pills=[
     {key:'all',label:'Total',count:total},
     {key:'delivered',label:'Delivered',count:delivered},
+    {key:'partially_delivered',label:'Partially Delivered',count:partiallyDelivered},
     {key:'pending',label:'Pending',count:pending},
     {key:'cancelled',label:'Cancelled',count:cancelled},
   ];
