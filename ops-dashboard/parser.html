@@ -2369,7 +2369,7 @@ async function autoRegenerateInvoiceIfReady(salesOrderId){
 async function generateInvoice(salesOrderId,btnEl,overrides){
   if(!overrides&&!await uxConfirm('Generate invoice for '+salesOrderId+'?'))return;
   const original=btnEl.textContent;
-  btnEl.textContent='Generating…';
+  btnEl.innerHTML='<span class="spinner"></span>Generating…';
   btnEl.style.pointerEvents='none';
   try{
     await ensureCatalogSyncedToday();
@@ -2527,7 +2527,7 @@ async function generateInvoicesBulk(salesOrderIds){
     await ensureCatalogSyncedToday();
     const succeeded=[],needsResolution=[],failed=[];
     for(const soid of salesOrderIds){
-      btn.textContent='Generating '+(succeeded.length+needsResolution.length+failed.length+1)+'/'+salesOrderIds.length+'…';
+      btn.innerHTML='<span class="spinner"></span>Generating '+(succeeded.length+needsResolution.length+failed.length+1)+'/'+salesOrderIds.length+'…';
       try{
         const data=await generateInvoiceCore(soid);
         if(data.needs_resolution)needsResolution.push(soid);
@@ -2563,7 +2563,7 @@ async function generatePaymentLinksBulk(salesOrderIds){
   const succeeded=[],skipped=[],failed=[];
   try{
     for(const soid of salesOrderIds){
-      btn.textContent='Generating '+(succeeded.length+skipped.length+failed.length+1)+'/'+salesOrderIds.length+'…';
+      btn.innerHTML='<span class="spinner"></span>Generating '+(succeeded.length+skipped.length+failed.length+1)+'/'+salesOrderIds.length+'…';
       const order=currentOrdersById[soid];
       let phone=order?.phone;
       if(!phone){
@@ -2615,7 +2615,7 @@ async function cancelOrdersBulk(salesOrderIds){
   const succeeded=[],failed=[];
   try{
     for(const soid of salesOrderIds){
-      btn.textContent='Cancelling '+(succeeded.length+failed.length+1)+'/'+salesOrderIds.length+'…';
+      btn.innerHTML='<span class="spinner"></span>Cancelling '+(succeeded.length+failed.length+1)+'/'+salesOrderIds.length+'…';
       try{
         const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
           method:'POST',
