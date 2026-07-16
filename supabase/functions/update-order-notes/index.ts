@@ -1,16 +1,22 @@
 // Supabase Edge Function — update-order-notes
 //
-// Lets an admin add/edit an order's internal note and/or its deliver_by
-// deadline from Order overview, after the order was already created.
-// orders' RLS locks writes to service-role only, so this is the write
-// path — same pattern as every other orders mutation in this app.
+// Lets an admin add/edit an order's internal note, its deliver_by
+// deadline, and/or its trip_override from Order overview, after the order
+// was already created. orders' RLS locks writes to service-role only, so
+// this is the write path — same pattern as every other orders mutation in
+// this app.
 //
 // Distinct from delivery_notes (the rider's own remark, written from the
 // Delivery tab) and order_items.delivery_instructions (parsed per item) —
 // admin_notes is the admin-facing internal note field.
 //
-// Input:  { sales_order_id: string, admin_notes?: string, deliver_by?: string|null }
-// Output: { sales_order_id, admin_notes, deliver_by }
+// trip_override moves this one order into a different trip grouping
+// (Overview/Packer/Delivery's trip view) without touching its actual
+// community — pass null/empty to clear it back to the community-derived
+// default.
+//
+// Input:  { sales_order_id: string, admin_notes?: string, deliver_by?: string|null, trip_override?: string|null }
+// Output: { sales_order_id, admin_notes, deliver_by, trip_override }
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -43,21 +49,22 @@ Deno.serve(async (req) => {
 
   try {
     await requireAuth(req);
-    const { sales_order_id, admin_notes, deliver_by } = await req.json();
+    const { sales_order_id, admin_notes, deliver_by, trip_override } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
     const update: Record<string, unknown> = {};
-    if (admin_notes !== undefined) update.admin_notes = admin_notes || null;
-    if (deliver_by !== undefined)  update.deliver_by  = deliver_by || null;
+    if (admin_notes !== undefined)    update.admin_notes    = admin_notes || null;
+    if (deliver_by !== undefined)     update.deliver_by     = deliver_by || null;
+    if (trip_override !== undefined)  update.trip_override  = trip_override || null;
     if (!Object.keys(update).length) throw new Error('Nothing to update');
 
     const { data, error } = await supabase
       .from('orders')
       .update(update)
       .eq('sales_order_id', sales_order_id)
-      .select('sales_order_id, admin_notes, deliver_by')
+      .select('sales_order_id, admin_notes, deliver_by, trip_override')
       .single();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);
