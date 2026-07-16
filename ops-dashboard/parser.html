@@ -34,12 +34,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .btn-sec:disabled{opacity:0.5;cursor:not-allowed}
 .btn-push{display:block;width:100%;padding:14px;border-radius:10px;border:none;background:#c2570a;color:#ffffff;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px;font-family:inherit}
 .btn-push:disabled{opacity:0.5;cursor:not-allowed}
-.push-row{display:flex;gap:8px;margin-bottom:10px}
+.push-row{display:flex;gap:10px;margin-bottom:14px}
 .push-row .btn-push{width:auto;flex:1;margin-bottom:0}
 .push-row .btn-sec{width:auto;flex:1;margin-bottom:0}
 /* Three bulk actions on one line — smaller text/padding than usual so the
    longest label (Generate Selected Invoices) still fits its third of the row
    on a phone screen. */
+.bulk-actions-row{margin-top:4px}
 .bulk-actions-row button{font-size:11px;padding:10px 4px;line-height:1.25}
 .btn-tomorrow{width:auto;flex:0 0 auto;padding:0 14px;border-radius:10px;border:1.5px solid #f5c896;background:#fdead9;color:#b45f0e;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
 .btn-tomorrow:disabled{opacity:0.5;cursor:not-allowed}
@@ -212,10 +213,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .gi-row:last-child{border-bottom:none}
 .gi-row label{display:block;font-size:12px;color:#2b2320;margin-bottom:4px}
 .gi-row select{margin-bottom:0}
-.pk-search{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:8px;background:#ffffff}
-.filter-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
-.filter-group-label{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:4px}
-.filter-pill{display:inline-flex;align-items:center;border-radius:14px;padding:4px 10px;font-size:11px;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a;cursor:pointer;white-space:nowrap}
+.pk-search{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
+.filter-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.filter-group-label{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:6px;margin-top:2px}
+.filter-pill{display:inline-flex;align-items:center;border-radius:14px;padding:5px 12px;font-size:11px;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a;cursor:pointer;white-space:nowrap}
 .filter-pill.active{background:#e8720c;border-color:#e8720c;color:#ffffff;font-weight:600}
 .status-pills .filter-pill{border-color:#b8d4e8;color:#2f6690}
 .status-pills .filter-pill.active{background:#2f6690;border-color:#2f6690;color:#ffffff}
@@ -337,12 +338,16 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <span><span id="to-label">Order overview</span> <span id="to-rc"></span></span>
     <input type="date" class="date-picker-compact" id="to-date-picker" onchange="setViewDate(this.value)">
   </div>
+  <input type="text" class="pk-search" id="to-search" placeholder="🔍 Search society, customer, or fruit...">
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div id="to-grouping-toggle" class="filter-pills status-pills"></div>
-  <div class="push-row bulk-actions-row" style="margin-bottom:12px">
+  <div class="push-row bulk-actions-row">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Selected Invoices (0)</button>
     <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
     <button class="btn-sec cancel-link" id="to-bulk-cancel" disabled>🚫 Cancel Selected (0)</button>
+  </div>
+  <div class="push-row" style="margin-bottom:14px">
+    <button class="header-btn" id="to-collapse-btn" onclick="toggleCollapseAllOverview()">▾ Collapse All</button>
   </div>
   <div id="to-list"><div class="to-empty">Loading…</div></div>
 </div>
@@ -1806,16 +1811,26 @@ function renderOrdersList(){
   document.getElementById('to-grouping-toggle').innerHTML=renderGroupingToggle();
 
   // Group orders by society (default) or by trip (viewGrouping==='trip') —
-  // same underlying list, just a different grouping key.
+  // same underlying list, just a different grouping key. Search matches
+  // society/trip name, customer name, or any item's fruit name — an order
+  // survives the filter if any one of those three matches.
+  const search=document.getElementById('to-search').value.trim().toLowerCase();
   const bySociety={};
   Object.entries(currentOrdersById).forEach(([soid,order])=>{
     if(!orderMatchesOverviewFilter(order))return;
     const soc=deriveGroupKey(order);
+    if(search){
+      const matches=soc.toLowerCase().includes(search)||
+        order.customer.toLowerCase().includes(search)||
+        order.items.some(i=>i.item_name.toLowerCase().includes(search));
+      if(!matches)return;
+    }
     if(!bySociety[soc])bySociety[soc]=[];
     bySociety[soc].push({soid,...order});
   });
 
   const socNames=Object.keys(bySociety).sort();
+  document.getElementById('to-collapse-btn').textContent=collapsedOverviewGroups.size?'▸ Expand All':'▾ Collapse All';
   if(!socNames.length){
     list.innerHTML='<div class="to-empty">'+(Object.keys(currentOrdersById).length?'No orders match this filter':'No orders for '+viewDate)+'</div>';
     updateBulkButtons();
@@ -1825,10 +1840,13 @@ function renderOrdersList(){
     const orders=bySociety[soc];
     const selectableSoids=orders.filter(o=>o.orderStatus!=='cancelled').map(o=>o.soid);
     const allSelected=selectableSoids.length>0&&selectableSoids.every(soid=>selectedOrders.has(soid));
+    const collapsed=collapsedOverviewGroups.has(soc);
     return '<div class="society-header">'+
       (selectableSoids.length?'<input type="checkbox" class="inv-select" '+(allSelected?'checked ':'')+'onchange="toggleSocietySelectAll('+escH(JSON.stringify(selectableSoids))+',this.checked)" title="Select all orders in this society"> ':'')+
-      escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+
+      '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></span>'+
+      '<span style="margin-left:auto;cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+(collapsed?'▸':'▾')+'</span>'+
       '</div>'+
+      (collapsed?'':
       orders.map(order=>{
         const cancelled=order.orderStatus==='cancelled';
         const readyToInvoice=isReadyToInvoice(order);
@@ -1852,6 +1870,13 @@ function renderOrdersList(){
               :' <span class="pay-missing">Payment link not generated</span>'
             ):'')+
           '</span></div>'+
+          // Delivery-related notes (aggregated from item.delivery_instructions,
+          // same as the Delivery tab's own note block) right under the
+          // customer name — so this doesn't require switching tabs to see.
+          (()=>{
+            const instructions=[...new Set(order.items.map(i=>(i.delivery_instructions||'').trim()).filter(Boolean))].join(' · ');
+            return instructions?'<div class="dv-notes">NOTE: '+escH(instructions)+'</div>':'';
+          })()+
           (order.adminNotes?'<div class="dv-notes">📝 '+escH(order.adminNotes)+'</div>':'')+
           '<div class="or-pills">'+order.items.map(item=>{
             const itemCancelled=item.status==='cancelled';
@@ -1889,7 +1914,7 @@ function renderOrdersList(){
             '</span>'+
           '</div>'+
         '</div>';
-      }).join('');
+      }).join(''));
   }).join('');
   updateBulkButtons();
 }
@@ -2365,6 +2390,24 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
 // the item rows are repointed.
 let currentOrdersById={};
 let currentItemsById={};
+// Collapse-to-headers-only view — a society/trip name in this set shows
+// just its header + count, no order cards. "Collapse All"/"Expand All"
+// fills/clears the whole set; clicking one header toggles just that group.
+let collapsedOverviewGroups=new Set();
+function toggleOverviewGroup(soc){
+  if(collapsedOverviewGroups.has(soc))collapsedOverviewGroups.delete(soc);
+  else collapsedOverviewGroups.add(soc);
+  renderOrdersList();
+}
+function toggleCollapseAllOverview(){
+  if(collapsedOverviewGroups.size){collapsedOverviewGroups=new Set();renderOrdersList();return;}
+  const groups=new Set();
+  Object.values(currentOrdersById).forEach(order=>{
+    if(orderMatchesOverviewFilter(order))groups.add(deriveGroupKey(order));
+  });
+  collapsedOverviewGroups=groups;
+  renderOrdersList();
+}
 let mtTargetOrder=null;
 let mtDirection=1;
 const mtModal=document.getElementById('mt-modal'),mtItems=document.getElementById('mt-items'),mtTitle=document.getElementById('mt-title'),mtMoveBtn=document.getElementById('mt-move');
@@ -3086,6 +3129,10 @@ function renderPackerGrid(){
 document.getElementById('pk-search').addEventListener('input',e=>{
   packerFilters.search=e.target.value;
   renderPackerGrid();
+});
+
+document.getElementById('to-search').addEventListener('input',()=>{
+  renderOrdersList();
 });
 
 async function savePackedQty(id){
