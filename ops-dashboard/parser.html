@@ -101,7 +101,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-phone-row{font-size:12px;color:#5c4f42;margin-bottom:8px}
 .dv-phone{color:#1a73e8;cursor:pointer;text-decoration:none;font-weight:600}
 .dv-phone:hover{text-decoration:underline}
-.dv-notes{font-size:12px;color:#5c4f42;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;margin-bottom:10px;white-space:pre-wrap}
+.dv-notes{font-size:12px;color:#c0392b;font-weight:700;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;margin-bottom:10px;white-space:pre-wrap}
 .dv-notes-edit textarea{width:100%;padding:8px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:12px;color:#2b2320;font-family:inherit;margin-bottom:6px;background:#ffffff;resize:vertical}
 .dv-item-table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:12px}
 .dv-item-table td{padding:6px 4px;border-bottom:1px solid #f5efe6;color:#2b2320;vertical-align:top}
@@ -2924,8 +2924,20 @@ function saveDvQueue(q){localStorage.setItem(DV_QUEUE_KEY,JSON.stringify(q));}
 // Distinguishes "couldn't reach the server at all" from a real error the
 // server sent back — only the former is worth queueing/retrying, since
 // retrying a genuine validation failure would just fail again forever.
+//
+// A raw fetch() failure is a TypeError, but that's not the only shape a
+// connectivity failure takes here — authToken() calls sb.auth.getSession(),
+// which silently tries to refresh an expired JWT over the network, and
+// Supabase's auth client wraps that kind of failure in its own error class
+// (not a TypeError). Mobile browsers also don't reliably flip
+// navigator.onLine to false just because there's no real signal. So on top
+// of both existing checks, fall back to matching the message text every
+// major engine actually uses for "couldn't reach the server" — this is
+// what catches the auth-refresh case that instanceof TypeError alone misses.
 function isNetworkFailure(e){
-  return !navigator.onLine||e instanceof TypeError;
+  if(!navigator.onLine||e instanceof TypeError)return true;
+  const msg=String(e&&e.message||'').toLowerCase();
+  return /failed to fetch|load failed|network ?error|internet_disconnected|network request failed/.test(msg);
 }
 
 function queueDvAction(type,payload){
@@ -3347,7 +3359,7 @@ function renderDeliveryCard(order,selectionMode){
         '</div>'+
       '</div>'
     :(instructions
-      ?'<div class="dv-notes">🚚 '+escH(instructions)+' <a class="or-link" onclick="editDeliveryInstructions(\''+order.soid+'\')">edit</a></div>'
+      ?'<div class="dv-notes">NOTE: '+escH(instructions)+' <a class="or-link" onclick="editDeliveryInstructions(\''+order.soid+'\')">edit</a></div>'
       :'<div class="or-links" style="margin-bottom:10px"><a class="or-link" onclick="editDeliveryInstructions(\''+order.soid+'\')">+ add delivery instructions</a></div>'
     );
 
