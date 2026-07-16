@@ -3417,7 +3417,11 @@ function deliveryOrderMatchesStatusFilter(order){
   // not have them buried inside the fully-clean deliveries.
   if(deliveryStatusFilter==='delivered')return order.deliveryStatus==='delivered';
   if(deliveryStatusFilter==='partially_delivered')return order.deliveryStatus==='partially_delivered';
-  return order.deliveryStatus!=='delivered'&&order.deliveryStatus!=='partially_delivered'; // 'pending' — not_dispatched or ofd
+  // Its own bucket too, split out of what used to be one "Pending" pile —
+  // an order already out with a rider is a different thing to track than
+  // one still sitting at the store.
+  if(deliveryStatusFilter==='ofd')return order.deliveryStatus==='ofd';
+  return order.deliveryStatus==='not_dispatched'; // 'pending'
 }
 
 // Counts reflect whichever scope (All/My) is currently active, so the
@@ -3427,12 +3431,14 @@ function renderDeliverySummaryPills(scopedOrders){
   const cancelled=scopedOrders.filter(o=>o.orderStatus==='cancelled').length;
   const delivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='delivered').length;
   const partiallyDelivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='partially_delivered').length;
-  const pending=total-cancelled-delivered-partiallyDelivered;
+  const ofd=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='ofd').length;
+  const pending=total-cancelled-delivered-partiallyDelivered-ofd;
   const pills=[
     {key:'all',label:'Total',count:total},
+    {key:'pending',label:'Pending',count:pending},
+    {key:'ofd',label:'OFD',count:ofd},
     {key:'delivered',label:'Delivered',count:delivered},
     {key:'partially_delivered',label:'Partially Delivered',count:partiallyDelivered},
-    {key:'pending',label:'Pending',count:pending},
     {key:'cancelled',label:'Cancelled',count:cancelled},
   ];
   document.getElementById('dv-summary-pills').innerHTML=pills.map(p=>
