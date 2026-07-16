@@ -3854,19 +3854,33 @@ function renderDeliveryCard(order,selectionMode){
   '</div>';
 }
 
-// One signed URL fetch per photo on any order that has one — has to run
-// after the innerHTML swap since the <img> placeholders don't exist until
-// then. delivery-photos is a private bucket, so a plain public URL won't
-// work; this session's own authenticated read access (granted to any
-// signed-in session) is what lets createSignedUrl succeed here.
+// Session-cached by storage path (signed URLs are valid for the 3600s
+// passed below) — renderDeliveryList calls this after every re-render
+// (search keystroke, filter pill, grouping toggle, etc.), and without this
+// cache every one of those would re-fetch a fresh signed URL for every
+// already-visible photo from Storage, even though the one from moments
+// ago is still perfectly valid.
+const signedPhotoUrlCache={};
+
+// One signed URL fetch per NOT-YET-CACHED photo — has to run after the
+// innerHTML swap since the <img> placeholders don't exist until then.
+// delivery-photos is a private bucket, so a plain public URL won't work;
+// this session's own authenticated read access (granted to any signed-in
+// session) is what lets createSignedUrl succeed here.
 function renderDeliveryPhotos(orders){
   orders.forEach(order=>{
     if(!(order.deliveryPhotoPaths&&order.deliveryPhotoPaths.length))return;
     order.deliveryPhotoPaths.forEach((path,idx)=>{
       const img=document.getElementById('dv-photo-'+order.soid+'-'+idx);
       if(!img)return;
+      if(signedPhotoUrlCache[path]){
+        img.src=signedPhotoUrlCache[path];
+        img.classList.remove('hidden');
+        return;
+      }
       sb.storage.from('delivery-photos').createSignedUrl(path,3600).then(({data,error})=>{
         if(error||!data)return;
+        signedPhotoUrlCache[path]=data.signedUrl;
         img.src=data.signedUrl;
         img.classList.remove('hidden');
       });
