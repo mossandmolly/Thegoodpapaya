@@ -37,8 +37,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .push-row{display:flex;gap:10px;margin-bottom:14px}
 .push-row .btn-push{width:auto;flex:1;margin-bottom:0}
 .push-row .btn-sec{width:auto;flex:1;margin-bottom:0}
-/* Three bulk actions on one line — smaller text/padding than usual so the
-   longest label (Generate Selected Invoices) still fits its third of the row
+/* Four bulk actions on one line — smaller text/padding than usual so the
+   longest label (Generate Invoices) still fits its quarter of the row
    on a phone screen. */
 .bulk-actions-row{margin-top:4px}
 .bulk-actions-row button{font-size:11px;padding:10px 4px;line-height:1.25}
@@ -203,7 +203,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .qo-block{border:1px solid #eee0d0;border-radius:8px;padding:10px;margin-bottom:10px;background:#ffffff}
 .qo-block-header{display:flex;gap:6px;margin-bottom:8px}
 .qo-block-header input{flex:1;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
-.qo-block-header input.qo-deliverby{flex:none;width:110px}
+.qo-block-header input.qo-deliverby,.qo-block-header input.qo-deliverafter{flex:none;width:110px}
 .qo-block-header button{background:none;border:none;color:#b3261e;font-size:16px;cursor:pointer;padding:0 4px;flex-shrink:0}
 .qo-row{display:flex;gap:6px;margin-bottom:6px}
 .qo-row input{padding:8px 9px;border:1px solid #eee0d0;border-radius:8px;font-size:12px;color:#2b2320;font-family:inherit;background:#ffffff;width:100%}
@@ -348,8 +348,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div id="to-grouping-toggle" class="filter-pills status-pills"></div>
   <div class="push-row bulk-actions-row">
-    <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Selected Invoices (0)</button>
+    <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Invoices (0)</button>
     <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
+    <button class="btn-sec" id="to-bulk-download" disabled>⬇️ Download (0)</button>
     <button class="btn-sec cancel-link" id="to-bulk-cancel" disabled>🚫 Cancel Selected (0)</button>
   </div>
   <div class="push-row" style="margin-bottom:14px">
@@ -532,6 +533,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <label class="dv-cash-row" style="margin-left:0;padding-left:0;border-left:none">
       <input type="checkbox" id="on-delivery-related"> Also show to delivery boy (delivery-related)
     </label>
+    <label class="modal-label">Deliver after (optional earliest time)</label>
+    <input type="time" id="on-deliverafter">
     <label class="modal-label">Deliver by (optional deadline)</label>
     <input type="time" id="on-deliverby">
     <div class="modal-actions">
@@ -1189,14 +1192,20 @@ RULES:
     not a replacement, both fields get it. Empty string "" if the message
     has nothing delivery-specific (most orders won't).
 
-4b. deliver_by = a structured "HH:MM" (24-hour) deadline ONLY if the
-    customer stated a hard latest-time to receive the order — e.g. "need by
-    4pm"→"16:00", "before 10am"→"10:00", "by 6:30pm"→"18:30". This drives
-    real packing/dispatch scheduling, so only fill it in when a specific
-    clock time is actually stated — NOT for vague urgency ("asap", "soon",
-    "whenever") and NOT for "deliver after Xpm" (that's an earliest time,
-    goes in delivery_instructions instead, not a deadline). Empty string ""
-    if no explicit latest-time was given (most orders won't have one).
+4b. deliver_by = a structured "HH:MM" (24-hour) LATEST-time deadline ONLY
+    if the customer stated a hard latest-time to receive the order — e.g.
+    "need by 4pm"→"16:00", "before 10am"→"10:00", "by 6:30pm"→"18:30",
+    "between 2 and 4pm"→"16:00" (the later bound). Only fill it in when a
+    specific clock time is actually stated — NOT for vague urgency ("asap",
+    "soon", "whenever"). Empty string "" if no explicit latest-time was
+    given (most orders won't have one).
+
+4c. deliver_after = a structured "HH:MM" (24-hour) EARLIEST-time
+    constraint — the mirror of deliver_by, for phrasing like "deliver after
+    4pm"→"16:00", "not before 10am"→"10:00", "between 2 and 4pm"→"14:00"
+    (the earlier bound — same "between" statement fills BOTH deliver_by and
+    deliver_after together, one bound each). Empty string "" if no explicit
+    earliest-time was given (most orders won't have one).
 
 5. Quantity rules:
    - g/gm/gms/kg stated → convert to kg decimal (500g=0.5, 300gm=0.3, half kg=0.5, 1/2kg=0.5, 2kg=2)
@@ -1247,7 +1256,7 @@ CRITICAL:
 - "orange" = Mandarin orange always, never mango
 
 Return ONLY valid compact JSON, no markdown fences:
-{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","quantity":0,"sales_order":""}],"flags":[]}`;
+{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":""}],"flags":[]}`;
 
   try{
     const compressStart = Date.now();
@@ -1369,9 +1378,12 @@ async function pushRows(rows,salesOrderIdFor){
         payment_method: 'cod',
         invoice_status: 'pending',
         deliver_by:     r.deliver_by||null,
+        deliver_after:  r.deliver_after||null,
       });
-    }else if(r.deliver_by&&!headers.get(soid).deliver_by){
-      headers.get(soid).deliver_by=r.deliver_by; // any row in this customer's batch may carry it
+    }else{
+      // any row in this customer's batch may carry either bound
+      if(r.deliver_by&&!headers.get(soid).deliver_by)headers.get(soid).deliver_by=r.deliver_by;
+      if(r.deliver_after&&!headers.get(soid).deliver_after)headers.get(soid).deliver_after=r.deliver_after;
     }
   });
   const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
@@ -1593,6 +1605,7 @@ async function addQoBlock(){
           '<input type="text" class="qo-customer" placeholder="Customer name (e.g. Dhavala A502)" autocomplete="off">'+
           '<div class="ac-list hidden"></div>'+
         '</div>'+
+        '<input type="time" class="qo-deliverafter" title="Deliver after (optional) — earliest acceptable time">'+
         '<input type="time" class="qo-deliverby" title="Deliver by (optional) — a hard deadline, not just preference">'+
         '<button type="button" onclick="this.closest(\'.qo-block\').remove()" title="Remove customer">✕</button>'+
       '</div>'+
@@ -1616,12 +1629,13 @@ qoSubmitBtn.addEventListener('click',async()=>{
     const customerName=formatCustomerName(block.querySelector('.qo-customer').value);
     if(!customerName)return;
     const deliverBy=block.querySelector('.qo-deliverby').value||'';
+    const deliverAfter=block.querySelector('.qo-deliverafter').value||'';
     block.querySelectorAll('.qo-row').forEach(row=>{
       const itemName=row.querySelector('.qo-item').value.trim();
       const qty=parseFloat(row.querySelector('.qo-qty').value);
       const description=row.querySelector('.qo-desc').value.trim();
       if(itemName&&!isNaN(qty)&&qty>0){
-        rows.push({customer_name:customerName,item_name:itemName,quantity:qty,description,deliver_by:deliverBy});
+        rows.push({customer_name:customerName,item_name:itemName,quantity:qty,description,deliver_by:deliverBy,deliver_after:deliverAfter});
       }
     });
   });
@@ -1689,7 +1703,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -1792,6 +1806,7 @@ async function loadTodaysOrders(){
         invoiceStatus: o?.invoice_status||null,
         orderStatus:   o?.status||'active',
         deliverBy:     o?.deliver_by||null,
+        deliverAfter:  o?.deliver_after||null,
         adminNotes:    o?.admin_notes||null,
         tripOverride:  o?.trip_override||null,
         items:[],
@@ -1870,7 +1885,7 @@ function renderOrdersList(){
             escH(order.customer)+
             (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
             (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
-            (!cancelled&&order.deliverBy?' <span class="deliver-by-badge">⏰ by '+escH(order.deliverBy.slice(0,5))+'</span>':'')+
+            (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
             (!cancelled&&fullyInvoiced?(order.razorpayUrl
               ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
               :' <span class="pay-missing">Payment link not generated</span>'
@@ -2021,6 +2036,18 @@ function fuzzySocietyMatch(canonicalKey){
 //     SOCIETIES list one more time by edit distance, in case it's a typo
 //     of a real listed society (exact matching in step 1 only catches
 //     correctly-spelled names).
+// Combines deliver_by (latest) and deliver_after (earliest) into one
+// readable label — "between" orders have both set, "deliver after X"/
+// "deliver by X" orders have just one. Returns null if neither is set.
+function deliveryWindowLabel(order){
+  const by=order.deliverBy?order.deliverBy.slice(0,5):null;
+  const after=order.deliverAfter?order.deliverAfter.slice(0,5):null;
+  if(by&&after)return after+'–'+by;
+  if(after)return 'after '+after;
+  if(by)return 'by '+by;
+  return null;
+}
+
 function deriveSociety(customerName){
   const name=(customerName||'').trim();
   if(!name)return name;
@@ -2251,13 +2278,14 @@ document.getElementById('ei-save').addEventListener('click',async()=>{
 // duplicates, and unticking "delivery-related" removes it from
 // delivery_instructions cleanly.
 let onTargetOrder=null;
-const onModal=document.getElementById('on-modal'),onNotesEl=document.getElementById('on-notes'),onDeliverByEl=document.getElementById('on-deliverby'),onDeliveryRelatedEl=document.getElementById('on-delivery-related');
+const onModal=document.getElementById('on-modal'),onNotesEl=document.getElementById('on-notes'),onDeliverByEl=document.getElementById('on-deliverby'),onDeliverAfterEl=document.getElementById('on-deliverafter'),onDeliveryRelatedEl=document.getElementById('on-delivery-related');
 
 async function openOrderNotesModal(soid){
   onTargetOrder=soid;
   const order=currentOrdersById[soid];
   onNotesEl.value=order?.adminNotes||'';
   onDeliverByEl.value=order?.deliverBy?order.deliverBy.slice(0,5):'';
+  onDeliverAfterEl.value=order?.deliverAfter?order.deliverAfter.slice(0,5):'';
   // Best-effort guess at the checkbox's starting state: was this note
   // already pushed into delivery_instructions last time it was saved?
   const{data:items}=await sb.from('order_items')
@@ -2273,15 +2301,16 @@ document.getElementById('on-save').addEventListener('click',async()=>{
   if(!soid)return;
   const notes=onNotesEl.value.trim();
   const deliverBy=onDeliverByEl.value||null;
+  const deliverAfter=onDeliverAfterEl.value||null;
   const deliveryRelated=onDeliveryRelatedEl.checked;
   const order=currentOrdersById[soid];
-  const deliverByChanged=order&&(order.deliverBy||null)!==deliverBy;
+  const deliverByChanged=order&&((order.deliverBy||null)!==deliverBy||(order.deliverAfter||null)!==deliverAfter);
   onModal.classList.add('hidden');
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/update-order-notes',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:soid,admin_notes:notes,deliver_by:deliverBy}),
+      body:JSON.stringify({sales_order_id:soid,admin_notes:notes,deliver_by:deliverBy,deliver_after:deliverAfter}),
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not save notes');
@@ -2630,7 +2659,7 @@ async function generateInvoice(salesOrderId,btnEl,overrides){
 }
 
 // ── Bulk actions (multi-select or whole-society) — one shared selection
-// drives Generate Selected Invoices, Payment Links, and Cancel Selected. ────
+// drives Generate Invoices, Payment Links, and Cancel Selected. ────
 let selectedOrders=new Set();
 
 function toggleOrderSelect(soid,checked){
@@ -2690,8 +2719,18 @@ function orderOverallStatus(order){
 
 // ── Order overview summary pills (top-level status filter) ──────────────
 let toOverviewFilter='all'; // 'all' | 'invoiced' | 'final' | 'inprogress' | 'cancelled'
+// Independent of the status filter above (an order can be both "Final" and
+// have a timeline constraint) — ANDed on top of whichever status bucket is
+// active, not one more mutually-exclusive bucket of its own. Reuses
+// orders.deliver_by/deliver_after, the structured timeline fields, rather
+// than keyword-scanning delivery_instructions free text — those ARE the
+// timeline signal, already captured via Quick Order Entry/order notes or
+// backfilled from "by/after/between" phrasing (see
+// extractDeliveryWindowFromText). Matches if EITHER bound is set.
+let overviewDeadlineOnly=false;
 
 function orderMatchesOverviewFilter(order){
+  if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
   if(toOverviewFilter==='all')return true;
   if(toOverviewFilter==='cancelled')return order.orderStatus==='cancelled';
   if(order.orderStatus==='cancelled')return false;
@@ -2708,6 +2747,11 @@ function setOverviewFilter(key){
   renderOrdersList();
 }
 
+function toggleOverviewDeadlineFilter(){
+  overviewDeadlineOnly=!overviewDeadlineOnly;
+  renderOrdersList();
+}
+
 function renderOverviewSummaryPills(){
   const orders=Object.values(currentOrdersById);
   const total=orders.length;
@@ -2716,6 +2760,7 @@ function renderOverviewSummaryPills(){
   const invoiced=active.filter(isFullyInvoiced).length;
   const final=active.filter(o=>!isFullyInvoiced(o)&&isReadyToInvoice(o)).length;
   const inprogress=active.length-invoiced-final;
+  const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
   const pills=[
     {key:'all',label:'All',count:total},
     {key:'inprogress',label:'Open/Packed',count:inprogress},
@@ -2725,7 +2770,8 @@ function renderOverviewSummaryPills(){
   ];
   document.getElementById('to-summary-pills').innerHTML=pills.map(p=>
     '<span class="filter-pill'+(toOverviewFilter===p.key?' active':'')+'" onclick="setOverviewFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
-  ).join('');
+  ).join('')+
+  '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>';
 }
 
 // One shared checkbox selection drives all three bulk actions — each button
@@ -2737,13 +2783,18 @@ function updateBulkButtons(){
 
   const invoiceIds=selected.filter(x=>isReadyToInvoice(x.order)).map(x=>x.soid);
   const invBtn=document.getElementById('to-bulk-invoice');
-  invBtn.textContent='🧾 Generate Selected Invoices ('+invoiceIds.length+')';
+  invBtn.textContent='🧾 Generate Invoices ('+invoiceIds.length+')';
   invBtn.disabled=invoiceIds.length===0;
 
   const paylinkIds=selected.filter(x=>isFullyInvoiced(x.order)&&!x.order.razorpayUrl).map(x=>x.soid);
   const payBtn=document.getElementById('to-bulk-paylink');
   payBtn.textContent='💳 Payment Links ('+paylinkIds.length+')';
   payBtn.disabled=paylinkIds.length===0;
+
+  const downloadIds=selected.filter(x=>isFullyInvoiced(x.order)).map(x=>x.soid);
+  const downloadBtn=document.getElementById('to-bulk-download');
+  downloadBtn.textContent='⬇️ Download ('+downloadIds.length+')';
+  downloadBtn.disabled=downloadIds.length===0;
 
   const cancelIds=selected.filter(x=>x.order.orderStatus!=='cancelled').map(x=>x.soid);
   const cancelBtn=document.getElementById('to-bulk-cancel');
@@ -2833,6 +2884,55 @@ async function generatePaymentLinksBulk(salesOrderIds){
 document.getElementById('to-bulk-paylink').addEventListener('click',()=>{
   const ids=[...selectedOrders].filter(soid=>isFullyInvoiced(currentOrdersById[soid])&&!currentOrdersById[soid].razorpayUrl);
   generatePaymentLinksBulk(ids);
+});
+
+// ── Bulk invoice PDF download — streams each selected order's Zoho invoice
+// through download-invoice (needs a live OAuth token, only the edge
+// function has one) and triggers a normal browser download per file.
+// Read-only — doesn't touch any order data, so no reload needed after.
+async function downloadInvoicesBulk(salesOrderIds){
+  if(!salesOrderIds.length){uxAlert('Nothing selected that has an invoice yet');return;}
+  const btn=document.getElementById('to-bulk-download');
+  btn.disabled=true;
+  const succeeded=[],failed=[];
+  try{
+    for(const soid of salesOrderIds){
+      btn.innerHTML='<span class="spinner"></span>Downloading '+(succeeded.length+failed.length+1)+'/'+salesOrderIds.length+'…';
+      try{
+        const res=await fetch(SUPABASE_URL+'/functions/v1/download-invoice',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+          body:JSON.stringify({sales_order_id:soid}),
+        });
+        if(!res.ok){
+          const data=await res.json().catch(()=>({}));
+          throw new Error(data.error||'Could not download invoice');
+        }
+        const blob=await res.blob();
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        a.href=url;
+        a.download=soid+'.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        succeeded.push(soid);
+      }catch(e){
+        failed.push(soid+': '+e.message);
+      }
+    }
+    let msg='Downloaded '+succeeded.length+' invoice'+(succeeded.length!==1?'s':'')+'.';
+    if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
+    uxAlert(msg);
+  }finally{
+    updateBulkButtons();
+  }
+}
+
+document.getElementById('to-bulk-download').addEventListener('click',()=>{
+  const ids=[...selectedOrders].filter(soid=>isFullyInvoiced(currentOrdersById[soid]));
+  downloadInvoicesBulk(ids);
 });
 
 // ── Bulk cancel (soft — never deletes rows) ──────────────────────────────────
@@ -2975,48 +3075,89 @@ async function loadPackerView(){
   backfillDeliverByFromDescriptions();
 }
 
-// Best-effort safety net: if a deadline is stated in an item's description
-// text (the parser missed it, the order predates the deliver_by rule, or
-// it was hand-typed) but orders.deliver_by is still empty, backfill it
-// from that text. This supplements, not replaces, the structured
-// deliver_by capture in the parser/Quick Order Entry — a regex guess is
-// never as reliable as an explicit field, so it only ever fills in an
-// empty deliver_by, never overrides one that's already set.
-function extractDeliverByFromText(text){
-  if(!text)return null;
-  const m=text.match(/\b(?:by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
-  if(!m)return null;
-  let hour=parseInt(m[1],10);
-  const min=m[2]?parseInt(m[2],10):0;
-  const ampm=(m[3]||'').toLowerCase();
+// Best-effort safety net: if a deadline and/or earliest-time is stated in
+// an item's description text (the parser missed it, the order predates
+// these rules, or it was hand-typed) but the corresponding order field is
+// still empty, backfill it from that text. This supplements, not
+// replaces, the structured capture in the parser/Quick Order Entry — a
+// regex guess is never as reliable as an explicit field, so it only ever
+// fills in an empty field, never overrides one that's already set.
+function normaliseClockTime(hourStr,minStr,ampmStr){
+  let hour=parseInt(hourStr,10);
+  const min=minStr?parseInt(minStr,10):0;
+  const ampm=(ampmStr||'').toLowerCase();
   if(hour>12||min>59)return null; // implausible as a 12-hour clock reading — don't guess
   if(ampm==='pm'&&hour<12)hour+=12;
   if(ampm==='am'&&hour===12)hour=0;
-  if(!ampm&&hour>=1&&hour<=7)hour+=12; // "by 4" with no am/pm — same-day grocery delivery, almost always means the afternoon
+  if(!ampm&&hour>=1&&hour<=7)hour+=12; // no am/pm — same-day grocery delivery, almost always means the afternoon
   return String(hour).padStart(2,'0')+':'+String(min).padStart(2,'0');
+}
+
+// "before" only counts as a deadline when NOT preceded by "not" — "not
+// before X" is an earliest-time constraint (see extractDeliverAfterFromText),
+// not a deadline.
+function extractDeliverByFromText(text){
+  if(!text)return null;
+  const m=text.match(/\b(?<!not\s)(?:by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  return m?normaliseClockTime(m[1],m[2],m[3]):null;
+}
+
+function extractDeliverAfterFromText(text){
+  if(!text)return null;
+  const m=text.match(/\b(?:after|not\s+before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  return m?normaliseClockTime(m[1],m[2],m[3]):null;
+}
+
+// "between X and Y" sets both bounds from one phrase — checked as its own
+// pattern rather than just relying on the two single-bound extractors
+// above, since "and"/"to" joining two times doesn't read as a separate
+// "after"/"by" phrase on its own.
+function extractDeliveryWindowFromText(text){
+  if(!text)return{deliverBy:null,deliverAfter:null};
+  const m=text.match(/\bbetween\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+(?:and|-|to)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  if(m){
+    return{
+      deliverAfter: normaliseClockTime(m[1],m[2],m[3]),
+      deliverBy:    normaliseClockTime(m[4],m[5],m[6]),
+    };
+  }
+  return{
+    deliverAfter: extractDeliverAfterFromText(text),
+    deliverBy:    extractDeliverByFromText(text),
+  };
 }
 
 async function backfillDeliverByFromDescriptions(){
   const bySoid={};
   packerItems.forEach(item=>{
     if(item.status==='cancelled')return;
-    if(packerCustomerMap[item.sales_order_id]?.deliver_by)return; // already set, never override
-    if(bySoid[item.sales_order_id])return; // already found one for this order this pass
-    const found=extractDeliverByFromText(item.description);
-    if(found)bySoid[item.sales_order_id]=found;
+    const existing=packerCustomerMap[item.sales_order_id];
+    if(existing?.deliver_by&&existing?.deliver_after)return; // both already set, nothing to backfill
+    if(bySoid[item.sales_order_id])return; // already found something for this order this pass
+    const{deliverBy,deliverAfter}=extractDeliveryWindowFromText(item.description);
+    const toFill={};
+    if(deliverBy&&!existing?.deliver_by)toFill.deliverBy=deliverBy;
+    if(deliverAfter&&!existing?.deliver_after)toFill.deliverAfter=deliverAfter;
+    if(Object.keys(toFill).length)bySoid[item.sales_order_id]=toFill;
   });
   const entries=Object.entries(bySoid);
   if(!entries.length)return;
-  await Promise.all(entries.map(async([soid,deliverBy])=>{
+  await Promise.all(entries.map(async([soid,fill])=>{
     try{
+      const body={sales_order_id:soid};
+      if(fill.deliverBy)body.deliver_by=fill.deliverBy;
+      if(fill.deliverAfter)body.deliver_after=fill.deliverAfter;
       const res=await fetch(SUPABASE_URL+'/functions/v1/update-order-notes',{
         method:'POST',
         headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-        body:JSON.stringify({sales_order_id:soid,deliver_by:deliverBy}),
+        body:JSON.stringify(body),
       });
       if(res.ok){
         evictCustomerLookupCache(soid);
-        if(packerCustomerMap[soid])packerCustomerMap[soid].deliver_by=deliverBy;
+        if(packerCustomerMap[soid]){
+          if(fill.deliverBy)packerCustomerMap[soid].deliver_by=fill.deliverBy;
+          if(fill.deliverAfter)packerCustomerMap[soid].deliver_after=fill.deliverAfter;
+        }
       }
     }catch(_e){
       // best-effort — a failed backfill just leaves it empty for manual entry
@@ -3376,6 +3517,7 @@ async function loadDeliveryView(){
         paymentCollectedMethod:o?.payment_collected_method||null,
         assignedRider:         o?.assigned_rider||null,
         deliverBy:             o?.deliver_by||null,
+        deliverAfter:          o?.deliver_after||null,
         tripOverride:          o?.trip_override||null,
         items:[],
       };
@@ -3407,7 +3549,19 @@ function setDeliveryStatusFilter(status){
   renderDeliveryList();
 }
 
+// Independent of the status filter below (same reasoning as Overview's
+// version) — ANDed on top of whichever status bucket is active. Reuses
+// orders.deliver_by/deliver_after, the structured timeline fields, rather
+// than keyword-scanning delivery_instructions free text. Matches if EITHER
+// bound is set.
+let deliveryDeadlineOnly=false;
+function toggleDeliveryDeadlineFilter(){
+  deliveryDeadlineOnly=!deliveryDeadlineOnly;
+  renderDeliveryList();
+}
+
 function deliveryOrderMatchesStatusFilter(order){
+  if(deliveryDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
   const cancelled=order.orderStatus==='cancelled';
   if(deliveryStatusFilter==='all')return true;
   if(deliveryStatusFilter==='cancelled')return cancelled;
@@ -3433,6 +3587,7 @@ function renderDeliverySummaryPills(scopedOrders){
   const partiallyDelivered=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='partially_delivered').length;
   const ofd=scopedOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus==='ofd').length;
   const pending=total-cancelled-delivered-partiallyDelivered-ofd;
+  const withDeadline=scopedOrders.filter(o=>o.deliverBy||o.deliverAfter).length;
   const pills=[
     {key:'all',label:'Total',count:total},
     {key:'pending',label:'Pending',count:pending},
@@ -3443,7 +3598,8 @@ function renderDeliverySummaryPills(scopedOrders){
   ];
   document.getElementById('dv-summary-pills').innerHTML=pills.map(p=>
     '<span class="filter-pill'+(deliveryStatusFilter===p.key?' active':'')+'" onclick="setDeliveryStatusFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
-  ).join('');
+  ).join('')+
+  '<span class="filter-pill'+(deliveryDeadlineOnly?' active':'')+'" onclick="toggleDeliveryDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>';
 }
 
 // qty*rate per item, ₹0 for anything description-flagged as free/replacement
@@ -3741,8 +3897,8 @@ function renderDeliveryCard(order,selectionMode){
     ?'<span class="dv-assigned-tag">rider: '+escH(order.assignedRider)+'</span>'
     :'';
 
-  const deliverByTag=(!delivered&&order.deliverBy)
-    ?' <span class="deliver-by-badge">⏰ by '+escH(order.deliverBy.slice(0,5))+'</span>'
+  const deliverByTag=(!delivered&&deliveryWindowLabel(order))
+    ?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>'
     :'';
 
   const selectCheckbox=selectionMode
@@ -3767,10 +3923,10 @@ function renderDeliveryCard(order,selectionMode){
       deliveryStatusBadge+
       paymentBadge+assignedTag+deliverByTag+
     '</span></div>'+
+    notesBlock+
     '<div class="dv-phone-row">📞 '+phoneDisplay+'</div>'+
     itemsTable+
     qrBlock+
-    notesBlock+
     (order.deliveryNotes?'<div class="dv-notes">📝 '+escH(order.deliveryNotes)+'</div>':'')+
     photoGrid+
     '<div class="or-actions"><span class="or-count">'+items.length+' item'+(items.length!==1?'s':'')+

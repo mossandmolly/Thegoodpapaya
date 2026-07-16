@@ -15,8 +15,12 @@
 // community — pass null/empty to clear it back to the community-derived
 // default.
 //
-// Input:  { sales_order_id: string, admin_notes?: string, deliver_by?: string|null, trip_override?: string|null }
-// Output: { sales_order_id, admin_notes, deliver_by, trip_override }
+// deliver_after is the mirror of deliver_by — an earliest-time constraint
+// ("deliver after 4pm") rather than a deadline. Both together express a
+// "between X and Y" window.
+//
+// Input:  { sales_order_id: string, admin_notes?: string, deliver_by?: string|null, deliver_after?: string|null, trip_override?: string|null }
+// Output: { sales_order_id, admin_notes, deliver_by, deliver_after, trip_override }
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -49,7 +53,7 @@ Deno.serve(async (req) => {
 
   try {
     await requireAuth(req);
-    const { sales_order_id, admin_notes, deliver_by, trip_override } = await req.json();
+    const { sales_order_id, admin_notes, deliver_by, deliver_after, trip_override } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
@@ -57,6 +61,7 @@ Deno.serve(async (req) => {
     const update: Record<string, unknown> = {};
     if (admin_notes !== undefined)    update.admin_notes    = admin_notes || null;
     if (deliver_by !== undefined)     update.deliver_by     = deliver_by || null;
+    if (deliver_after !== undefined)  update.deliver_after   = deliver_after || null;
     if (trip_override !== undefined)  update.trip_override  = trip_override || null;
     if (!Object.keys(update).length) throw new Error('Nothing to update');
 
@@ -64,7 +69,7 @@ Deno.serve(async (req) => {
       .from('orders')
       .update(update)
       .eq('sales_order_id', sales_order_id)
-      .select('sales_order_id, admin_notes, deliver_by, trip_override')
+      .select('sales_order_id, admin_notes, deliver_by, deliver_after, trip_override')
       .single();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);

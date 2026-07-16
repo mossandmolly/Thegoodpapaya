@@ -1,0 +1,99 @@
+// Supabase Edge Function — download-invoice
+//
+// Streams a Zoho Books invoice PDF back to the caller so the browser can
+// download it directly — Zoho's PDF endpoint needs a valid OAuth token,
+// which only this function (server-side) has; the frontend can't call
+// Zoho directly.
+//
+// Input:  { sales_order_id: string }
+// Output: application/pdf body (the invoice PDF itself) on success,
+//         or { error } JSON on failure
+//
+// Required env vars:
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+//   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORGANIZATION_ID
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+function env(key: string) {
+  const val = Deno.env.get(key);
+  if (!val) throw new Error(`Missing env: ${key}`);
+  return val;
+}
+
+// This function uses the service role internally, so it bypasses RLS
+// regardless of who calls it — the anon key alone is enough to invoke it at
+// the platform level. Requiring a real logged-in user session here is what
+// actually restricts this to signed-in ops staff.
+async function requireAuth(req: Request): Promise<void> {
+  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!jwt) throw new Error('Not authenticated');
+  const res = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, {
+    headers: { Authorization: `Bearer ${jwt}`, apikey: env('SUPABASE_SERVICE_ROLE_KEY') },
+  });
+  if (!res.ok) throw new Error('Not authenticated');
+}
+
+const CORS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+async function getZohoToken(): Promise<string> {
+  const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type:    'refresh_token',
+      client_id:     env('ZOHO_CLIENT_ID'),
+      client_secret: env('ZOHO_CLIENT_SECRET'),
+      refresh_token: env('ZOHO_REFRESH_TOKEN'),
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(data)}`);
+  return data.access_token;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
+
+  try {
+    await requireAuth(req);
+    const { sales_order_id } = await req.json();
+    if (!sales_order_id) throw new Error('Missing sales_order_id');
+
+    const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('zoho_invoice_id, invoice_number')
+      .eq('sales_order_id', sales_order_id)
+      .single();
+    if (error || !order) throw new Error(`Order ${sales_order_id} not found`);
+    if (!order.zoho_invoice_id) throw new Error('No invoice generated for this order yet');
+
+    const token = await getZohoToken();
+    const orgId = env('ZOHO_ORGANIZATION_ID');
+    const pdfRes = await fetch(
+      `https://www.zohoapis.in/books/v3/invoices/${order.zoho_invoice_id}?organization_id=${orgId}&accept=pdf`,
+      { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
+    );
+    if (!pdfRes.ok) throw new Error(`Zoho PDF fetch failed (${pdfRes.status})`);
+    const pdfBuffer = await pdfRes.arrayBuffer();
+
+    return new Response(pdfBuffer, {
+      headers: {
+        ...CORS,
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${(order.invoice_number || sales_order_id)}.pdf"`,
+      },
+    });
+
+  } catch (err: any) {
+    return new Response(
+      JSON.stringify({ error: err.message }),
+      { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } },
+    );
+  }
+});
