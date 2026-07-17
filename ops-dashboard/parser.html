@@ -3247,26 +3247,21 @@ function renderPackerGrid(){
       '<button class="pk-final" onclick="markFinal(\''+item.id+'\')" '+(item.status!=='packed'?'disabled title="Save a final quantity first"':'')+'>Mark as Final</button>'+
     '</div>';
 
-  if(viewGrouping!=='trip'){
-    grid.innerHTML=filtered.map(cardHtml).join('');
-    return;
-  }
-
-  // Trip view: same cards, grouped under trip headers instead of one flat
-  // grid — packerItemTrip resolves each item's order to {customer,
-  // tripOverride} via packerCustomerMap since packerItems itself only
-  // carries the raw item row.
-  const byTrip={};
+  // Always grouped — by society (default/flat view) or by trip (trip
+  // view), same deriveGroupKey the Overview/Delivery tabs use, just
+  // resolved from packerCustomerMap since packerItems only carries the raw
+  // item row, not a full order object.
+  const byGroup={};
   filtered.forEach(item=>{
     const o=packerCustomerMap[item.sales_order_id];
     const orderLike={customer:o?.customer_name||item.sales_order_id,tripOverride:o?.trip_override||null};
-    const trip=deriveTrip(orderLike);
-    (byTrip[trip]=byTrip[trip]||[]).push(item);
+    const key=deriveGroupKey(orderLike);
+    (byGroup[key]=byGroup[key]||[]).push(item);
   });
-  const tripNames=Object.keys(byTrip).sort();
-  grid.innerHTML=tripNames.map(trip=>
-    '<div class="society-header" style="grid-column:1/-1">'+escH(trip)+' <span class="sh-count">('+byTrip[trip].length+' item'+(byTrip[trip].length!==1?'s':'')+')</span></div>'+
-    byTrip[trip].map(cardHtml).join('')
+  const groupNames=Object.keys(byGroup).sort();
+  grid.innerHTML=groupNames.map(name=>
+    '<div class="society-header" style="grid-column:1/-1">'+escH(name)+' <span class="sh-count">('+byGroup[name].length+' item'+(byGroup[name].length!==1?'s':'')+')</span></div>'+
+    byGroup[name].map(cardHtml).join('')
   ).join('');
 }
 
