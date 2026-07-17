@@ -135,9 +135,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-free-badge{font-size:9px;font-weight:700;color:#3f7a34;background:#e5f3e3;border-radius:4px;padding:1px 5px}
 .dv-item-cancelled td{color:#a39a8c;text-decoration:line-through}
 .dv-item-cancelled .cancelled-badge{text-decoration:none}
-.dv-total-row td{font-weight:700;font-size:14px;color:#ffffff;background:#e8720c;padding:8px 6px}
-.dv-total-row td:first-child{border-radius:6px 0 0 6px}
-.dv-total-row td:last-child{border-radius:0 6px 6px 0}
+.dv-total-bar{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:15px;color:#ffffff;background:#e8720c;border-radius:8px;padding:10px 14px;margin-top:14px;margin-bottom:10px}
 .dv-qr-block{display:flex;flex-direction:column;align-items:center;gap:6px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:10px}
 .dv-qr-label{font-size:12px;font-weight:600;color:#5c4f42}
 .dv-qr-block img{border-radius:8px;background:#ffffff}
@@ -2647,7 +2645,13 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
     // day's Today's Orders can flag them CF — a priority since the customer
     // wasn't served on time. Only set when pushing forward — pulling an item
     // back to today is a deliberate pull-up, not a missed-service punt.
-    const update={sales_order_id:newSalesOrderId,status:'open'};
+    // This reuses the same row under a new sales_order_id rather than
+    // inserting a fresh one, so every other per-day field needs resetting
+    // by hand — otherwise a rider's "collected into bag" tick (or a
+    // packer's final qty/packed-by) from the old day would silently carry
+    // over onto the new day's copy despite nothing actually having
+    // happened for it yet.
+    const update={sales_order_id:newSalesOrderId,status:'open',collected:false,final_quantity:null,packed_by:null,packed_at:null};
     if(movingForward)update.carried_forward=true;
     const{error}=await sb.from('order_items').update(update).in('id',ids);
     if(error)throw new Error(error.message);
@@ -4076,8 +4080,14 @@ function renderDeliveryCard(order,selectionMode){
           '<td>'+(isFree?'<span class="dv-free-badge">FREE</span>':(amount==null?'—':'₹'+amount.toFixed(0)))+'</td>'+
         '</tr>';
       }).join('')+
-      '<tr class="dv-total-row"><td colspan="2">Total</td><td>₹'+total.toFixed(0)+'</td></tr>'+
-    '</tbody></table>';
+    '</tbody></table>'+
+    // Total lives outside the table as its own bar, not a table row — a
+    // <tr> can't take a real margin, so keeping it in the table meant it
+    // always sat flush against the last item with no breathing room. This
+    // way there's a clear, unmissable gap before it — the line items are
+    // "what's in the bag," the orange bar is "what's owed," and a rider
+    // should never have to squint to tell those apart.
+    '<div class="dv-total-bar"><span>Total</span><span>₹'+total.toFixed(0)+'</span></div>';
 
   // Only worth showing while there's still money to collect — once the
   // rider's confirmed payment, or there's no payment link on file at all,
