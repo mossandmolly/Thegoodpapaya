@@ -144,7 +144,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-scope-tabs{display:flex;gap:8px;margin-bottom:10px}
 .dv-scope-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
 .dv-scope-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
-.dv-assigned-tag{font-size:12px;font-weight:700;color:#5c4f42;margin-left:6px}
+.dv-assigned-tag{font-size:12px;font-weight:700;color:#b3261e;margin-left:6px}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
 .dv-queue-badge.hidden{display:none}
@@ -3999,7 +3999,7 @@ function renderDeliveryCard(order,selectionMode){
   // longer applies to it.
   if(cancelled){
     const items=activeItems(order);
-    const assignedTag=order.assignedRider?'<span class="dv-assigned-tag">rider: '+escH(order.assignedRider)+'</span>':'';
+    const assignedTag=order.assignedRider?'<span class="dv-assigned-tag">🛵 rider: '+escH(order.assignedRider)+'</span>':'';
     return '<div class="order-row dv-cancelled-card">'+
       '<div class="or-top"><span class="or-cust">'+escH(order.customer)+' <span class="cancelled-badge">CANCELLED</span>'+assignedTag+'</span></div>'+
       '<div class="dv-cancelled-items">'+items.map(i=>escH(i.item_name)).join(', ')+'</div>'+
@@ -4118,7 +4118,7 @@ function renderDeliveryCard(order,selectionMode){
     :'';
 
   const assignedTag=order.assignedRider
-    ?'<span class="dv-assigned-tag">rider: '+escH(order.assignedRider)+'</span>'
+    ?'<span class="dv-assigned-tag">🛵 rider: '+escH(order.assignedRider)+'</span>'
     :'';
 
   const deliverByTag=(!delivered&&deliveryWindowLabel(order))
