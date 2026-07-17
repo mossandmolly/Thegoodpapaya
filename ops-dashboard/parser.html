@@ -479,20 +479,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <img id="img-lightbox-img" style="max-width:92vw;max-height:92vh;border-radius:8px" alt="Delivery photo">
 </div>
 
-<!-- GENERIC ALERT / CONFIRM / PROMPT MODAL — replaces native browser
-     dialogs everywhere in this app (those always show as "<site> says",
-     which no page script can change; this is our own popup instead) -->
-<div class="modal-overlay hidden" id="ux-modal">
-  <div class="modal-box">
-    <div id="ux-modal-message" style="font-size:14px;color:#2b2320;white-space:pre-wrap;margin-bottom:14px"></div>
-    <input type="text" id="ux-modal-input" class="hidden">
-    <div class="modal-actions">
-      <button class="btn-sec hidden" id="ux-modal-cancel" style="margin-bottom:0">Cancel</button>
-      <button class="btn-parse" id="ux-modal-ok" style="margin-bottom:0">OK</button>
-    </div>
-  </div>
-</div>
-
 <!-- ADD ITEM MODAL -->
 <div class="modal-overlay hidden" id="ai-modal">
   <div class="modal-box">
@@ -648,6 +634,25 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
   </div>
 </div>
+</div>
+
+<!-- GENERIC ALERT / CONFIRM / PROMPT MODAL — replaces native browser
+     dialogs everywhere in this app (those always show as "<site> says",
+     which no page script can change; this is our own popup instead).
+     Deliberately a sibling of #app, not nested inside it: ensureRiderName()
+     shows this via uxPrompt() BEFORE #app's own "hidden" class is ever
+     removed (first-time login on a fresh device has no saved name yet) —
+     nested inside #app, this modal would be invisible right when it's
+     needed most, leaving the whole page blank with no way to proceed. -->
+<div class="modal-overlay hidden" id="ux-modal">
+  <div class="modal-box">
+    <div id="ux-modal-message" style="font-size:14px;color:#2b2320;white-space:pre-wrap;margin-bottom:14px"></div>
+    <input type="text" id="ux-modal-input" class="hidden">
+    <div class="modal-actions">
+      <button class="btn-sec hidden" id="ux-modal-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="ux-modal-ok" style="margin-bottom:0">OK</button>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
