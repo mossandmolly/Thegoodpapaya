@@ -62,7 +62,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    collapse caret on the other, the whole row clickable to toggle (the
    checkbox inside stops propagation so checking it doesn't also toggle). */
 .dv-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px;cursor:pointer}
-.dv-expand-caret{color:#8a7a6a;font-size:13px;flex-shrink:0;padding:2px 2px}
+.dv-expand-caret{color:#8a7a6a;font-size:22px;font-weight:700;line-height:1;flex-shrink:0;padding:2px 6px;cursor:pointer}
 .dv-collapsed-card{padding:12px 14px}
 .dv-collapsed-card .dv-card-header{margin-bottom:0}
 .pay-missing{font-size:11px;font-weight:700;color:#b3261e}
@@ -255,6 +255,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-line1-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .pk-qty-label{font-size:12px;font-weight:700;color:#2b2320;white-space:nowrap}
 .pk-instr{font-size:12px;font-weight:700;color:#b3261e;margin-bottom:8px}
+.pk-packed-by{font-size:10px;color:#8a7a6a;margin-bottom:4px}
 .pk-row{display:flex;gap:6px;margin-bottom:6px}
 .pk-qty{width:100%;padding:7px 8px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
 .pk-tick{background:#e8720c;color:#ffffff;border:none;border-radius:8px;padding:0 12px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0}
@@ -1684,7 +1685,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
@@ -1915,7 +1916,7 @@ function renderOrdersList(){
     return '<div class="society-header">'+
       (selectableSoids.length?'<input type="checkbox" class="inv-select" '+(allSelected?'checked ':'')+'onchange="toggleSocietySelectAll('+escH(JSON.stringify(selectableSoids))+',this.checked)" title="Select all orders in this society"> ':'')+
       '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></span>'+
-      '<span style="margin-left:auto;cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+(collapsed?'▸':'▾')+'</span>'+
+      '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+(collapsed?'▸':'▾')+'</span>'+
       '</div>'+
       (collapsed?'':
       orders.map(order=>{
@@ -3323,6 +3324,7 @@ function renderPackerGrid(){
         '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></span>'+
       '</div>'+
       (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
+      (item.packed_by?'<div class="pk-packed-by">📦 Packed by '+escH(item.packed_by)+'</div>':'')+
       '<div class="pk-row">'+
         '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'" oninput="this.nextElementSibling.disabled=false">'+
         '<button class="pk-tick" disabled onclick="savePackedQty(\''+item.id+'\')" title="Change the quantity to save">✓</button>'+
@@ -3827,7 +3829,13 @@ function renderDeliveryList(){
 
   list.innerHTML=socNames.map(soc=>{
     const orders=bySociety[soc];
-    return '<div class="society-header">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
+    // Only shown in selection mode ("assign to me") — lets a rider grab a
+    // whole society's worth of undelivered orders in one tap instead of
+    // checking each order individually.
+    const selectAllCb=selectionMode
+      ?'<input type="checkbox" class="inv-select" '+(orders.every(o=>selectedDeliveryOrders.has(o.soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(orders.map(o=>o.soid)))+',this.checked)" title="Select all orders in this society"> '
+      :'';
+    return '<div class="society-header">'+selectAllCb+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
       orders.map(order=>renderDeliveryCard(order,selectionMode)).join('');
   }).join('');
 
@@ -3838,6 +3846,16 @@ function toggleDeliverySelect(soid,checked){
   if(checked)selectedDeliveryOrders.add(soid);
   else selectedDeliveryOrders.delete(soid);
   updateDeliveryAssignButton();
+}
+
+// Select/deselect every order shown for one society at once — mirrors
+// Overview's toggleSocietySelectAll. Redraws from cached data, no re-fetch.
+function toggleDeliverySocietySelectAll(soids,checked){
+  soids.forEach(soid=>{
+    if(checked)selectedDeliveryOrders.add(soid);
+    else selectedDeliveryOrders.delete(soid);
+  });
+  renderDeliveryList();
 }
 
 function updateDeliveryAssignButton(){
