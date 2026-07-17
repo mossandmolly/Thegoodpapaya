@@ -241,6 +241,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .filter-pill.active{background:#e8720c;border-color:#e8720c;color:#ffffff;font-weight:600}
 .status-pills .filter-pill{border-color:#b8d4e8;color:#2f6690}
 .status-pills .filter-pill.active{background:#2f6690;border-color:#2f6690;color:#ffffff}
+/* Overview's delivery-status row is a secondary filter riding on top of the
+   invoice-status one above it — deliberately smaller/muted so it reads as
+   a quiet refinement, not a second row of equally-weighted pills competing
+   with the primary Open/Final/Invoiced/Cancelled buckets. */
+.delivery-status-pills{gap:5px;margin-bottom:10px}
+.delivery-status-pills .filter-pill{padding:3px 9px;font-size:10px;border-color:#e5ddd0;color:#a89b8a}
+.delivery-status-pills .filter-pill.active{background:#a89b8a;border-color:#a89b8a;color:#ffffff;font-weight:600}
 .pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:10px}
 .pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:13px}
 .pk-status-badge{align-self:flex-start;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px}
@@ -365,7 +372,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <input type="text" class="pk-search" id="to-search" placeholder="🔍 Search society, customer, or fruit...">
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
-  <div id="to-delivery-pills" class="filter-pills status-pills"></div>
+  <div id="to-delivery-pills" class="filter-pills delivery-status-pills"></div>
   <div id="to-grouping-toggle" class="filter-pills status-pills"></div>
   <div class="push-row bulk-actions-row">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Invoices (0)</button>
