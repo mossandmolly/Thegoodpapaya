@@ -1684,6 +1684,26 @@ async function fetchAllOrderItems(applyFilters){
   return{data:rows,error:null};
 }
 
+// Same paginated-range pattern as fetchAllOrderItems above — a plain
+// .select().like() with no .range() is capped at Supabase's default row
+// limit and would silently truncate on a day with enough distinct orders.
+async function fetchAllCustomerLookupByDatePrefix(datePrefix){
+  const rows=[];
+  let from=0;
+  while(true){
+    const{data,error}=await sb.from('order_customer_lookup')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after')
+      .like('sales_order_id',datePrefix+'-%')
+      .order('sales_order_id')
+      .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
+    if(error)return{data:null,error};
+    rows.push(...(data||[]));
+    if(!data||data.length<ORDER_ITEMS_PAGE_SIZE)break;
+    from+=ORDER_ITEMS_PAGE_SIZE;
+  }
+  return{data:rows,error:null};
+}
+
 // order_customer_lookup's .in() list also needs chunking — a long URL with
 // hundreds of sales_order_ids can be rejected/truncated, so batch it.
 // Returns the full row per sales_order_id (not just the name) so callers can
@@ -1785,9 +1805,7 @@ async function loadTodaysOrders(){
   // instead of two round trips back to back.
   const[{data,error},custRes]=await Promise.all([
     fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
-    sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after')
-      .like('sales_order_id',viewDate+'-%'),
+    fetchAllCustomerLookupByDatePrefix(viewDate),
   ]);
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
 
