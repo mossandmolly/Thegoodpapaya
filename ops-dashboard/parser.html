@@ -184,6 +184,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .community-table td{padding:4px 6px;border-bottom:1px solid #f1e9df;color:#5c4f42}
 .community-table input{width:90px;padding:4px 6px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit;background:#ffffff}
 .community-table input[type="text"]{width:110px}
+.stock-opening-input{width:80px;padding:5px 7px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit}
+.stock-badge{display:inline-flex;align-items:center;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap}
+.stock-badge.stock-need{background:#fbe9e7;color:#b3261e}
+.stock-badge.stock-trending{background:#fff3b0;color:#8a6d00}
+.stock-badge.stock-ok{background:#e3f3e3;color:#2d6b2d}
+.stock-tranche-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid #f1e9df}
+.stock-tranche-time{color:#a39a8c;font-size:10px;margin-left:6px}
 .del-btn{background:none;border:none;color:#b3261e;cursor:pointer;font-size:14px;padding:0 4px}
 .edit-btn{background:none;border:none;color:#2f6690;cursor:pointer;font-size:14px;padding:0 4px}
 .add-row{display:flex;gap:8px;margin-top:10px}
@@ -316,6 +323,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab active" onclick="switchTab('today')" id="tab-today">📋 Order overview</button>
   <button class="tab" onclick="switchTab('packer')" id="tab-packer">📦 Packer</button>
   <button class="tab" onclick="switchTab('delivery')" id="tab-delivery">🚚 Delivery</button>
+  <button class="tab" onclick="switchTab('stock')" id="tab-stock">📊 Stock</button>
 </div>
 
 <!-- PARSER -->
@@ -425,6 +433,36 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="header-btn" id="dv-collapse-btn" onclick="toggleCollapseAllDelivery()">▾ Collapse All</button>
   </div>
   <div id="dv-list"><div class="to-empty">Loading…</div></div>
+</div>
+
+<!-- STOCK -->
+<div class="panel" id="panel-stock">
+  <div class="section-label date-header-row">
+    <span><span id="stock-label">Stock</span> <span id="stock-rc"></span></span>
+    <input type="date" class="date-picker-compact" id="stock-date-picker" onchange="setViewDate(this.value)">
+  </div>
+  <input type="text" class="pk-search" id="stock-search" placeholder="🔍 Search fruit..." oninput="renderStockTable()">
+  <div id="stock-summary-pills" class="filter-pills status-pills"></div>
+  <div class="table-scroll">
+    <table class="community-table" id="stock-table"><thead><tr>
+      <th>Fruit</th><th>Opening stock</th><th>Purchased today</th><th>Demand today</th><th>Remaining</th><th>Status</th>
+    </tr></thead><tbody id="stock-tbody"></tbody></table>
+  </div>
+</div>
+
+<!-- STOCK PURCHASE TRANCHES MODAL -->
+<div class="modal-overlay hidden" id="stock-purchase-modal">
+  <div class="modal-box">
+    <h3 id="stock-purchase-title">Purchases</h3>
+    <div id="stock-purchase-list"></div>
+    <label class="modal-label">Add tranche</label>
+    <input type="number" id="stock-purchase-qty" step="0.01" min="0" placeholder="Quantity">
+    <input type="text" id="stock-purchase-source" placeholder="Source (optional) e.g. Mother Dairy, local vendor">
+    <div class="modal-actions">
+      <button class="btn-sec" id="stock-purchase-close" style="margin-bottom:0">Close</button>
+      <button class="btn-parse" id="stock-purchase-add" style="margin-bottom:0">Add</button>
+    </div>
+  </div>
 </div>
 
 <!-- MARK DELIVERED MODAL -->
@@ -799,7 +837,7 @@ function renderRiderBadge(){
 
 function applyRoleRestrictions(){
   if(!isDeliveryRole)return;
-  ['tab-parser','tab-today','tab-packer'].forEach(id=>{
+  ['tab-parser','tab-today','tab-packer','tab-stock'].forEach(id=>{
     const el=document.getElementById(id);
     if(el)el.style.display='none';
   });
@@ -896,6 +934,7 @@ function switchTab(name){
   if(name==='today')loadTodaysOrders();
   if(name==='packer')loadPackerView();
   if(name==='delivery')loadDeliveryView();
+  if(name==='stock')loadStockView();
 }
 
 // ── Config UI ─────────────────────────────────────────────────────────────
@@ -1808,7 +1847,7 @@ const VIEW_DATE_MIN=addDays(CALENDAR_TODAY,-15);
 const VIEW_DATE_MAX=ENTRY_DATE_MAX;
 
 function syncViewDatePickers(){
-  [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker'),document.getElementById('dv-date-picker')].forEach(el=>{
+  [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker'),document.getElementById('dv-date-picker'),document.getElementById('stock-date-picker')].forEach(el=>{
     if(!el)return;
     el.min=VIEW_DATE_MIN;
     el.max=VIEW_DATE_MAX;
@@ -1830,6 +1869,7 @@ function setViewDate(dateStr){
   if(document.getElementById('panel-today').classList.contains('active'))loadTodaysOrders();
   if(document.getElementById('panel-packer').classList.contains('active'))loadPackerView();
   if(document.getElementById('panel-delivery').classList.contains('active'))loadDeliveryView();
+  if(document.getElementById('panel-stock').classList.contains('active'))loadStockView();
 }
 
 async function loadTodaysOrders(){
@@ -4565,6 +4605,191 @@ async function undoDelivered(soid){
       await loadDeliveryView();
     }
   }
+}
+
+// ── Stock ─────────────────────────────────────────────────────────────────
+// Shares the same viewDate as Overview/Packer/Delivery (see setViewDate) —
+// stock is a per-calendar-day thing just like orders are.
+//
+// "Need to order" rule: pool = opening stock + everything purchased today;
+// remaining = pool - today's order demand (aggregated live from
+// order_items, same source every other tab reads — nothing to keep in
+// sync); remaining_pct = remaining / pool. <20% = Need to Order, 20-35% =
+// Trending Low, otherwise OK. No forecasting/trend math — this is
+// deliberately just live numbers, re-checked every time the tab loads.
+let stockCatalog=[];
+let stockOpeningMap={};    // item_name -> opening_qty
+let stockPurchasesMap={};  // item_name -> [{id,qty,source,created_at}]
+let stockDemandMap={};     // item_name -> today's aggregated order demand
+let stockStatusFilter='all'; // 'all' | 'need' | 'trending' | 'ok'
+let stockPurchaseTargetItem=null;
+
+async function loadStockView(){
+  const tbody=document.getElementById('stock-tbody');
+  document.getElementById('stock-label').textContent=
+    viewDate===CALENDAR_TODAY?'Stock':'Stock — '+viewDate;
+  tbody.innerHTML='<tr><td colspan="6" class="to-empty">Loading…</td></tr>';
+
+  const[catalog,openingRes,purchaseRes,itemsRes]=await Promise.all([
+    ensureCatalogItems().catch(e=>{console.error(e);return[];}),
+    sb.from('stock_opening').select('item_name,opening_qty').eq('date',viewDate),
+    sb.from('stock_purchases').select('id,item_name,qty,source,created_at').eq('date',viewDate).order('created_at'),
+    fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
+  ]);
+  const firstErr=openingRes.error||purchaseRes.error||itemsRes.error;
+  if(firstErr){tbody.innerHTML='<tr><td colspan="6" class="to-empty">'+escH(firstErr.message)+'</td></tr>';return;}
+
+  stockCatalog=catalog||[];
+
+  stockOpeningMap={};
+  (openingRes.data||[]).forEach(r=>{stockOpeningMap[r.item_name]=r.opening_qty;});
+
+  stockPurchasesMap={};
+  (purchaseRes.data||[]).forEach(r=>{
+    (stockPurchasesMap[r.item_name]=stockPurchasesMap[r.item_name]||[]).push(r);
+  });
+
+  // Cancelled items never needed — a rejected/cancelled line item was never
+  // actually going to consume stock.
+  stockDemandMap={};
+  (itemsRes.data||[]).filter(i=>i.status!=='cancelled').forEach(i=>{
+    const qty=i.final_quantity??i.requested_quantity;
+    stockDemandMap[i.item_name]=(stockDemandMap[i.item_name]||0)+qty;
+  });
+
+  renderStockTable();
+}
+
+function stockStatusFor(itemName){
+  const opening=stockOpeningMap[itemName]||0;
+  const purchased=(stockPurchasesMap[itemName]||[]).reduce((s,p)=>s+p.qty,0);
+  const demand=stockDemandMap[itemName]||0;
+  const pool=opening+purchased;
+  const remaining=pool-demand;
+  // No pool entered at all (opening/purchases both zero) but nothing's
+  // been ordered either — nothing to flag, reads as OK rather than a
+  // false "need to order" from a 0/0 fruit nobody's touched today.
+  const pct=pool>0?(remaining/pool*100):(demand>0?0:100);
+  const status=pct<20?'need':(pct<35?'trending':'ok');
+  return{opening,purchased,demand,pool,remaining,pct,status};
+}
+
+const STOCK_STATUS_BADGE={
+  need:    '<span class="stock-badge stock-need">🔴 Need to Order</span>',
+  trending:'<span class="stock-badge stock-trending">🟡 Trending Low</span>',
+  ok:      '<span class="stock-badge stock-ok">🟢 OK</span>',
+};
+
+function renderStockSummaryPills(){
+  const statuses=stockCatalog.map(c=>stockStatusFor(c.item_name).status);
+  const pills=[
+    {key:'all',label:'All',count:statuses.length},
+    {key:'need',label:'🔴 Need to Order',count:statuses.filter(s=>s==='need').length},
+    {key:'trending',label:'🟡 Trending Low',count:statuses.filter(s=>s==='trending').length},
+    {key:'ok',label:'🟢 OK',count:statuses.filter(s=>s==='ok').length},
+  ];
+  document.getElementById('stock-summary-pills').innerHTML=pills.map(p=>
+    '<span class="filter-pill'+(stockStatusFilter===p.key?' active':'')+'" onclick="setStockStatusFilter('+escH(JSON.stringify(p.key))+')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join('');
+}
+
+function setStockStatusFilter(key){
+  stockStatusFilter=key;
+  renderStockTable();
+}
+
+function renderStockTable(){
+  renderStockSummaryPills();
+  const search=document.getElementById('stock-search').value.trim().toLowerCase();
+  const tbody=document.getElementById('stock-tbody');
+
+  const rows=stockCatalog.filter(c=>{
+    if(search&&!c.item_name.toLowerCase().includes(search))return false;
+    if(stockStatusFilter!=='all'&&stockStatusFor(c.item_name).status!==stockStatusFilter)return false;
+    return true;
+  }).sort((a,b)=>a.item_name.localeCompare(b.item_name));
+
+  document.getElementById('stock-rc').textContent=rows.length?'— '+rows.length+' fruit'+(rows.length!==1?'s':''):'';
+
+  if(!rows.length){
+    tbody.innerHTML='<tr><td colspan="6" class="to-empty">No fruits match</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML=rows.map(c=>{
+    const s=stockStatusFor(c.item_name);
+    const unit=c.unit||'';
+    return '<tr>'+
+      '<td>'+escH(c.item_name)+'</td>'+
+      '<td><input type="number" class="stock-opening-input" step="0.01" min="0" value="'+(stockOpeningMap[c.item_name]??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
+        '<button class="pk-tick" disabled onclick="saveStockOpening(this.previousElementSibling,'+escH(JSON.stringify(c.item_name))+')" title="Save opening stock">✓</button></td>'+
+      '<td>'+s.purchased.toFixed(2)+' '+escH(unit)+' <a class="or-link" onclick="openStockPurchaseModal('+escH(JSON.stringify(c.item_name))+')">manage</a></td>'+
+      '<td>'+s.demand.toFixed(2)+' '+escH(unit)+'</td>'+
+      '<td>'+s.remaining.toFixed(2)+' '+escH(unit)+' ('+Math.round(s.pct)+'%)</td>'+
+      '<td>'+STOCK_STATUS_BADGE[s.status]+'</td>'+
+    '</tr>';
+  }).join('');
+}
+
+async function saveStockOpening(inputEl,itemName){
+  const qty=parseFloat(inputEl.value)||0;
+  const{error}=await sb.from('stock_opening')
+    .upsert({item_name:itemName,date:viewDate,opening_qty:qty},{onConflict:'item_name,date'});
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  stockOpeningMap[itemName]=qty;
+  renderStockTable();
+}
+
+const stockPurchaseModal=document.getElementById('stock-purchase-modal');
+
+function openStockPurchaseModal(itemName){
+  stockPurchaseTargetItem=itemName;
+  document.getElementById('stock-purchase-title').textContent='Purchases — '+itemName;
+  document.getElementById('stock-purchase-qty').value='';
+  document.getElementById('stock-purchase-source').value='';
+  renderStockPurchaseList();
+  stockPurchaseModal.classList.remove('hidden');
+}
+
+function renderStockPurchaseList(){
+  const list=stockPurchasesMap[stockPurchaseTargetItem]||[];
+  const el=document.getElementById('stock-purchase-list');
+  el.innerHTML=list.length
+    ?list.map(p=>
+      '<div class="stock-tranche-row"><span>'+p.qty+(p.source?' — '+escH(p.source):'')+
+        ' <span class="stock-tranche-time">'+new Date(p.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</span></span>'+
+        '<button class="del-btn" onclick="deleteStockPurchase('+escH(JSON.stringify(p.id))+')">✕</button></div>'
+    ).join('')
+    :'<div class="to-empty" style="padding:8px 0">No purchases logged yet today</div>';
+}
+
+document.getElementById('stock-purchase-close').addEventListener('click',()=>{
+  stockPurchaseModal.classList.add('hidden');
+  renderStockTable();
+});
+
+document.getElementById('stock-purchase-add').addEventListener('click',async()=>{
+  const qty=parseFloat(document.getElementById('stock-purchase-qty').value);
+  if(!qty||qty<=0){uxAlert('Enter a quantity');return;}
+  const source=document.getElementById('stock-purchase-source').value.trim()||null;
+  const{data,error}=await sb.from('stock_purchases')
+    .insert({item_name:stockPurchaseTargetItem,date:viewDate,qty,source})
+    .select().single();
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  (stockPurchasesMap[stockPurchaseTargetItem]=stockPurchasesMap[stockPurchaseTargetItem]||[]).push(data);
+  document.getElementById('stock-purchase-qty').value='';
+  document.getElementById('stock-purchase-source').value='';
+  renderStockPurchaseList();
+});
+
+async function deleteStockPurchase(id){
+  if(!await uxConfirm('Remove this purchase entry?'))return;
+  const{error}=await sb.from('stock_purchases').delete().eq('id',id);
+  if(error){uxAlert('Failed: '+error.message);return;}
+  const arr=stockPurchasesMap[stockPurchaseTargetItem]||[];
+  const idx=arr.findIndex(p=>p.id===id);
+  if(idx>-1)arr.splice(idx,1);
+  renderStockPurchaseList();
 }
 
 </script>
