@@ -405,6 +405,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="push-row bulk-actions-row hidden" id="dv-assign-row" style="margin-bottom:12px">
     <button class="btn-push" id="dv-assign-me" disabled>🙋 Assign to me (0)</button>
   </div>
+  <div class="push-row" style="margin-bottom:14px">
+    <button class="header-btn" id="dv-collapse-btn" onclick="toggleCollapseAllDelivery()">▾ Collapse All</button>
+  </div>
   <div id="dv-list"><div class="to-empty">Loading…</div></div>
 </div>
 
@@ -3389,6 +3392,25 @@ function toggleDeliveryOrderExpanded(soid){
   renderDeliveryList();
 }
 
+// Collapse All / Expand All — same toggle-the-whole-set convention as
+// Overview's group collapse, just over individual orders here. "Expand
+// All" only expands whatever's actually visible under the current scope/
+// search/status filter, not every order ever loaded for the day.
+function toggleCollapseAllDelivery(){
+  if(expandedDeliveryOrders.size){expandedDeliveryOrders=new Set();renderDeliveryList();return;}
+  const search=document.getElementById('dv-search').value.trim().toLowerCase();
+  const visible=new Set();
+  Object.entries(deliveryOrders).forEach(([soid,order])=>{
+    const full={soid,...order};
+    if(deliveryScope!=='all'&&full.assignedRider!==riderName)return;
+    if(search&&!full.customer.toLowerCase().includes(search))return;
+    if(!deliveryOrderMatchesStatusFilter(full))return;
+    visible.add(soid);
+  });
+  expandedDeliveryOrders=visible;
+  renderDeliveryList();
+}
+
 // ── Offline queue ─────────────────────────────────────────────────────────
 // A rider's phone commonly loses signal inside a building/basement/lift —
 // but only AFTER the Delivery tab was already loaded while still online.
@@ -3726,6 +3748,7 @@ function renderDeliveryList(){
     .filter(order=>deliveryScope==='all'||order.assignedRider===riderName);
   renderDeliverySummaryPills(scoped);
   document.getElementById('dv-grouping-toggle').innerHTML=renderGroupingToggle();
+  document.getElementById('dv-collapse-btn').textContent=expandedDeliveryOrders.size?'▾ Collapse All':'▸ Expand All';
 
   const bySociety={};
   scoped.forEach(order=>{
