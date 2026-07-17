@@ -182,6 +182,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .community-table input{width:90px;padding:4px 6px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit;background:#ffffff}
 .community-table input[type="text"]{width:110px}
 .del-btn{background:none;border:none;color:#b3261e;cursor:pointer;font-size:14px;padding:0 4px}
+.edit-btn{background:none;border:none;color:#2f6690;cursor:pointer;font-size:14px;padding:0 4px}
 .add-row{display:flex;gap:8px;margin-top:10px}
 .add-row input{flex:1;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;color:#2b2320;font-size:12px;font-family:inherit}
 .add-row input::placeholder{color:#8a7a6a}
@@ -1002,7 +1003,11 @@ async function loadPackersConfig(){
     // inside this attribute's own double-quoted onclick="..." string, which
     // breaks the HTML parse and silently kills the click handler. escH()
     // turns those into &quot; so the attribute stays intact.
-    '<li>'+escH(p.name)+'<span>'+escH(p.assigned_fruits.join(', ')||'no fruits assigned')+'</span><button class="del-btn" onclick="deletePacker('+escH(JSON.stringify(p.id))+')">✕</button></li>'
+    '<li>'+escH(p.name)+'<span>'+escH(p.assigned_fruits.join(', ')||'no fruits assigned')+'</span>'+
+    '<span style="display:flex;gap:2px;flex-shrink:0">'+
+      '<button class="edit-btn" onclick="editPacker('+escH(JSON.stringify(p.id))+')" title="Edit">✎</button>'+
+      '<button class="del-btn" onclick="deletePacker('+escH(JSON.stringify(p.id))+')">✕</button>'+
+    '</span></li>'
   ).join('');
 }
 async function addPacker(){
@@ -1023,6 +1028,19 @@ async function addPacker(){
   document.getElementById('new-packer-name').value='';
   document.getElementById('new-packer-fruits').value='';
   await loadPackersConfig();
+}
+// Populates the add/edit form above from an existing packer's saved
+// values — addPacker() already upserts by name, so submitting this back
+// via the same Add button replaces that packer's fruit list rather than
+// creating a duplicate. This just removes the need to retype everything
+// by hand to make a small change.
+function editPacker(id){
+  const packer=packersCache.find(p=>p.id===id);
+  if(!packer)return;
+  document.getElementById('new-packer-name').value=packer.name;
+  document.getElementById('new-packer-fruits').value=packer.assigned_fruits.join(', ');
+  document.getElementById('new-packer-name').scrollIntoView({behavior:'smooth',block:'center'});
+  document.getElementById('new-packer-fruits').focus();
 }
 async function deletePacker(id){
   const packer=packersCache.find(p=>p.id===id);
