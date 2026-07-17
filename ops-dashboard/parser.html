@@ -122,9 +122,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-item-table td:last-child{text-align:right;white-space:nowrap;font-weight:600}
 .dv-item-table tr:last-of-type td{border-bottom:none}
 .dv-item-name-cell{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+/* The not-delivered/cancelled control is always the last child here (name
+   cell is always checkbox-or-tick + name + this) — pushed to the far right
+   since it's the rare action; the collected checkbox next to it is the
+   common one and stays prominent on the left. */
+.dv-item-name-cell>:last-child{margin-left:auto}
 .dv-item-nd{display:inline-flex;align-items:center;padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;color:#b3261e;background:#fbe9e7;border:1px solid #f3c6c0;cursor:pointer;text-decoration:none;white-space:nowrap}
 .dv-item-nd:hover{background:#f6d3ce}
-.dv-collected-cb{width:auto;margin:0}
+.dv-collected-cb{width:22px;height:22px;margin:0;flex-shrink:0;accent-color:#e8720c;cursor:pointer}
 .dv-collected-tick{color:#3f7a34;font-weight:700}
 .dv-awaiting-collection{font-size:11px;color:#8a7a6a;font-style:italic}
 .dv-free-badge{font-size:9px;font-weight:700;color:#3f7a34;background:#e5f3e3;border-radius:4px;padding:1px 5px}
@@ -141,7 +146,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-scope-tabs{display:flex;gap:8px;margin-bottom:10px}
 .dv-scope-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
 .dv-scope-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
-.dv-assigned-tag{font-size:10px;font-weight:600;color:#8a7a6a;margin-left:6px}
+.dv-assigned-tag{font-size:12px;font-weight:700;color:#5c4f42;margin-left:6px}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
 .dv-queue-badge.hidden{display:none}
@@ -429,7 +434,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <label class="dv-cash-row hidden" id="dv-cash-row">
       <input type="checkbox" id="dv-cash-toggle"> Paid in cash
     </label>
-    <label class="modal-label">Remarks (optional)</label>
+    <label class="modal-label">Delivery comment (optional)</label>
     <textarea id="dv-notes" rows="3" placeholder="e.g. left at gate, handed to security..."></textarea>
     <label class="modal-label">Photos (optional)</label>
     <input type="file" id="dv-photo" accept="image/*" multiple>
@@ -440,10 +445,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
-<!-- NOT DELIVERED (ITEM RETURN) MODAL -->
+<!-- CANCEL ITEM (NOT DELIVERED / RETURNED) MODAL -->
 <div class="modal-overlay hidden" id="nd-modal">
   <div class="modal-box">
-    <h3>Item not delivered</h3>
+    <h3>Cancel item</h3>
     <label class="modal-label">Reason</label>
     <select id="nd-reason">
       <option>Customer returned, not required</option>
@@ -460,10 +465,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
-<!-- ADD REMARK MODAL — usable any time, independent of mark-delivered -->
+<!-- ADD DELIVERY COMMENT MODAL — usable any time, independent of mark-delivered -->
 <div class="modal-overlay hidden" id="dv-remark-modal">
   <div class="modal-box">
-    <h3>Add remark</h3>
+    <h3>Add delivery comment</h3>
     <textarea id="dv-remark-input" rows="3" placeholder="e.g. customer paid extra against the QR, note for admin..."></textarea>
     <div class="modal-actions">
       <button class="btn-sec" id="dv-remark-cancel" style="margin-bottom:0">Cancel</button>
@@ -3814,9 +3819,20 @@ async function saveDeliveryInstructions(soid){
 // redraws instantly instead of re-fetching.
 // Selection ("assign to me") only makes sense over undelivered orders you
 // don't already own — offering it under My/Delivered would just be
-// confusing busywork.
+// confusing busywork. Shown under both "Pending" and "Total" (which
+// includes pending orders mixed in with ones already past that point) —
+// renderDeliveryCard disables the checkbox itself for any order that's
+// already ofd/delivered/partially_delivered/cancelled, rather than hiding
+// the whole selection row just because the view includes some of those too.
 function deliverySelectionModeActive(){
-  return deliveryScope==='all'&&deliveryStatusFilter==='pending';
+  return deliveryScope==='all'&&(deliveryStatusFilter==='pending'||deliveryStatusFilter==='all');
+}
+
+// Only a still-at-the-store order can be picked up and assigned — one
+// that's already ofd, delivered, partially delivered, or cancelled has
+// already moved past the point where "assign to me" means anything.
+function orderEligibleForAssignment(order){
+  return order.orderStatus!=='cancelled'&&order.deliveryStatus==='not_dispatched';
 }
 
 function renderDeliveryList(){
@@ -3861,9 +3877,14 @@ function renderDeliveryList(){
     const orders=bySociety[soc];
     // Only shown in selection mode ("assign to me") — lets a rider grab a
     // whole society's worth of undelivered orders in one tap instead of
-    // checking each order individually.
-    const selectAllCb=selectionMode
-      ?'<input type="checkbox" class="inv-select" '+(orders.every(o=>selectedDeliveryOrders.has(o.soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(orders.map(o=>o.soid)))+',this.checked)" title="Select all orders in this society"> '
+    // checking each order individually. Only counts/selects orders still
+    // eligible for assignment — under "Total" this society may also
+    // include ones already ofd/delivered/cancelled, which this checkbox
+    // should just skip over, same as their own per-order checkbox being
+    // disabled.
+    const assignableSoids=orders.filter(orderEligibleForAssignment).map(o=>o.soid);
+    const selectAllCb=(selectionMode&&assignableSoids.length)
+      ?'<input type="checkbox" class="inv-select" '+(assignableSoids.every(soid=>selectedDeliveryOrders.has(soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(assignableSoids))+',this.checked)" title="Select all assignable orders in this society"> '
       :'';
     return '<div class="society-header">'+selectAllCb+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span></div>'+
       orders.map(order=>renderDeliveryCard(order,selectionMode)).join('');
@@ -4004,8 +4025,10 @@ function renderDeliveryCard(order,selectionMode){
       '</div>'
     :(instructions
       ?'<div class="dv-notes">NOTE: '+escH(instructions)+' <a class="or-link" onclick="editDeliveryInstructions(\''+order.soid+'\')">edit</a></div>'
-      :'<div class="or-links" style="margin-bottom:10px"><a class="or-link" onclick="editDeliveryInstructions(\''+order.soid+'\')">+ add delivery instructions</a></div>'
-    );
+      // No "+ add delivery instructions" prompt when there isn't one — every
+      // card offering it regardless of whether it's relevant was overkill;
+      // adding one is now done from Overview's "+ notes" instead.
+      :'');
 
   // Item list as a compact table (qty + amount), not pills — a delivery
   // card needs to double as a bill summary, pills don't carry a column for
@@ -4037,7 +4060,7 @@ function renderDeliveryCard(order,selectionMode){
             :(item.collected?'<span class="dv-collected-tick" title="Collected, out for delivery">OFD ✓</span>':'');
         const ndControl=cancelled
           ?'<span class="cancelled-badge" title="'+escH(item.description||'')+'">CANCELLED</span>'
-          :'<a class="dv-item-nd" onclick="openNotDeliveredModal(\''+item.id+'\',\''+order.soid+'\')">✕ not delivered</a>';
+          :'<a class="dv-item-nd" onclick="openNotDeliveredModal(\''+item.id+'\',\''+order.soid+'\')">✕ cancel item</a>';
         return '<tr'+(cancelled?' class="dv-item-cancelled"':'')+'>'+
           '<td><div class="dv-item-name-cell">'+collectedControl+'<span>'+escH(item.item_name)+'</span>'+
             ndControl+
@@ -4085,8 +4108,11 @@ function renderDeliveryCard(order,selectionMode){
     ?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>'
     :'';
 
+  const eligibleForAssignment=orderEligibleForAssignment(order);
   const selectCheckbox=selectionMode
-    ?'<input type="checkbox" class="inv-select" '+(selectedDeliveryOrders.has(order.soid)?'checked ':'')+'onchange="toggleDeliverySelect(\''+order.soid+'\',this.checked)"> '
+    ?'<input type="checkbox" class="inv-select" '+(selectedDeliveryOrders.has(order.soid)?'checked ':'')+
+      (eligibleForAssignment?'':'disabled title="Already out for delivery or beyond" ')+
+      'onchange="toggleDeliverySelect(\''+order.soid+'\',this.checked)"> '
     :'';
 
   // Signed URLs are fetched async after this HTML is in the DOM (see
@@ -4140,7 +4166,7 @@ function renderDeliveryCard(order,selectionMode){
       (notDispatched?' · '+collectedCount+'/'+items.length+' collected':'')+
     '</span>'+
       '<span class="or-links">'+
-        '<a class="or-link" onclick="openAddRemark(\''+order.soid+'\')">+ remark</a>'+
+        '<a class="or-link" onclick="openAddRemark(\''+order.soid+'\')">+ delivery comment</a>'+
         '<a class="or-link" onclick="openAddPhoto(\''+order.soid+'\')">+ photo</a>'+
         (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
         (delivered
@@ -4229,7 +4255,7 @@ document.getElementById('nd-confirm').addEventListener('click',async()=>{
   ndModal.classList.add('hidden');
 
   const item=(deliveryOrders[soid]?.items||[]).find(i=>i.id===itemId);
-  const description=appendAddendum(item?.description,'Not delivered: '+reason);
+  const description=appendAddendum(item?.description,'Cancelled: '+reason);
 
   // Optimistic — the item shows cancelled immediately either way.
   if(item){item.status='cancelled';item.description=description;}
@@ -4249,7 +4275,7 @@ document.getElementById('nd-confirm').addEventListener('click',async()=>{
       // to show the customer meanwhile; "add a remark" on the card is
       // there to note anything like an overpayment against it.
       queueDvAction('not_delivered',payload);
-      uxAlert('No connection — saved. The invoice update will finish once you\'re back online. The existing payment QR (if any) is still fine to use for now — add a remark on the card if the customer paid extra against it.');
+      uxAlert('No connection — saved. The invoice update will finish once you\'re back online. The existing payment QR (if any) is still fine to use for now — add a delivery comment on the card if the customer paid extra against it.');
     }else{
       uxAlert(e.message);
       await loadDeliveryView();
