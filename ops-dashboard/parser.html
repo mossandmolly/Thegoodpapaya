@@ -1886,18 +1886,43 @@ function renderOrdersList(){
         // showing a payment link for an amount that's now stale.
         const fullyInvoiced=isFullyInvoiced(order);
         const overallStatus=cancelled?null:orderOverallStatus(order);
+        const checkboxHtml=!cancelled
+          ?'<input type="checkbox" class="inv-select" '+(selectedOrders.has(order.soid)?'checked ':'')+'onchange="toggleOrderSelect('+escH(JSON.stringify(order.soid))+',this.checked)"> '
+          :'';
+        const statusBadges=(cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
+          (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
+          (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'');
+
+        // Collapsed by default — same reasoning as Delivery's per-order
+        // collapse: a compact summary (customer name, status, timeline if
+        // any) instead of the full pill list/actions, so a long order list
+        // isn't a wall of expanded cards until you actually need one.
+        const expandedOv=expandedOverviewOrders.has(order.soid);
+        if(!expandedOv){
+          return '<div class="order-row'+(cancelled?' order-cancelled':'')+' dv-collapsed-card">'+
+            '<div class="dv-card-header" onclick="toggleOverviewOrderExpanded(\''+order.soid+'\')">'+
+              '<span class="or-cust">'+
+                '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
+                escH(order.customer)+
+                statusBadges+
+              '</span>'+
+              '<span class="dv-expand-caret">▸</span>'+
+            '</div>'+
+          '</div>';
+        }
+
         return '<div class="order-row'+(cancelled?' order-cancelled':'')+'">'+
-          '<div class="or-top"><span class="or-cust">'+
-            (!cancelled?'<input type="checkbox" class="inv-select" '+(selectedOrders.has(order.soid)?'checked ':'')+'onchange="toggleOrderSelect('+escH(JSON.stringify(order.soid))+',this.checked)"> ':'')+
+          '<div class="dv-card-header" onclick="toggleOverviewOrderExpanded(\''+order.soid+'\')"><span class="or-cust">'+
+            '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
             escH(order.customer)+
-            (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
-            (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
-            (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
+            statusBadges+
             (!cancelled&&fullyInvoiced?(order.razorpayUrl
-              ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link">💳 payment link</a>'
+              ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link" onclick="event.stopPropagation()">💳 payment link</a>'
               :' <span class="pay-missing">Payment link not generated</span>'
             ):'')+
-          '</span></div>'+
+          '</span>'+
+          '<span class="dv-expand-caret">▾</span>'+
+          '</div>'+
           // Delivery-related notes (aggregated from item.delivery_instructions,
           // same as the Delivery tab's own note block) right under the
           // customer name — so this doesn't require switching tabs to see.
@@ -2450,6 +2475,16 @@ function toggleCollapseAllOverview(){
   collapsedOverviewGroups=groups;
   renderOrdersList();
 }
+
+// Separate, per-order collapse (within an expanded group) — tracks which
+// orders are EXPANDED, empty by default so every order starts collapsed to
+// a one-line summary, same convention as Delivery's expandedDeliveryOrders.
+let expandedOverviewOrders=new Set();
+function toggleOverviewOrderExpanded(soid){
+  if(expandedOverviewOrders.has(soid))expandedOverviewOrders.delete(soid);
+  else expandedOverviewOrders.add(soid);
+  renderOrdersList();
+}
 let mtTargetOrder=null;
 let mtDirection=1;
 const mtModal=document.getElementById('mt-modal'),mtItems=document.getElementById('mt-items'),mtTitle=document.getElementById('mt-title'),mtMoveBtn=document.getElementById('mt-move');
@@ -2892,17 +2927,29 @@ document.getElementById('to-bulk-paylink').addEventListener('click',()=>{
   generatePaymentLinksBulk(ids);
 });
 
+function sleep(ms){return new Promise(res=>setTimeout(res,ms));}
+
 // ── Bulk invoice PDF download — streams each selected order's Zoho invoice
 // through download-invoice (needs a live OAuth token, only the edge
 // function has one) and triggers a normal browser download per file.
 // Read-only — doesn't touch any order data, so no reload needed after.
+//
+// Two things needed fixing after only the first download in a batch was
+// coming through: browsers cap/block automatic downloads fired in quick
+// succession without a fresh user gesture per file (Chrome specifically
+// prompts to allow "multiple downloads" and silently drops the rest until
+// granted) — a short delay between each makes them land far enough apart
+// to avoid that. Revoking the blob URL synchronously right after click()
+// was also a race — the browser's download manager hasn't necessarily
+// finished reading it yet, so that's now deferred instead of immediate.
 async function downloadInvoicesBulk(salesOrderIds){
   if(!salesOrderIds.length){uxAlert('Nothing selected that has an invoice yet');return;}
   const btn=document.getElementById('to-bulk-download');
   btn.disabled=true;
   const succeeded=[],failed=[];
   try{
-    for(const soid of salesOrderIds){
+    for(let i=0;i<salesOrderIds.length;i++){
+      const soid=salesOrderIds[i];
       btn.innerHTML='<span class="spinner"></span>Downloading '+(succeeded.length+failed.length+1)+'/'+salesOrderIds.length+'…';
       try{
         const res=await fetch(SUPABASE_URL+'/functions/v1/download-invoice',{
@@ -2922,11 +2969,12 @@ async function downloadInvoicesBulk(salesOrderIds){
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(url);
+        setTimeout(()=>URL.revokeObjectURL(url),10000);
         succeeded.push(soid);
       }catch(e){
         failed.push(soid+': '+e.message);
       }
+      if(i<salesOrderIds.length-1)await sleep(700);
     }
     let msg='Downloaded '+succeeded.length+' invoice'+(succeeded.length!==1?'s':'')+'.';
     if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
