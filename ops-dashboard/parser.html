@@ -443,6 +443,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <input type="text" class="pk-search" id="stock-search" placeholder="🔍 Search fruit..." oninput="renderStockTable()">
   <div id="stock-summary-pills" class="filter-pills status-pills"></div>
+  <div class="add-row" style="margin-top:0">
+    <select id="stock-add-fruit-picker" style="flex:2">
+      <option value="">+ pick a fruit to track today…</option>
+    </select>
+    <button type="button" onclick="addStockFruitRow()">+ Add</button>
+  </div>
   <div class="table-scroll">
     <table class="community-table" id="stock-table"><thead><tr>
       <th>Fruit</th><th>Opening stock</th><th>Purchased today</th><th>Demand today</th><th>Remaining</th><th>Status</th>
@@ -4623,12 +4629,19 @@ let stockPurchasesMap={};  // item_name -> [{id,qty,source,created_at}]
 let stockDemandMap={};     // item_name -> today's aggregated order demand
 let stockStatusFilter='all'; // 'all' | 'need' | 'trending' | 'ok'
 let stockPurchaseTargetItem=null;
+// Fruits explicitly added to today's view via the "+ Add" picker even
+// though they have no activity yet (no opening stock/purchases/demand) —
+// session-only, resets whenever the date changes. Nothing is written to
+// the DB just from adding a row; that only happens once an actual value
+// (opening stock or a purchase) is saved for it.
+let stockExtraFruits=new Set();
 
 async function loadStockView(){
   const tbody=document.getElementById('stock-tbody');
   document.getElementById('stock-label').textContent=
     viewDate===CALENDAR_TODAY?'Stock':'Stock — '+viewDate;
   tbody.innerHTML='<tr><td colspan="6" class="to-empty">Loading…</td></tr>';
+  stockExtraFruits=new Set();
 
   const[catalog,openingRes,purchaseRes,itemsRes]=await Promise.all([
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
@@ -4680,8 +4693,19 @@ const STOCK_STATUS_BADGE={
   ok:      '<span class="stock-badge stock-ok">🟢 OK</span>',
 };
 
-function renderStockSummaryPills(){
-  const statuses=stockCatalog.map(c=>stockStatusFor(c.item_name).status);
+// A fruit only shows in the table once it's "active" for the day — has an
+// opening stock entry, a purchase, order demand, or was explicitly added
+// via the "+ Add" picker. Otherwise every one of the ~75 catalog fruits
+// would show up unconditionally, most with nothing to say.
+function isStockFruitActive(itemName){
+  return stockOpeningMap[itemName]!==undefined
+    ||(stockPurchasesMap[itemName]&&stockPurchasesMap[itemName].length>0)
+    ||stockDemandMap[itemName]!==undefined
+    ||stockExtraFruits.has(itemName);
+}
+
+function renderStockSummaryPills(activeCatalog){
+  const statuses=activeCatalog.map(c=>stockStatusFor(c.item_name).status);
   const pills=[
     {key:'all',label:'All',count:statuses.length},
     {key:'need',label:'🔴 Need to Order',count:statuses.filter(s=>s==='need').length},
@@ -4698,12 +4722,37 @@ function setStockStatusFilter(key){
   renderStockTable();
 }
 
+// Only offers fruits not already showing — picking one that's already
+// active would just be a confusing no-op.
+function renderStockAddFruitPicker(activeCatalog){
+  const activeNames=new Set(activeCatalog.map(c=>c.item_name));
+  const sel=document.getElementById('stock-add-fruit-picker');
+  const options=stockCatalog.filter(c=>!activeNames.has(c.item_name)).sort((a,b)=>a.item_name.localeCompare(b.item_name));
+  sel.innerHTML='<option value="">+ pick a fruit to track today…</option>'+
+    options.map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('');
+}
+
+function addStockFruitRow(){
+  const sel=document.getElementById('stock-add-fruit-picker');
+  const name=sel.value;
+  if(!name)return;
+  stockExtraFruits.add(name);
+  // Reset the filters so the newly added row is immediately visible
+  // instead of silently hidden behind whatever status/search filter
+  // happened to be active.
+  stockStatusFilter='all';
+  document.getElementById('stock-search').value='';
+  renderStockTable();
+}
+
 function renderStockTable(){
-  renderStockSummaryPills();
+  const activeCatalog=stockCatalog.filter(c=>isStockFruitActive(c.item_name));
+  renderStockSummaryPills(activeCatalog);
+  renderStockAddFruitPicker(activeCatalog);
   const search=document.getElementById('stock-search').value.trim().toLowerCase();
   const tbody=document.getElementById('stock-tbody');
 
-  const rows=stockCatalog.filter(c=>{
+  const rows=activeCatalog.filter(c=>{
     if(search&&!c.item_name.toLowerCase().includes(search))return false;
     if(stockStatusFilter!=='all'&&stockStatusFor(c.item_name).status!==stockStatusFilter)return false;
     return true;
@@ -4712,7 +4761,10 @@ function renderStockTable(){
   document.getElementById('stock-rc').textContent=rows.length?'— '+rows.length+' fruit'+(rows.length!==1?'s':''):'';
 
   if(!rows.length){
-    tbody.innerHTML='<tr><td colspan="6" class="to-empty">No fruits match</td></tr>';
+    const emptyMsg=(search||stockStatusFilter!=='all')
+      ?'No fruits match'
+      :'Nothing tracked yet today — add a fruit above to get started, or it\'ll appear automatically once an order or stock entry comes in for it.';
+    tbody.innerHTML='<tr><td colspan="6" class="to-empty">'+emptyMsg+'</td></tr>';
     return;
   }
 
