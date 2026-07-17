@@ -1893,6 +1893,13 @@ function renderOrdersList(){
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'');
 
+        // "Packed" here means reached at least the packed stage (packed,
+        // final, or invoiced all count — packing is a one-way milestone,
+        // an already-invoiced item was necessarily packed too) — not "sits
+        // at exactly status=packed right now".
+        const activeCount=activeItems(order).length;
+        const packedCount=activeItems(order).filter(i=>ITEM_STATUS_RANK[i.status]>=ITEM_STATUS_RANK.packed).length;
+
         // Collapsed by default — same reasoning as Delivery's per-order
         // collapse: a compact summary (customer name, status, timeline if
         // any) instead of the full pill list/actions, so a long order list
@@ -1905,6 +1912,7 @@ function renderOrdersList(){
                 '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
                 escH(order.customer)+
                 statusBadges+
+                (!cancelled?' <span class="sh-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
               '</span>'+
               '<span class="dv-expand-caret">▸</span>'+
             '</div>'+
