@@ -1777,7 +1777,18 @@ async function loadTodaysOrders(){
   document.getElementById('to-label').textContent=
     viewDate===CALENDAR_TODAY?'Order overview':(viewDate===tomorrowDate?'Order overview (Tomorrow)':'Order overview — '+viewDate);
   list.innerHTML='<div class="to-empty">Loading…</div>';
-  const{data,error}=await fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%'));
+
+  // Both filter by the same date prefix independently — the customer-info
+  // query used to wait for the items query to finish first just to learn
+  // which order IDs to ask about, but sales_order_id already encodes the
+  // date, so it can ask "today's customer info" directly, in parallel,
+  // instead of two round trips back to back.
+  const[{data,error},custRes]=await Promise.all([
+    fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
+    sb.from('order_customer_lookup')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after')
+      .like('sales_order_id',viewDate+'-%'),
+  ]);
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
 
   if(data&&data.length){
@@ -1798,9 +1809,9 @@ async function loadTodaysOrders(){
   // order_customer_lookup — a narrow view (sales_order_id, customer_name,
   // phone, razorpay_url, invoice_status) granted to anon — instead of an
   // edge-function round trip.
-  const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
-  const{map:customerMap,error:custErr}=await fetchCustomerMap(uniqueIds);
-  if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
+  if(custRes.error){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custRes.error.message)+'</div>';return;}
+  const customerMap={};
+  (custRes.data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;customerMap[o.sales_order_id]=o;});
 
   const bySalesOrder={};
   const byItemId={};
