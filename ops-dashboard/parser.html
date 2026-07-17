@@ -50,6 +50,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .society-header{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#ffffff;background:#c2570a;margin:18px 0 8px;padding:9px 12px;border-radius:8px}
 .society-header:first-child{margin-top:0}
 .sh-count{font-weight:400;text-transform:none;letter-spacing:normal;color:#fbdec2;font-size:11px}
+.packed-count{font-weight:400;color:#000000;font-size:11px}
 .order-row{background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:8px}
 /* Customer name on its own full-width line — squeezing it against the
    action links on narrow screens is what pushed it into a corner and
@@ -1912,7 +1913,7 @@ function renderOrdersList(){
                 '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
                 escH(order.customer)+
                 statusBadges+
-                (!cancelled?' <span class="sh-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
+                (!cancelled?' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
               '</span>'+
               '<span class="dv-expand-caret">▸</span>'+
             '</div>'+
