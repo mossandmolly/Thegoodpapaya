@@ -255,6 +255,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-line1-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .pk-qty-label{font-size:12px;font-weight:700;color:#2b2320;white-space:nowrap}
 .pk-instr{font-size:12px;font-weight:700;color:#b3261e;margin-bottom:8px}
+.pk-assigned-to{font-size:10px;color:#8a7a6a;margin-bottom:4px}
 .pk-packed-by{font-size:10px;color:#8a7a6a;margin-bottom:4px}
 .pk-row{display:flex;gap:6px;margin-bottom:6px}
 .pk-qty{width:100%;padding:7px 8px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
@@ -3193,7 +3194,7 @@ async function deleteItem(id){
 }
 
 // ── Packer ────────────────────────────────────────────────────────────────
-let packerItems=[],packerCustomerMap={},packerUnitByItem={};
+let packerItems=[],packerCustomerMap={},packerUnitByItem={},packerAssignedNameByFruit={};
 const packerFilters={search:'',fruits:new Set(),statuses:new Set()};
 let packerScope='all'; // 'all' | 'mine' — 'mine' = items whose fruit is in this device's packer's assigned_fruits (packers config table)
 // Per-group (society/trip) collapse — tracks which are EXPANDED, empty by
@@ -3235,6 +3236,16 @@ async function loadPackerView(){
   packerCustomerMap=map||{};
   packerUnitByItem={};
   (catalog||[]).forEach(c=>{packerUnitByItem[c.item_name]=c.unit||'kg';});
+  // Reverse index of packersCache's assigned_fruits — which packer(s) (if
+  // any) have this fruit assigned to them via the Config tab, so a card can
+  // show "assigned to" without every packer having to check Config. A fruit
+  // with no one assigned (or "My Orders" not in use) just shows nothing here.
+  packerAssignedNameByFruit={};
+  packersCache.forEach(p=>{
+    p.assigned_fruits.forEach(fruit=>{
+      (packerAssignedNameByFruit[fruit]=packerAssignedNameByFruit[fruit]||[]).push(p.name);
+    });
+  });
 
   renderPackerFilterPills();
   renderPackerGrid();
@@ -3324,6 +3335,7 @@ function renderPackerGrid(){
         '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></span>'+
       '</div>'+
       (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
+      (packerAssignedNameByFruit[item.item_name]?.length?'<div class="pk-assigned-to">👤 Assigned to '+escH(packerAssignedNameByFruit[item.item_name].join(', '))+'</div>':'')+
       (item.packed_by?'<div class="pk-packed-by">📦 Packed by '+escH(item.packed_by)+'</div>':'')+
       '<div class="pk-row">'+
         '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'" oninput="this.nextElementSibling.disabled=false">'+
