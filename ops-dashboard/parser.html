@@ -128,6 +128,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-collected-tick{color:#3f7a34;font-weight:700}
 .dv-awaiting-collection{font-size:11px;color:#8a7a6a;font-style:italic}
 .dv-free-badge{font-size:9px;font-weight:700;color:#3f7a34;background:#e5f3e3;border-radius:4px;padding:1px 5px}
+.dv-item-cancelled td{color:#a39a8c;text-decoration:line-through}
+.dv-item-cancelled .cancelled-badge{text-decoration:none}
 .dv-total-row td{font-weight:700;font-size:14px;color:#ffffff;background:#e8720c;padding:8px 6px}
 .dv-total-row td:first-child{border-radius:6px 0 0 6px}
 .dv-total-row td:last-child{border-radius:0 6px 6px 0}
@@ -355,6 +357,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <input type="text" class="pk-search" id="to-search" placeholder="🔍 Search society, customer, or fruit...">
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
+  <div id="to-delivery-pills" class="filter-pills status-pills"></div>
   <div id="to-grouping-toggle" class="filter-pills status-pills"></div>
   <div class="push-row bulk-actions-row">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Invoices (0)</button>
@@ -1846,6 +1849,7 @@ async function loadTodaysOrders(){
         razorpayUrl:   o?.razorpay_url||null,
         invoiceStatus: o?.invoice_status||null,
         orderStatus:   o?.status||'active',
+        deliveryStatus:o?.delivery_status||'not_dispatched',
         deliverBy:     o?.deliver_by||null,
         deliverAfter:  o?.deliver_after||null,
         adminNotes:    o?.admin_notes||null,
@@ -2830,8 +2834,23 @@ let toOverviewFilter='all'; // 'all' | 'invoiced' | 'final' | 'inprogress' | 'ca
 // Matches if EITHER bound is set.
 let overviewDeadlineOnly=false;
 
+// A separate axis from toOverviewFilter above — invoice status and
+// delivery status track different things (an order can be "Final" and
+// still pending delivery, or "Invoiced" and already delivered). ANDed on
+// top of whichever invoice-status bucket is active, same as the deadline
+// toggle. 'ofd' folds into 'pending' here — Overview only needs "has it
+// arrived yet", the finer ofd/not-dispatched split is what the Delivery
+// tab's own pills are for.
+let overviewDeliveryFilter='all'; // 'all' | 'pending' | 'partially_delivered' | 'delivered'
+
 function orderMatchesOverviewFilter(order){
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
+  if(overviewDeliveryFilter!=='all'){
+    const ds=order.deliveryStatus||'not_dispatched';
+    if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
+    if(overviewDeliveryFilter==='partially_delivered'&&ds!=='partially_delivered')return false;
+    if(overviewDeliveryFilter==='pending'&&(ds==='delivered'||ds==='partially_delivered'))return false;
+  }
   if(toOverviewFilter==='all')return true;
   if(toOverviewFilter==='cancelled')return order.orderStatus==='cancelled';
   if(order.orderStatus==='cancelled')return false;
@@ -2850,6 +2869,11 @@ function setOverviewFilter(key){
 
 function toggleOverviewDeadlineFilter(){
   overviewDeadlineOnly=!overviewDeadlineOnly;
+  renderOrdersList();
+}
+
+function setOverviewDeliveryFilter(key){
+  overviewDeliveryFilter=key;
   renderOrdersList();
 }
 
@@ -2873,6 +2897,19 @@ function renderOverviewSummaryPills(){
     '<span class="filter-pill'+(toOverviewFilter===p.key?' active':'')+'" onclick="setOverviewFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
   '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>';
+
+  const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
+  const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;
+  const pendingDelivery=active.length-delivered-partiallyDelivered;
+  const deliveryPills=[
+    {key:'all',label:'All',count:active.length},
+    {key:'pending',label:'Pending Delivery',count:pendingDelivery},
+    {key:'partially_delivered',label:'Partially Delivered',count:partiallyDelivered},
+    {key:'delivered',label:'Delivered',count:delivered},
+  ];
+  document.getElementById('to-delivery-pills').innerHTML=deliveryPills.map(p=>
+    '<span class="filter-pill'+(overviewDeliveryFilter===p.key?' active':'')+'" onclick="setOverviewDeliveryFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join('');
 }
 
 // One shared checkbox selection drives all three bulk actions — each button
@@ -3497,6 +3534,17 @@ async function performDvAction(type,payload){
     const{error}=await sb.from('order_items').update({status:'cancelled',description:payload.description}).eq('id',payload.itemId);
     if(error)throw new Error(error.message);
     await autoRegenerateInvoiceIfReady(payload.soid);
+    // A rejection can land after the order was already marked fully
+    // delivered — that reading is now stale (not everything ordered
+    // actually arrived), so flip it to partially_delivered. No-op
+    // server-side if the order wasn't already 'delivered'.
+    const syncRes=await fetch(SUPABASE_URL+'/functions/v1/mark-delivered',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:payload.soid,sync_partial_status:true}),
+    });
+    if(!syncRes.ok){const d=await syncRes.json().catch(()=>({}));throw new Error(d.error||'Could not sync delivery status');}
+    evictCustomerLookupCache(payload.soid);
   }
 }
 
@@ -3912,9 +3960,16 @@ function renderDeliveryCard(order,selectionMode){
   // spoiled/refused item without having to undo the whole order.
   const computedTotal=items.reduce((sum,item)=>sum+(deliveryItemAmount(item)||0),0);
   const total=order.invoiceTotal!=null?order.invoiceTotal:computedTotal;
+  // Cancelled items (rejected via "not delivered", before or after OFD) are
+  // still shown here, struck through with a CANCELLED badge, instead of
+  // vanishing — a rider/admin reviewing this card should be able to see
+  // what was actually rejected, not just what's left. They're excluded from
+  // `items`/`total` above (activeItems), same as everywhere else this order
+  // is priced or counted.
   const itemsTable=
     '<table class="dv-item-table"><tbody>'+
-      items.map(item=>{
+      (order.items||[]).map(item=>{
+        const cancelled=item.status==='cancelled';
         const qty=item.final_quantity??item.requested_quantity;
         const cat=deliveryCatalogByItem[item.item_name.toLowerCase()];
         const amount=deliveryItemAmount(item);
@@ -3923,12 +3978,16 @@ function renderDeliveryCard(order,selectionMode){
         // dispatch — once the order's OFD or delivered, each collected item
         // instead shows an "OFD" tag (not just a bare checkmark), so it's
         // obvious at a glance this item actually went out with the rider.
-        const collectedControl=notDispatched
-          ?'<input type="checkbox" class="dv-collected-cb" '+(item.collected?'checked ':'')+'onchange="toggleItemCollected(\''+item.id+'\',\''+order.soid+'\',this.checked)" title="Collected into bag">'
-          :(item.collected?'<span class="dv-collected-tick" title="Collected, out for delivery">OFD ✓</span>':'');
-        return '<tr>'+
+        const collectedControl=cancelled?''
+          :notDispatched
+            ?'<input type="checkbox" class="dv-collected-cb" '+(item.collected?'checked ':'')+'onchange="toggleItemCollected(\''+item.id+'\',\''+order.soid+'\',this.checked)" title="Collected into bag">'
+            :(item.collected?'<span class="dv-collected-tick" title="Collected, out for delivery">OFD ✓</span>':'');
+        const ndControl=cancelled
+          ?'<span class="cancelled-badge" title="'+escH(item.description||'')+'">CANCELLED</span>'
+          :'<a class="dv-item-nd" onclick="openNotDeliveredModal(\''+item.id+'\',\''+order.soid+'\')">✕ not delivered</a>';
+        return '<tr'+(cancelled?' class="dv-item-cancelled"':'')+'>'+
           '<td><div class="dv-item-name-cell">'+collectedControl+'<span>'+escH(item.item_name)+'</span>'+
-            '<a class="dv-item-nd" onclick="openNotDeliveredModal(\''+item.id+'\',\''+order.soid+'\')">✕ not delivered</a>'+
+            ndControl+
           '</div></td>'+
           '<td>'+qty+' '+escH(cat?.unit||'')+'</td>'+
           '<td>'+(isFree?'<span class="dv-free-badge">FREE</span>':(amount==null?'—':'₹'+amount.toFixed(0)))+'</td>'+

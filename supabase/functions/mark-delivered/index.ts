@@ -21,8 +21,18 @@
 // never risk wiping out earlier ones.
 //
 // Input:  { sales_order_id: string, delivered?: boolean, notes?: string, photo_paths?: string[],
-//           payment_collected?: boolean, payment_collected_method?: 'cash'|'online'|null, rider?: string }
+//           payment_collected?: boolean, payment_collected_method?: 'cash'|'online'|null, rider?: string,
+//           sync_partial_status?: boolean }
 // Output: { sales_order_id, delivery_status, delivered_at }
+//
+// sync_partial_status (used instead of `delivered`) re-checks an already-
+// 'delivered' order for cancelled items and flips it to
+// 'partially_delivered' if any exist — for when an item gets rejected via
+// the Delivery tab's "not delivered" *after* the order was already marked
+// fully delivered, which would otherwise leave it reading 'delivered'
+// forever. Touches delivery_status only, never delivered_at/payment —
+// unlike `delivered: true`, this isn't re-confirming a delivery just
+// happened.
 //
 // `rider` (only meaningful when delivered: true) records who actually
 // marked this delivered — attribution for performance tracking, distinct
@@ -68,7 +78,7 @@ Deno.serve(async (req) => {
 
   try {
     await requireAuth(req);
-    const { sales_order_id, delivered, notes, photo_paths, payment_collected, payment_collected_method, rider } = await req.json();
+    const { sales_order_id, delivered, notes, photo_paths, payment_collected, payment_collected_method, rider, sync_partial_status } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
     if (delivered !== undefined && typeof delivered !== 'boolean') throw new Error('delivered must be a boolean if provided');
 
@@ -115,6 +125,21 @@ Deno.serve(async (req) => {
       update.payment_collected        = delivered ? !!payment_collected : false;
       update.payment_collected_method = delivered && payment_collected ? (payment_collected_method || null) : null;
       update.payment_collected_at     = delivered && payment_collected ? new Date().toISOString() : null;
+    } else if (sync_partial_status) {
+      const { data: current } = await supabase
+        .from('orders')
+        .select('delivery_status')
+        .eq('sales_order_id', sales_order_id)
+        .single();
+      if (current?.delivery_status === 'delivered') {
+        const { data: cancelledItems } = await supabase
+          .from('order_items')
+          .select('id')
+          .eq('sales_order_id', sales_order_id)
+          .eq('status', 'cancelled')
+          .limit(1);
+        if (cancelledItems && cancelledItems.length) update.delivery_status = 'partially_delivered';
+      }
     }
     // Only touch notes when actually provided, so un-marking a delivery
     // (delivered: false) doesn't wipe out a remark that was already
@@ -130,7 +155,22 @@ Deno.serve(async (req) => {
       update.delivery_photo_paths = [...new Set([...current, ...photo_paths])];
     }
 
-    if (!Object.keys(update).length) throw new Error('Nothing to update');
+    if (!Object.keys(update).length) {
+      // sync_partial_status is a routine no-op whenever the order wasn't
+      // already 'delivered' (still ofd, or nothing was actually rejected) —
+      // that's success, not an error, so the frontend's not-delivered flow
+      // doesn't need to special-case it.
+      if (sync_partial_status) {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('sales_order_id, delivery_status, delivered_at, delivered_by, payment_collected, payment_collected_method')
+          .eq('sales_order_id', sales_order_id)
+          .single();
+        if (error) throw new Error(error.message);
+        return new Response(JSON.stringify(data), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+      }
+      throw new Error('Nothing to update');
+    }
 
     const { data, error } = await supabase
       .from('orders')
