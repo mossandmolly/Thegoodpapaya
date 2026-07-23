@@ -457,7 +457,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <div class="table-scroll">
     <table class="community-table" id="stock-table"><thead><tr>
-      <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Invoiced (sold)</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
+      <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Packed/Invoiced</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
   </div>
 </div>
@@ -4660,11 +4660,11 @@ async function undoDelivered(soid){
 // made against that frozen baseline. Every manual opening-stock edit is
 // logged to stock_opening_history (who, from what, to what).
 //
-// Available = opening + today's purchases − invoiced (already sold) −
-// pending orders (active, not yet invoiced). "Need to order" rule:
-// pool = opening + purchases; available/pool <20% = Need to Order, 20-35%
-// = Trending Low, otherwise OK — deliberately just live numbers, no
-// forecasting math.
+// Available = opening + today's purchases − packed/invoiced (physically
+// already pulled off the shelf) − pending orders (still just an order,
+// not yet packed). "Need to order" rule: pool = opening + purchases;
+// available/pool <20% = Need to Order, 20-35% = Trending Low, otherwise
+// OK — deliberately just live numbers, no forecasting math.
 //
 // At day's end, closing stock (physical recount) is entered; wastage =
 // available − closing, in both quantity and ₹ (qty × catalog unit_price).
@@ -4673,8 +4673,8 @@ let stockOpeningMap={};        // item_name -> opening_qty
 let stockOpeningHistoryMap={}; // item_name -> [{old_qty,new_qty,changed_by,changed_at}] desc, today only
 let stockClosingMap={};        // item_name -> closing_qty
 let stockPurchasesMap={};      // item_name -> [{id,qty,source,created_at}]
-let stockInvoicedMap={};       // item_name -> qty already invoiced (sold) today
-let stockPendingMap={};        // item_name -> qty still active but not yet invoiced today
+let stockPackedMap={};         // item_name -> qty already packed/final/invoiced today (physically off the shelf)
+let stockPendingMap={};        // item_name -> qty still open/held (an order exists, but nothing pulled yet)
 let stockPackingStarted=false; // true once any item has reached 'packed' or beyond for the viewed date
 let stockStatusFilter='all';   // 'all' | 'need' | 'trending' | 'ok'
 let stockPurchaseTargetItem=null;
@@ -4718,15 +4718,16 @@ async function loadStockView(){
     (stockPurchasesMap[r.item_name]=stockPurchasesMap[r.item_name]||[]).push(r);
   });
 
-  // Already-sold (invoiced) and still-pending (active but not yet
-  // invoiced) demand tracked separately — cancelled items never counted
-  // toward either, since a rejected line item was never going to consume
-  // stock.
-  stockInvoicedMap={};
+  // Packed-or-beyond (packed/final/invoiced — physically pulled off the
+  // shelf, whether or not it's been billed yet) and still-pending
+  // (open/held — an order exists, nothing pulled yet) tracked separately.
+  // Cancelled items never counted toward either, since a rejected line
+  // item was never going to consume stock.
+  stockPackedMap={};
   stockPendingMap={};
   (itemsRes.data||[]).filter(i=>i.status!=='cancelled').forEach(i=>{
     const qty=i.final_quantity??i.requested_quantity;
-    const map=i.status==='invoiced'?stockInvoicedMap:stockPendingMap;
+    const map=ITEM_STATUS_RANK[i.status]>=ITEM_STATUS_RANK.packed?stockPackedMap:stockPendingMap;
     map[i.item_name]=(map[i.item_name]||0)+qty;
   });
 
@@ -4784,18 +4785,18 @@ async function autoPopulateStockOpening(){
 function stockStatusFor(itemName){
   const opening=stockOpeningMap[itemName]||0;
   const purchased=(stockPurchasesMap[itemName]||[]).reduce((s,p)=>s+p.qty,0);
-  const invoiced=stockInvoicedMap[itemName]||0;
+  const packed=stockPackedMap[itemName]||0;
   const pending=stockPendingMap[itemName]||0;
   const pool=opening+purchased;
-  const available=pool-invoiced-pending;
+  const available=pool-packed-pending;
   // No pool entered at all (opening/purchases both zero) but nothing's
   // been ordered either — nothing to flag, reads as OK rather than a
   // false "need to order" from a 0/0 fruit nobody's touched today.
-  const pct=pool>0?(available/pool*100):((invoiced+pending)>0?0:100);
+  const pct=pool>0?(available/pool*100):((packed+pending)>0?0:100);
   const status=pct<20?'need':(pct<35?'trending':'ok');
   const closing=stockClosingMap[itemName];
   const wastageQty=closing!=null?(available-closing):null;
-  return{opening,purchased,invoiced,pending,pool,available,pct,status,closing,wastageQty};
+  return{opening,purchased,packed,pending,pool,available,pct,status,closing,wastageQty};
 }
 
 const STOCK_STATUS_BADGE={
@@ -4812,7 +4813,7 @@ function isStockFruitActive(itemName){
   return stockOpeningMap[itemName]!==undefined
     ||stockClosingMap[itemName]!==undefined
     ||(stockPurchasesMap[itemName]&&stockPurchasesMap[itemName].length>0)
-    ||stockInvoicedMap[itemName]!==undefined
+    ||stockPackedMap[itemName]!==undefined
     ||stockPendingMap[itemName]!==undefined
     ||stockExtraFruits.has(itemName);
 }
@@ -4904,7 +4905,7 @@ function renderStockTable(){
       '<td>'+escH(c.item_name)+historyHtml+'</td>'+
       '<td>'+openingControl+'</td>'+
       '<td>'+s.purchased.toFixed(2)+' '+escH(unit)+' <a class="or-link" onclick="openStockPurchaseModal('+escH(JSON.stringify(c.item_name))+')">manage</a></td>'+
-      '<td>'+s.invoiced.toFixed(2)+' '+escH(unit)+'</td>'+
+      '<td>'+s.packed.toFixed(2)+' '+escH(unit)+'</td>'+
       '<td>'+s.pending.toFixed(2)+' '+escH(unit)+'</td>'+
       '<td>'+s.available.toFixed(2)+' '+escH(unit)+' ('+Math.round(s.pct)+'%)</td>'+
       '<td>'+STOCK_STATUS_BADGE[s.status]+'</td>'+
