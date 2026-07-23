@@ -29,10 +29,14 @@ create table if not exists stock_purchases (
   created_at  timestamptz not null default now()
 );
 
-create index idx_stock_opening_date on stock_opening(date);
-create index idx_stock_purchases_date on stock_purchases(date);
-create index idx_stock_purchases_date_item on stock_purchases(date, item_name);
+create index if not exists idx_stock_opening_date        on stock_opening(date);
+create index if not exists idx_stock_purchases_date       on stock_purchases(date);
+create index if not exists idx_stock_purchases_date_item  on stock_purchases(date, item_name);
 
+-- drop-then-create rather than IF NOT EXISTS — Postgres doesn't support
+-- that clause for triggers/policies, and this whole file needs to be
+-- safely re-runnable if an earlier attempt got partway through.
+drop trigger if exists stock_opening_updated_at on stock_opening;
 create trigger stock_opening_updated_at
   before update on stock_opening
   for each row execute function update_updated_at();
@@ -44,6 +48,10 @@ create trigger stock_opening_updated_at
 alter table stock_opening   enable row level security;
 alter table stock_purchases enable row level security;
 
+drop policy if exists "stock_opening_read"    on stock_opening;
+drop policy if exists "stock_opening_write"   on stock_opening;
+drop policy if exists "stock_purchases_read"  on stock_purchases;
+drop policy if exists "stock_purchases_write" on stock_purchases;
 create policy "stock_opening_read"    on stock_opening   for select using (true);
 create policy "stock_opening_write"   on stock_opening   for all    using (true);
 create policy "stock_purchases_read"  on stock_purchases for select using (true);

@@ -13,14 +13,20 @@ create table if not exists stock_closing (
   unique (item_name, date)
 );
 
-create index idx_stock_closing_date on stock_closing(date);
-create index idx_stock_closing_item_date on stock_closing(item_name, date desc);
+create index if not exists idx_stock_closing_date      on stock_closing(date);
+create index if not exists idx_stock_closing_item_date  on stock_closing(item_name, date desc);
 
+-- drop-then-create rather than IF NOT EXISTS — Postgres doesn't support
+-- that clause for triggers/policies, and this file needs to be safely
+-- re-runnable if an earlier attempt got partway through.
+drop trigger if exists stock_closing_updated_at on stock_closing;
 create trigger stock_closing_updated_at
   before update on stock_closing
   for each row execute function update_updated_at();
 
 alter table stock_closing enable row level security;
+drop policy if exists "stock_closing_read"  on stock_closing;
+drop policy if exists "stock_closing_write" on stock_closing;
 create policy "stock_closing_read"  on stock_closing for select using (true);
 create policy "stock_closing_write" on stock_closing for all    using (true);
 
@@ -40,8 +46,10 @@ create table if not exists stock_opening_history (
   changed_at  timestamptz not null default now()
 );
 
-create index idx_stock_opening_history_lookup on stock_opening_history(item_name, date, changed_at desc);
+create index if not exists idx_stock_opening_history_lookup on stock_opening_history(item_name, date, changed_at desc);
 
 alter table stock_opening_history enable row level security;
+drop policy if exists "stock_opening_history_read"   on stock_opening_history;
+drop policy if exists "stock_opening_history_insert" on stock_opening_history;
 create policy "stock_opening_history_read"   on stock_opening_history for select using (true);
 create policy "stock_opening_history_insert" on stock_opening_history for insert with check (true);
