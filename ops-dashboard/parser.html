@@ -184,13 +184,19 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .community-table td{padding:4px 6px;border-bottom:1px solid #f1e9df;color:#5c4f42}
 .community-table input{width:90px;padding:4px 6px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit;background:#ffffff}
 .community-table input[type="text"]{width:110px}
-.stock-opening-input{width:80px;padding:5px 7px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit}
+.stock-qty-input{width:80px;padding:5px 7px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit}
 .stock-badge{display:inline-flex;align-items:center;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap}
 .stock-badge.stock-need{background:#fbe9e7;color:#b3261e}
 .stock-badge.stock-trending{background:#fff3b0;color:#8a6d00}
 .stock-badge.stock-ok{background:#e3f3e3;color:#2d6b2d}
 .stock-tranche-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid #f1e9df}
 .stock-tranche-time{color:#a39a8c;font-size:10px;margin-left:6px}
+.stock-history{font-size:9px;color:#a39a8c;white-space:normal;max-width:220px;margin-top:2px}
+.stock-qty-input:disabled{background:#f5efe6;color:#a39a8c;cursor:not-allowed}
+.stock-lock-note{font-size:9px;color:#a39a8c;display:block;margin-top:2px}
+.stock-wastage{display:inline-flex;flex-direction:column;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;line-height:1.6}
+.stock-wastage.stock-wastage-loss{background:#fbe9e7;color:#b3261e}
+.stock-wastage.stock-wastage-none{background:#e3f3e3;color:#2d6b2d}
 .del-btn{background:none;border:none;color:#b3261e;cursor:pointer;font-size:14px;padding:0 4px}
 .edit-btn{background:none;border:none;color:#2f6690;cursor:pointer;font-size:14px;padding:0 4px}
 .add-row{display:flex;gap:8px;margin-top:10px}
@@ -451,7 +457,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <div class="table-scroll">
     <table class="community-table" id="stock-table"><thead><tr>
-      <th>Fruit</th><th>Opening stock</th><th>Purchased today</th><th>Demand today</th><th>Remaining</th><th>Status</th>
+      <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Invoiced (sold)</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
   </div>
 </div>
@@ -4644,74 +4650,152 @@ async function undoDelivered(soid){
 // Shares the same viewDate as Overview/Packer/Delivery (see setViewDate) —
 // stock is a per-calendar-day thing just like orders are.
 //
-// "Need to order" rule: pool = opening stock + everything purchased today;
-// remaining = pool - today's order demand (aggregated live from
-// order_items, same source every other tab reads — nothing to keep in
-// sync); remaining_pct = remaining / pool. <20% = Need to Order, 20-35% =
-// Trending Low, otherwise OK. No forecasting/trend math — this is
-// deliberately just live numbers, re-checked every time the tab loads.
+// Daily cycle: previous day's closing stock (physical count) auto-
+// populates the next working day's opening stock (whichever is the most
+// recent stock_closing row before the viewed date — Sundays or any other
+// gap with nothing entered are skipped automatically, no day-of-week
+// logic needed). Opening can then be adjusted by hand that morning
+// (overnight spoilage etc.) up until packing actually starts for the day,
+// at which point it locks — the rest of the day's buying decisions are
+// made against that frozen baseline. Every manual opening-stock edit is
+// logged to stock_opening_history (who, from what, to what).
+//
+// Available = opening + today's purchases − invoiced (already sold) −
+// pending orders (active, not yet invoiced). "Need to order" rule:
+// pool = opening + purchases; available/pool <20% = Need to Order, 20-35%
+// = Trending Low, otherwise OK — deliberately just live numbers, no
+// forecasting math.
+//
+// At day's end, closing stock (physical recount) is entered; wastage =
+// available − closing, in both quantity and ₹ (qty × catalog unit_price).
 let stockCatalog=[];
-let stockOpeningMap={};    // item_name -> opening_qty
-let stockPurchasesMap={};  // item_name -> [{id,qty,source,created_at}]
-let stockDemandMap={};     // item_name -> today's aggregated order demand
-let stockStatusFilter='all'; // 'all' | 'need' | 'trending' | 'ok'
+let stockOpeningMap={};        // item_name -> opening_qty
+let stockOpeningHistoryMap={}; // item_name -> [{old_qty,new_qty,changed_by,changed_at}] desc, today only
+let stockClosingMap={};        // item_name -> closing_qty
+let stockPurchasesMap={};      // item_name -> [{id,qty,source,created_at}]
+let stockInvoicedMap={};       // item_name -> qty already invoiced (sold) today
+let stockPendingMap={};        // item_name -> qty still active but not yet invoiced today
+let stockPackingStarted=false; // true once any item has reached 'packed' or beyond for the viewed date
+let stockStatusFilter='all';   // 'all' | 'need' | 'trending' | 'ok'
 let stockPurchaseTargetItem=null;
 // Fruits explicitly added to today's view via the "+ Add" picker even
 // though they have no activity yet (no opening stock/purchases/demand) —
 // session-only, resets whenever the date changes. Nothing is written to
 // the DB just from adding a row; that only happens once an actual value
-// (opening stock or a purchase) is saved for it.
+// (opening stock, closing stock, or a purchase) is saved for it.
 let stockExtraFruits=new Set();
+
+const STOCK_COLSPAN=9;
 
 async function loadStockView(){
   const tbody=document.getElementById('stock-tbody');
   document.getElementById('stock-label').textContent=
     viewDate===CALENDAR_TODAY?'Stock':'Stock — '+viewDate;
-  tbody.innerHTML='<tr><td colspan="6" class="to-empty">Loading…</td></tr>';
+  tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">Loading…</td></tr>';
   stockExtraFruits=new Set();
 
-  const[catalog,openingRes,purchaseRes,itemsRes]=await Promise.all([
+  const[catalog,openingRes,closingRes,purchaseRes,itemsRes,historyRes]=await Promise.all([
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
     sb.from('stock_opening').select('item_name,opening_qty').eq('date',viewDate),
+    sb.from('stock_closing').select('item_name,closing_qty').eq('date',viewDate),
     sb.from('stock_purchases').select('id,item_name,qty,source,created_at').eq('date',viewDate).order('created_at'),
     fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
+    sb.from('stock_opening_history').select('item_name,old_qty,new_qty,changed_by,changed_at').eq('date',viewDate).order('changed_at',{ascending:false}),
   ]);
-  const firstErr=openingRes.error||purchaseRes.error||itemsRes.error;
-  if(firstErr){tbody.innerHTML='<tr><td colspan="6" class="to-empty">'+escH(firstErr.message)+'</td></tr>';return;}
+  const firstErr=openingRes.error||closingRes.error||purchaseRes.error||itemsRes.error||historyRes.error;
+  if(firstErr){tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">'+escH(firstErr.message)+'</td></tr>';return;}
 
   stockCatalog=catalog||[];
 
   stockOpeningMap={};
   (openingRes.data||[]).forEach(r=>{stockOpeningMap[r.item_name]=r.opening_qty;});
 
+  stockClosingMap={};
+  (closingRes.data||[]).forEach(r=>{stockClosingMap[r.item_name]=r.closing_qty;});
+
   stockPurchasesMap={};
   (purchaseRes.data||[]).forEach(r=>{
     (stockPurchasesMap[r.item_name]=stockPurchasesMap[r.item_name]||[]).push(r);
   });
 
-  // Cancelled items never needed — a rejected/cancelled line item was never
-  // actually going to consume stock.
-  stockDemandMap={};
+  // Already-sold (invoiced) and still-pending (active but not yet
+  // invoiced) demand tracked separately — cancelled items never counted
+  // toward either, since a rejected line item was never going to consume
+  // stock.
+  stockInvoicedMap={};
+  stockPendingMap={};
   (itemsRes.data||[]).filter(i=>i.status!=='cancelled').forEach(i=>{
     const qty=i.final_quantity??i.requested_quantity;
-    stockDemandMap[i.item_name]=(stockDemandMap[i.item_name]||0)+qty;
+    const map=i.status==='invoiced'?stockInvoicedMap:stockPendingMap;
+    map[i.item_name]=(map[i.item_name]||0)+qty;
   });
 
+  stockPackingStarted=(itemsRes.data||[]).some(i=>i.status!=='cancelled'&&ITEM_STATUS_RANK[i.status]>=ITEM_STATUS_RANK.packed);
+
+  stockOpeningHistoryMap={};
+  (historyRes.data||[]).forEach(r=>{
+    (stockOpeningHistoryMap[r.item_name]=stockOpeningHistoryMap[r.item_name]||[]).push(r);
+  });
+
+  await autoPopulateStockOpening();
   renderStockTable();
+}
+
+// Seeds today's opening stock from the most recent prior day's closing
+// count, for any fruit that was being tracked before but doesn't already
+// have an opening entry for the viewed date — a no-op on every reload
+// after the first, since it only ever fills in what's missing. Logged to
+// history like any other opening-stock change, attributed to "Auto"
+// rather than a person, so the trail still shows where the starting
+// number came from.
+async function autoPopulateStockOpening(){
+  const missing=stockCatalog.filter(c=>stockOpeningMap[c.item_name]===undefined);
+  if(!missing.length)return;
+
+  const{data,error}=await sb.from('stock_closing')
+    .select('item_name,closing_qty,date')
+    .lt('date',viewDate)
+    .order('date',{ascending:false})
+    .limit(2000);
+  if(error||!data||!data.length)return;
+
+  const lastClosingByItem={};
+  data.forEach(r=>{
+    if(lastClosingByItem[r.item_name]===undefined)lastClosingByItem[r.item_name]=r;
+  });
+
+  // Each fruit's own upsert-then-insert must stay sequential (the history
+  // row needs the upsert to have succeeded first), but different fruits
+  // are independent — parallelize across those so a fresh morning with a
+  // dozen+ fruits to seed doesn't serialize one at a time.
+  const toSeed=missing.filter(c=>lastClosingByItem[c.item_name]);
+  await Promise.all(toSeed.map(async c=>{
+    const prior=lastClosingByItem[c.item_name];
+    const{error:upErr}=await sb.from('stock_opening')
+      .upsert({item_name:c.item_name,date:viewDate,opening_qty:prior.closing_qty},{onConflict:'item_name,date'});
+    if(upErr)return;
+    stockOpeningMap[c.item_name]=prior.closing_qty;
+    const historyRow={item_name:c.item_name,date:viewDate,old_qty:null,new_qty:prior.closing_qty,changed_by:'Auto (from '+prior.date+"'s closing)"};
+    const{error:histErr}=await sb.from('stock_opening_history').insert(historyRow);
+    if(!histErr)(stockOpeningHistoryMap[c.item_name]=stockOpeningHistoryMap[c.item_name]||[]).unshift(historyRow);
+  }));
 }
 
 function stockStatusFor(itemName){
   const opening=stockOpeningMap[itemName]||0;
   const purchased=(stockPurchasesMap[itemName]||[]).reduce((s,p)=>s+p.qty,0);
-  const demand=stockDemandMap[itemName]||0;
+  const invoiced=stockInvoicedMap[itemName]||0;
+  const pending=stockPendingMap[itemName]||0;
   const pool=opening+purchased;
-  const remaining=pool-demand;
+  const available=pool-invoiced-pending;
   // No pool entered at all (opening/purchases both zero) but nothing's
   // been ordered either — nothing to flag, reads as OK rather than a
   // false "need to order" from a 0/0 fruit nobody's touched today.
-  const pct=pool>0?(remaining/pool*100):(demand>0?0:100);
+  const pct=pool>0?(available/pool*100):((invoiced+pending)>0?0:100);
   const status=pct<20?'need':(pct<35?'trending':'ok');
-  return{opening,purchased,demand,pool,remaining,pct,status};
+  const closing=stockClosingMap[itemName];
+  const wastageQty=closing!=null?(available-closing):null;
+  return{opening,purchased,invoiced,pending,pool,available,pct,status,closing,wastageQty};
 }
 
 const STOCK_STATUS_BADGE={
@@ -4721,13 +4805,15 @@ const STOCK_STATUS_BADGE={
 };
 
 // A fruit only shows in the table once it's "active" for the day — has an
-// opening stock entry, a purchase, order demand, or was explicitly added
-// via the "+ Add" picker. Otherwise every one of the ~75 catalog fruits
-// would show up unconditionally, most with nothing to say.
+// opening/closing stock entry, a purchase, order demand, or was
+// explicitly added via the "+ Add" picker. Otherwise every one of the ~75
+// catalog fruits would show up unconditionally, most with nothing to say.
 function isStockFruitActive(itemName){
   return stockOpeningMap[itemName]!==undefined
+    ||stockClosingMap[itemName]!==undefined
     ||(stockPurchasesMap[itemName]&&stockPurchasesMap[itemName].length>0)
-    ||stockDemandMap[itemName]!==undefined
+    ||stockInvoicedMap[itemName]!==undefined
+    ||stockPendingMap[itemName]!==undefined
     ||stockExtraFruits.has(itemName);
 }
 
@@ -4791,31 +4877,62 @@ function renderStockTable(){
     const emptyMsg=(search||stockStatusFilter!=='all')
       ?'No fruits match'
       :'Nothing tracked yet today — add a fruit above to get started, or it\'ll appear automatically once an order or stock entry comes in for it.';
-    tbody.innerHTML='<tr><td colspan="6" class="to-empty">'+emptyMsg+'</td></tr>';
+    tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">'+emptyMsg+'</td></tr>';
     return;
   }
 
   tbody.innerHTML=rows.map(c=>{
     const s=stockStatusFor(c.item_name);
     const unit=c.unit||'';
+    const history=(stockOpeningHistoryMap[c.item_name]||[]).slice(0,3);
+    const historyHtml=history.length
+      ?'<div class="stock-history">'+history.map(h=>
+          escH(h.changed_by||'—')+': '+(h.old_qty??'–')+'→'+h.new_qty+' ('+new Date(h.changed_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+')'
+        ).join(' · ')+'</div>'
+      :'';
+    const openingControl=stockPackingStarted
+      ?'<input type="number" class="stock-qty-input" step="0.01" min="0" value="'+(stockOpeningMap[c.item_name]??'')+'" disabled title="Locked — packing has started for today">'+
+        '<span class="stock-lock-note">🔒 locked (packing started)</span>'
+      :'<input type="number" class="stock-qty-input" step="0.01" min="0" value="'+(stockOpeningMap[c.item_name]??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
+        '<button class="pk-tick" disabled onclick="saveStockOpening(this.previousElementSibling,'+escH(JSON.stringify(c.item_name))+')" title="Save opening stock">✓</button>';
+    const wastageHtml=s.wastageQty==null
+      ?'—'
+      :'<span class="stock-wastage '+(s.wastageQty>0?'stock-wastage-loss':'stock-wastage-none')+'">'+
+          s.wastageQty.toFixed(2)+' '+escH(unit)+'<span>₹'+(s.wastageQty*(c.unit_price||0)).toFixed(0)+'</span>'+
+        '</span>';
     return '<tr>'+
-      '<td>'+escH(c.item_name)+'</td>'+
-      '<td><input type="number" class="stock-opening-input" step="0.01" min="0" value="'+(stockOpeningMap[c.item_name]??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
-        '<button class="pk-tick" disabled onclick="saveStockOpening(this.previousElementSibling,'+escH(JSON.stringify(c.item_name))+')" title="Save opening stock">✓</button></td>'+
+      '<td>'+escH(c.item_name)+historyHtml+'</td>'+
+      '<td>'+openingControl+'</td>'+
       '<td>'+s.purchased.toFixed(2)+' '+escH(unit)+' <a class="or-link" onclick="openStockPurchaseModal('+escH(JSON.stringify(c.item_name))+')">manage</a></td>'+
-      '<td>'+s.demand.toFixed(2)+' '+escH(unit)+'</td>'+
-      '<td>'+s.remaining.toFixed(2)+' '+escH(unit)+' ('+Math.round(s.pct)+'%)</td>'+
+      '<td>'+s.invoiced.toFixed(2)+' '+escH(unit)+'</td>'+
+      '<td>'+s.pending.toFixed(2)+' '+escH(unit)+'</td>'+
+      '<td>'+s.available.toFixed(2)+' '+escH(unit)+' ('+Math.round(s.pct)+'%)</td>'+
       '<td>'+STOCK_STATUS_BADGE[s.status]+'</td>'+
+      '<td><input type="number" class="stock-qty-input" step="0.01" min="0" value="'+(stockClosingMap[c.item_name]??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
+        '<button class="pk-tick" disabled onclick="saveStockClosing(this.previousElementSibling,'+escH(JSON.stringify(c.item_name))+')" title="Save closing stock">✓</button></td>'+
+      '<td>'+wastageHtml+'</td>'+
     '</tr>';
   }).join('');
 }
 
 async function saveStockOpening(inputEl,itemName){
-  const qty=parseFloat(inputEl.value)||0;
+  const newQty=parseFloat(inputEl.value)||0;
+  const oldQty=stockOpeningMap[itemName]??null;
   const{error}=await sb.from('stock_opening')
-    .upsert({item_name:itemName,date:viewDate,opening_qty:qty},{onConflict:'item_name,date'});
+    .upsert({item_name:itemName,date:viewDate,opening_qty:newQty},{onConflict:'item_name,date'});
   if(error){uxAlert('Failed to save: '+error.message);return;}
-  stockOpeningMap[itemName]=qty;
+  await sb.from('stock_opening_history').insert({item_name:itemName,date:viewDate,old_qty:oldQty,new_qty:newQty,changed_by:riderName||null});
+  stockOpeningMap[itemName]=newQty;
+  (stockOpeningHistoryMap[itemName]=stockOpeningHistoryMap[itemName]||[]).unshift({item_name:itemName,old_qty:oldQty,new_qty:newQty,changed_by:riderName||null,changed_at:new Date().toISOString()});
+  renderStockTable();
+}
+
+async function saveStockClosing(inputEl,itemName){
+  const qty=parseFloat(inputEl.value)||0;
+  const{error}=await sb.from('stock_closing')
+    .upsert({item_name:itemName,date:viewDate,closing_qty:qty},{onConflict:'item_name,date'});
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  stockClosingMap[itemName]=qty;
   renderStockTable();
 }
 
