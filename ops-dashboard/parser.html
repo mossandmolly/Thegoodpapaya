@@ -683,7 +683,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
   <div class="config-section">
     <h3>🏘️ Communities <span style="font-size:11px;color:#8a7a6a;font-weight:400">(lat/lng + trip grouping — feeds the Trip view on Overview/Packer/Delivery)</span></h3>
-    <p class="note">Communities are added automatically as new orders come in — this is just for filling in each one's coordinates and trip grouping, not for adding new ones by hand. Combinable group is a plain label you choose — any communities sharing the same label become one trip together; leave it blank to let a community be its own single-community trip.</p>
+    <p class="note">Communities are also added automatically as new orders come in — this list is for filling in each one's coordinates and trip grouping, plus adding/renaming/removing entries by hand. Combinable group is a plain label you choose — any communities sharing the same label become one trip together; leave it blank to let a community be its own single-community trip. Renaming one only fixes this record — if new orders keep deriving the old name from a customer's address, that name will just get auto-recreated alongside it, so renaming is best used for one-off typo fixes, not an ongoing display name.</p>
+    <div class="add-row">
+      <input type="text" id="new-community-name" placeholder="New community name">
+      <button onclick="addCommunity()">Add</button>
+    </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
         <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th></th>
@@ -973,24 +977,30 @@ function renderCommunityTable(rows){
   if(!tbody)return;
   tbody.innerHTML=rows.map(c=>
     '<tr>'+
-      '<td>'+escH(c.name)+'</td>'+
+      '<td><input type="text" id="comm-name-'+c.id+'" value="'+escH(c.name)+'"></td>'+
       '<td><input type="number" step="0.000001" id="comm-lat-'+c.id+'" value="'+(c.lat??'')+'"></td>'+
       '<td><input type="number" step="0.000001" id="comm-lng-'+c.id+'" value="'+(c.lng??'')+'"></td>'+
       '<td><input type="text" id="comm-group-'+c.id+'" value="'+escH(c.combinable_group||'')+'" placeholder="e.g. north-cluster"></td>'+
       '<td><input type="number" id="comm-rank-'+c.id+'" value="'+(c.stack_rank??'')+'"></td>'+
       '<td><input type="time" id="comm-nlt-'+c.id+'" value="'+(c.no_later_than?c.no_later_than.slice(0,5):'')+'"></td>'+
-      '<td><button class="del-btn" style="color:#2d6b2d" onclick="saveCommunity('+escH(JSON.stringify(c.id))+')" title="Save">💾</button></td>'+
+      '<td style="white-space:nowrap">'+
+        '<button class="del-btn" style="color:#2d6b2d" onclick="saveCommunity('+escH(JSON.stringify(c.id))+')" title="Save">💾</button>'+
+        '<button class="del-btn" onclick="deleteCommunity('+escH(JSON.stringify(c.id))+','+escH(JSON.stringify(c.name))+')" title="Delete">✕</button>'+
+      '</td>'+
     '</tr>'
   ).join('');
 }
 
 async function saveCommunity(id){
+  const name=document.getElementById('comm-name-'+id).value.trim();
+  if(!name){uxAlert('Community name can\'t be empty');return;}
   const lat=document.getElementById('comm-lat-'+id).value;
   const lng=document.getElementById('comm-lng-'+id).value;
   const group=document.getElementById('comm-group-'+id).value.trim();
   const rank=document.getElementById('comm-rank-'+id).value;
   const nlt=document.getElementById('comm-nlt-'+id).value;
   const update={
+    name,
     lat:              lat===''?null:parseFloat(lat),
     lng:              lng===''?null:parseFloat(lng),
     combinable_group: group||null,
@@ -999,6 +1009,23 @@ async function saveCommunity(id){
   };
   const{error}=await sb.from('communities').update(update).eq('id',id);
   if(error){uxAlert('Failed to save: '+error.message);return;}
+  await loadCommunitiesConfig();
+}
+
+async function addCommunity(){
+  const input=document.getElementById('new-community-name');
+  const name=input.value.trim();
+  if(!name)return;
+  const{error}=await sb.from('communities').insert({name});
+  if(error){uxAlert('Failed to add: '+error.message);return;}
+  input.value='';
+  await loadCommunitiesConfig();
+}
+
+async function deleteCommunity(id,name){
+  if(!await uxConfirm('Remove community "'+name+'"? If new orders keep deriving this name from a customer address, it\'ll just get auto-recreated.'))return;
+  const{error}=await sb.from('communities').delete().eq('id',id);
+  if(error){uxAlert('Failed to delete: '+error.message);return;}
   await loadCommunitiesConfig();
 }
 
