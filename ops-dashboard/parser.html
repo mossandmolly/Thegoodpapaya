@@ -4857,19 +4857,40 @@ function stockAvailableToPick(){
     .sort((a,b)=>a.localeCompare(b));
 }
 
+// Deliberately not using the shared attachAutocomplete() helper here — its
+// render path awaits getOptions() (needed elsewhere, where the options
+// come from a real fetch), and that extra microtask tick was enough to
+// occasionally lose the "is the input still focused?" check by the time
+// render() actually ran, leaving the list stuck hidden. stockAvailableToPick
+// is already synchronous, so this renders inline within the same event —
+// no await, no race.
 const stockAddFruitInput=document.getElementById('stock-add-fruit-input');
-attachAutocomplete(stockAddFruitInput,document.getElementById('stock-add-fruit-ac'),
-  ()=>stockAvailableToPick(),'Nothing left to add','No matching fruit');
+const stockAddFruitAc=document.getElementById('stock-add-fruit-ac');
 
-// attachAutocomplete dispatches a 'change' event when a suggestion is
-// clicked — that's the one signal to treat as "confirmed pick" (typing
-// alone, without picking from the list, never fires this), so there's no
-// risk of adding a name that isn't a real catalog fruit.
-stockAddFruitInput.addEventListener('change',function(){
-  const name=this.value.trim();
-  this.value='';
-  if(!name||!stockAvailableToPick().includes(name))return;
+function renderStockFruitOptions(){
+  if(document.activeElement!==stockAddFruitInput){stockAddFruitAc.classList.add('hidden');return;}
+  const q=stockAddFruitInput.value.trim().toLowerCase();
+  const all=stockAvailableToPick();
+  const matches=q?all.filter(n=>n.toLowerCase().includes(q)):all;
+  if(!matches.length){
+    stockAddFruitAc.innerHTML='<div class="ac-item ac-empty">'+(all.length?'No matching fruit':'Nothing left to add')+'</div>';
+  }else{
+    stockAddFruitAc.innerHTML=matches.map(n=>'<div class="ac-item">'+escH(n)+'</div>').join('');
+  }
+  stockAddFruitAc.classList.remove('hidden');
+}
+stockAddFruitInput.addEventListener('focus',renderStockFruitOptions);
+stockAddFruitInput.addEventListener('input',renderStockFruitOptions);
+stockAddFruitInput.addEventListener('blur',()=>{setTimeout(()=>stockAddFruitAc.classList.add('hidden'),150);});
+stockAddFruitAc.addEventListener('mousedown',e=>{
+  const item=e.target.closest('.ac-item');
+  if(!item||item.classList.contains('ac-empty'))return;
+  e.preventDefault();
+  const name=item.textContent;
+  stockAddFruitAc.classList.add('hidden');
+  if(!stockAvailableToPick().includes(name))return;
   stockPendingFruitPicks.add(name);
+  stockAddFruitInput.value='';
   renderStockFruitPills();
 });
 
