@@ -183,6 +183,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    whole thing lays out flat and just scrolls with the page like any
    other content, not a scrollbox-within-a-scrollbox. */
 .stock-table-wrap{width:100%;overflow-x:visible}
+.stock-fruit-pills{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.stock-fruit-pill{display:inline-flex;align-items:center;gap:6px;background:#fdf3e7;border:1px solid #f0dcc0;border-radius:14px;padding:5px 6px 5px 12px;font-size:12px;color:#5c4f42}
+.stock-fruit-pill button{background:none;border:none;color:#b3261e;cursor:pointer;font-size:13px;font-weight:700;padding:0 4px;line-height:1}
 .community-table{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
 .community-table th{text-align:left;color:#8a7a6a;font-weight:600;padding:4px 6px;border-bottom:1px solid #eee0d0;position:sticky;top:0;background:#fdf8f3}
 .community-table td{padding:4px 6px;border-bottom:1px solid #f1e9df;color:#5c4f42}
@@ -453,11 +456,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <input type="text" class="pk-search" id="stock-search" placeholder="🔍 Search fruit..." oninput="renderStockTable()">
   <div id="stock-summary-pills" class="filter-pills status-pills"></div>
-  <div class="add-row" style="margin-top:0;align-items:flex-start">
-    <select id="stock-add-fruit-picker" multiple size="6" style="flex:2"></select>
-    <button type="button" onclick="addStockFruitRow()">+ Add selected</button>
+  <div class="add-row" style="margin-top:0">
+    <div class="ac-wrap" style="flex:2">
+      <input type="text" id="stock-add-fruit-input" placeholder="Type a fruit name to track…" autocomplete="off">
+      <div class="ac-list hidden" id="stock-add-fruit-ac"></div>
+    </div>
+    <button type="button" id="stock-add-fruit-btn" disabled onclick="commitStockFruitPicks()">+ Add (0)</button>
   </div>
-  <p class="note" style="margin:-4px 0 10px">Ctrl/Cmd-click (or tap each one on mobile) to pick several fruits at once, then Add selected.</p>
+  <div class="stock-fruit-pills" id="stock-fruit-pills"></div>
   <div class="stock-table-wrap">
     <table class="community-table" id="stock-table"><thead><tr>
       <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Packed/Invoiced</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
@@ -4689,6 +4695,11 @@ async function loadStockView(){
   document.getElementById('stock-label').textContent=
     viewDate===CALENDAR_TODAY?'Stock':'Stock — '+viewDate;
   tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">Loading…</td></tr>';
+  // A pick made before switching dates doesn't carry meaning on a
+  // different day's stock — clear the pending pills rather than let them
+  // silently follow the date change.
+  stockPendingFruitPicks=new Set();
+  renderStockFruitPills();
 
   const[catalog,openingRes,closingRes,purchaseRes,itemsRes,historyRes]=await Promise.all([
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
@@ -4832,25 +4843,53 @@ function setStockStatusFilter(key){
   renderStockTable();
 }
 
-// Only offers fruits not already showing — picking one that's already
-// active would just be a confusing no-op.
-function renderStockAddFruitPicker(activeCatalog){
-  const activeNames=new Set(activeCatalog.map(c=>c.item_name));
-  const sel=document.getElementById('stock-add-fruit-picker');
-  // Re-render happens on every search/filter change too (not just when the
-  // tracked-fruit set itself changes) — capture and reapply whatever's
-  // currently picked so mid-selection isn't wiped out by an unrelated
-  // keystroke elsewhere on the tab.
-  const previouslySelected=new Set([...sel.selectedOptions].map(o=>o.value));
-  const options=stockCatalog.filter(c=>!activeNames.has(c.item_name)).sort((a,b)=>a.item_name.localeCompare(b.item_name));
-  sel.innerHTML=options.map(c=>
-    '<option value="'+escH(c.item_name)+'"'+(previouslySelected.has(c.item_name)?' selected':'')+'>'+escH(c.item_name)+'</option>'
-  ).join('');
+// Fruits picked (typed + selected from the autocomplete) but not yet
+// committed — shown as removable pills, cleared on commit or on a date
+// change. Nothing's written to the DB until "+ Add" is actually clicked.
+let stockPendingFruitPicks=new Set();
+
+// Catalog fruits not already tracked today and not already sitting in a
+// pending pill — the pool the autocomplete offers.
+function stockAvailableToPick(){
+  return stockCatalog
+    .map(c=>c.item_name)
+    .filter(n=>!isStockFruitActive(n)&&!stockPendingFruitPicks.has(n))
+    .sort((a,b)=>a.localeCompare(b));
 }
 
-async function addStockFruitRow(){
-  const sel=document.getElementById('stock-add-fruit-picker');
-  const names=[...sel.selectedOptions].map(o=>o.value);
+const stockAddFruitInput=document.getElementById('stock-add-fruit-input');
+attachAutocomplete(stockAddFruitInput,document.getElementById('stock-add-fruit-ac'),
+  ()=>stockAvailableToPick(),'Nothing left to add','No matching fruit');
+
+// attachAutocomplete dispatches a 'change' event when a suggestion is
+// clicked — that's the one signal to treat as "confirmed pick" (typing
+// alone, without picking from the list, never fires this), so there's no
+// risk of adding a name that isn't a real catalog fruit.
+stockAddFruitInput.addEventListener('change',function(){
+  const name=this.value.trim();
+  this.value='';
+  if(!name||!stockAvailableToPick().includes(name))return;
+  stockPendingFruitPicks.add(name);
+  renderStockFruitPills();
+});
+
+function removeStockFruitPick(name){
+  stockPendingFruitPicks.delete(name);
+  renderStockFruitPills();
+}
+
+function renderStockFruitPills(){
+  const names=[...stockPendingFruitPicks].sort((a,b)=>a.localeCompare(b));
+  document.getElementById('stock-fruit-pills').innerHTML=names.map(n=>
+    '<span class="stock-fruit-pill">'+escH(n)+'<button onclick="removeStockFruitPick('+escH(JSON.stringify(n))+')" title="Remove">✕</button></span>'
+  ).join('');
+  const btn=document.getElementById('stock-add-fruit-btn');
+  btn.textContent='+ Add ('+names.length+')';
+  btn.disabled=names.length===0;
+}
+
+async function commitStockFruitPicks(){
+  const names=[...stockPendingFruitPicks];
   if(!names.length)return;
   // Persisted immediately (opening stock = 0, logged to history like any
   // other opening-stock write) rather than just a session flag — otherwise
@@ -4866,6 +4905,8 @@ async function addStockFruitRow(){
     if(!histErr)(stockOpeningHistoryMap[name]=stockOpeningHistoryMap[name]||[]).unshift({...historyRow,changed_at:new Date().toISOString()});
     stockOpeningMap[name]=0;
   }));
+  stockPendingFruitPicks=new Set();
+  renderStockFruitPills();
   // Reset the filters so the newly added rows are immediately visible
   // instead of silently hidden behind whatever status/search filter
   // happened to be active.
@@ -4877,7 +4918,6 @@ async function addStockFruitRow(){
 function renderStockTable(){
   const activeCatalog=stockCatalog.filter(c=>isStockFruitActive(c.item_name));
   renderStockSummaryPills(activeCatalog);
-  renderStockAddFruitPicker(activeCatalog);
   const search=document.getElementById('stock-search').value.trim().toLowerCase();
   const tbody=document.getElementById('stock-tbody');
 
