@@ -179,6 +179,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .config-list li:last-child{border-bottom:none}
 .config-list li span{color:#8a7a6a;font-size:11px;margin-left:8px;flex-shrink:0}
 .table-scroll{max-height:320px;overflow-y:auto;overflow-x:auto}
+/* Stock's own table wrapper — no height cap, no forced scrollbar, so the
+   whole thing lays out flat and just scrolls with the page like any
+   other content, not a scrollbox-within-a-scrollbox. */
+.stock-table-wrap{width:100%;overflow-x:visible}
 .community-table{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
 .community-table th{text-align:left;color:#8a7a6a;font-weight:600;padding:4px 6px;border-bottom:1px solid #eee0d0;position:sticky;top:0;background:#fdf8f3}
 .community-table td{padding:4px 6px;border-bottom:1px solid #f1e9df;color:#5c4f42}
@@ -455,7 +459,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </select>
     <button type="button" onclick="addStockFruitRow()">+ Add</button>
   </div>
-  <div class="table-scroll">
+  <div class="stock-table-wrap">
     <table class="community-table" id="stock-table"><thead><tr>
       <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Packed/Invoiced</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
@@ -4678,12 +4682,6 @@ let stockPendingMap={};        // item_name -> qty still open/held (an order exi
 let stockPackingStarted=false; // true once any item has reached 'packed' or beyond for the viewed date
 let stockStatusFilter='all';   // 'all' | 'need' | 'trending' | 'ok'
 let stockPurchaseTargetItem=null;
-// Fruits explicitly added to today's view via the "+ Add" picker even
-// though they have no activity yet (no opening stock/purchases/demand) —
-// session-only, resets whenever the date changes. Nothing is written to
-// the DB just from adding a row; that only happens once an actual value
-// (opening stock, closing stock, or a purchase) is saved for it.
-let stockExtraFruits=new Set();
 
 const STOCK_COLSPAN=9;
 
@@ -4692,7 +4690,6 @@ async function loadStockView(){
   document.getElementById('stock-label').textContent=
     viewDate===CALENDAR_TODAY?'Stock':'Stock — '+viewDate;
   tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">Loading…</td></tr>';
-  stockExtraFruits=new Set();
 
   const[catalog,openingRes,closingRes,purchaseRes,itemsRes,historyRes]=await Promise.all([
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
@@ -4806,16 +4803,16 @@ const STOCK_STATUS_BADGE={
 };
 
 // A fruit only shows in the table once it's "active" for the day — has an
-// opening/closing stock entry, a purchase, order demand, or was
-// explicitly added via the "+ Add" picker. Otherwise every one of the ~75
-// catalog fruits would show up unconditionally, most with nothing to say.
+// opening/closing stock entry (including one seeded at 0 via "+ Add" —
+// that write is real and persists, not just a session flag), a purchase,
+// or order demand. Otherwise every one of the ~75 catalog fruits would
+// show up unconditionally, most with nothing to say.
 function isStockFruitActive(itemName){
   return stockOpeningMap[itemName]!==undefined
     ||stockClosingMap[itemName]!==undefined
     ||(stockPurchasesMap[itemName]&&stockPurchasesMap[itemName].length>0)
     ||stockPackedMap[itemName]!==undefined
-    ||stockPendingMap[itemName]!==undefined
-    ||stockExtraFruits.has(itemName);
+    ||stockPendingMap[itemName]!==undefined;
 }
 
 function renderStockSummaryPills(activeCatalog){
@@ -4846,11 +4843,21 @@ function renderStockAddFruitPicker(activeCatalog){
     options.map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('');
 }
 
-function addStockFruitRow(){
+async function addStockFruitRow(){
   const sel=document.getElementById('stock-add-fruit-picker');
   const name=sel.value;
   if(!name)return;
-  stockExtraFruits.add(name);
+  // Persisted immediately (opening stock = 0, logged to history like any
+  // other opening-stock write) rather than just a session flag — otherwise
+  // a fruit added to track would vanish again on the next reload/deploy,
+  // defeating the point of curating this list.
+  const{error}=await sb.from('stock_opening')
+    .upsert({item_name:name,date:viewDate,opening_qty:0},{onConflict:'item_name,date'});
+  if(error){uxAlert('Failed to add: '+error.message);return;}
+  const historyRow={item_name:name,date:viewDate,old_qty:null,new_qty:0,changed_by:riderName||null};
+  const{error:histErr}=await sb.from('stock_opening_history').insert(historyRow);
+  if(!histErr)(stockOpeningHistoryMap[name]=stockOpeningHistoryMap[name]||[]).unshift({...historyRow,changed_at:new Date().toISOString()});
+  stockOpeningMap[name]=0;
   // Reset the filters so the newly added row is immediately visible
   // instead of silently hidden behind whatever status/search filter
   // happened to be active.
