@@ -453,12 +453,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <input type="text" class="pk-search" id="stock-search" placeholder="🔍 Search fruit..." oninput="renderStockTable()">
   <div id="stock-summary-pills" class="filter-pills status-pills"></div>
-  <div class="add-row" style="margin-top:0">
-    <select id="stock-add-fruit-picker" style="flex:2">
-      <option value="">+ pick a fruit to track today…</option>
-    </select>
-    <button type="button" onclick="addStockFruitRow()">+ Add</button>
+  <div class="add-row" style="margin-top:0;align-items:flex-start">
+    <select id="stock-add-fruit-picker" multiple size="6" style="flex:2"></select>
+    <button type="button" onclick="addStockFruitRow()">+ Add selected</button>
   </div>
+  <p class="note" style="margin:-4px 0 10px">Ctrl/Cmd-click (or tap each one on mobile) to pick several fruits at once, then Add selected.</p>
   <div class="stock-table-wrap">
     <table class="community-table" id="stock-table"><thead><tr>
       <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Packed/Invoiced</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
@@ -4838,27 +4837,36 @@ function setStockStatusFilter(key){
 function renderStockAddFruitPicker(activeCatalog){
   const activeNames=new Set(activeCatalog.map(c=>c.item_name));
   const sel=document.getElementById('stock-add-fruit-picker');
+  // Re-render happens on every search/filter change too (not just when the
+  // tracked-fruit set itself changes) — capture and reapply whatever's
+  // currently picked so mid-selection isn't wiped out by an unrelated
+  // keystroke elsewhere on the tab.
+  const previouslySelected=new Set([...sel.selectedOptions].map(o=>o.value));
   const options=stockCatalog.filter(c=>!activeNames.has(c.item_name)).sort((a,b)=>a.item_name.localeCompare(b.item_name));
-  sel.innerHTML='<option value="">+ pick a fruit to track today…</option>'+
-    options.map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('');
+  sel.innerHTML=options.map(c=>
+    '<option value="'+escH(c.item_name)+'"'+(previouslySelected.has(c.item_name)?' selected':'')+'>'+escH(c.item_name)+'</option>'
+  ).join('');
 }
 
 async function addStockFruitRow(){
   const sel=document.getElementById('stock-add-fruit-picker');
-  const name=sel.value;
-  if(!name)return;
+  const names=[...sel.selectedOptions].map(o=>o.value);
+  if(!names.length)return;
   // Persisted immediately (opening stock = 0, logged to history like any
   // other opening-stock write) rather than just a session flag — otherwise
   // a fruit added to track would vanish again on the next reload/deploy,
-  // defeating the point of curating this list.
-  const{error}=await sb.from('stock_opening')
-    .upsert({item_name:name,date:viewDate,opening_qty:0},{onConflict:'item_name,date'});
-  if(error){uxAlert('Failed to add: '+error.message);return;}
-  const historyRow={item_name:name,date:viewDate,old_qty:null,new_qty:0,changed_by:riderName||null};
-  const{error:histErr}=await sb.from('stock_opening_history').insert(historyRow);
-  if(!histErr)(stockOpeningHistoryMap[name]=stockOpeningHistoryMap[name]||[]).unshift({...historyRow,changed_at:new Date().toISOString()});
-  stockOpeningMap[name]=0;
-  // Reset the filters so the newly added row is immediately visible
+  // defeating the point of curating this list. Each fruit is independent,
+  // so one failing doesn't block the rest.
+  await Promise.all(names.map(async name=>{
+    const{error}=await sb.from('stock_opening')
+      .upsert({item_name:name,date:viewDate,opening_qty:0},{onConflict:'item_name,date'});
+    if(error)return;
+    const historyRow={item_name:name,date:viewDate,old_qty:null,new_qty:0,changed_by:riderName||null};
+    const{error:histErr}=await sb.from('stock_opening_history').insert(historyRow);
+    if(!histErr)(stockOpeningHistoryMap[name]=stockOpeningHistoryMap[name]||[]).unshift({...historyRow,changed_at:new Date().toISOString()});
+    stockOpeningMap[name]=0;
+  }));
+  // Reset the filters so the newly added rows are immediately visible
   // instead of silently hidden behind whatever status/search filter
   // happened to be active.
   stockStatusFilter='all';
