@@ -67,6 +67,13 @@
     .btn-push:hover { opacity: 0.9; }
     .btn-clear { background: white; border: 1.5px solid var(--red, #c0392b); color: var(--red, #c0392b); }
     .btn-clear:hover { background: #fdecea; }
+
+    .live-actions { white-space: nowrap; }
+    .icon-btn { border: none; background: transparent; cursor: pointer; font-size: 0.85rem; padding: 3px 5px; border-radius: 4px; }
+    .icon-btn:hover { background: var(--bg); }
+    tr.editing td { background: #fffbeb; }
+    .live-edit-input { width: 100%; min-width: 60px; padding: 4px 6px; border: 1.5px solid var(--brand); border-radius: 4px; font-size: 12px; font-family: inherit; box-sizing: border-box; }
+    .live-edit-qty { width: 56px; }
   </style>
 </head>
 <body>
@@ -116,7 +123,7 @@
     <div class="live-table-wrap">
       <table id="liveTable">
         <thead>
-          <tr><th>Time</th><th>Group</th><th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Sales order</th></tr>
+          <tr><th>Time</th><th>Group</th><th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Sales order</th><th></th></tr>
         </thead>
         <tbody id="liveTableBody"></tbody>
       </table>
@@ -251,7 +258,9 @@ clearBtn.addEventListener('click', () => {
 
 // ── Live WhatsApp Orders — running list fed by the listener ────────────────
 const LIVE_POLL_MS = 20000;
+const EDIT_FIELDS = ['customer_name', 'item_name', 'description', 'quantity', 'sales_order'];
 let liveRows = [];
+let editingId = null;
 
 const liveTableBody = document.getElementById('liveTableBody');
 const liveEmpty     = document.getElementById('liveEmpty');
@@ -261,6 +270,7 @@ const livePushBtn   = document.getElementById('livePushBtn');
 const liveClearBtn  = document.getElementById('liveClearBtn');
 
 async function fetchLiveRows() {
+  if (editingId) return; // don't clobber an in-progress edit under the poller
   const { data, error } = await sb
     .from('whatsapp_parsed_orders')
     .select('*')
@@ -275,20 +285,83 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }
 
+function timeStr(ts) {
+  return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+}
+
 function renderLiveTable() {
   liveRowCount.textContent = liveRows.length ? liveRows.length + ' row' + (liveRows.length !== 1 ? 's' : '') : '';
   liveEmpty.classList.toggle('hidden', liveRows.length > 0);
-  liveTableBody.innerHTML = liveRows.map(r => `
-    <tr>
-      <td>${escapeHtml(new Date(r.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }))}</td>
+  liveTableBody.innerHTML = liveRows.map(r => r.id === editingId ? editRowHtml(r) : viewRowHtml(r)).join('');
+}
+
+function viewRowHtml(r) {
+  return `
+    <tr data-id="${r.id}">
+      <td>${escapeHtml(timeStr(r.created_at))}</td>
       <td>${escapeHtml(r.group_name)}</td>
       <td>${escapeHtml(r.customer_name)}</td>
       <td>${escapeHtml(r.item_name)}</td>
       <td>${escapeHtml(r.description)}</td>
       <td>${escapeHtml(r.quantity)}</td>
       <td>${escapeHtml(r.sales_order)}</td>
-    </tr>
-  `).join('');
+      <td class="live-actions"><button class="icon-btn" data-action="edit" data-id="${r.id}" title="Edit row">✏️</button></td>
+    </tr>`;
+}
+
+function editRowHtml(r) {
+  const input = (field, cls = '') =>
+    `<input class="live-edit-input ${cls}" data-field="${field}" value="${escapeHtml(r[field])}">`;
+  return `
+    <tr data-id="${r.id}" class="editing">
+      <td>${escapeHtml(timeStr(r.created_at))}</td>
+      <td>${escapeHtml(r.group_name)}</td>
+      <td>${input('customer_name')}</td>
+      <td>${input('item_name')}</td>
+      <td>${input('description')}</td>
+      <td>${input('quantity', 'live-edit-qty')}</td>
+      <td>${input('sales_order')}</td>
+      <td class="live-actions">
+        <button class="icon-btn" data-action="save" data-id="${r.id}" title="Save">✓</button>
+        <button class="icon-btn" data-action="cancel" data-id="${r.id}" title="Cancel">✕</button>
+      </td>
+    </tr>`;
+}
+
+liveTableBody.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+  if (action === 'edit') { editingId = id; renderLiveTable(); }
+  else if (action === 'cancel') { editingId = null; renderLiveTable(); }
+  else if (action === 'save') { await saveEdit(id, btn); }
+});
+
+async function saveEdit(id, saveBtn) {
+  const tr = liveTableBody.querySelector(`tr[data-id="${id}"]`);
+  if (!tr) return;
+  const updates = {};
+  EDIT_FIELDS.forEach(field => {
+    const val = tr.querySelector(`[data-field="${field}"]`).value.trim();
+    updates[field] = val || null;
+  });
+  if (!updates.customer_name || !updates.item_name) {
+    showToast('Customer and item cannot be empty', 'error');
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = '…';
+  const { error } = await sb.from('whatsapp_parsed_orders').update(updates).eq('id', id);
+  if (error) {
+    showToast('Save failed: ' + error.message, 'error');
+    saveBtn.disabled = false;
+    saveBtn.textContent = '✓';
+    return;
+  }
+  editingId = null;
+  await fetchLiveRows();
+  showToast('Row updated ✓');
 }
 
 liveCopyBtn.addEventListener('click', () => {
