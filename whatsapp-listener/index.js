@@ -98,10 +98,42 @@ async function flush(jid) {
   try {
     const result = await postToParser(payload)
     logResult(groupName, payload, result)
+    if (result?.rows?.length) {
+      const phoneBySender = new Map(b.items.map((m) => [m.sender, m.phone]))
+      await insertParsedRows(result.rows, payload.date, groupName, phoneBySender)
+    }
   } catch (e) {
     console.error('[parser] request failed:', e.message)
     logResult(groupName, payload, { error: e.message })
   }
+}
+
+// Writes parsed rows into the `whatsapp_parsed_orders` table that the parser
+// page's "Live WhatsApp Orders" list reads from.
+async function insertParsedRows(rows, orderDate, groupName, phoneBySender) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
+  const records = rows.map((r) => ({
+    order_date: r.order_date || orderDate,
+    group_name: groupName,
+    customer_name: r.customer_name,
+    phone: phoneBySender.get(r.customer_name) || null,
+    item_name: r.item_name,
+    description: r.description || null,
+    quantity: r.quantity != null ? String(r.quantity) : null,
+    sales_order: r.sales_order || null,
+  }))
+  const resp = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/whatsapp_parsed_orders`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify(records),
+  })
+  if (!resp.ok) throw new Error(`table insert failed: ${await resp.text()}`)
+  console.log(`[table] inserted ${records.length} row(s) into whatsapp_parsed_orders`)
 }
 
 async function postToParser(payload) {
