@@ -1,6 +1,7 @@
-// Supabase Edge Function — parse WhatsApp screenshot images OR voice/text orders
-// POST { images: [{data, media_type}], date? }  → image mode
-// POST { text, date? }                          → text mode
+// Supabase Edge Function — parse WhatsApp screenshot images, live listener text, or voice/text orders
+// POST { images: [{data, media_type}], date? }              → image mode
+// POST { messages: [{sender, phone, text, timestamp}], date? } → live text mode (WhatsApp listener)
+// POST { text, date? }                                        → text mode (ops voice/typed entry)
 
 function env(key: string, fallback?: string): string {
   return Deno.env.get(key) ?? fallback ?? '';
@@ -78,6 +79,51 @@ RULES:
 8. final_quantity and status = always empty string
 9. plain "mango" with no variety = flag, use item_name "Mango"
 10. plain "grapes" = Green grapes
+
+Respond ONLY with valid JSON, no markdown:
+{"rows":[{"order_date":"${today}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
+}
+
+// Same canonical item list / aliases / pc-to-kg / ignore-rules as the image parser above,
+// adapted for live WhatsApp text messages (from the group listener) instead of screenshots.
+// The sender name is already known from WhatsApp metadata, so unlike the image prompt we
+// don't need Claude to guess it from a bold/colored name in a chat bubble.
+function buildLiveTextSystemPrompt(today: string): string {
+  return `You are an order parser for Good Papaya, a fresh produce delivery business in Bengaluru. Parse live WhatsApp group messages into structured order rows.
+
+TODAY: ${today}
+
+Each line below is tagged "SenderName: message text" — SenderName is the real WhatsApp sender name (already includes flat/door number where the customer set that as their display name).
+
+CANONICAL ITEM NAMES — match input to EXACTLY one of these:
+${ITEM_NAMES.join(', ')}
+
+PIECE TO KG CONVERSIONS:
+${Object.entries(PC_TO_KG).map(([k,v]) => `${k}=${v}kg/pc`).join(', ')}
+
+ALIASES:
+mini orange/mini orange sweet/sweet orange → Mandarin orange
+yellaki/yellakki/yalakki/yalaki/elaichi banana/elachi banana/banana → Yelakki banana
+langda/langdaa/langra → Langra mango
+kesar → Kesar mango, alphonso → Alphonso mango, dasheri → Dasheri mango, badami → Badami mango
+beganpalli/baganpalli/pedanpally → Banganapalli mango
+cherry sweet/cherry → Cherry Indian
+jamun big/jamun small → Jamun (qualifier to description)
+grapes → Green grapes, litchi → Lychee, sweet lime → Mosambi, rocket apple → Rockit apple
+watermelon medium/small/large → Watermelon (qualifier to description)
+
+RULES:
+1. customer_name = the SenderName tag on each line, used exactly as given — do not reformat, guess, or invent a name
+2. Consecutive lines with the SAME SenderName tag are one order — combine all their item lines into that customer's order, the same way multiple lines under one WhatsApp chat bubble would be combined
+3. IGNORE lines with: complaint, photo, delivery, replacement, dry, not fresh, late, sorry, refund, missing, damaged, cancel, wrong, issue, feedback, 👍, 🙏
+4. IGNORE non-order messages (greetings, chit-chat, admin notices)
+5. item_name = ONLY base fruit name from canonical list, no qualifiers
+6. description = qualifier words only (big, small, medium, large, sweet, organic, raw etc.)
+7. Quantity: stated in kg/g → convert to kg (500g=0.5). Plain number or Npc → multiply by kg/pc if in table, add "assumed N pieces" to description. No qty → use 1, flag it.
+8. sales_order = ${today}-CustomerNameNoSpaces
+9. final_quantity and status = always empty string
+10. plain "mango" with no variety = flag, use item_name "Mango"
+11. plain "grapes" = Green grapes
 
 Respond ONLY with valid JSON, no markdown:
 {"rows":[{"order_date":"${today}","customer_name":"","item_name":"","description":"","quantity":0,"final_quantity":"","status":"","sales_order":""}],"flags":[]}`;
@@ -162,6 +208,37 @@ Deno.serve(async (req) => {
           max_tokens: 2000,
           system: buildImageSystemPrompt(today),
           messages: [{ role: 'user', content: [...imageBlocks, { type: 'text', text: 'Parse all orders from these screenshots. Return only JSON.' }] }]
+        }),
+      });
+
+      const aiData = await anthropicRes.json();
+      if (!anthropicRes.ok) throw new Error(aiData?.error?.message ?? `Anthropic error ${anthropicRes.status}`);
+
+      const raw = aiData.content?.[0]?.text ?? '{}';
+      let parsed: any;
+      try { parsed = JSON.parse(raw); }
+      catch (_) { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : { rows: [], flags: [] }; }
+
+      return new Response(JSON.stringify(parsed), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+
+    // ── LIVE TEXT MODE (WhatsApp group listener) ────────────────────────────
+    // POST { messages: [{ sender, phone, text, timestamp }], date?, groupName? }
+    // Same canonical item list / aliases / pc-to-kg table / ignore-rules as image mode.
+    if (body.messages && Array.isArray(body.messages) && body.messages.length > 0) {
+      const lines = body.messages
+        .map((m: any) => `${(m.sender ?? 'Unknown').toString().trim()}: ${(m.text ?? '').toString().trim()}`)
+        .filter((l: string) => l.length > 0)
+        .join('\n');
+
+      const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 2000,
+          system: buildLiveTextSystemPrompt(today),
+          messages: [{ role: 'user', content: `Parse all orders from these live WhatsApp messages. Return only JSON.\n\n${lines}` }]
         }),
       });
 
