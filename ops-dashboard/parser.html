@@ -50,6 +50,23 @@
     .hidden { display: none; }
     .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .live-section { margin-top: 32px; padding-top: 20px; border-top: 1.5px solid var(--border); }
+    .live-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+    .live-title { font-size: 1rem; font-weight: 600; color: var(--text); }
+    .live-sub { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 10px; }
+    .live-table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: auto; max-height: 360px; margin-bottom: 10px; }
+    #liveTable { width: 100%; border-collapse: collapse; font-size: 12px; }
+    #liveTable th { position: sticky; top: 0; background: var(--card-bg, #fff); text-align: left; padding: 8px 10px; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+    #liveTable td { padding: 7px 10px; border-bottom: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+    #liveTable tr:last-child td { border-bottom: none; }
+    .live-empty { padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
+    .live-btns { display: flex; gap: 8px; }
+    .live-btns button { flex: 1; margin-bottom: 0; }
+    .btn-push { background: var(--green, #2e7d32); color: white; border: none; }
+    .btn-push:hover { opacity: 0.9; }
+    .btn-clear { background: white; border: 1.5px solid var(--red, #c0392b); color: var(--red, #c0392b); }
+    .btn-clear:hover { background: #fdecea; }
   </style>
 </head>
 <body>
@@ -88,6 +105,28 @@
     <div class="tsv-box" id="tsvBox"></div>
     <button class="btn-sec" id="copyBtn">📋 Copy TSV</button>
     <button class="btn-sec" id="clearBtn">🔄 Clear & start over</button>
+  </div>
+
+  <div class="live-section">
+    <div class="live-header">
+      <span class="live-title">Live WhatsApp Orders</span>
+      <span class="live-sub" id="liveRowCount"></span>
+    </div>
+    <div class="live-sub">Running list from the WhatsApp listener — updates automatically, separate from the upload above.</div>
+    <div class="live-table-wrap">
+      <table id="liveTable">
+        <thead>
+          <tr><th>Time</th><th>Group</th><th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Sales order</th></tr>
+        </thead>
+        <tbody id="liveTableBody"></tbody>
+      </table>
+      <div class="live-empty hidden" id="liveEmpty">No live orders yet</div>
+    </div>
+    <div class="live-btns">
+      <button class="btn-sec" id="liveCopyBtn">📋 Copy TSV</button>
+      <button class="btn-sec btn-push" id="livePushBtn">📤 Push to operations</button>
+      <button class="btn-sec btn-clear" id="liveClearBtn">🗑 Clear</button>
+    </div>
   </div>
 </div>
 
@@ -209,6 +248,108 @@ clearBtn.addEventListener('click', () => {
   resultsWrap.classList.add('hidden');
   tsvBox.textContent = '';
 });
+
+// ── Live WhatsApp Orders — running list fed by the listener ────────────────
+const LIVE_POLL_MS = 20000;
+let liveRows = [];
+
+const liveTableBody = document.getElementById('liveTableBody');
+const liveEmpty     = document.getElementById('liveEmpty');
+const liveRowCount  = document.getElementById('liveRowCount');
+const liveCopyBtn   = document.getElementById('liveCopyBtn');
+const livePushBtn   = document.getElementById('livePushBtn');
+const liveClearBtn  = document.getElementById('liveClearBtn');
+
+async function fetchLiveRows() {
+  const { data, error } = await sb
+    .from('whatsapp_parsed_orders')
+    .select('*')
+    .eq('cleared', false)
+    .order('created_at', { ascending: true });
+  if (error) { console.error('live fetch failed:', error.message); return; }
+  liveRows = data || [];
+  renderLiveTable();
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+function renderLiveTable() {
+  liveRowCount.textContent = liveRows.length ? liveRows.length + ' row' + (liveRows.length !== 1 ? 's' : '') : '';
+  liveEmpty.classList.toggle('hidden', liveRows.length > 0);
+  liveTableBody.innerHTML = liveRows.map(r => `
+    <tr>
+      <td>${escapeHtml(new Date(r.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }))}</td>
+      <td>${escapeHtml(r.group_name)}</td>
+      <td>${escapeHtml(r.customer_name)}</td>
+      <td>${escapeHtml(r.item_name)}</td>
+      <td>${escapeHtml(r.description)}</td>
+      <td>${escapeHtml(r.quantity)}</td>
+      <td>${escapeHtml(r.sales_order)}</td>
+    </tr>
+  `).join('');
+}
+
+liveCopyBtn.addEventListener('click', () => {
+  const header = 'order_date\tcustomer_name\titem_name\tdescription\tquantity\tsales_order';
+  const lines = liveRows.map(r =>
+    [r.order_date, r.customer_name, r.item_name, r.description || '', r.quantity || '', r.sales_order || ''].join('\t')
+  );
+  navigator.clipboard.writeText([header, ...lines].join('\n')).then(() => {
+    liveCopyBtn.textContent = '✅ Copied!';
+    setTimeout(() => { liveCopyBtn.textContent = '📋 Copy TSV'; }, 2000);
+  });
+});
+
+livePushBtn.addEventListener('click', async () => {
+  if (!liveRows.length) return;
+  livePushBtn.disabled = true;
+  livePushBtn.textContent = 'Pushing…';
+  try {
+    const records = liveRows.map(r => ({
+      customer_name:      r.customer_name,
+      invoice_date:        r.order_date,
+      item_name:           r.item_name,
+      description:         r.description || null,
+      requested_quantity:  parseFloat(r.quantity) || 0,
+    }));
+    const phones = {};
+    liveRows.forEach(r => { if (r.phone) phones[r.customer_name] = r.phone; });
+    const res = await fetch(SUPABASE_URL + '/functions/v1/add-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON },
+      body: JSON.stringify({ records, phones, allowMissingPhones: true }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Push failed');
+
+    const ids = liveRows.map(r => r.id);
+    await sb.from('whatsapp_parsed_orders').update({ cleared: true }).in('id', ids);
+
+    const n = data.inserted || 0;
+    const heldMsg = data.held > 0 ? ' (' + data.held + ' held as duplicate)' : '';
+    showToast(n + ' item' + (n !== 1 ? 's' : '') + ' pushed to operations' + heldMsg + ' ✓');
+    await fetchLiveRows();
+  } catch (e) {
+    showToast('Push failed: ' + e.message, 'error');
+  } finally {
+    livePushBtn.disabled = false;
+    livePushBtn.textContent = '📤 Push to operations';
+  }
+});
+
+liveClearBtn.addEventListener('click', async () => {
+  if (!liveRows.length) return;
+  if (!confirm('Clear ' + liveRows.length + ' row(s) from the list? They stay in the database, just hidden here.')) return;
+  const ids = liveRows.map(r => r.id);
+  const { error } = await sb.from('whatsapp_parsed_orders').update({ cleared: true }).in('id', ids);
+  if (error) { showToast('Clear failed: ' + error.message, 'error'); return; }
+  await fetchLiveRows();
+});
+
+fetchLiveRows();
+setInterval(fetchLiveRows, LIVE_POLL_MS);
 </script>
 </body>
 </html>

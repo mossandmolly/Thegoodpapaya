@@ -60,12 +60,18 @@ JIDs from step 3, then redeploy. The listener will now:
    the first unflushed message.
 3. POST the batch to `parse-orders` (`liveText` mode) using
    `SUPABASE_SERVICE_ROLE_KEY`.
-4. Print the parsed rows/flags to the logs and append them to
-   `parsed-orders.log.jsonl` as an audit trail.
+4. Print the parsed rows/flags to the logs, append them to
+   `parsed-orders.log.jsonl` as an audit trail, and insert them into the
+   `whatsapp_parsed_orders` Supabase table (migration
+   `024_whatsapp_parsed_orders.sql`).
 
-Where those parsed rows go next (a review queue, straight into orders,
-etc.) hasn't been wired up yet — right now they're logged, not written into
-any table, so nothing acts on them automatically.
+That table feeds a new "Live WhatsApp Orders" section on
+[parser.html](https://goodpapaya-operations.netlify.app/parser.html) — a
+separate, running list from the image-upload table on the same page, polled
+every 20s, with its own Copy TSV / Push to operations / Clear controls.
+"Push to operations" calls the same `add-orders` function the manual entry
+page uses; "Clear" soft-hides rows (sets `cleared = true`, doesn't delete)
+so new rows keep appending after a clear.
 
 ---
 
