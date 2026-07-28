@@ -166,9 +166,15 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    team needs day-to-day, unlike the entry-date picker on the Parser page. */
 .date-header-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .date-picker-compact{width:auto;text-transform:none;letter-spacing:normal;padding:4px 8px;font-size:11px;border:1px solid #eee0d0;border-radius:6px;background:#fdf8f3;color:#5c4f42;font-family:inherit;margin-bottom:0}
-.flags-box{background:#fdf6d9;border:1px solid #f0dd8a;border-radius:8px;padding:10px 14px;font-size:12px;color:#8a6d0a;line-height:1.8;white-space:pre-wrap}
-.flags-ok{background:#e5f3e3;border:1px solid #bfe0b8;border-radius:8px;padding:10px 14px;font-size:12px;color:#3f7a34}
-.tsv-box{background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#5c4f42;overflow-x:auto;white-space:pre;line-height:1.6;max-height:300px;overflow-y:auto;margin-bottom:10px}
+.parser-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px}
+.parser-split-table{flex:2 1 420px;min-width:280px}
+.parser-split-images{flex:1 1 280px;min-width:220px;max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;position:sticky;top:10px}
+.parser-split-images img{width:100%;border-radius:8px;border:2px solid #eee0d0;display:block;cursor:zoom-in}
+.parser-split-images img.highlight{border-color:#e8720c}
+.parser-img-label{font-size:10px;color:#8a7a6a;margin-bottom:4px}
+#parsed-table input{width:100%;padding:5px 6px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit;background:#ffffff}
+#parsed-table td{min-width:90px}
+#parsed-table td:nth-child(3){min-width:160px}
 .hidden{display:none}
 .spinner{display:inline-block;width:13px;height:13px;border:2px solid #eee0d0;border-top-color:#e8720c;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -358,10 +364,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="timing-summary" class="hidden" style="background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#5c4f42;line-height:1.8"></div>
   <button class="btn-parse" id="pb" disabled>Parse orders</button>
   <div id="rw" class="hidden">
-    <div class="section-label">Flags</div>
-    <div id="fb"></div>
-    <div class="section-label">Parsed rows <span id="rc"></span></div>
-    <div class="tsv-box" id="tb"></div>
+    <div class="parser-split">
+      <div class="parser-split-table">
+        <div class="section-label">Parsed rows <span id="rc"></span> <span style="font-weight:400;text-transform:none;letter-spacing:normal">— edit any cell before pushing</span></div>
+        <div class="table-scroll" style="max-height:480px">
+          <table class="community-table" id="parsed-table"><thead><tr>
+            <th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Delivery instructions</th><th>Deliver after</th><th>Deliver by</th><th>Img</th><th></th>
+          </tr></thead><tbody id="parsed-tbody"></tbody></table>
+        </div>
+      </div>
+      <div class="parser-split-images" id="parser-split-images"></div>
+    </div>
     <div class="push-row">
       <button class="btn-push" id="pushb">📤 Push to Operations</button>
       <button class="btn-tomorrow" id="push-tomorrow">📤→ Tomorrow</button>
@@ -1195,9 +1208,14 @@ function setEntryDate(dateStr){
 }
 
 let imgs=[];
+// One object URL per image, same order as imgs — reused by both the
+// upload-time thumbnail strip (#pv) and the post-parse split view (which
+// shows the same images full-size for cross-referencing against the
+// parsed table), so each file only gets one blob URL instead of two.
+let imgUrls=[];
 const dz=document.getElementById('dz'),fi=document.getElementById('fi'),pv=document.getElementById('pv');
 const pb=document.getElementById('pb'),sbEl=document.getElementById('sb'),rw=document.getElementById('rw');
-const fb=document.getElementById('fb'),tb=document.getElementById('tb'),rc=document.getElementById('rc');
+const rc=document.getElementById('rc');
 const cb=document.getElementById('cb'),xb=document.getElementById('xb');
 
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
@@ -1208,8 +1226,10 @@ fi.addEventListener('change',()=>add([...fi.files]));
 function add(files){
   files.filter(f=>f.type.startsWith('image/')).forEach(f=>{
     imgs.push(f);
+    const url=URL.createObjectURL(f);
+    imgUrls.push(url);
     const img=document.createElement('img');
-    img.src=URL.createObjectURL(f);img.className='preview-thumb';pv.appendChild(img);
+    img.src=url;img.className='preview-thumb';pv.appendChild(img);
   });
   if(imgs.length){pb.disabled=false;set(imgs.length+' image(s) ready');}
 }
@@ -1385,6 +1405,8 @@ RULES:
     - If the reply is just a confirmation, address, or non-order text → ignore entirely
     - For add-on items, prepend "add-on" to the description e.g. "add-on, ripe" or just "add-on" if no other qualifiers
 
+13. source_image = the 0-based index of which image, among the ones provided in THIS request (in the order they were given), this row was read from. If this request only has one image, this is always 0.
+
 CRITICAL:
 - description never blank if any qualifier/note/condition/piece count exists
 - Always include "N pieces" in description when order was by count
@@ -1393,7 +1415,7 @@ CRITICAL:
 - "orange" = Mandarin orange always, never mango
 
 Return ONLY valid compact JSON, no markdown fences:
-{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":""}],"flags":[]}`;
+{"rows":[{"order_date":"${CALENDAR_TODAY}","customer_name":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":"","source_image":0}],"flags":[]}`;
 
   try{
     const compressStart = Date.now();
@@ -1432,15 +1454,26 @@ Return ONLY valid compact JSON, no markdown fences:
       return parseJson(data.content.map(x=>x.text||'').join(''));
     }
 
-    async function runBatch(batch, label){
+    // localOffset tracks where this (sub-)batch sits within the ORIGINAL
+    // top-level batch passed to the outermost runBatch call — a
+    // timeout-triggered split hands each half a batch-local source_image
+    // (0-based within just that half), so it has to be shifted back to be
+    // relative to the whole top-level batch before merging the halves
+    // together, and again shifted by the top-level batch's own position in
+    // `batches` once it reaches the loop below.
+    async function runBatch(batch, label, localOffset=0){
       try {
-        return await callAPI(batch, label);
+        const result = await callAPI(batch, label);
+        (result.rows||[]).forEach(r=>{
+          if(typeof r.source_image==='number')r.source_image+=localOffset;
+        });
+        return result;
       } catch(e) {
         if(batch.length === 1) throw new Error(label+' failed: '+e.message);
         set('Splitting '+label+'…','loading');
         const mid = Math.ceil(batch.length/2);
-        const a = await runBatch(batch.slice(0, mid), label+'a');
-        const b = await runBatch(batch.slice(mid), label+'b');
+        const a = await runBatch(batch.slice(0, mid), label+'a', localOffset);
+        const b = await runBatch(batch.slice(mid), label+'b', localOffset+mid);
         return { rows:[...(a.rows||[]),...(b.rows||[])], flags:[...(a.flags||[]),...(b.flags||[])] };
       }
     }
@@ -1448,6 +1481,11 @@ Return ONLY valid compact JSON, no markdown fences:
     for(let i=0; i<batches.length; i++){
       set('Parsing batch '+(i+1)+' of '+batches.length+'…','loading');
       const p = await runBatch(batches[i], 'Batch '+(i+1));
+      const batchGlobalOffset=i*BATCH;
+      (p.rows||[]).forEach(r=>{
+        if(typeof r.source_image==='number')r.source_image+=batchGlobalOffset;
+        else r.source_image=null;
+      });
       allRows = allRows.concat(p.rows||[]);
       allFlags = allFlags.concat(p.flags||[]);
     }
@@ -1463,6 +1501,11 @@ Return ONLY valid compact JSON, no markdown fences:
 let lastRows=[];
 function render(p){
   const{rows:rawRows=[],flags=[]}=p;
+  // Quality flags aren't shown in the UI anymore (the row-level detail is
+  // now visible and editable directly in the table instead of a separate
+  // summary list) — still logged to the console for anyone debugging a
+  // parse.
+  if(flags.length)console.warn('Parser flags:',flags);
   // Re-derive sales_order from a canonical key regardless of what casing/
   // punctuation the parser produced for customer_name, so the same customer
   // always lands on the same sales_order_id.
@@ -1471,10 +1514,8 @@ function render(p){
     return{...r,customer_name,sales_order:(r.order_date||CALENDAR_TODAY)+'-'+canonicalCustomerKey(customer_name)};
   });
   lastRows=rows;
-  if(flags.length){fb.className='flags-box';fb.textContent=flags.join('\n');}
-  else{fb.className='flags-ok';fb.textContent='All rows parsed cleanly ✓';}
-  tb.textContent=rows.map(r=>[r.order_date,r.customer_name,r.item_name,r.description||'',r.quantity,'','',r.sales_order].join('\t')).join('\n');
-  rc.textContent='— '+rows.length+' rows';
+  renderParserImagePanel();
+  renderParsedTable();
   rw.classList.remove('hidden');
   set('Done — '+rows.length+' rows from '+imgs.length+' image(s)');
   pb.disabled=false;
@@ -1482,13 +1523,75 @@ function render(p){
   setPush('');
 }
 
+function renderParserImagePanel(){
+  const el=document.getElementById('parser-split-images');
+  el.innerHTML=imgUrls.map((url,idx)=>
+    '<div><div class="parser-img-label">Image '+(idx+1)+'</div><img id="parser-img-'+idx+'" src="'+url+'" onclick="openImgLightbox(this.src)"></div>'
+  ).join('');
+}
+
+function highlightParserImage(idx){
+  document.querySelectorAll('#parser-split-images img').forEach(img=>img.classList.remove('highlight'));
+  const img=document.getElementById('parser-img-'+idx);
+  if(!img)return;
+  img.classList.add('highlight');
+  img.scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+// Edits mutate lastRows directly rather than re-rendering the table on
+// every keystroke — rebuilding the whole tbody on input would lose focus
+// mid-type (the exact bug just fixed on the Stock tab's fruit picker).
+// Only sales_order needs recomputing live (it's derived from
+// customer_name), and it isn't shown in the table, so no DOM touch is
+// needed for that either.
+function updateParsedRow(idx,field,value){
+  const row=lastRows[idx];
+  if(!row)return;
+  row[field]=value;
+  if(field==='customer_name'){
+    const formatted=formatCustomerName(value);
+    row.customer_name=formatted;
+    row.sales_order=(row.order_date||CALENDAR_TODAY)+'-'+canonicalCustomerKey(formatted);
+  }
+}
+
+function removeParsedRow(idx){
+  lastRows.splice(idx,1);
+  renderParsedTable();
+}
+
+function renderParsedTable(){
+  const tbody=document.getElementById('parsed-tbody');
+  rc.textContent='— '+lastRows.length+' rows';
+  if(!lastRows.length){tbody.innerHTML='';return;}
+  tbody.innerHTML=lastRows.map((r,i)=>
+    '<tr>'+
+      '<td><input type="text" value="'+escH(r.customer_name||'')+'" oninput="updateParsedRow('+i+',\'customer_name\',this.value)"></td>'+
+      '<td><input type="text" value="'+escH(r.item_name||'')+'" oninput="updateParsedRow('+i+',\'item_name\',this.value)"></td>'+
+      '<td><input type="text" value="'+escH(r.description||'')+'" oninput="updateParsedRow('+i+',\'description\',this.value)"></td>'+
+      '<td><input type="number" step="0.01" min="0" value="'+(r.quantity??'')+'" oninput="updateParsedRow('+i+',\'quantity\',this.value)"></td>'+
+      '<td><input type="text" value="'+escH(r.delivery_instructions||'')+'" oninput="updateParsedRow('+i+',\'delivery_instructions\',this.value)"></td>'+
+      '<td><input type="time" value="'+escH(r.deliver_after||'')+'" oninput="updateParsedRow('+i+',\'deliver_after\',this.value)"></td>'+
+      '<td><input type="time" value="'+escH(r.deliver_by||'')+'" oninput="updateParsedRow('+i+',\'deliver_by\',this.value)"></td>'+
+      '<td>'+(typeof r.source_image==='number'?'<a class="or-link" onclick="highlightParserImage('+r.source_image+')">📷 '+(r.source_image+1)+'</a>':'—')+'</td>'+
+      '<td><button class="del-btn" onclick="removeParsedRow('+i+')" title="Remove row">✕</button></td>'+
+    '</tr>'
+  ).join('');
+}
+
 cb.addEventListener('click',()=>{
-  navigator.clipboard.writeText(tb.textContent).then(()=>{cb.textContent='✅ Copied!';setTimeout(()=>cb.textContent='📋 Copy TSV',2000);});
+  // Built fresh from lastRows (not a cached string) so it reflects
+  // whatever's actually been edited in the table, not just what the
+  // parser originally returned.
+  const tsv=lastRows.map(r=>[r.order_date,r.customer_name,r.item_name,r.description||'',r.quantity,'','',r.sales_order].join('\t')).join('\n');
+  navigator.clipboard.writeText(tsv).then(()=>{cb.textContent='✅ Copied!';setTimeout(()=>cb.textContent='📋 Copy TSV',2000);});
 });
 xb.addEventListener('click',()=>{
-  imgs=[];pv.innerHTML='';fi.value='';pb.disabled=true;
-  set('Upload screenshots to begin');rw.classList.add('hidden');tb.textContent='';
+  imgs=[];imgUrls.forEach(u=>URL.revokeObjectURL(u));imgUrls=[];pv.innerHTML='';fi.value='';pb.disabled=true;
+  set('Upload screenshots to begin');rw.classList.add('hidden');
   lastRows=[];
+  document.getElementById('parsed-tbody').innerHTML='';
+  document.getElementById('parser-split-images').innerHTML='';
 });
 
 // ── Push to order_items ──────────────────────────────────────────────────────
