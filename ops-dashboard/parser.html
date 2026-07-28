@@ -4678,6 +4678,7 @@ async function undoDelivered(soid){
 // At day's end, closing stock (physical recount) is entered; wastage =
 // available − closing, in both quantity and ₹ (qty × catalog unit_price).
 let stockCatalog=[];
+let stockTrackedFruits=new Set(); // item_name set — persists across days, see stock_tracked_fruits
 let stockOpeningMap={};        // item_name -> opening_qty
 let stockOpeningHistoryMap={}; // item_name -> [{old_qty,new_qty,changed_by,changed_at}] desc, today only
 let stockClosingMap={};        // item_name -> closing_qty
@@ -4701,18 +4702,24 @@ async function loadStockView(){
   stockPendingFruitPicks=new Set();
   renderStockFruitPills();
 
-  const[catalog,openingRes,closingRes,purchaseRes,itemsRes,historyRes]=await Promise.all([
+  const[catalog,trackedRes,openingRes,closingRes,purchaseRes,itemsRes,historyRes]=await Promise.all([
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
+    sb.from('stock_tracked_fruits').select('item_name'),
     sb.from('stock_opening').select('item_name,opening_qty').eq('date',viewDate),
     sb.from('stock_closing').select('item_name,closing_qty').eq('date',viewDate),
     sb.from('stock_purchases').select('id,item_name,qty,source,created_at').eq('date',viewDate).order('created_at'),
     fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
     sb.from('stock_opening_history').select('item_name,old_qty,new_qty,changed_by,changed_at').eq('date',viewDate).order('changed_at',{ascending:false}),
   ]);
-  const firstErr=openingRes.error||closingRes.error||purchaseRes.error||itemsRes.error||historyRes.error;
+  const firstErr=trackedRes.error||openingRes.error||closingRes.error||purchaseRes.error||itemsRes.error||historyRes.error;
   if(firstErr){tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">'+escH(firstErr.message)+'</td></tr>';return;}
 
   stockCatalog=catalog||[];
+
+  // Persistent — a fruit stays visible every day once added here, unlike
+  // opening/closing/purchases/demand below which are all scoped to the
+  // one date being viewed.
+  stockTrackedFruits=new Set((trackedRes.data||[]).map(r=>r.item_name));
 
   stockOpeningMap={};
   (openingRes.data||[]).forEach(r=>{stockOpeningMap[r.item_name]=r.opening_qty;});
@@ -4812,13 +4819,16 @@ const STOCK_STATUS_BADGE={
   ok:      '<span class="stock-badge stock-ok">🟢 OK</span>',
 };
 
-// A fruit only shows in the table once it's "active" for the day — has an
-// opening/closing stock entry (including one seeded at 0 via "+ Add" —
-// that write is real and persists, not just a session flag), a purchase,
-// or order demand. Otherwise every one of the ~75 catalog fruits would
-// show up unconditionally, most with nothing to say.
+// A fruit shows in the table once it's either explicitly tracked
+// (stock_tracked_fruits — persists every day until removed, regardless of
+// whether today has any activity for it yet) or has some activity for the
+// viewed day specifically (an opening/closing entry, a purchase, or order
+// demand) even if it was never formally added to tracking. Otherwise
+// every one of the ~75 catalog fruits would show up unconditionally, most
+// with nothing to say.
 function isStockFruitActive(itemName){
-  return stockOpeningMap[itemName]!==undefined
+  return stockTrackedFruits.has(itemName)
+    ||stockOpeningMap[itemName]!==undefined
     ||stockClosingMap[itemName]!==undefined
     ||(stockPurchasesMap[itemName]&&stockPurchasesMap[itemName].length>0)
     ||stockPackedMap[itemName]!==undefined
@@ -4912,19 +4922,14 @@ function renderStockFruitPills(){
 async function commitStockFruitPicks(){
   const names=[...stockPendingFruitPicks];
   if(!names.length)return;
-  // Persisted immediately (opening stock = 0, logged to history like any
-  // other opening-stock write) rather than just a session flag — otherwise
-  // a fruit added to track would vanish again on the next reload/deploy,
-  // defeating the point of curating this list. Each fruit is independent,
-  // so one failing doesn't block the rest.
+  // Writes to the persistent tracked-fruits list, not a per-day
+  // opening-stock row — this is "start tracking this fruit going
+  // forward," not "its opening stock today is 0." Each fruit is
+  // independent, so one failing doesn't block the rest.
   await Promise.all(names.map(async name=>{
-    const{error}=await sb.from('stock_opening')
-      .upsert({item_name:name,date:viewDate,opening_qty:0},{onConflict:'item_name,date'});
+    const{error}=await sb.from('stock_tracked_fruits').upsert({item_name:name},{onConflict:'item_name'});
     if(error)return;
-    const historyRow={item_name:name,date:viewDate,old_qty:null,new_qty:0,changed_by:riderName||null};
-    const{error:histErr}=await sb.from('stock_opening_history').insert(historyRow);
-    if(!histErr)(stockOpeningHistoryMap[name]=stockOpeningHistoryMap[name]||[]).unshift({...historyRow,changed_at:new Date().toISOString()});
-    stockOpeningMap[name]=0;
+    stockTrackedFruits.add(name);
   }));
   stockPendingFruitPicks=new Set();
   renderStockFruitPills();
@@ -4933,6 +4938,14 @@ async function commitStockFruitPicks(){
   // happened to be active.
   stockStatusFilter='all';
   document.getElementById('stock-search').value='';
+  renderStockTable();
+}
+
+async function stopTrackingStockFruit(name){
+  if(!await uxConfirm('Stop tracking "'+name+'" in Stock? Past opening/closing/purchase records for it stay in the database — it just won\'t be force-shown every day anymore (it will still reappear on any day it has real activity).'))return;
+  const{error}=await sb.from('stock_tracked_fruits').delete().eq('item_name',name);
+  if(error){uxAlert('Failed: '+error.message);return;}
+  stockTrackedFruits.delete(name);
   renderStockTable();
 }
 
@@ -4977,8 +4990,11 @@ function renderStockTable(){
       :'<span class="stock-wastage '+(s.wastageQty>0?'stock-wastage-loss':'stock-wastage-none')+'">'+
           s.wastageQty.toFixed(2)+' '+escH(unit)+'<span>₹'+(s.wastageQty*(c.unit_price||0)).toFixed(0)+'</span>'+
         '</span>';
+    const stopTrackingLink=stockTrackedFruits.has(c.item_name)
+      ?'<div><a class="or-link" style="color:#b3261e" onclick="stopTrackingStockFruit('+escH(JSON.stringify(c.item_name))+')">stop tracking</a></div>'
+      :'';
     return '<tr>'+
-      '<td>'+escH(c.item_name)+historyHtml+'</td>'+
+      '<td>'+escH(c.item_name)+historyHtml+stopTrackingLink+'</td>'+
       '<td>'+openingControl+'</td>'+
       '<td>'+s.purchased.toFixed(2)+' '+escH(unit)+' <a class="or-link" onclick="openStockPurchaseModal('+escH(JSON.stringify(c.item_name))+')">manage</a></td>'+
       '<td>'+s.packed.toFixed(2)+' '+escH(unit)+'</td>'+
