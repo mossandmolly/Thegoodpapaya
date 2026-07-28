@@ -305,6 +305,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .rules-list li:last-child{border-bottom:none}
 .badge{display:inline-block;background:#fdead9;border-radius:4px;padding:1px 6px;font-size:10px;color:#c2570a;margin-right:4px}
 .note{font-size:11px;color:#8a7a6a;margin-top:6px;font-style:italic}
+.dup-group{background:#fdf3e7;border:1px solid #f0dcc0;border-radius:8px;padding:8px 10px;margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dup-item{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#5c4f42;background:#ffffff;border:1px solid #eee0d0;border-radius:14px;padding:4px 6px 4px 10px}
 #login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
 #login-screen.hidden{display:none}
 .login-box{width:100%;max-width:320px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:12px;padding:24px}
@@ -716,6 +718,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <input type="text" id="new-community-name" placeholder="New community name">
       <button onclick="addCommunity()">Add</button>
     </div>
+    <div id="community-duplicates"></div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
         <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th></th>
@@ -998,6 +1001,51 @@ async function loadCommunitiesConfig(){
   communitiesCache={};
   (data||[]).forEach(c=>{communitiesCache[c.name]=c;});
   renderCommunityTable(data||[]);
+  renderDuplicateCommunities();
+}
+
+// Same-place, different-spelling entries ("77Degree" vs "77degree",
+// "Bren edgewater" vs "brenedgewater") — communities.name is only unique
+// on the exact string, so these can pile up over time from inconsistent
+// casing/spacing in different orders' addresses, or from someone typing a
+// near-duplicate into the Add box above. Grouped by the same canonical
+// key deriveSociety() itself uses, so "duplicate" here means exactly what
+// it means everywhere else in this app.
+function findDuplicateCommunityGroups(){
+  const groups={};
+  Object.values(communitiesCache).forEach(c=>{
+    const key=communityCanonicalKey(c.name);
+    (groups[key]=groups[key]||[]).push(c);
+  });
+  return Object.values(groups).filter(g=>g.length>1);
+}
+
+function renderDuplicateCommunities(){
+  const el=document.getElementById('community-duplicates');
+  if(!el)return;
+  const groups=findDuplicateCommunityGroups();
+  if(!groups.length){el.innerHTML='';return;}
+  el.innerHTML='<p class="note" style="color:#b3261e">⚠️ Possible duplicates (same name, different spelling/casing) — pick which one to keep:</p>'+
+    groups.map(g=>{
+      const ids=g.map(c=>c.id);
+      return '<div class="dup-group">'+
+        g.map(c=>
+          '<span class="dup-item">'+escH(c.name)+
+            (c.lat!=null||c.lng!=null||c.combinable_group?' <span style="color:#3f7a34">(has data)</span>':'')+
+            ' <button class="btn-sec" style="padding:3px 8px;font-size:11px;margin-bottom:0" onclick="keepCommunityMergeOthers('+escH(JSON.stringify(c.id))+','+escH(JSON.stringify(ids))+')">Keep, delete others</button>'+
+          '</span>'
+        ).join('')+
+      '</div>';
+    }).join('');
+}
+
+async function keepCommunityMergeOthers(keepId,allIds){
+  const toDelete=allIds.filter(id=>id!==keepId);
+  if(!toDelete.length)return;
+  if(!await uxConfirm('Delete '+toDelete.length+' duplicate community row'+(toDelete.length!==1?'s':'')+', keeping just this one? If new orders keep deriving one of the deleted spellings, it\'ll just get auto-recreated as its own row again — worth checking back here occasionally.'))return;
+  const{error}=await sb.from('communities').delete().in('id',toDelete);
+  if(error){uxAlert('Failed: '+error.message);return;}
+  await loadCommunitiesConfig();
 }
 
 function renderCommunityTable(rows){
@@ -1022,6 +1070,15 @@ function renderCommunityTable(rows){
 async function saveCommunity(id){
   const name=document.getElementById('comm-name-'+id).value.trim();
   if(!name){uxAlert('Community name can\'t be empty');return;}
+  // Block a rename that would just recreate the exact duplicate problem
+  // the merge tool above exists to clean up — same canonical name as a
+  // DIFFERENT existing community (case/spacing aside).
+  const key=communityCanonicalKey(name);
+  const collision=Object.values(communitiesCache).find(c=>c.id!==id&&communityCanonicalKey(c.name)===key);
+  if(collision){
+    uxAlert('"'+collision.name+'" already exists — that\'s the same name as this, just different spelling/casing. Use that one instead, or delete it first if this is meant to replace it.');
+    return;
+  }
   const lat=document.getElementById('comm-lat-'+id).value;
   const lng=document.getElementById('comm-lng-'+id).value;
   const group=document.getElementById('comm-group-'+id).value.trim();
@@ -1044,6 +1101,16 @@ async function addCommunity(){
   const input=document.getElementById('new-community-name');
   const name=input.value.trim();
   if(!name)return;
+  // communities.name is only unique on the exact string, so without this
+  // check "77Degree" and "77degree" could both exist as separate rows —
+  // catch that here rather than relying on the merge tool to clean it up
+  // after the fact.
+  const key=communityCanonicalKey(name);
+  const existing=Object.values(communitiesCache).find(c=>communityCanonicalKey(c.name)===key);
+  if(existing){
+    uxAlert('"'+existing.name+'" already exists — that\'s the same name, just different spelling/casing. Use that one instead of adding a near-duplicate.');
+    return;
+  }
   const{error}=await sb.from('communities').insert({name});
   if(error){uxAlert('Failed to add: '+error.message);return;}
   input.value='';

@@ -193,14 +193,35 @@ Deno.serve(async (req) => {
     try {
       const societies = [...new Set(
         rows.map(r => deriveSociety(r.customer_name)).filter(Boolean),
-      )].map(name => ({ name }));
+      )];
 
       if (societies.length) {
-        await fetch(`${env('SUPABASE_URL')}/rest/v1/communities?on_conflict=name`, {
-          method:  'POST',
-          headers: { ...sbHeaders(), Prefer: 'resolution=ignore-duplicates,return=minimal' },
-          body:    JSON.stringify(societies),
+        // communities.name is only unique on the exact string — a society
+        // not on the SOCIETIES whitelist above falls through to
+        // formatCommunityName(raw), whose output casing/spacing tracks
+        // whatever the AI parser happened to extract that particular time
+        // (e.g. "Bren Edgewater" vs "Brenedgewater" if a space gets
+        // dropped). Checking existing rows by CANONICAL key first — not
+        // on_conflict's exact-string match — stops that from silently
+        // creating a near-duplicate row every time the formatting varies
+        // slightly for the same real place.
+        const existingRes = await fetch(`${env('SUPABASE_URL')}/rest/v1/communities?select=name`, {
+          headers: sbHeaders(),
         });
+        const existing: { name: string }[] = existingRes.ok ? await existingRes.json() : [];
+        const existingKeys = new Set(existing.map(c => communityCanonicalKey(c.name)));
+
+        const toInsert = societies
+          .filter(name => !existingKeys.has(communityCanonicalKey(name)))
+          .map(name => ({ name }));
+
+        if (toInsert.length) {
+          await fetch(`${env('SUPABASE_URL')}/rest/v1/communities?on_conflict=name`, {
+            method:  'POST',
+            headers: { ...sbHeaders(), Prefer: 'resolution=ignore-duplicates,return=minimal' },
+            body:    JSON.stringify(toInsert),
+          });
+        }
       }
     } catch (_e) {
       // swallow — communities is a nice-to-have, not load-bearing for this request
