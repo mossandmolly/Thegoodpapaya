@@ -2433,16 +2433,19 @@ function fuzzySocietyMatch(canonicalKey){
 //
 // Checked in three passes:
 //  1. Does the name's canonical form start with one of the known
-//     communities' canonical forms? Some society names contain digits
-//     themselves (e.g. "77degree"), which would otherwise get misread as
-//     the door number with nothing left as a valid society prefix.
-//  2. Otherwise, every leading word that's purely alphabetic is the
-//     society name, up to (not including) the first word containing a
-//     digit — that word is assumed to be the door number. If the very
-//     first word already has a digit in it and step 1 didn't match
-//     anything, there's no reliable society prefix to extract, so that
-//     first word alone is used rather than the whole (customer-specific,
-//     ungroupable) string.
+//     communities' canonical forms? Handles names that contain digits
+//     themselves (e.g. "77 Degree") even before step 2 below has a chance
+//     to mis-split them.
+//  2. Otherwise, split from the LAST space, not the first digit: the
+//     final token is the door number if it contains a digit, everything
+//     before it is the society name. The customer_name format is always
+//     "society then door" by this point (the AI reorders it up front),
+//     and the door number is always the last token — so scanning from the
+//     back finds the true boundary even when the society name itself
+//     starts with a digit ("77 Degree", "80 Trees"), which a front-to-back
+//     "first digit-token" scan would wrongly truncate at. If there's only
+//     one token, or the last token has no digit at all, there's no door
+//     number to split off — the whole string is used as-is.
 //  3. Before accepting that fallback name, check it against known
 //     communities one more time by edit distance, in case it's a typo of
 //     a real listed society (exact matching in step 1 only catches
@@ -2486,8 +2489,9 @@ function deriveSociety(customerName){
   }
 
   const tokens=name.split(/\s+/);
-  const doorIdx=tokens.findIndex(t=>/\d/.test(t));
-  const raw=doorIdx===-1?name:(doorIdx===0?tokens[0]:tokens.slice(0,doorIdx).join(' '));
+  const lastIdx=tokens.length-1;
+  const hasDoorTail=lastIdx>0&&/\d/.test(tokens[lastIdx]);
+  const raw=hasDoorTail?tokens.slice(0,lastIdx).join(' '):name;
 
   const fuzzyKey=fuzzySocietyMatch(communityCanonicalKey(raw));
   if(fuzzyKey)return SOCIETY_DISPLAY_BY_KEY[fuzzyKey];

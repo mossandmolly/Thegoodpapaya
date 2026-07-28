@@ -129,12 +129,18 @@ function fuzzySocietyMatch(canonicalKey: string, lookup: SocietyLookup): string 
 
 // Society name = everything before the door number, not just the first
 // word. Checks the known communities first (via canonical-key prefix
-// match, handles names that contain digits themselves), then falls back to
-// every leading purely-alphabetic word up to the first word containing a
-// digit — before accepting that fallback, it's checked against the known
-// communities once more by edit distance in case it's a typo of a real
-// society (the exact-prefix check above only catches correctly-spelled
-// names).
+// match, handles names that contain digits themselves before the token
+// split below has a chance to mis-split them), then falls back to
+// splitting from the LAST space rather than the first digit: the final
+// token is the door number if it contains a digit, everything before it
+// is the society name. customer_name is always "society then door" by
+// this point, and the door number is always the last token, so scanning
+// from the back finds the true boundary even when the society name
+// itself starts with a digit ("77 Degree", "80 Trees") — a front-to-back
+// "first digit-token" scan would wrongly truncate at those. Before
+// accepting that fallback, it's checked against the known communities
+// once more by edit distance in case it's a typo of a real society (the
+// exact-prefix check above only catches correctly-spelled names).
 //
 // `matched` tells the caller whether this came from an existing community
 // (already guaranteed consistent) or the raw fallback guess (still
@@ -153,8 +159,9 @@ function deriveSocietyDetailed(customerName: string, lookup: SocietyLookup): { n
   }
 
   const tokens = name.split(/\s+/);
-  const doorIdx = tokens.findIndex(t => /\d/.test(t));
-  const raw = doorIdx === -1 ? name : (doorIdx === 0 ? tokens[0] : tokens.slice(0, doorIdx).join(' '));
+  const lastIdx = tokens.length - 1;
+  const hasDoorTail = lastIdx > 0 && /\d/.test(tokens[lastIdx]);
+  const raw = hasDoorTail ? tokens.slice(0, lastIdx).join(' ') : name;
 
   const fuzzyKey = fuzzySocietyMatch(communityCanonicalKey(raw), lookup);
   if (fuzzyKey) return { name: lookup.displayByKey[fuzzyKey], matched: true };
