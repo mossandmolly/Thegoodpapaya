@@ -950,8 +950,6 @@ function signOut(){
 }
 
 // ── Default config ────────────────────────────────────────────────────────
-const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Snnraj Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
-
 let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango"];
 
 let PKG={"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50};
@@ -1004,7 +1002,7 @@ async function loadCommunitiesConfig(){
   renderDuplicateCommunities();
   // Whatever's now in communities (including anything just added/renamed/
   // merged above) folds into the same lookup deriveSociety() and the AI
-  // parser's KNOWN SOCIETIES list both use — see rebuildSocietyLookup.
+  // parser's KNOWN SOCIETIES prompt list both use — see rebuildSocietyLookup.
   rebuildSocietyLookup();
 }
 
@@ -1379,10 +1377,9 @@ pb.addEventListener('click',async()=>{
 
   const aliasLines=Object.entries(ALIASES).map(([k,v])=>k+'→'+v).join(', ');
   const pkgLines=Object.entries(PKG).map(([k,v])=>k+'='+v+'kg/pc').join(', ');
-  // Every known display name, hardcoded SOCIETIES merged with whatever's
-  // currently in the communities table (see rebuildSocietyLookup) — so the
-  // AI parser recognizes societies discovered from real orders too, not
-  // just the ones seeded in source code.
+  // Every known display name currently in the communities table (see
+  // rebuildSocietyLookup) — so the AI parser recognizes every society
+  // discovered from real orders, not just a fixed seed list.
   const societyList=Object.values(SOCIETY_DISPLAY_BY_KEY).join(', ');
 
   const SYS=`You are an order parser for Good Papaya, a fresh produce delivery business in Bengaluru.
@@ -2359,31 +2356,22 @@ function formatCommunityName(s){
   return t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():t;
 }
 
-// Built from SOCIETIES (the hardcoded seed list) merged with whatever's
-// currently in `communities` — the DB table is the more current source
-// (it has every society ever discovered from a real order, like "Bren
-// Edgewater", not just the ones hardcoded here) so it's folded in on top
-// rather than requiring a code change every time a new one shows up.
-// Groups synonym spellings ("77degree" / "77 degree") under one canonical
-// key, each mapped to a single display name, so every variant a customer
-// might have typed always derives to the exact same community. Longest
-// key first so e.g. a hypothetical "sobha" entry couldn't shadow the more
-// specific "sobhaeternia". The hardcoded list's casing wins over the DB's
-// for any name both carry, since it's deliberately curated and the DB may
-// itself still hold an old un-cleaned-up variant.
+// The `communities` table is the sole source of truth for known society
+// names — no hardcoded fallback list. Groups synonym spellings ("77degree"
+// / "77 degree") under one canonical key, each mapped to a single display
+// name, so every variant a customer might have typed always derives to the
+// exact same community. Longest key first so e.g. a hypothetical "sobha"
+// entry couldn't shadow the more specific "sobhaeternia".
 //
-// Rebuilt (not a one-time const) whenever communitiesCache refreshes —
-// see rebuildSocietyLookup, called once at script load with just the
-// hardcoded list (communities isn't loaded yet pre-login) and again every
-// time loadCommunitiesConfig() runs.
+// Rebuilt (not a one-time const) whenever communitiesCache refreshes — see
+// rebuildSocietyLookup, called once at script load (empty, since
+// communities isn't loaded yet pre-login) and again every time
+// loadCommunitiesConfig() runs. Anything not yet in `communities` falls
+// through to the raw-text extraction in deriveSociety below.
 let SOCIETY_DISPLAY_BY_KEY={};
 let SOCIETY_KEYS_BY_LENGTH=[];
 function rebuildSocietyLookup(){
   const map={};
-  for(const soc of SOCIETIES){
-    const key=communityCanonicalKey(soc);
-    if(key&&!map[key])map[key]=formatCommunityName(soc);
-  }
   for(const name of Object.keys(communitiesCache||{})){
     const key=communityCanonicalKey(name);
     if(key&&!map[key])map[key]=name;
@@ -2416,16 +2404,16 @@ function levenshtein(a,b){
 
 // A handful of edits tolerated, scaled to the known name's length (skips
 // anything under 4 chars — a 1-edit tolerance on "Kew" or "Ivy" would
-// swallow unrelated short names). Used both against the known SOCIETIES
-// list here, and for clustering unlisted names by frequency elsewhere.
+// swallow unrelated short names). Used both against known communities
+// here, and for clustering unlisted names by frequency elsewhere.
 function fuzzyThreshold(len){
   return len<4?0:Math.max(1,Math.min(3,Math.floor(len*0.2)));
 }
 
-// Best-effort fuzzy match of a canonical key against the known SOCIETIES
-// keys — a typo like "Krishvigavakhi" (missing the 's') should still
-// resolve to the one correctly-spelled "Krishvigavakshi" entry rather than
-// becoming its own junk community.
+// Best-effort fuzzy match of a canonical key against known communities —
+// a typo like "Krishvigavakhi" (missing the 's') should still resolve to
+// the one correctly-spelled "Krishvigavakshi" entry rather than becoming
+// its own junk community.
 function fuzzySocietyMatch(canonicalKey){
   if(!canonicalKey)return null;
   let best=null,bestDist=Infinity;
@@ -2445,10 +2433,9 @@ function fuzzySocietyMatch(canonicalKey){
 //
 // Checked in three passes:
 //  1. Does the name's canonical form start with one of the known
-//     SOCIETIES entries' canonical forms? Some society names contain
-//     digits themselves (e.g. "77degree"), which would otherwise get
-//     misread as the door number with nothing left as a valid society
-//     prefix.
+//     communities' canonical forms? Some society names contain digits
+//     themselves (e.g. "77degree"), which would otherwise get misread as
+//     the door number with nothing left as a valid society prefix.
 //  2. Otherwise, every leading word that's purely alphabetic is the
 //     society name, up to (not including) the first word containing a
 //     digit — that word is assumed to be the door number. If the very
@@ -2456,9 +2443,9 @@ function fuzzySocietyMatch(canonicalKey){
 //     anything, there's no reliable society prefix to extract, so that
 //     first word alone is used rather than the whole (customer-specific,
 //     ungroupable) string.
-//  3. Before accepting that fallback name, check it against the known
-//     SOCIETIES list one more time by edit distance, in case it's a typo
-//     of a real listed society (exact matching in step 1 only catches
+//  3. Before accepting that fallback name, check it against known
+//     communities one more time by edit distance, in case it's a typo of
+//     a real listed society (exact matching in step 1 only catches
 //     correctly-spelled names).
 // Combines deliver_by (latest) and deliver_after (earliest) into one
 // readable label — "between" orders have both set, "deliver after X"/

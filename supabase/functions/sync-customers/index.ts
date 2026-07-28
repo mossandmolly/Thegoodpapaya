@@ -50,11 +50,6 @@ function cleanCustomerName(raw: string): string {
     .replace(/\S+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 }
 
-// Known society names that contain digits themselves (e.g. "77degree") —
-// without this list those would get misread as already being the door
-// number, leaving nothing valid before it.
-const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Snnraj Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
-
 // Community identity must be agnostic of case AND special characters — "77
 // degree", "77degree" and "77-degree" are all the same place and must
 // always resolve to exactly one community, never three. Matching and
@@ -72,22 +67,14 @@ function formatCommunityName(s: string): string {
 
 type SocietyLookup = { displayByKey: Record<string, string>; keysByLength: string[] };
 
-// SOCIETIES only needs to seed the very first time a society is ever seen
-// — once it's in `communities` (backfilled by this very function, or
-// added via create-order/Config), that's the more current source: it has
-// every society this hardcoded list was ever missing, without needing a
-// code change every time. Built fresh per request (not a module-level
-// constant) since it now depends on a DB fetch; the hardcoded list's
-// casing wins over the DB's for any name both carry, since it's
-// deliberately curated and the DB may itself still hold an old
-// un-cleaned-up variant. Longest key first so a shorter entry can't
-// shadow a more specific one that starts the same way.
+// The `communities` table is the sole source of truth for known society
+// names — no hardcoded fallback list. Built fresh per request from
+// whatever's currently in the table (backfilled by this very function, or
+// added via create-order/Config). Longest key first so a shorter entry
+// can't shadow a more specific one that starts the same way. Anything not
+// yet in `communities` falls through to the raw-text extraction below.
 function buildSocietyLookup(extraNames: string[]): SocietyLookup {
   const displayByKey: Record<string, string> = {};
-  for (const soc of SOCIETIES) {
-    const key = communityCanonicalKey(soc);
-    if (key && !displayByKey[key]) displayByKey[key] = formatCommunityName(soc);
-  }
   for (const name of extraNames) {
     const key = communityCanonicalKey(name);
     if (key && !displayByKey[key]) displayByKey[key] = name;
@@ -124,7 +111,7 @@ function fuzzyThreshold(len: number): number {
   return len < 4 ? 0 : Math.max(1, Math.min(3, Math.floor(len * 0.2)));
 }
 
-// Best-effort fuzzy match against the known SOCIETIES keys — a typo like
+// Best-effort fuzzy match against the known communities — a typo like
 // "Krishvigavakhi" (missing the 's') should still resolve to the one
 // correctly-spelled "Krishvigavakshi" entry rather than becoming its own
 // junk community.
@@ -141,19 +128,21 @@ function fuzzySocietyMatch(canonicalKey: string, lookup: SocietyLookup): string 
 }
 
 // Society name = everything before the door number, not just the first
-// word. Checks the known SOCIETIES list first (via canonical-key prefix
+// word. Checks the known communities first (via canonical-key prefix
 // match, handles names that contain digits themselves), then falls back to
 // every leading purely-alphabetic word up to the first word containing a
 // digit — before accepting that fallback, it's checked against the known
-// list once more by edit distance in case it's a typo of a real society
-// (the exact-prefix check above only catches correctly-spelled names).
+// communities once more by edit distance in case it's a typo of a real
+// society (the exact-prefix check above only catches correctly-spelled
+// names).
 //
-// `matched` tells the caller whether this came from the known SOCIETIES
-// list (already guaranteed consistent) or the raw fallback guess (still
-// vulnerable to a handful of customers typo-ing a name that isn't in the
-// list at all) — only the latter needs the frequency-based clustering
-// below, since re-clustering already-known societies risks accidentally
-// merging two genuinely different ones that happen to look similar.
+// `matched` tells the caller whether this came from an existing community
+// (already guaranteed consistent) or the raw fallback guess (still
+// vulnerable to a handful of customers typo-ing a name that isn't in
+// `communities` at all) — only the latter needs the frequency-based
+// clustering below, since re-clustering already-known societies risks
+// accidentally merging two genuinely different ones that happen to look
+// similar.
 function deriveSocietyDetailed(customerName: string, lookup: SocietyLookup): { name: string; matched: boolean } {
   const name = (customerName || '').trim();
   if (!name) return { name, matched: false };
@@ -173,7 +162,7 @@ function deriveSocietyDetailed(customerName: string, lookup: SocietyLookup): { n
   return { name: formatCommunityName(raw), matched: false };
 }
 
-// For communities NOT in the known SOCIETIES list at all: cluster the
+// For communities not already known at all: cluster the
 // distinct derived names by edit distance (single-linkage via union-find),
 // then within each cluster pick whichever exact spelling occurred most
 // often among customers as canonical, remapping the rest to it. This is
@@ -310,9 +299,8 @@ Deno.serve(async (req) => {
       // Fetched once, before deriving anything — folds every community
       // already in the table (found by a PREVIOUS run of this same
       // backfill, or by create-order, or entered by hand in Config) into
-      // the matching lookup, so it benefits from the same exact-prefix/
-      // typo-correction treatment as the hardcoded SOCIETIES list without
-      // needing a code change every time a new one shows up.
+      // the matching lookup, so a community already known gets the same
+      // exact-prefix/typo-correction treatment on every subsequent run.
       const { data: existingCommunities } = await supabase.from('communities').select('name');
       const lookup = buildSocietyLookup((existingCommunities || []).map((c: { name: string }) => c.name));
 

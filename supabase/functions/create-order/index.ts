@@ -39,11 +39,6 @@ function sbHeaders() {
   };
 }
 
-// Known society names that contain digits themselves (e.g. "77degree") —
-// without this list those would get misread as already being the door
-// number, leaving nothing valid before it.
-const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Snnraj Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
-
 // Community identity must be agnostic of case AND special characters — "77
 // degree", "77degree" and "77-degree" are all the same place and must
 // always resolve to exactly one community, never three. Matching and
@@ -61,22 +56,14 @@ function formatCommunityName(s: string): string {
 
 type SocietyLookup = { displayByKey: Record<string, string>; keysByLength: string[] };
 
-// SOCIETIES only needs to seed the very first time a society is ever seen
-// — once it's in `communities` (added automatically below, or entered by
-// hand in Config), that's the more current source: it has every society
-// this hardcoded list was ever missing (like "Bren Edgewater" before this
-// fix existed), without needing a code change every time. Built fresh per
-// request (not a module-level constant) since it now depends on a DB
-// fetch; the hardcoded list's casing wins over the DB's for any name both
-// carry, since it's deliberately curated and the DB may itself still hold
-// an old un-cleaned-up variant. Longest key first so a shorter entry can't
-// shadow a more specific one that starts the same way.
+// The `communities` table is the sole source of truth for known society
+// names — no hardcoded fallback list. Built fresh per request from
+// whatever's currently in the table (grown automatically below, or
+// entered by hand in Config). Longest key first so a shorter entry can't
+// shadow a more specific one that starts the same way. Anything not yet
+// in `communities` falls through to the raw-text extraction below.
 function buildSocietyLookup(extraNames: string[]): SocietyLookup {
   const displayByKey: Record<string, string> = {};
-  for (const soc of SOCIETIES) {
-    const key = communityCanonicalKey(soc);
-    if (key && !displayByKey[key]) displayByKey[key] = formatCommunityName(soc);
-  }
   for (const name of extraNames) {
     const key = communityCanonicalKey(name);
     if (key && !displayByKey[key]) displayByKey[key] = name;
@@ -113,7 +100,7 @@ function fuzzyThreshold(len: number): number {
   return len < 4 ? 0 : Math.max(1, Math.min(3, Math.floor(len * 0.2)));
 }
 
-// Best-effort fuzzy match against the known SOCIETIES keys — a typo like
+// Best-effort fuzzy match against the known communities — a typo like
 // "Krishvigavakhi" (missing the 's') should still resolve to the one
 // correctly-spelled "Krishvigavakshi" entry rather than becoming its own
 // junk community.
@@ -130,12 +117,13 @@ function fuzzySocietyMatch(canonicalKey: string, lookup: SocietyLookup): string 
 }
 
 // Society name = everything before the door number, not just the first
-// word. Checks the known-society list first (via canonical-key prefix
+// word. Checks the known communities first (via canonical-key prefix
 // match, handles names that contain digits themselves), then falls back to
 // every leading purely-alphabetic word up to the first word containing a
 // digit — before accepting that fallback, it's checked against the known
-// list once more by edit distance in case it's a typo of a real society
-// (the exact-prefix check above only catches correctly-spelled names).
+// communities once more by edit distance in case it's a typo of a real
+// society (the exact-prefix check above only catches correctly-spelled
+// names).
 function deriveSociety(customerName: string, lookup: SocietyLookup): string {
   const name = (customerName || '').trim();
   if (!name) return name;
@@ -202,18 +190,16 @@ Deno.serve(async (req) => {
     // Best-effort: grow the communities table from these customer names.
     // Never fails the request — a name-check pattern miss shouldn't block order creation.
     try {
-      // Fetched once, before deriving anything — used both to build a
-      // richer society-matching lookup (so a community discovered from a
-      // PREVIOUS order, like "Bren Edgewater" once it's actually in the
-      // table, gets the same exact-prefix/typo-correction treatment as the
-      // hardcoded list, not just names someone's manually added to source
-      // code) and to dedupe the insert below by canonical key rather than
-      // on_conflict's exact-string match — a society not on the SOCIETIES
-      // whitelist falls through to formatCommunityName(raw), whose output
-      // casing/spacing tracks whatever the AI parser happened to extract
-      // that particular time (e.g. "Bren Edgewater" vs "Brenedgewater" if
-      // a space gets dropped), so exact-string matching alone lets
-      // near-duplicates pile up.
+      // Fetched once, before deriving anything — used both to build the
+      // society-matching lookup (so a community discovered from a
+      // PREVIOUS order gets the same exact-prefix/typo-correction
+      // treatment) and to dedupe the insert below by canonical key rather
+      // than on_conflict's exact-string match — a society not yet in
+      // `communities` falls through to formatCommunityName(raw), whose
+      // output casing/spacing tracks whatever the AI parser happened to
+      // extract that particular time (e.g. "Bren Edgewater" vs
+      // "Brenedgewater" if a space gets dropped), so exact-string matching
+      // alone lets near-duplicates pile up.
       const existingRes = await fetch(`${env('SUPABASE_URL')}/rest/v1/communities?select=name`, {
         headers: sbHeaders(),
       });
