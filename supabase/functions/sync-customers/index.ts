@@ -70,20 +70,31 @@ function formatCommunityName(s: string): string {
   return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t;
 }
 
-// Built once from SOCIETIES — groups synonym spellings ("77degree" / "77
-// degree") under one canonical key, each mapped to a single display name,
-// so every variant a customer might have typed always derives to the exact
-// same community. Longest key first so a shorter entry can't shadow a more
-// specific one that starts the same way.
-const SOCIETY_DISPLAY_BY_KEY: Record<string, string> = (() => {
-  const map: Record<string, string> = {};
+type SocietyLookup = { displayByKey: Record<string, string>; keysByLength: string[] };
+
+// SOCIETIES only needs to seed the very first time a society is ever seen
+// — once it's in `communities` (backfilled by this very function, or
+// added via create-order/Config), that's the more current source: it has
+// every society this hardcoded list was ever missing, without needing a
+// code change every time. Built fresh per request (not a module-level
+// constant) since it now depends on a DB fetch; the hardcoded list's
+// casing wins over the DB's for any name both carry, since it's
+// deliberately curated and the DB may itself still hold an old
+// un-cleaned-up variant. Longest key first so a shorter entry can't
+// shadow a more specific one that starts the same way.
+function buildSocietyLookup(extraNames: string[]): SocietyLookup {
+  const displayByKey: Record<string, string> = {};
   for (const soc of SOCIETIES) {
     const key = communityCanonicalKey(soc);
-    if (key && !map[key]) map[key] = formatCommunityName(soc);
+    if (key && !displayByKey[key]) displayByKey[key] = formatCommunityName(soc);
   }
-  return map;
-})();
-const SOCIETY_KEYS_BY_LENGTH = Object.keys(SOCIETY_DISPLAY_BY_KEY).sort((a, b) => b.length - a.length);
+  for (const name of extraNames) {
+    const key = communityCanonicalKey(name);
+    if (key && !displayByKey[key]) displayByKey[key] = name;
+  }
+  const keysByLength = Object.keys(displayByKey).sort((a, b) => b.length - a.length);
+  return { displayByKey, keysByLength };
+}
 
 // Classic edit-distance DP — used to catch a typo'd society name ("out of
 // 10 customers, 8 spell it right and 2 don't") instead of letting each
@@ -117,10 +128,10 @@ function fuzzyThreshold(len: number): number {
 // "Krishvigavakhi" (missing the 's') should still resolve to the one
 // correctly-spelled "Krishvigavakshi" entry rather than becoming its own
 // junk community.
-function fuzzySocietyMatch(canonicalKey: string): string | null {
+function fuzzySocietyMatch(canonicalKey: string, lookup: SocietyLookup): string | null {
   if (!canonicalKey) return null;
   let best: string | null = null, bestDist = Infinity;
-  for (const key of SOCIETY_KEYS_BY_LENGTH) {
+  for (const key of lookup.keysByLength) {
     const threshold = fuzzyThreshold(key.length);
     if (!threshold) continue;
     const dist = levenshtein(canonicalKey, key);
@@ -143,21 +154,21 @@ function fuzzySocietyMatch(canonicalKey: string): string | null {
 // list at all) — only the latter needs the frequency-based clustering
 // below, since re-clustering already-known societies risks accidentally
 // merging two genuinely different ones that happen to look similar.
-function deriveSocietyDetailed(customerName: string): { name: string; matched: boolean } {
+function deriveSocietyDetailed(customerName: string, lookup: SocietyLookup): { name: string; matched: boolean } {
   const name = (customerName || '').trim();
   if (!name) return { name, matched: false };
 
   const canonicalName = communityCanonicalKey(name);
-  for (const key of SOCIETY_KEYS_BY_LENGTH) {
-    if (canonicalName.startsWith(key)) return { name: SOCIETY_DISPLAY_BY_KEY[key], matched: true };
+  for (const key of lookup.keysByLength) {
+    if (canonicalName.startsWith(key)) return { name: lookup.displayByKey[key], matched: true };
   }
 
   const tokens = name.split(/\s+/);
   const doorIdx = tokens.findIndex(t => /\d/.test(t));
   const raw = doorIdx === -1 ? name : (doorIdx === 0 ? tokens[0] : tokens.slice(0, doorIdx).join(' '));
 
-  const fuzzyKey = fuzzySocietyMatch(communityCanonicalKey(raw));
-  if (fuzzyKey) return { name: SOCIETY_DISPLAY_BY_KEY[fuzzyKey], matched: true };
+  const fuzzyKey = fuzzySocietyMatch(communityCanonicalKey(raw), lookup);
+  if (fuzzyKey) return { name: lookup.displayByKey[fuzzyKey], matched: true };
 
   return { name: formatCommunityName(raw), matched: false };
 }
@@ -296,7 +307,16 @@ Deno.serve(async (req) => {
     // Never fails the sync — a name-pattern miss shouldn't block it.
     let communitiesUpserted = 0;
     try {
-      const derived = rows.map(r => deriveSocietyDetailed(r.customer_name));
+      // Fetched once, before deriving anything — folds every community
+      // already in the table (found by a PREVIOUS run of this same
+      // backfill, or by create-order, or entered by hand in Config) into
+      // the matching lookup, so it benefits from the same exact-prefix/
+      // typo-correction treatment as the hardcoded SOCIETIES list without
+      // needing a code change every time a new one shows up.
+      const { data: existingCommunities } = await supabase.from('communities').select('name');
+      const lookup = buildSocietyLookup((existingCommunities || []).map((c: { name: string }) => c.name));
+
+      const derived = rows.map(r => deriveSocietyDetailed(r.customer_name, lookup));
 
       // Frequency-correct only the unlisted (fallback-derived) names — if
       // 8 customers in a cluster spell it one way and 2 spell it another,

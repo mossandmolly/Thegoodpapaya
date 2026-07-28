@@ -1002,6 +1002,10 @@ async function loadCommunitiesConfig(){
   (data||[]).forEach(c=>{communitiesCache[c.name]=c;});
   renderCommunityTable(data||[]);
   renderDuplicateCommunities();
+  // Whatever's now in communities (including anything just added/renamed/
+  // merged above) folds into the same lookup deriveSociety() and the AI
+  // parser's KNOWN SOCIETIES list both use — see rebuildSocietyLookup.
+  rebuildSocietyLookup();
 }
 
 // Same-place, different-spelling entries ("77Degree" vs "77degree",
@@ -1375,7 +1379,11 @@ pb.addEventListener('click',async()=>{
 
   const aliasLines=Object.entries(ALIASES).map(([k,v])=>k+'→'+v).join(', ');
   const pkgLines=Object.entries(PKG).map(([k,v])=>k+'='+v+'kg/pc').join(', ');
-  const societyList=SOCIETIES.join(', ');
+  // Every known display name, hardcoded SOCIETIES merged with whatever's
+  // currently in the communities table (see rebuildSocietyLookup) — so the
+  // AI parser recognizes societies discovered from real orders too, not
+  // just the ones seeded in source code.
+  const societyList=Object.values(SOCIETY_DISPLAY_BY_KEY).join(', ');
 
   const SYS=`You are an order parser for Good Papaya, a fresh produce delivery business in Bengaluru.
 
@@ -2351,20 +2359,39 @@ function formatCommunityName(s){
   return t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():t;
 }
 
-// Built once from SOCIETIES — groups synonym spellings ("77degree" / "77
-// degree") under one canonical key, each mapped to a single display name,
-// so every variant a customer might have typed always derives to the
-// exact same community. Longest key first so e.g. a hypothetical "sobha"
-// entry couldn't shadow the more specific "sobhaeternia".
-const SOCIETY_DISPLAY_BY_KEY=(()=>{
+// Built from SOCIETIES (the hardcoded seed list) merged with whatever's
+// currently in `communities` — the DB table is the more current source
+// (it has every society ever discovered from a real order, like "Bren
+// Edgewater", not just the ones hardcoded here) so it's folded in on top
+// rather than requiring a code change every time a new one shows up.
+// Groups synonym spellings ("77degree" / "77 degree") under one canonical
+// key, each mapped to a single display name, so every variant a customer
+// might have typed always derives to the exact same community. Longest
+// key first so e.g. a hypothetical "sobha" entry couldn't shadow the more
+// specific "sobhaeternia". The hardcoded list's casing wins over the DB's
+// for any name both carry, since it's deliberately curated and the DB may
+// itself still hold an old un-cleaned-up variant.
+//
+// Rebuilt (not a one-time const) whenever communitiesCache refreshes —
+// see rebuildSocietyLookup, called once at script load with just the
+// hardcoded list (communities isn't loaded yet pre-login) and again every
+// time loadCommunitiesConfig() runs.
+let SOCIETY_DISPLAY_BY_KEY={};
+let SOCIETY_KEYS_BY_LENGTH=[];
+function rebuildSocietyLookup(){
   const map={};
   for(const soc of SOCIETIES){
     const key=communityCanonicalKey(soc);
     if(key&&!map[key])map[key]=formatCommunityName(soc);
   }
-  return map;
-})();
-const SOCIETY_KEYS_BY_LENGTH=Object.keys(SOCIETY_DISPLAY_BY_KEY).sort((a,b)=>b.length-a.length);
+  for(const name of Object.keys(communitiesCache||{})){
+    const key=communityCanonicalKey(name);
+    if(key&&!map[key])map[key]=name;
+  }
+  SOCIETY_DISPLAY_BY_KEY=map;
+  SOCIETY_KEYS_BY_LENGTH=Object.keys(map).sort((a,b)=>b.length-a.length);
+}
+rebuildSocietyLookup();
 
 // Classic edit-distance DP — used to catch a typo'd society name ("out of
 // 10 customers, 8 spell it right and 2 don't") instead of letting each
