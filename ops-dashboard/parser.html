@@ -947,7 +947,7 @@ function signOut(){
 }
 
 // ── Default config ────────────────────────────────────────────────────────
-const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
+const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Snnraj Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"];
 
 let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango"];
 
@@ -1326,8 +1326,9 @@ RULES:
    Also use judgement to identify new societies not on this list.
    STRIP: Indian first/last names (Kalika, Radhika, Kavita, Shalu, Sapna, Femina, Usha, Harpreet, Swati, Nandhini, Komali, Monika, Gayathri, Anu, Nikesha, Chanchal, Sampada, Chanda, Soumya, Anupreet etc), Indian city names (Delhi, Mumbai, Bangalore etc), builder prefixes (APR, Prestige, Brigade unless part of society name).
    NEVER strip the society name itself. When in doubt whether a word is a person name or society name, KEEP it.
+   IMPORTANT: some society names are shared by multiple different builders (e.g. "Sobha Eternia" and "Snnraj Eternia" are two DIFFERENT, unrelated societies that happen to both be called "Eternia") — for any society name that appears in KNOWN SOCIETIES as part of a two-word compound (builder + name), KEEP the full compound exactly as listed. Never shorten it down to just the shared tail word, even if that bare tail word ALSO appears in KNOWN SOCIETIES on its own — that would wrongly merge two distinct societies into one.
    REORDER if needed: society always before door e.g. "B303 T4"→"T4 B303", "Sapna T4 B303"→"T4 B303".
-   Examples: "Kalika Villa 384"→"Villa 384", "Radhika Meda A705"→"Meda A705", "Kavita Ferns E402"→"Ferns E402", "Usha Espana L401"→"Espana L401", "Harpreet Lakefront E501"→"Lakefront E501", "Rupal APR Villa 269"→"Villa 269"
+   Examples: "Kalika Villa 384"→"Villa 384", "Radhika Meda A705"→"Meda A705", "Kavita Ferns E402"→"Ferns E402", "Usha Espana L401"→"Espana L401", "Harpreet Lakefront E501"→"Lakefront E501", "Rupal APR Villa 269"→"Villa 269", "Snnraj Eternia B204"→"Snnraj Eternia B204" (keep "Snnraj" — do NOT shorten to "Eternia B204")
 
 2. IGNORE ONLY: 👍 reacted messages, payment/UPI confirmations, deleted messages, system messages (member added/removed)
 
@@ -1634,29 +1635,53 @@ async function pushRows(rows,salesOrderIdFor){
   const createOrderData=await createOrderRes.json();
   if(!createOrderRes.ok)throw new Error('orders: '+(createOrderData.error||'failed'));
 
-  // 2. Line items — held if (sales_order_id, item_name, requested_quantity) already exists
+  // 2. Line items — held if (sales_order_id, item_name, requested_quantity)
+  // already exists. Used to check + insert one row at a time in a loop —
+  // 145 rows meant 290 sequential round trips (a SELECT then an INSERT,
+  // each awaited before the next started), which is what made a 145-row
+  // push take ~2 minutes. Now it's one dedup-check query covering every
+  // sales_order_id in this push (chunked, same pattern as
+  // fetchCustomerMap), plus one bulk insert — a handful of round trips
+  // total regardless of row count.
+  const soids=[...new Set(rows.map(r=>salesOrderIdFor(r)))];
+  const existingKeys=new Set();
+  const DEDUP_CHUNK=200;
+  for(let i=0;i<soids.length;i+=DEDUP_CHUNK){
+    const{data,error}=await sb.from('order_items')
+      .select('sales_order_id,item_name,requested_quantity')
+      .in('sales_order_id',soids.slice(i,i+DEDUP_CHUNK));
+    if(error)throw new Error('check: '+error.message);
+    (data||[]).forEach(o=>existingKeys.add(o.sales_order_id+'|'+o.item_name+'|'+o.requested_quantity));
+  }
+
   let opened=0,held=0;
-  for(const r of rows){
+  const toInsert=rows.map(r=>{
     const soid=salesOrderIdFor(r);
     const qty=parseFloat(r.quantity)||0;
-    const{data:existing,error:selErr}=await sb.from('order_items')
-      .select('id')
-      .eq('sales_order_id',soid)
-      .eq('item_name',r.item_name)
-      .eq('requested_quantity',qty)
-      .limit(1);
-    if(selErr)throw new Error('check: '+selErr.message);
-    const status=(existing&&existing.length)?'held':'open';
-    const{error:insErr}=await sb.from('order_items').insert({
+    const key=soid+'|'+r.item_name+'|'+qty;
+    // A duplicate of an earlier row within this SAME push (not just
+    // against what's already in the DB) needs to be caught too — add
+    // each key as it's assigned so a repeat later in the same batch also
+    // resolves to 'held', matching what the old row-by-row check did
+    // (the first occurrence would already be in the DB by the time the
+    // second one's SELECT ran).
+    const status=existingKeys.has(key)?'held':'open';
+    existingKeys.add(key);
+    status==='held'?held++:opened++;
+    return{
       sales_order_id:     soid,
       item_name:          r.item_name,
       description:        r.description||null,
       delivery_instructions: r.delivery_instructions||null,
       requested_quantity: qty,
       status,
-    });
-    if(insErr)throw new Error('insert: '+insErr.message);
-    status==='held'?held++:opened++;
+    };
+  });
+
+  const INSERT_CHUNK=500;
+  for(let i=0;i<toInsert.length;i+=INSERT_CHUNK){
+    const{error}=await sb.from('order_items').insert(toInsert.slice(i,i+INSERT_CHUNK));
+    if(error)throw new Error('insert: '+error.message);
   }
   return{opened,held};
 }
