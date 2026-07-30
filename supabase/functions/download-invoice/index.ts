@@ -96,6 +96,16 @@ Deno.serve(async (req) => {
     if (!pdfRes.ok) throw new Error(`Zoho PDF fetch failed (${pdfRes.status})`);
     const pdfBuffer = await pdfRes.arrayBuffer();
 
+    // Best-effort — the PDF itself already fetched fine, so a hiccup here
+    // shouldn't turn a successful download into a failed response.
+    await supabase
+      .from('orders')
+      .update({ invoice_downloaded_at: new Date().toISOString() })
+      .eq('sales_order_id', sales_order_id)
+      .then(({ error: updateErr }) => {
+        if (updateErr) console.error('Could not stamp invoice_downloaded_at:', updateErr.message);
+      });
+
     return new Response(pdfBuffer, {
       headers: {
         ...CORS,
