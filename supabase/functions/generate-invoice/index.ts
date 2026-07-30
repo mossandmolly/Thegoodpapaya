@@ -11,14 +11,18 @@
 // be packed and marked final before this is called; the frontend only shows
 // the "generate invoice" action once that's true for the whole order.
 //
-// Rate comes from catalog.unit_price, matched to item_name case-insensitively.
+// Rate comes live from Zoho Books' /items endpoint (the source of truth for
+// pricing), matched to item_name case-insensitively — NOT from the local
+// catalog table, which is only a mirror kept fresh as a side effect here and
+// can otherwise silently lag behind a price changed directly in Zoho.
 // Items whose description contains "replacement", "free", or "free sample"
-// are billed at ₹0 regardless of catalog match — reported back in free_items
+// are billed at ₹0 regardless of the Zoho rate — reported back in free_items
 // so the frontend can show it in the confirmation summary.
-// If a non-free item's name doesn't match the catalog at all, the request
-// comes back with needs_resolution + closest-name suggestions instead of
-// failing outright; resubmit with rate_overrides = { item_name: catalog_item_name }
-// once the caller has picked the right one, and it'll use that catalog row's rate.
+// If a non-free item's name doesn't match any live Zoho item at all, the
+// request comes back with needs_resolution + closest-name suggestions
+// instead of failing outright; resubmit with
+// rate_overrides = { item_name: zoho_item_name } once the caller has picked
+// the right one, and it'll use that item's live rate.
 //
 // Sets cf_requested_quantity custom field per line item.
 // Updates orders.invoice_status, zoho_invoice_id, invoice_number, invoice_total, balance_due.
@@ -159,6 +163,35 @@ function zohoUrl(path: string, orgId: string): string {
 
 function zohoHeaders(token: string): HeadersInit {
   return { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' };
+}
+
+// ── Live item rates ───────────────────────────────────────────────────────────
+// Zoho Books is the single source of truth for pricing. This used to read
+// rates from the local `catalog` table instead — a mirror that only updates
+// when someone remembers to run sync-catalog — so a price changed directly
+// in Zoho could sit un-synced indefinitely while invoices kept going out at
+// the old rate. Pulling live here means every invoice bills whatever Zoho
+// says right now, full stop.
+async function fetchZohoItems(
+  token: string, orgId: string,
+): Promise<Array<{ name: string; rate: number; item_id: string; unit: string }>> {
+  let page = 1;
+  const all: Array<{ name: string; rate: number; item_id: string; unit: string }> = [];
+  while (true) {
+    const res = await fetch(
+      zohoUrl(`/items?status=active&page=${page}&per_page=200`, orgId),
+      { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
+    );
+    const d = await res.json();
+    if (!res.ok) throw new Error(`Zoho items fetch failed: ${d.message || res.status}`);
+    const items = d.items ?? [];
+    all.push(...items.map((i: any) => ({
+      name: i.name as string, rate: i.rate ?? 0, item_id: i.item_id as string, unit: i.unit || 'kg',
+    })));
+    if (!d.page_context?.has_more_page) break;
+    page++;
+  }
+  return all;
 }
 
 // Same identity rule as the frontend's canonicalCustomerKey — case AND
@@ -308,13 +341,20 @@ Deno.serve(async (req) => {
       throw new Error(`Missing final qty: ${missing.map((i: any) => i.item_name).join(', ')}`);
     }
 
-    const { data: catalog, error: catalogErr } = await supabase
-      .from('catalog').select('item_name, unit_price');
-    if (catalogErr) throw new Error(catalogErr.message);
-    const catalogNames = (catalog ?? []).map((c: any) => c.item_name as string);
-    const rateByLowerName = new Map(
-      (catalog ?? []).map((c: any) => [(c.item_name as string).toLowerCase(), c.unit_price ?? 0]),
-    );
+    const zohoItems = await fetchZohoItems(token, orgId);
+    const catalogNames = zohoItems.map(i => i.name);
+    const rateByLowerName = new Map(zohoItems.map(i => [i.name.toLowerCase(), i.rate]));
+
+    // Best-effort: keep the local catalog mirror fresh as a side effect of
+    // every invoice, since Config/Stock/Packer still read it for unit labels
+    // and autocomplete — but this never gates or blocks invoicing itself.
+    supabase.from('catalog').upsert(
+      zohoItems.map(i => ({
+        item_name: i.name, unit_price: i.rate, unit: i.unit, active: true,
+        zoho_item_id: i.item_id, synced_at: new Date().toISOString(),
+      })),
+      { onConflict: 'zoho_item_id' },
+    ).then(({ error }) => { if (error) console.error('Catalog mirror refresh failed:', error.message); });
 
     const freeItems: string[] = [];
     const unresolved: Array<{ item_name: string; suggestions: string[] }> = [];
