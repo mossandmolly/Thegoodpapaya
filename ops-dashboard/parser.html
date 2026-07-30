@@ -830,7 +830,19 @@ uxModalInput.addEventListener('keydown',e=>{
 // apart from anyone who just has the public anon key.
 async function authToken(){
   const{data:{session}}=await sb.auth.getSession();
-  return session?.access_token||SUPABASE_ANON;
+  if(!session)return SUPABASE_ANON;
+  // Mobile browsers throttle/pause timers while a tab is backgrounded, so
+  // the library's own background auto-refresh can't be relied on to have
+  // actually run by the time someone unlocks their phone and comes back to
+  // a screen that's been asleep for a while — that's what was showing up
+  // as "Not authenticated" right after resuming. Check the token's real
+  // expiry here and force a refresh if it's expired or close to it, instead
+  // of handing over one the server's about to reject anyway.
+  if(session.expires_at&&session.expires_at*1000<Date.now()+60000){
+    const{data:refreshed,error}=await sb.auth.refreshSession().catch(e=>({data:null,error:e}));
+    if(!error&&refreshed?.session)return refreshed.session.access_token;
+  }
+  return session.access_token||SUPABASE_ANON;
 }
 
 // Delivery sessions are confined to the Delivery tab — a UI-level
@@ -2259,6 +2271,7 @@ function renderOrdersList(){
         const statusBadges=(cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
+          (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus):'')+
           (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'');
 
         // "Packed" here means reached at least the packed stage (packed,
@@ -2467,6 +2480,18 @@ function deliveryWindowLabel(order){
   if(after)return 'after '+after;
   if(by)return 'by '+by;
   return null;
+}
+
+// Shared with the Delivery tab's per-card badge (renderDeliveryCard) so
+// Overview shows the exact same wording/color for the exact same underlying
+// orders.delivery_status — 'not_dispatched' is the DB column's default
+// (since migration 031), so every invoiced order starts here and stays here
+// until dispatch-order/mark-delivered move it along.
+function deliveryStatusBadgeHtml(deliveryStatus){
+  if(deliveryStatus==='partially_delivered')return ' <span class="order-status-badge" style="background:#a0522d">PARTIALLY DELIVERED</span>';
+  if(deliveryStatus==='delivered')return ' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>';
+  if(deliveryStatus==='ofd')return ' <span class="order-status-badge" style="background:#2f6690">OUT FOR DELIVERY</span>';
+  return ' <span class="order-status-badge" style="background:#8a7a6a">NOT DISPATCHED</span>';
 }
 
 // Renders one badge per distinct deliver-by/deliver-after window found in a
@@ -3948,10 +3973,17 @@ function saveDvQueue(q){localStorage.setItem(DV_QUEUE_KEY,JSON.stringify(q));}
 // of both existing checks, fall back to matching the message text every
 // major engine actually uses for "couldn't reach the server" — this is
 // what catches the auth-refresh case that instanceof TypeError alone misses.
+//
+// "Not authenticated" is also treated as retryable here rather than a
+// genuine validation failure — a stale/expired token (e.g. a rider's phone
+// screen was off long enough that the session token lapsed) is exactly the
+// kind of thing that self-heals on the next attempt now that authToken()
+// force-refreshes an expiring session, whereas dropping the action outright
+// would silently lose a real delivery/payment update the rider made.
 function isNetworkFailure(e){
   if(!navigator.onLine||e instanceof TypeError)return true;
   const msg=String(e&&e.message||'').toLowerCase();
-  return /failed to fetch|load failed|network ?error|internet_disconnected|network request failed/.test(msg);
+  return /failed to fetch|load failed|network ?error|internet_disconnected|network request failed|not authenticated/.test(msg);
 }
 
 function queueDvAction(type,payload){
@@ -4036,7 +4068,7 @@ async function flushDvQueue(){
   }
   saveDvQueue(remaining);
   renderDvQueueBadge();
-  if(anySynced&&document.getElementById('panel-delivery').classList.contains('active'))await loadDeliveryView();
+  if(anySynced&&document.getElementById('panel-delivery').classList.contains('active'))await loadDeliveryView(true);
 }
 
 window.addEventListener('online',flushDvQueue);
@@ -4058,13 +4090,23 @@ const FREE_ITEM_RE=/\b(replacement|free sample|free)\b/i;
 // has rows to build a card from) — anywhere the card shows "what's actually
 // in this order" needs the existing activeItems() filter first.
 
-async function loadDeliveryView(){
+// silent=true is used for the background re-sync after a queued offline
+// action flushes (see flushDvQueue) — a rider mid-delivery shouldn't get
+// the whole list wiped to a blank "Loading…" and their in-progress
+// selection/scroll position reset just because something quietly synced in
+// the background. Errors in silent mode are logged, not shown, since the
+// existing (still-valid) list on screen is better than replacing it with
+// an error for a refresh nobody asked for.
+async function loadDeliveryView(silent){
   const list=document.getElementById('dv-list');
   const tomorrowDate=addDays(CALENDAR_TODAY,1);
   document.getElementById('dv-label').textContent=
     viewDate===CALENDAR_TODAY?'Delivery':(viewDate===tomorrowDate?'Delivery (Tomorrow)':'Delivery — '+viewDate);
-  list.innerHTML='<div class="to-empty">Loading…</div>';
-  selectedDeliveryOrders=new Set();
+  const scrollY=list.scrollTop;
+  if(!silent){
+    list.innerHTML='<div class="to-empty">Loading…</div>';
+    selectedDeliveryOrders=new Set();
+  }
 
   const[{data,error},catalog]=await Promise.all([
     fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
@@ -4073,17 +4115,24 @@ async function loadDeliveryView(){
   deliveryCatalogByItem={};
   (catalog||[]).forEach(c=>{deliveryCatalogByItem[c.item_name.toLowerCase()]={unit:c.unit||'',rate:c.unit_price||0};});
 
-  if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  if(error){
+    if(silent){console.error('Silent delivery refresh failed:',error.message);return;}
+    list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;
+  }
   if(!data||!data.length){
     deliveryOrders={};
     document.getElementById('dv-rc').textContent='';
+    if(silent){renderDeliveryList();return;}
     list.innerHTML='<div class="to-empty">No orders for '+viewDate+'</div>';
     return;
   }
 
   const uniqueIds=[...new Set(data.map(i=>i.sales_order_id))];
   const{map:customerMap,error:custErr}=await fetchCustomerMap(uniqueIds);
-  if(custErr){list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;}
+  if(custErr){
+    if(silent){console.error('Silent delivery refresh failed:',custErr.message);return;}
+    list.innerHTML='<div class="to-empty">Could not load customer names: '+escH(custErr.message)+'</div>';return;
+  }
 
   const bySalesOrder={};
   data.forEach(item=>{
@@ -4121,6 +4170,7 @@ async function loadDeliveryView(){
 
   deliveryOrders=bySalesOrder;
   renderDeliveryList();
+  if(silent)list.scrollTop=scrollY;
 }
 
 function setDeliveryScope(scope){
@@ -4519,13 +4569,7 @@ function renderDeliveryCard(order,selectionMode){
       '</div>'
     :'';
 
-  const deliveryStatusBadge=partiallyDelivered
-    ?' <span class="order-status-badge" style="background:#a0522d">PARTIALLY DELIVERED</span>'
-    :delivered
-      ?' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>'
-      :ofd
-        ?' <span class="order-status-badge" style="background:#2f6690">OUT FOR DELIVERY</span>'
-        :' <span class="order-status-badge" style="background:#8a7a6a">NOT DISPATCHED</span>';
+  const deliveryStatusBadge=deliveryStatusBadgeHtml(order.deliveryStatus);
 
   const paymentBadge=delivered
     ?(order.paymentCollected
