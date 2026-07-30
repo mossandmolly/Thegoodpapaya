@@ -54,7 +54,16 @@ const CORS = {
 };
 
 // ── Zoho OAuth ────────────────────────────────────────────────────────────────
+// Module-level cache, not per-request — bulk-cancelling calls this function
+// once per selected order in quick succession, and Zoho's OAuth token
+// endpoint rate-limits rapid repeated refresh-token exchanges from the same
+// client. Supabase Edge Functions frequently reuse the same warm isolate for
+// back-to-back invocations, so this cache often applies across requests too.
+let cachedToken = '';
+let tokenExpiry = 0;
+
 async function getZohoToken(): Promise<string> {
+  if (cachedToken && Date.now() < tokenExpiry - 60_000) return cachedToken;
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -67,7 +76,9 @@ async function getZohoToken(): Promise<string> {
   });
   const data = await res.json();
   if (!data.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(data)}`);
-  return data.access_token;
+  cachedToken = data.access_token;
+  tokenExpiry = Date.now() + (data.expires_in ?? 3600) * 1000;
+  return cachedToken;
 }
 
 function zohoUrl(path: string, orgId: string): string {
