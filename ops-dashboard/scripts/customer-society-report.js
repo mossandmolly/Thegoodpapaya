@@ -27,6 +27,22 @@ function normKey(name) {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+// Manual overrides for societies known to be a single real community despite
+// splitting into multiple resolved/inferred names above (typos, sub-block
+// names, or a shared complex referred to by its individual tower numbers).
+const MANUAL_SOCIETY_MERGES = [
+  { test: (s) => /^sjr/i.test(s) && /blu.?water/i.test(s), into: "Sjr Bluewater" },
+  { test: (s) => /^sjr/i.test(s) && /redwood/i.test(s), into: "Sjr Redwood" },
+  { test: (s) => /^t[1-7]$/i.test(s) || /^lotus$/i.test(s), into: "Lotus (T1-T7)" },
+];
+
+function applyManualMerge(soc) {
+  for (const rule of MANUAL_SOCIETY_MERGES) {
+    if (rule.test(soc)) return rule.into;
+  }
+  return soc;
+}
+
 // Best-effort society name for customers the canonical list doesn't cover:
 // take the leading run of tokens that contain no digits (society names are
 // alphabetic, door/unit numbers contain a digit), then collapse a trailing
@@ -112,10 +128,12 @@ function main() {
       soc = guess.display;
       inferred = true;
     }
+    soc = applyManualMerge(soc);
     c.society = soc;
     c.inferred = inferred;
 
-    if (!bySociety.has(soc)) bySociety.set(soc, { customers: [], sales: 0, orders: 0, inferred });
+    if (!bySociety.has(soc)) bySociety.set(soc, { customers: [], sales: 0, orders: 0, inferred: false });
+    if (inferred) bySociety.get(soc).inferred = true;
     const s = bySociety.get(soc);
     s.customers.push(c.display);
     s.sales += c.sales;
