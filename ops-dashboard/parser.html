@@ -2405,13 +2405,13 @@ function renderOrdersList(){
         const checkboxHtml=!cancelled
           ?'<input type="checkbox" class="inv-select" '+(selectedOrders.has(order.soid)?'checked ':'')+'onchange="toggleOrderSelect('+escH(JSON.stringify(order.soid))+',this.checked)"> '
           :'';
-        // Every active item's description flags it as a replacement (never
-        // an order with no items at all) — worth a loud callout since a
-        // replacement-only order shouldn't be billed/handled like a normal
-        // paid one.
+        // Every active item's description flags it as replacement/free
+        // (never an order with no items at all) — worth a loud callout
+        // since a replacement-only order shouldn't be billed/handled like a
+        // normal paid one.
         const activeOrderItems=activeItems(order);
         const replacementOnly=!cancelled&&activeOrderItems.length>0&&
-          activeOrderItems.every(i=>/\breplacement\b/i.test(i.description||''));
+          activeOrderItems.every(i=>/\b(replacement|replace|free)\b/i.test(i.description||''));
         const statusBadges=(cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
