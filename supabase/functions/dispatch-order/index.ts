@@ -12,7 +12,13 @@
 // 'not_dispatched' — calling it again on an already-dispatched (or
 // delivered) order is a harmless no-op rather than clobbering later state.
 //
-// Input:  { sales_order_id: string }
+// An order should never end up OFD without a named rider attached — if
+// `rider` is passed and the order isn't already assigned to someone, this
+// claims it for that rider as part of the same dispatch, same "no
+// unassigned deliveries" rule assign-rider enforces on its own path.
+// Never overwrites an existing assignment.
+//
+// Input:  { sales_order_id: string, rider?: string }
 // Output: { sales_order_id, delivery_status, dispatched: boolean }
 //
 // Required env vars:
@@ -46,14 +52,21 @@ Deno.serve(async (req) => {
 
   try {
     await requireAuth(req);
-    const { sales_order_id } = await req.json();
+    const { sales_order_id, rider } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
+    const update: Record<string, unknown> = { delivery_status: 'ofd', dispatched_at: new Date().toISOString() };
+    if (rider) {
+      const { data: existing } = await supabase
+        .from('orders').select('assigned_rider').eq('sales_order_id', sales_order_id).maybeSingle();
+      if (!existing?.assigned_rider) update.assigned_rider = rider;
+    }
+
     const { data, error } = await supabase
       .from('orders')
-      .update({ delivery_status: 'ofd', dispatched_at: new Date().toISOString() })
+      .update(update)
       .eq('sales_order_id', sales_order_id)
       .eq('delivery_status', 'not_dispatched')
       .select('sales_order_id, delivery_status')

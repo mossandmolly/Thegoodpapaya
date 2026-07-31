@@ -147,6 +147,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-assigned-tag{font-size:12px;font-weight:700;color:#b3261e;margin-left:6px}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
+.replacement-only-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
 .dv-queue-badge.hidden{display:none}
 .cluster-summary-box{background:#fff8f0;border:1px solid #f0dfc8;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px}
@@ -2404,11 +2405,19 @@ function renderOrdersList(){
         const checkboxHtml=!cancelled
           ?'<input type="checkbox" class="inv-select" '+(selectedOrders.has(order.soid)?'checked ':'')+'onchange="toggleOrderSelect('+escH(JSON.stringify(order.soid))+',this.checked)"> '
           :'';
+        // Every active item's description flags it as a replacement (never
+        // an order with no items at all) — worth a loud callout since a
+        // replacement-only order shouldn't be billed/handled like a normal
+        // paid one.
+        const activeOrderItems=activeItems(order);
+        const replacementOnly=!cancelled&&activeOrderItems.length>0&&
+          activeOrderItems.every(i=>/\breplacement\b/i.test(i.description||''));
         const statusBadges=(cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
           (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus):'')+
-          (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'');
+          (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'')+
+          (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'');
 
         // "Packed" here means reached at least the packed stage (packed,
         // final, or invoiced all count — packing is a one-way milestone,
@@ -3497,27 +3506,30 @@ function renderNotDispatchedClusterSummary(active){
   const orders=active.filter(o=>isFullyInvoiced(o)&&(o.deliveryStatus||'not_dispatched')==='not_dispatched');
   if(!orders.length){el.innerHTML='';return;}
 
-  const counts={};
+  const houses={};
   orders.forEach(o=>{
     const soc=deriveSociety(o.customer);
     const cluster=communitiesCache[soc]?.cluster||'Unnamed';
-    counts[cluster]=(counts[cluster]||0)+1;
+    (houses[cluster]=houses[cluster]||[]).push(o.customer);
   });
 
   const rankOf=name=>(clustersCache[name]&&clustersCache[name].stack_rank!=null)?clustersCache[name].stack_rank:9999;
-  let entries=Object.entries(counts).map(([name,count])=>({name,count}));
+  let entries=Object.entries(houses).map(([name,list])=>({name,list}));
 
   const c1=entries.find(e=>e.name==='Cluster 1'),c2=entries.find(e=>e.name==='Cluster 2');
-  if(c1&&c2&&(c1.count+c2.count)<=6){
+  if(c1&&c2&&(c1.list.length+c2.list.length)<=6){
     entries=entries.filter(e=>e!==c1&&e!==c2);
-    entries.push({name:'Cluster 1 + Cluster 2',count:c1.count+c2.count});
+    entries.push({name:'Cluster 1 + Cluster 2',list:[...c1.list,...c2.list]});
   }
   entries.sort((a,b)=>rankOf(a.name.split(' + ')[0])-rankOf(b.name.split(' + ')[0]));
 
   el.innerHTML='<div class="cluster-summary-box">'+
     '<div class="cluster-summary-title">📍 Not Dispatched by Cluster ('+orders.length+')</div>'+
     entries.map(e=>
-      '<div class="cluster-summary-row"><span class="cs-name">'+escH(e.name)+'</span><span>'+e.count+'</span></div>'
+      '<div class="cluster-summary-row">'+
+        '<span class="cs-name">'+escH(e.name)+'</span><span>'+e.list.length+'</span>'+
+        '<span class="cs-detail">'+e.list.map(escH).join(', ')+'</span>'+
+      '</div>'
     ).join('')+
   '</div>';
 }
@@ -4297,7 +4309,7 @@ async function performDvAction(type,payload){
     const res=await fetch(SUPABASE_URL+'/functions/v1/dispatch-order',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:payload.soid}),
+      body:JSON.stringify({sales_order_id:payload.soid,rider:payload.rider}),
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not dispatch order');
@@ -4584,11 +4596,15 @@ function deliverySelectionModeActive(){
   return deliveryScope==='all'&&(deliveryStatusFilter==='pending'||deliveryStatusFilter==='all');
 }
 
-// Only a still-at-the-store order can be picked up and assigned — one
-// that's already ofd, delivered, partially delivered, or cancelled has
-// already moved past the point where "assign to me" means anything.
+// A not-yet-assigned order can be picked up whether it's still at the
+// store or already out (a rider who dispatched it without an explicit
+// assignment step, or one taking over from someone who unassigned, can
+// still claim it) — only delivered/partially delivered/cancelled has moved
+// past the point where "assign to me" means anything, and an already-
+// assigned order isn't up for grabs regardless of its delivery status.
 function orderEligibleForAssignment(order){
-  return order.orderStatus!=='cancelled'&&order.deliveryStatus==='not_dispatched';
+  return order.orderStatus!=='cancelled'&&!order.assignedRider&&
+    (order.deliveryStatus==='not_dispatched'||order.deliveryStatus==='ofd');
 }
 
 function renderDeliveryList(){
@@ -4710,9 +4726,19 @@ async function toggleItemCollected(itemId,soid,checked){
 }
 
 async function dispatchOrder(soid){
+  // An order can never go OFD without a named rider attached — ask now if
+  // this device hasn't said who it is yet (only actually prompts if
+  // riderName isn't already set; a no-op otherwise), and bail out rather
+  // than dispatching to nobody if it's still not answered.
+  await ensureRiderName();
+  if(!riderName){uxAlert('A name is needed before marking this out for delivery.');return;}
+
   // Optimistic: the card already reads "OFD" for the rider immediately.
   const order=deliveryOrders[soid];
-  if(order)order.deliveryStatus='ofd';
+  if(order){
+    order.deliveryStatus='ofd';
+    if(!order.assignedRider)order.assignedRider=riderName;
+  }
   renderDeliveryList();
 
   try{
@@ -4720,14 +4746,14 @@ async function dispatchOrder(soid){
     const res=await fetch(SUPABASE_URL+'/functions/v1/dispatch-order',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:soid}),
+      body:JSON.stringify({sales_order_id:soid,rider:riderName}),
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not dispatch order');
     evictCustomerLookupCache(soid);
   }catch(e){
     if(isNetworkFailure(e)){
-      queueDvAction('dispatch_order',{soid});
+      queueDvAction('dispatch_order',{soid,rider:riderName});
     }else{
       uxAlert(e.message);
     }
@@ -4925,6 +4951,8 @@ function renderDeliveryCard(order,selectionMode){
         '<a class="or-link" onclick="openAddRemark(\''+order.soid+'\')">+ delivery comment</a>'+
         '<a class="or-link" onclick="openAddPhoto(\''+order.soid+'\')">+ photo</a>'+
         (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
+        (!delivered&&!order.assignedRider?'<a class="or-link" onclick="assignOrderToMe(\''+order.soid+'\')">🛵 assign to me</a>':'')+
+        (!delivered&&order.assignedRider?'<a class="or-link" onclick="unassignOrder(\''+order.soid+'\')">unassign</a>':'')+
         (delivered
           ?'<a class="or-link" onclick="undoDelivered(\''+order.soid+'\')">undo delivered</a>'
           :ofd
@@ -5004,6 +5032,8 @@ document.getElementById('nd-cancel').addEventListener('click',()=>{ndModal.class
 // That's what makes "generate invoice" reappear on Today's Orders as the
 // cue for an admin to regenerate it without this item.
 document.getElementById('nd-confirm').addEventListener('click',async()=>{
+  await ensureRiderName();
+  if(!riderName){uxAlert('A name is needed before cancelling an item.');return;}
   const reason=ndReasonSel.value==='Other'?ndOtherInput.value.trim():ndReasonSel.value;
   if(!reason){uxAlert('Enter a reason');return;}
   const itemId=ndTargetItem,soid=ndTargetOrder;
@@ -5127,7 +5157,8 @@ dvAddPhotoInput.addEventListener('change',async()=>{
 document.getElementById('dv-assign-me').addEventListener('click',async()=>{
   const ids=[...selectedDeliveryOrders];
   if(!ids.length)return;
-  if(!riderName){uxAlert('Enter your name first (tap the badge in the top-right corner).');return;}
+  await ensureRiderName();
+  if(!riderName){uxAlert('A name is needed before assigning orders.');return;}
   if(!await uxConfirm('Assign '+ids.length+' order'+(ids.length!==1?'s':'')+' to '+riderName+'?'))return;
   const btn=document.getElementById('dv-assign-me');
   btn.disabled=true;
@@ -5154,6 +5185,58 @@ document.getElementById('dv-assign-me').addEventListener('click',async()=>{
     btn.disabled=selectedDeliveryOrders.size===0;
   }
 });
+
+// Per-order equivalent of the bulk "assign to me" above, for a single card
+// (e.g. a rider who already dispatched an order without going through
+// selection mode first, or one taking over an order someone else
+// unassigned).
+async function assignOrderToMe(soid){
+  await ensureRiderName();
+  if(!riderName){uxAlert('A name is needed before assigning orders.');return;}
+  if(!await uxConfirm('Assign this order to '+riderName+'?'))return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/assign-rider',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_ids:[soid],rider:riderName}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not assign order');
+    evictCustomerLookupCache(soid);
+    if(data.already_taken&&data.already_taken.length){uxAlert('Already claimed by someone else.');}
+    await loadDeliveryView();
+  }catch(e){
+    uxAlert(isNetworkFailure(e)?'No connection — try again once you have signal.':e.message);
+  }
+}
+
+// Reverses assignment — resets an OFD order back to Not Dispatched (items
+// need re-collecting and it needs to be marked OFD again by whoever picks
+// it up next) since a different rider taking over shouldn't silently
+// inherit the previous rider's collected-checkbox state. Not offered once
+// delivered/partially delivered (see unassign-rider) — the confirm text
+// makes the OFD reset explicit since it's the one non-obvious side effect.
+async function unassignOrder(soid){
+  await ensureRiderName();
+  if(!riderName){uxAlert('A name is needed before unassigning orders.');return;}
+  const order=deliveryOrders[soid];
+  const wasOfd=order&&order.deliveryStatus==='ofd';
+  if(!await uxConfirm('Unassign this order from '+(order?.assignedRider||'its current rider')+'?'+
+    (wasOfd?' This resets it back to Not Dispatched — items will need re-collecting, and it\'ll need to be marked OFD again by whoever picks it up next.':'')))return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/unassign-rider',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not unassign order');
+    evictCustomerLookupCache(soid);
+    await loadDeliveryView();
+  }catch(e){
+    uxAlert(isNetworkFailure(e)?'No connection — try again once you have signal.':e.message);
+  }
+}
 
 // ── Mark delivered modal ─────────────────────────────────────────────────
 const dvModal=document.getElementById('dv-modal'),dvNotesEl=document.getElementById('dv-notes'),dvPhotoInput=document.getElementById('dv-photo');
@@ -5213,6 +5296,8 @@ function compressImage(file,maxDim,quality){
 }
 
 document.getElementById('dv-confirm').addEventListener('click',async()=>{
+  await ensureRiderName();
+  if(!riderName){uxAlert('A name is needed before marking this delivered.');return;}
   const soid=dvTargetOrder;
   if(!soid)return;
   const notes=dvNotesEl.value.trim();
