@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
 
     const { data, error } = await supabase
       .from('orders')
-      .update({ delivery_status: 'ofd' })
+      .update({ delivery_status: 'ofd', dispatched_at: new Date().toISOString() })
       .eq('sales_order_id', sales_order_id)
       .eq('delivery_status', 'not_dispatched')
       .select('sales_order_id, delivery_status')

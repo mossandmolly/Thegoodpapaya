@@ -149,6 +149,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
 .dv-queue-badge.hidden{display:none}
+.cluster-summary-box{background:#fff8f0;border:1px solid #f0dfc8;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px}
+.cluster-summary-title{font-weight:700;color:#b45f0e;font-size:11px;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:6px}
+.cluster-summary-row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #f5ebd9;color:#5c4f42}
+.cluster-summary-row:last-child{border-bottom:none}
+.cluster-summary-row .cs-name{font-weight:600}
+.cluster-summary-row .cs-detail{color:#8a7a6a;font-size:11px;flex-basis:100%}
 .dv-cancelled-card{opacity:0.7}
 .dv-cancelled-items{font-size:12px;color:#8a7a6a;text-decoration:line-through}
 .rider-badge{font-size:12px;color:#5c4f42;cursor:pointer;margin-right:14px}
@@ -412,6 +418,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <input type="text" class="pk-search" id="to-search" placeholder="🔍 Search society, customer, or fruit...">
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div id="to-delivery-pills" class="filter-pills delivery-status-pills"></div>
+  <div id="to-notdispatched-summary"></div>
+  <div id="to-ofd-summary"></div>
   <div id="to-grouping-toggle" class="filter-pills status-pills"></div>
   <div class="push-row bulk-actions-row">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Invoices (0)</button>
@@ -717,6 +725,21 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 
   <div class="config-section">
+    <h3>🗺️ Clusters <span style="font-size:11px;color:#8a7a6a;font-weight:400">(regional grouping for the Not Dispatched summary on Overview)</span></h3>
+    <p class="note">A cluster is a coarse geographic grouping of several communities (many trips' worth) — used only to summarize not-dispatched orders by region on Order Overview. Stack rank sets delivery priority order (lower goes out first); any community not assigned to a cluster below shows up under "Unnamed" in that summary, ranked last. Assign each community to a cluster from the Communities table below.</p>
+    <div class="add-row">
+      <input type="text" id="new-cluster-name" placeholder="New cluster name">
+      <input type="number" id="new-cluster-rank" placeholder="Stack rank" style="max-width:110px">
+      <button onclick="addCluster()">Add</button>
+    </div>
+    <div class="table-scroll">
+      <table class="community-table"><thead><tr>
+        <th>Cluster</th><th>Stack rank</th><th></th>
+      </tr></thead><tbody id="cluster-tbody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="config-section">
     <h3>🏘️ Communities <span style="font-size:11px;color:#8a7a6a;font-weight:400">(lat/lng + trip grouping — feeds the Trip view on Overview/Packer/Delivery)</span></h3>
     <p class="note">Communities are also added automatically as new orders come in — this list is for filling in each one's coordinates and trip grouping, plus adding/renaming/removing entries by hand. Combinable group is a plain label you choose — any communities sharing the same label become one trip together; leave it blank to let a community be its own single-community trip. Renaming one only fixes this record — if new orders keep deriving the old name from a customer's address, that name will just get auto-recreated alongside it, so renaming is best used for one-off typo fixes, not an ongoing display name.</p>
     <div class="add-row">
@@ -726,7 +749,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div id="community-duplicates"></div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th></th>
+        <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th>Cluster</th><th></th>
       </tr></thead><tbody id="community-tbody"></tbody></table>
     </div>
   </div>
@@ -932,7 +955,13 @@ async function initAppAfterLogin(){
   // which tab loads first — loaded once here rather than lazily on first
   // Config visit, best-effort (a failure here just means trip view falls
   // back to plain society grouping until the next successful load).
-  loadCommunitiesConfig().catch(e=>console.error('Could not load communities config',e));
+  // Clusters loaded first since Overview's not-dispatched-by-cluster
+  // summary needs the stack-rank list regardless of whether Config was
+  // ever opened this session.
+  loadClustersConfig()
+    .catch(e=>console.error('Could not load clusters config',e))
+    .then(()=>loadCommunitiesConfig())
+    .catch(e=>console.error('Could not load communities config',e));
 
   if(isDeliveryRole){
     switchTab('delivery');
@@ -1007,16 +1036,98 @@ function switchTab(name){
 }
 
 // ── Config UI ─────────────────────────────────────────────────────────────
-function renderConfig(){
+async function renderConfig(){
   document.getElementById('fruit-list').innerHTML=FRUITS.map((f,i)=>`<li>${f}<button class="del-btn" onclick="delFruit(${i})">✕</button></li>`).join('');
   document.getElementById('pkg-list').innerHTML=Object.entries(PKG).map(([k,v])=>`<li>${k}<span>${v} kg/pc</span><button class="del-btn" onclick="delPkg('${k}')">✕</button></li>`).join('');
   document.getElementById('alias-list').innerHTML=Object.entries(ALIASES).map(([k,v])=>`<li>${k}<span>→ ${v}</span><button class="del-btn" onclick="delAlias('${k}')">✕</button></li>`).join('');
   populatePackerFruitPicker();
   loadPackersConfig();
+  // Clusters loaded first — the Communities table's cluster picker needs
+  // the full cluster list to already be in clustersCache when it renders.
+  await loadClustersConfig();
   loadCommunitiesConfig();
 }
 
 // ── Communities (lat/lng + trip grouping) ────────────────────────────────
+// Keyed by cluster name — same session-cache convention as
+// communitiesCache below. Loaded alongside it since the Communities
+// table's per-row cluster picker (and the Overview not-dispatched-by-
+// cluster summary) both need the full cluster list, not just what's
+// currently referenced by a community.
+let clustersCache={};
+
+async function loadClustersConfig(){
+  const{data,error}=await sb.from('clusters').select('*').order('stack_rank',{nullsFirst:false});
+  if(error){console.error(error);return;}
+  clustersCache={};
+  (data||[]).forEach(c=>{clustersCache[c.name]=c;});
+  renderClusterTable(data||[]);
+}
+
+function clusterOptionsHtml(selected){
+  return '<option value="">— Unnamed —</option>'+
+    Object.keys(clustersCache).map(name=>
+      '<option value="'+escH(name)+'"'+(name===selected?' selected':'')+'>'+escH(name)+'</option>'
+    ).join('');
+}
+
+function renderClusterTable(rows){
+  const tbody=document.getElementById('cluster-tbody');
+  if(!tbody)return;
+  tbody.innerHTML=rows.map(c=>
+    '<tr>'+
+      '<td><input type="text" id="cluster-name-'+escH(c.name)+'" value="'+escH(c.name)+'"></td>'+
+      '<td><input type="number" id="cluster-rank-'+escH(c.name)+'" value="'+(c.stack_rank??'')+'"></td>'+
+      '<td style="white-space:nowrap">'+
+        '<button class="del-btn" style="color:#2d6b2d" onclick="saveCluster('+escH(JSON.stringify(c.name))+')" title="Save">💾</button>'+
+        '<button class="del-btn" onclick="deleteCluster('+escH(JSON.stringify(c.name))+')" title="Delete">✕</button>'+
+      '</td>'+
+    '</tr>'
+  ).join('');
+}
+
+async function saveCluster(oldName){
+  const name=document.getElementById('cluster-name-'+oldName).value.trim();
+  if(!name){uxAlert('Cluster name can\'t be empty');return;}
+  const rank=document.getElementById('cluster-rank-'+oldName).value;
+  const stackRank=rank===''?null:parseInt(rank,10);
+  if(name!==oldName){
+    // Renaming a cluster's primary key — every community pointing at the
+    // old name needs to follow it, or they'd silently fall back to
+    // "Unnamed" the moment the old row's gone.
+    const{error:commErr}=await sb.from('communities').update({cluster:name}).eq('cluster',oldName);
+    if(commErr){uxAlert('Failed to update communities using this cluster: '+commErr.message);return;}
+    const{error:insErr}=await sb.from('clusters').insert({name,stack_rank:stackRank});
+    if(insErr){uxAlert('Failed to save: '+insErr.message);return;}
+    await sb.from('clusters').delete().eq('name',oldName);
+  }else{
+    const{error}=await sb.from('clusters').update({stack_rank:stackRank}).eq('name',oldName);
+    if(error){uxAlert('Failed to save: '+error.message);return;}
+  }
+  await loadClustersConfig();
+  await loadCommunitiesConfig();
+}
+
+async function addCluster(){
+  const nameEl=document.getElementById('new-cluster-name'),rankEl=document.getElementById('new-cluster-rank');
+  const name=nameEl.value.trim();
+  if(!name)return;
+  if(clustersCache[name]){uxAlert('"'+name+'" already exists');return;}
+  const rank=rankEl.value;
+  const{error}=await sb.from('clusters').insert({name,stack_rank:rank===''?null:parseInt(rank,10)});
+  if(error){uxAlert('Failed to add: '+error.message);return;}
+  nameEl.value='';rankEl.value='';
+  await loadClustersConfig();
+}
+
+async function deleteCluster(name){
+  if(!await uxConfirm('Remove cluster "'+name+'"? Any community currently assigned to it falls back to "Unnamed", not deleted.'))return;
+  const{error}=await sb.from('clusters').delete().eq('name',name);
+  if(error){uxAlert('Failed to delete: '+error.message);return;}
+  await loadClustersConfig();
+  await loadCommunitiesConfig();
+}
+
 // Session-cached like customerLookupCache — refreshed whenever the Config
 // tab is opened or a row is saved. Keyed by community name (matches
 // deriveSociety()'s output, since both sides derive from the same
@@ -1091,6 +1202,7 @@ function renderCommunityTable(rows){
       '<td><input type="text" id="comm-group-'+c.id+'" value="'+escH(c.combinable_group||'')+'" placeholder="e.g. north-cluster"></td>'+
       '<td><input type="number" id="comm-rank-'+c.id+'" value="'+(c.stack_rank??'')+'"></td>'+
       '<td><input type="time" id="comm-nlt-'+c.id+'" value="'+(c.no_later_than?c.no_later_than.slice(0,5):'')+'"></td>'+
+      '<td><select id="comm-cluster-'+c.id+'">'+clusterOptionsHtml(c.cluster)+'</select></td>'+
       '<td style="white-space:nowrap">'+
         '<button class="del-btn" style="color:#2d6b2d" onclick="saveCommunity('+escH(JSON.stringify(c.id))+')" title="Save">💾</button>'+
         '<button class="del-btn" onclick="deleteCommunity('+escH(JSON.stringify(c.id))+','+escH(JSON.stringify(c.name))+')" title="Delete">✕</button>'+
@@ -1116,6 +1228,7 @@ async function saveCommunity(id){
   const group=document.getElementById('comm-group-'+id).value.trim();
   const rank=document.getElementById('comm-rank-'+id).value;
   const nlt=document.getElementById('comm-nlt-'+id).value;
+  const cluster=document.getElementById('comm-cluster-'+id).value;
   const update={
     name,
     lat:              lat===''?null:parseFloat(lat),
@@ -1123,6 +1236,7 @@ async function saveCommunity(id){
     combinable_group: group||null,
     stack_rank:       rank===''?null:parseInt(rank,10),
     no_later_than:    nlt||null,
+    cluster:          cluster||null,
   };
   const{error}=await sb.from('communities').update(update).eq('id',id);
   if(error){uxAlert('Failed to save: '+error.message);return;}
@@ -2057,7 +2171,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -2215,6 +2329,8 @@ async function loadTodaysOrders(){
         adminNotes:    o?.admin_notes||null,
         tripOverride:  o?.trip_override||null,
         invoiceDownloadedAt:o?.invoice_downloaded_at||null,
+        assignedRider: o?.assigned_rider||null,
+        dispatchedAt:  o?.dispatched_at||null,
         items:[],
       };
     }
@@ -3363,6 +3479,106 @@ function renderOverviewSummaryPills(){
   document.getElementById('to-delivery-pills').innerHTML=deliveryPills.map(p=>
     '<span class="filter-pill'+(overviewDeliveryFilter===p.key?' active':'')+'" onclick="setOverviewDeliveryFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('');
+
+  renderNotDispatchedClusterSummary(active);
+  renderOfdRiderSummary(active);
+}
+
+// ── Not Dispatched by Cluster — a delivery-priority-ordered count of
+// not_dispatched orders grouped by each society's cluster (Config ->
+// Clusters), so ops can see at a glance which region still has the most
+// left to dispatch without expanding every society individually. Cluster 1
+// + Cluster 2 collapse into one row when their combined count is small
+// (<=6) — a specific rule for those two adjacent, often jointly-run
+// regions, not a general nearby-cluster-merging system.
+function renderNotDispatchedClusterSummary(active){
+  const el=document.getElementById('to-notdispatched-summary');
+  if(!el)return;
+  const orders=active.filter(o=>isFullyInvoiced(o)&&(o.deliveryStatus||'not_dispatched')==='not_dispatched');
+  if(!orders.length){el.innerHTML='';return;}
+
+  const counts={};
+  orders.forEach(o=>{
+    const soc=deriveSociety(o.customer);
+    const cluster=communitiesCache[soc]?.cluster||'Unnamed';
+    counts[cluster]=(counts[cluster]||0)+1;
+  });
+
+  const rankOf=name=>(clustersCache[name]&&clustersCache[name].stack_rank!=null)?clustersCache[name].stack_rank:9999;
+  let entries=Object.entries(counts).map(([name,count])=>({name,count}));
+
+  const c1=entries.find(e=>e.name==='Cluster 1'),c2=entries.find(e=>e.name==='Cluster 2');
+  if(c1&&c2&&(c1.count+c2.count)<=6){
+    entries=entries.filter(e=>e!==c1&&e!==c2);
+    entries.push({name:'Cluster 1 + Cluster 2',count:c1.count+c2.count});
+  }
+  entries.sort((a,b)=>rankOf(a.name.split(' + ')[0])-rankOf(b.name.split(' + ')[0]));
+
+  el.innerHTML='<div class="cluster-summary-box">'+
+    '<div class="cluster-summary-title">📍 Not Dispatched by Cluster ('+orders.length+')</div>'+
+    entries.map(e=>
+      '<div class="cluster-summary-row"><span class="cs-name">'+escH(e.name)+'</span><span>'+e.count+'</span></div>'
+    ).join('')+
+  '</div>';
+}
+
+// A rider's OFD orders cluster into "trips" — dispatches in close
+// succession belong to the same trip; a bigger gap starts a new one. Trip
+// start time is the LAST dispatch in that burst (when the rider finished
+// loading everything and actually started driving/delivering), not the
+// first, per how the trip is meant to be reported.
+const TRIP_GAP_MINUTES=15;
+function groupOfdIntoTrips(orders){
+  const timed=orders.filter(o=>o.dispatchedAt).sort((a,b)=>new Date(a.dispatchedAt)-new Date(b.dispatchedAt));
+  const untimed=orders.filter(o=>!o.dispatchedAt);
+  const trips=[];
+  let current=null;
+  timed.forEach(o=>{
+    const t=new Date(o.dispatchedAt).getTime();
+    if(current&&(t-current.lastTime)<=TRIP_GAP_MINUTES*60000){
+      current.orders.push(o);
+      current.lastTime=t;
+    }else{
+      current={orders:[o],lastTime:t};
+      trips.push(current);
+    }
+  });
+  // Orders dispatched before this feature existed (no dispatched_at) — show
+  // them too rather than silently dropping them, just without a start time.
+  if(untimed.length)trips.push({orders:untimed,lastTime:null});
+  return trips;
+}
+
+function renderOfdRiderSummary(active){
+  const el=document.getElementById('to-ofd-summary');
+  if(!el)return;
+  const orders=active.filter(o=>o.deliveryStatus==='ofd');
+  if(!orders.length){el.innerHTML='';return;}
+
+  const byRider={};
+  orders.forEach(o=>{
+    const rider=o.assignedRider||'Unassigned';
+    (byRider[rider]=byRider[rider]||[]).push(o);
+  });
+
+  const rows=Object.keys(byRider).sort().flatMap(rider=>
+    groupOfdIntoTrips(byRider[rider]).map(trip=>{
+      const startLabel=trip.lastTime
+        ?new Date(trip.lastTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})
+        :'no timestamp';
+      const houses=trip.orders.map(o=>escH(o.customer)).join(', ');
+      return '<div class="cluster-summary-row">'+
+        '<span class="cs-name">🛵 '+escH(rider)+'</span>'+
+        '<span>Trip started '+startLabel+' · '+trip.orders.length+' house'+(trip.orders.length!==1?'s':'')+'</span>'+
+        '<span class="cs-detail">'+houses+'</span>'+
+      '</div>';
+    })
+  );
+
+  el.innerHTML='<div class="cluster-summary-box">'+
+    '<div class="cluster-summary-title">🛵 Out For Delivery by Rider ('+orders.length+')</div>'+
+    rows.join('')+
+  '</div>';
 }
 
 // One shared checkbox selection drives all three bulk actions — each button
