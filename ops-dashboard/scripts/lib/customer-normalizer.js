@@ -1,0 +1,122 @@
+// Shared logic for turning a raw Zoho "Sales by Customer" CSV export into a
+// list of unique, deduped customers with a resolved society. Used by both
+// customer-society-report.js and customer-retention-report.js so the two
+// stay consistent about what counts as "the same customer".
+
+const fs = require("fs");
+const { resolveSociety, splitGluedSociety } = require("../../js/order-parser.js");
+
+function parseCsv(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.length);
+  const header = lines[0].split(",");
+  return lines.slice(1).map((line) => {
+    const cols = line.split(",");
+    const row = {};
+    header.forEach((h, i) => { row[h] = cols[i]; });
+    return row;
+  });
+}
+
+function normKey(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Manual overrides for societies known to be a single real community despite
+// splitting into multiple resolved/inferred names above (typos, sub-block
+// names, or a shared complex referred to by its individual tower numbers).
+const MANUAL_SOCIETY_MERGES = [
+  { test: (s) => /^sjr/i.test(s) && /blu.?water/i.test(s), into: "Sjr Bluewater" },
+  { test: (s) => /^sjr/i.test(s) && /redwood/i.test(s), into: "Sjr Redwood" },
+  { test: (s) => /^t[1-7]$/i.test(s) || /^lotus$/i.test(s), into: "Lotus (T1-T7)" },
+];
+
+function applyManualMerge(soc) {
+  for (const rule of MANUAL_SOCIETY_MERGES) {
+    if (rule.test(soc)) return rule.into;
+  }
+  return soc;
+}
+
+// Best-effort society name for customers the canonical list doesn't cover:
+// take the leading run of tokens that contain no digits (society names are
+// alphabetic, door/unit numbers contain a digit), then collapse a trailing
+// plural "s" so "Bren Edgewaters" and "Brenedgewater" land in the same bucket.
+function inferSociety(words) {
+  const lead = [];
+  for (const w of words) {
+    if (/\d/.test(w)) break;
+    lead.push(w);
+  }
+  let base = lead.length ? lead.join(" ") : words[0].replace(/\d+$/, "");
+  if (!base) base = words[0];
+  const display = base
+    .split(/\s+/)
+    .map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+  return display;
+}
+
+function resolveCustomerSociety(display) {
+  const words = display.trim().split(/\s+/);
+  let soc = null;
+
+  const [gluedSoc] = splitGluedSociety(words[0]);
+  if (gluedSoc) soc = gluedSoc;
+  if (!soc) [soc] = resolveSociety(words[0]);
+  if (!soc && words.length > 1) [soc] = resolveSociety(words[0] + words[1]);
+
+  let inferred = false;
+  if (!soc) {
+    soc = inferSociety(words);
+    inferred = true;
+  }
+  return { society: applyManualMerge(soc), inferred };
+}
+
+// Reads a Sales-by-Customer CSV and returns { customers, rawRowCount }, where
+// customers has one entry per unique (deduped) customer:
+// { display, count, sales, society, inferred }.
+function loadCustomers(csvPath) {
+  const rows = parseCsv(fs.readFileSync(csvPath, "utf8"));
+
+  // Group raw rows by normalized key (case/space/punctuation-insensitive).
+  const groups = new Map(); // normKey -> { names: Map(rawName -> count), count, sales }
+  for (const row of rows) {
+    const raw = row.customer_name.trim();
+    const key = normKey(raw);
+    if (!groups.has(key)) groups.set(key, { names: new Map(), count: 0, sales: 0 });
+    const g = groups.get(key);
+    g.names.set(raw, (g.names.get(raw) || 0) + 1);
+    g.count += Number(row.count) || 0;
+    g.sales += parseFloat(row.sales_with_tax) || 0;
+  }
+
+  // Fold in Zoho's auto-duplicate "-1"/"-2" suffix: only merge when the
+  // suffix-stripped name normalizes to another group that already exists
+  // independently (real evidence of duplication, not just a door number
+  // that happens to end in a dash-number like "Ahad 12-202").
+  for (const [key, g] of [...groups]) {
+    const rawSample = [...g.names.keys()][0];
+    const dashMatch = rawSample.match(/^(.*)-(\d{1,2})$/);
+    if (!dashMatch) continue;
+    const trimmedKey = normKey(dashMatch[1]);
+    if (trimmedKey !== key && groups.has(trimmedKey)) {
+      const target = groups.get(trimmedKey);
+      for (const [name, count] of g.names) target.names.set(name, (target.names.get(name) || 0) + count);
+      target.count += g.count;
+      target.sales += g.sales;
+      groups.delete(key);
+    }
+  }
+
+  // Pick a display name per unique customer: the raw spelling seen most often.
+  const customers = [...groups.values()].map((g) => {
+    const display = [...g.names.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const { society, inferred } = resolveCustomerSociety(display);
+    return { display, count: g.count, sales: g.sales, society, inferred };
+  });
+
+  return { customers, rawRowCount: rows.length };
+}
+
+module.exports = { loadCustomers, normKey, parseCsv };
