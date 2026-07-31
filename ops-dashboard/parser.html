@@ -1979,21 +1979,28 @@ function setQoStatus(msg,cls){qoStatus.textContent=msg;qoStatus.className='push-
 
 qoSubmitBtn.addEventListener('click',async()=>{
   const rows=[];
-  qoBlocksEl.querySelectorAll('.qo-block').forEach(block=>{
+  const corrections=[];
+  for(const block of qoBlocksEl.querySelectorAll('.qo-block')){
     const customerName=formatCustomerName(block.querySelector('.qo-customer').value);
-    if(!customerName)return;
+    if(!customerName)continue;
     const deliverBy=block.querySelector('.qo-deliverby').value||'';
     const deliverAfter=block.querySelector('.qo-deliverafter').value||'';
-    block.querySelectorAll('.qo-row').forEach(row=>{
+    for(const row of block.querySelectorAll('.qo-row')){
       const itemName=row.querySelector('.qo-item').value.trim();
-      const qty=parseFloat(row.querySelector('.qo-qty').value);
+      let qty=parseFloat(row.querySelector('.qo-qty').value);
       const description=row.querySelector('.qo-desc').value.trim();
-      if(itemName&&!isNaN(qty)&&qty>0){
-        rows.push({customer_name:customerName,item_name:itemName,quantity:qty,description,deliver_by:deliverBy,deliver_after:deliverAfter});
+      if(!itemName||isNaN(qty)||qty<=0)continue;
+
+      const result=await correctQtyFromDescription(itemName,qty,description);
+      if(result.corrected){
+        corrections.push(itemName+': '+qty+' → '+result.qty+'kg ('+result.pieceCount+' pcs @ '+result.pcsPerKg+'/kg)');
+        qty=result.qty;
       }
-    });
-  });
+      rows.push({customer_name:customerName,item_name:itemName,quantity:qty,description,deliver_by:deliverBy,deliver_after:deliverAfter});
+    }
+  }
   if(!rows.length){setQoStatus('Add at least one customer with an item and quantity','err');return;}
+  if(corrections.length&&!await uxConfirm('Corrected qty from description for '+corrections.length+' item'+(corrections.length!==1?'s':'')+':\n\n'+corrections.join('\n')+'\n\nPush with these corrected quantities?'))return;
   if(entryDate!==CALENDAR_TODAY&&!await uxConfirm('Submit to '+entryDate+' instead of today?'))return;
 
   qoSubmitBtn.disabled=true;qoSubmitBtn.textContent='Submitting…';setQoStatus('');
@@ -2831,10 +2838,53 @@ async function ensureCatalogItems(){
   // unit_price is only used by the Delivery tab (per-item amount + total),
   // but it's harmless to carry along for every other caller of this shared,
   // session-cached fetch too.
-  const{data,error}=await sb.from('catalog').select('item_name,unit,unit_price').order('item_name');
+  const{data,error}=await sb.from('catalog').select('item_name,unit,unit_price,pcs_per_kg').order('item_name');
   if(error)throw new Error('Could not load catalog: '+error.message);
   catalogItems=data||[];
   return catalogItems;
+}
+
+// Detects a piece-count phrase in a free-text description — "12 pcs",
+// "12pc", "12 pieces", "12 nos" — used by correctQtyFromDescription below to
+// catch a Quick Order qty that was actually typed as a piece count, not kg.
+function parsePieceCount(description){
+  const m=(description||'').match(/(\d+(?:\.\d+)?)\s*(pcs?|pieces?|nos?)\b/i);
+  return m?parseFloat(m[1]):null;
+}
+
+// Manual Quick Order entry only — an intern typing "12" into qty when the
+// customer's message said "12 pcs" is describing a piece count, not a kg
+// quantity. For a weight-sold item (catalog unit 'kg') that needs
+// converting via that item's pieces-per-kg ratio before it's billed. If the
+// ratio isn't in catalog yet, prompts for it once and saves it there
+// (catalog.pcs_per_kg, see migration 043) so later orders for the same item
+// don't ask again. Different fruits have wildly different piece weights, so
+// this is never guessed — only ever a value someone actually entered.
+async function correctQtyFromDescription(itemName,qty,description){
+  const pieceCount=parsePieceCount(description);
+  if(!pieceCount)return{qty,corrected:false};
+
+  const catalog=await ensureCatalogItems().catch(()=>[]);
+  const key=itemName.trim().toLowerCase();
+  const entry=catalog.find(c=>c.item_name.toLowerCase()===key);
+  if(!entry||(entry.unit||'kg').toLowerCase()!=='kg')return{qty,corrected:false};
+
+  let pcsPerKg=entry.pcs_per_kg;
+  if(!pcsPerKg){
+    const entered=await uxPrompt(
+      '"'+itemName+'" — description says '+pieceCount+' pcs, but qty was entered as '+qty+'.\n\n'+
+      'How many pieces of "'+itemName+'" make up 1kg? (saved for future orders — leave blank to skip correcting this item)',
+    );
+    const parsed=parseFloat(entered);
+    if(!entered||isNaN(parsed)||parsed<=0)return{qty,corrected:false};
+    pcsPerKg=parsed;
+    const{error}=await sb.from('catalog').update({pcs_per_kg:pcsPerKg}).eq('item_name',entry.item_name);
+    if(error)console.error('Could not save pieces-per-kg for '+itemName+':',error.message);
+    catalogItems=null; // force a fresh load so the saved ratio is picked up next time
+  }
+
+  const correctedQty=Math.round((pieceCount/pcsPerKg)*100)/100;
+  return{qty:correctedQty,corrected:correctedQty!==qty,pieceCount,pcsPerKg};
 }
 
 async function addItemPrompt(salesOrderId){
