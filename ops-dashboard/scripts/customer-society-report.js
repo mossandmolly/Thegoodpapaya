@@ -157,6 +157,16 @@ function main() {
 
   const totalSales = customers.reduce((sum, c) => sum + c.sales, 0);
   const totalOrders = customers.reduce((sum, c) => sum + c.count, 0);
+  const median = (arr) => {
+    const s = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  };
+  console.log(`Avg sales per customer: ${(totalSales / customers.length).toFixed(2)}`);
+  console.log(`Avg orders (frequency) per customer: ${(totalOrders / customers.length).toFixed(2)}`);
+  console.log(`Median orders (frequency) per customer: ${median(customers.map((c) => c.count))}`);
+  console.log(`Median sales per customer: ${median(customers.map((c) => c.sales)).toFixed(2)}`);
+  console.log("");
   const sorted = [...bySociety.entries()].sort((a, b) => b[1].customers.length - a[1].customers.length);
   console.log("society,unique_customers,pct_customers,orders,sales_with_tax,pct_sales,inferred");
   for (const [soc, data] of sorted) {
