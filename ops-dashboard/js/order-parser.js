@@ -442,3 +442,12 @@ function setSocieties(canonicals, aliasMap) {
   CANONICAL_SOCIETIES = canonicals.map(s => s.toLowerCase());
   SOC_ALIASES = aliasMap || {};
 }
+
+// Expose for reuse in Node scripts (browser <script> tag usage is unaffected).
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    get CANONICAL_SOCIETIES() { return CANONICAL_SOCIETIES; },
+    get SOC_ALIASES() { return SOC_ALIASES; },
+    resolveSociety, splitGluedSociety, ruleMatch, parseOrders, parseLine, setSocieties,
+  };
+}
