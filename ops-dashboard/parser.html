@@ -841,6 +841,19 @@ async function authToken(){
   if(session.expires_at&&session.expires_at*1000<Date.now()+60000){
     const{data:refreshed,error}=await sb.auth.refreshSession().catch(e=>({data:null,error:e}));
     if(!error&&refreshed?.session)return refreshed.session.access_token;
+    if(error&&!isNetworkFailure(error)){
+      // The refresh token itself was rejected, not just a connectivity
+      // blip — almost always because another device sharing this login
+      // already rotated it out from under this one (refresh token rotation
+      // isn't optional in Supabase; only how aggressively it punishes reuse
+      // is). Nothing handed over from here will ever be accepted, so
+      // limping along with the stale access_token would just surface as a
+      // confusing "Not authenticated" on whatever gets tried next. Force a
+      // clean sign-out now so the login screen comes back immediately with
+      // a clear ask, instead of that.
+      await sb.auth.signOut().catch(()=>{});
+      return SUPABASE_ANON;
+    }
   }
   return session.access_token||SUPABASE_ANON;
 }
