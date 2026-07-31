@@ -905,7 +905,7 @@ let riderName=localStorage.getItem(RIDER_NAME_KEY)||null;
 
 async function ensureRiderName(){
   if(!riderName){
-    const entered=((await uxPrompt('What\'s your name? We\'ll remember it on this device.'))||'').trim();
+    const entered=((await uxPrompt('What\'s your name?'))||'').trim();
     if(entered){
       riderName=entered;
       localStorage.setItem(RIDER_NAME_KEY,riderName);
