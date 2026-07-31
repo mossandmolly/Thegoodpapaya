@@ -137,10 +137,13 @@ function main() {
   console.log(`Societies: ${bySociety.size} (${bySociety.size - inferredCount} from canonical list, ${inferredCount} inferred — review these)`);
   console.log("");
 
+  const totalSales = customers.reduce((sum, c) => sum + c.sales, 0);
   const sorted = [...bySociety.entries()].sort((a, b) => b[1].customers.length - a[1].customers.length);
-  console.log("society,unique_customers,orders,sales_with_tax,inferred");
+  console.log("society,unique_customers,pct_customers,orders,sales_with_tax,pct_sales,inferred");
   for (const [soc, data] of sorted) {
-    console.log(`${soc},${data.customers.length},${data.orders},${data.sales.toFixed(2)},${data.inferred}`);
+    const pctCustomers = ((data.customers.length / customers.length) * 100).toFixed(1);
+    const pctSales = ((data.sales / totalSales) * 100).toFixed(1);
+    console.log(`${soc},${data.customers.length},${pctCustomers}%,${data.orders},${data.sales.toFixed(2)},${pctSales}%,${data.inferred}`);
   }
 }
 
