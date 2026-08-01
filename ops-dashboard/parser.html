@@ -162,6 +162,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .cluster-summary-row:last-child{border-bottom:none}
 .cluster-summary-row .cs-name{font-weight:600}
 .cluster-summary-row .cs-detail{color:#8a7a6a;font-size:11px;flex-basis:100%}
+.trip-progress-bar{position:relative;height:6px;background:#eee0d0;border-radius:3px;margin:4px 0 10px;flex-basis:100%}
+.trip-bar-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;border:2px solid #ffffff;box-shadow:0 0 0 1px rgba(0,0,0,0.12)}
+.trip-bar-dot.tb-start{background:#2f6690}
+.trip-bar-dot.tb-ready{background:#e8720c}
+.trip-bar-dot.tb-first{background:#8a4fbf}
+.trip-bar-dot.tb-end{background:#2d6b2d}
+.cs-house-leftover{color:#b45f0e;font-weight:700}
 .dv-cancelled-card{opacity:0.7}
 .dv-cancelled-items{font-size:12px;color:#8a7a6a;text-decoration:line-through}
 .rider-badge{font-size:12px;color:#5c4f42;cursor:pointer;margin-right:14px}
@@ -3837,9 +3844,33 @@ function computeTripTimings(orders){
     });
     t.start=t.dispatchTimes.length?Math.min(...t.dispatchTimes):null;
     t.ready=t.dispatchTimes.length?Math.max(...t.dispatchTimes):null;
+    t.firstDeliver=t.deliverTimes.length?Math.min(...t.deliverTimes):null;
     t.end=t.deliverTimes.length?Math.max(...t.deliverTimes):null;
   });
   return byTrip;
+}
+
+// Visual timeline for one trip: Start (first OFD) -> Ready (last OFD) ->
+// 1st drop (first delivery) -> End (last delivery), positioned by actual
+// elapsed time between whichever points exist so the bar reflects real
+// pacing, not just evenly-spaced steps. An in-progress trip (no end yet)
+// extends the bar to "now" as its provisional right edge.
+function tripProgressBarHtml(t){
+  const points=[
+    {label:'Start',time:t.start,cls:'tb-start'},
+    {label:'Ready',time:t.ready,cls:'tb-ready'},
+    {label:'1st drop',time:t.firstDeliver,cls:'tb-first'},
+    {label:'End',time:t.end,cls:'tb-end'},
+  ].filter(p=>p.time);
+  if(!points.length)return '';
+  const rangeStart=points[0].time;
+  const rangeEnd=t.end||Date.now();
+  const span=Math.max(rangeEnd-rangeStart,60000);
+  const dots=points.map(p=>{
+    const pct=Math.min(100,Math.max(0,((p.time-rangeStart)/span)*100));
+    return '<div class="trip-bar-dot '+p.cls+'" style="left:'+pct.toFixed(1)+'%" title="'+p.label+' '+fmtTripTime(p.time)+'"></div>';
+  }).join('');
+  return '<div class="trip-progress-bar">'+dots+'</div>';
 }
 function fmtTripTime(ms){
   return ms?new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—';
@@ -3856,35 +3887,50 @@ function readyLabelFor(t){
   return 'Ready '+fmtTripTime(t.ready)+(notPicked?' ('+(total-notPicked)+'/'+total+' picked — '+notPicked+' left at store)':'');
 }
 
+// Grouped rider-first, trip-second — "who's doing what" is the natural
+// dispatcher question, and a rider normally has one trip at a time but can
+// show more than one sub-block if they somehow do. Each trip sub-block
+// carries its own progress bar (Start/Ready/1st drop/End).
 function renderOfdRiderSummary(active,tripInfo){
   const el=document.getElementById('to-ofd-summary');
   if(!el)return;
   const timings=computeTripTimings(active);
-  const rows=[];
+  const byRider={};
   Object.keys(timings).forEach(key=>{
     const t=timings[key];
     const ofdOrders=t.orders.filter(o=>o.deliveryStatus==='ofd');
     if(!ofdOrders.length)return;
     const num=tripInfo.numberByTripKey[key];
-    const riderLabel=t.riders.size?[...t.riders].sort().join(', '):'Unassigned';
-    rows.push({num:num??9999,html:
-      '<div class="cluster-summary-row">'+
-        '<span class="cs-name">🛵 Trip '+(num??'?')+' · '+escH(riderLabel)+'</span>'+
-        '<span>Start '+fmtTripTime(t.start)+' · '+readyLabelFor(t)+' · '+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</span>'+
-        '<span class="cs-detail">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</span>'+
-      '</div>'});
+    const riders=t.riders.size?[...t.riders].sort():['Unassigned'];
+    riders.forEach(rider=>{
+      (byRider[rider]=byRider[rider]||[]).push({t,num:num??9999,ofdOrders});
+    });
   });
-  if(!rows.length){el.innerHTML='';return;}
-  rows.sort((a,b)=>a.num-b.num);
+  const riderNames=Object.keys(byRider).sort();
+  if(!riderNames.length){el.innerHTML='';return;}
+
+  const rowsHtml=riderNames.map(rider=>{
+    const trips=byRider[rider].sort((a,b)=>a.num-b.num);
+    const tripBlocks=trips.map(({t,num,ofdOrders})=>
+      '<div class="cs-detail" style="margin-top:6px;color:#5c4f42"><b>Trip '+num+'</b> — Start '+fmtTripTime(t.start)+' · '+readyLabelFor(t)+' · '+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</div>'+
+      tripProgressBarHtml(t)+
+      '<div class="cs-detail">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</div>'
+    ).join('');
+    return '<div class="cluster-summary-row" style="display:block"><span class="cs-name">🛵 '+escH(rider)+'</span>'+tripBlocks+'</div>';
+  }).join('');
+
   const totalOfd=active.filter(o=>o.deliveryStatus==='ofd').length;
-  el.innerHTML=summaryBoxHtml('ofd','🛵 Out For Delivery by Trip ('+totalOfd+')',rows.map(r=>r.html).join(''));
+  el.innerHTML=summaryBoxHtml('ofd','🛵 Out For Delivery — By Rider & Trip ('+totalOfd+')',rowsHtml);
 }
 
 // New section: every trip with at least one delivery done today, with its
 // start/ready/end times and who delivered it — persists for the whole day
 // as a running log, not just "what's active right now." A trip that's
 // only partially delivered still shows here (with an "N still out" note)
-// AND in the OFD-by-trip summary above at the same time.
+// AND in the OFD-by-trip summary above at the same time. Leftover (never
+// picked up, sibling already delivering — see isLeftoverOrder) houses
+// list first, ahead of the already-delivered ones, so what still needs
+// priority doesn't get buried at the end of a long list.
 function renderPastTripsSummary(active,tripInfo){
   const el=document.getElementById('to-past-trips-summary');
   if(!el)return;
@@ -3896,13 +3942,19 @@ function renderPastTripsSummary(active,tripInfo){
     if(!deliveredOrders.length)return;
     const num=tripInfo.numberByTripKey[key];
     const riderLabel=t.riders.size?[...t.riders].sort().join(', '):'Unassigned';
+    const leftoverOrders=t.orders.filter(o=>o.deliveryStatus==='not_dispatched');
     const stillOut=t.orders.filter(o=>o.deliveryStatus==='ofd').length;
+    const houses=[
+      ...leftoverOrders.map(o=>'<span class="cs-house-leftover">'+escH(o.customer)+'</span>'),
+      ...deliveredOrders.map(o=>escH(o.customer)),
+    ].join(', ');
     rows.push({end:t.end||0,html:
       '<div class="cluster-summary-row">'+
         '<span class="cs-name">✅ Trip '+(num??'?')+' · '+escH(riderLabel)+'</span>'+
         '<span>Start '+fmtTripTime(t.start)+' · '+readyLabelFor(t)+' · End '+fmtTripTime(t.end)+
           (stillOut?' · '+stillOut+' still out':'')+'</span>'+
-        '<span class="cs-detail">'+deliveredOrders.map(o=>escH(o.customer)).join(', ')+'</span>'+
+        tripProgressBarHtml(t)+
+        '<span class="cs-detail">'+houses+'</span>'+
       '</div>'});
   });
   if(!rows.length){el.innerHTML='';return;}
