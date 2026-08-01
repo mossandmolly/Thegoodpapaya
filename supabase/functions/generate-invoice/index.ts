@@ -126,19 +126,29 @@ const CORS = {
 };
 
 // ── Zoho OAuth ────────────────────────────────────────────────────────────────
-// Module-level cache, not per-request — bulk-generating invoices calls this
-// function once per selected order in quick succession, and Zoho's OAuth
-// token endpoint rate-limits rapid repeated refresh-token exchanges from the
-// same client ("You have made too many requests continuously"). Supabase
-// Edge Functions frequently reuse the same warm isolate for back-to-back
-// invocations, so this cache often applies across requests too, not just
-// within one — cutting the OAuth round-trip (and its rate-limit exposure)
-// down to roughly once per token lifetime instead of once per invoice.
+// Two-tier cache: an in-memory one (fast path within a warm isolate) backed
+// by a shared `zoho_token_cache` row in Postgres. The in-memory cache alone
+// isn't enough — generate-invoice, cancel-order, and download-invoice each
+// run as separate functions with their OWN isolates, so switching between
+// actions (e.g. downloading invoices, then generating more) used to mean
+// each function fetched its own fresh token from Zoho, working against the
+// very rate limit the cache was meant to avoid ("You have made too many
+// requests continuously"). The DB row lets every function reuse the same
+// token and refresh it only once across the whole system.
 let cachedToken = '';
 let tokenExpiry = 0;
 
-async function getZohoToken(): Promise<string> {
+async function getZohoToken(supabase: ReturnType<typeof createClient>): Promise<string> {
   if (cachedToken && Date.now() < tokenExpiry - 60_000) return cachedToken;
+
+  const { data: row } = await supabase
+    .from('zoho_token_cache').select('access_token,expires_at').eq('id', 1).maybeSingle();
+  if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000) {
+    cachedToken = row.access_token;
+    tokenExpiry = new Date(row.expires_at).getTime();
+    return cachedToken;
+  }
+
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -153,6 +163,9 @@ async function getZohoToken(): Promise<string> {
   if (!data.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(data)}`);
   cachedToken = data.access_token;
   tokenExpiry = Date.now() + (data.expires_in ?? 3600) * 1000;
+  await supabase.from('zoho_token_cache').upsert({
+    id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString(),
+  });
   return cachedToken;
 }
 
@@ -320,7 +333,7 @@ Deno.serve(async (req) => {
     const overrides: Record<string, string> = rate_overrides ?? {};
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
-    const token    = await getZohoToken();
+    const token    = await getZohoToken(supabase);
     const orgId    = env('ZOHO_ORGANIZATION_ID');
 
     // Load order header and its billable order_items in parallel. 'invoiced'

@@ -54,16 +54,29 @@ const CORS = {
 };
 
 // ── Zoho OAuth ────────────────────────────────────────────────────────────────
-// Module-level cache, not per-request — bulk-cancelling calls this function
-// once per selected order in quick succession, and Zoho's OAuth token
-// endpoint rate-limits rapid repeated refresh-token exchanges from the same
-// client. Supabase Edge Functions frequently reuse the same warm isolate for
-// back-to-back invocations, so this cache often applies across requests too.
+// Two-tier cache: an in-memory one (fast path within a warm isolate) backed
+// by a shared `zoho_token_cache` row in Postgres — generate-invoice,
+// cancel-order, and download-invoice each run as separate functions with
+// their OWN isolates, so an in-memory-only cache meant switching between
+// actions (e.g. cancelling orders right after generating invoices) still
+// hit Zoho's OAuth endpoint fresh from each function, defeating the whole
+// point of caching ("You have made too many requests continuously"). The
+// DB row lets every function reuse the same token and refresh it only once
+// across the whole system.
 let cachedToken = '';
 let tokenExpiry = 0;
 
-async function getZohoToken(): Promise<string> {
+async function getZohoToken(supabase: ReturnType<typeof createClient>): Promise<string> {
   if (cachedToken && Date.now() < tokenExpiry - 60_000) return cachedToken;
+
+  const { data: row } = await supabase
+    .from('zoho_token_cache').select('access_token,expires_at').eq('id', 1).maybeSingle();
+  if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000) {
+    cachedToken = row.access_token;
+    tokenExpiry = new Date(row.expires_at).getTime();
+    return cachedToken;
+  }
+
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -78,6 +91,9 @@ async function getZohoToken(): Promise<string> {
   if (!data.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(data)}`);
   cachedToken = data.access_token;
   tokenExpiry = Date.now() + (data.expires_in ?? 3600) * 1000;
+  await supabase.from('zoho_token_cache').upsert({
+    id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString(),
+  });
   return cachedToken;
 }
 
@@ -158,7 +174,7 @@ Deno.serve(async (req) => {
     // 1. Unapply payments (left as unused customer credit in Zoho) + delete invoice
     if (order.zoho_invoice_id) {
       try {
-        const token  = await getZohoToken();
+        const token  = await getZohoToken(supabase);
         const orgId  = env('ZOHO_ORGANIZATION_ID');
         const payments = await fetchAppliedPayments(order.zoho_invoice_id, token, orgId);
         for (const p of payments) {
