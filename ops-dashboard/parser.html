@@ -2373,7 +2373,9 @@ function renderOrdersList(){
     bySociety[soc].push({soid,...order});
   });
 
-  const socNames=Object.keys(bySociety).sort();
+  const socNames=viewGrouping==='trip'
+    ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
+    :Object.keys(bySociety).sort();
   document.getElementById('to-collapse-btn').textContent=collapsedOverviewGroups.size?'▸ Expand All':'▾ Collapse All';
   if(!socNames.length){
     list.innerHTML='<div class="to-empty">'+(Object.keys(currentOrdersById).length?'No orders match this filter':'No orders for '+viewDate)+'</div>';
@@ -2712,6 +2714,76 @@ function deriveTrip(order){
 // in Overview/Delivery already carries both.
 function deriveGroupKey(order){
   return viewGrouping==='trip'?deriveTrip(order):deriveSociety(order.customer);
+}
+
+// ── Trip-view priority ordering ──────────────────────────────────────────
+// "By Trip" groups sort by delivery priority instead of alphabetically
+// (Flat/society view keeps the plain alphabetical sort it always had) —
+// higher-priority (lower stack_rank) clusters' trips come first regardless
+// of how many orders are in each; a 3-order trip in a rank-1 cluster still
+// outranks a 30-order trip in rank-3. Every order needs {customer,
+// deliverBy} at minimum.
+//
+// Packing-to-delivery buffer: an order needing to be delivered by 4pm has
+// to be packed and ready by 2:30pm (90 min for dispatch + drive time) —
+// and by 2pm (30 min before THAT), it needs to already be at the very top
+// of the queue so there's still room to actually get it packed in time.
+// Both numbers below are that rule, so a close deadline overrides cluster
+// rank entirely once its escalation point is reached.
+const PACK_TO_DELIVERY_BUFFER_MIN=90;
+const ESCALATE_LEAD_MIN=30;
+
+function groupClusterRank(orders){
+  let best=9999;
+  orders.forEach(o=>{
+    const soc=deriveSociety(o.customer);
+    const cluster=communitiesCache[soc]&&communitiesCache[soc].cluster;
+    const rank=(cluster&&clustersCache[cluster]&&clustersCache[cluster].stack_rank!=null)
+      ?clustersCache[cluster].stack_rank:9999;
+    if(rank<best)best=rank;
+  });
+  return best;
+}
+
+// Minutes from now until an order's deliver_by (today) — negative once
+// that deadline's already passed. Null if there's no deadline at all.
+function minutesToDeadline(deliverBy){
+  if(!deliverBy)return null;
+  const[h,m]=deliverBy.split(':').map(Number);
+  const now=new Date();
+  const deadline=new Date(now.getFullYear(),now.getMonth(),now.getDate(),h,m,0,0);
+  return(deadline-now)/60000;
+}
+
+// Soonest escalated deadline among a group's orders, or null if nothing in
+// it has reached its escalation point yet (still fine to rank by cluster).
+function groupUrgency(orders){
+  let soonest=null;
+  orders.forEach(o=>{
+    const mins=minutesToDeadline(o.deliverBy);
+    if(mins==null)return;
+    const escalateAt=mins-PACK_TO_DELIVERY_BUFFER_MIN-ESCALATE_LEAD_MIN;
+    if(escalateAt<=0&&(soonest==null||mins<soonest))soonest=mins;
+  });
+  return soonest;
+}
+
+// groupNames: the keys to order. ordersByName(name): returns that group's
+// orders (each {customer, deliverBy}) — callers adapt their own group
+// shape (order objects vs. packer items) to that before calling this.
+function sortTripGroupNames(groupNames,ordersByName){
+  const meta=new Map(groupNames.map(name=>{
+    const orders=ordersByName(name);
+    return[name,{urgency:groupUrgency(orders),clusterRank:groupClusterRank(orders)}];
+  }));
+  return[...groupNames].sort((a,b)=>{
+    const ma=meta.get(a),mb=meta.get(b);
+    if(ma.urgency!=null&&mb.urgency!=null)return ma.urgency-mb.urgency;
+    if(ma.urgency!=null)return -1;
+    if(mb.urgency!=null)return 1;
+    if(ma.clusterRank!==mb.clusterRank)return ma.clusterRank-mb.clusterRank;
+    return a.localeCompare(b);
+  });
 }
 
 // One shared toggle rendered identically on all three tabs — switching on
@@ -4112,7 +4184,16 @@ function renderPackerGrid(){
     const key=deriveGroupKey(orderLike);
     (byGroup[key]=byGroup[key]||[]).push(item);
   });
-  const groupNames=Object.keys(byGroup).sort();
+  // Packer only has raw item rows per group, not order objects — adapt via
+  // packerCustomerMap (raw deliver_by column, not the camelCase deliverBy
+  // Overview/Delivery's own order objects carry) before handing off to the
+  // same trip-priority sort those two use.
+  const groupNames=viewGrouping==='trip'
+    ?sortTripGroupNames(Object.keys(byGroup),name=>byGroup[name].map(item=>{
+        const o=packerCustomerMap[item.sales_order_id];
+        return{customer:o?.customer_name||item.sales_order_id,deliverBy:o?.deliver_by||null};
+      }))
+    :Object.keys(byGroup).sort();
   // Collapsed by default — same expanded-set convention as Overview/
   // Delivery's per-order collapse, just at the group level here. Each
   // header shows aggregate progress across every item in the bucket (the
@@ -4632,7 +4713,9 @@ function renderDeliveryList(){
     bySociety[soc].push(order);
   });
 
-  const socNames=Object.keys(bySociety).sort();
+  const socNames=viewGrouping==='trip'
+    ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
+    :Object.keys(bySociety).sort();
   const totalLoaded=Object.keys(deliveryOrders).length;
   const shown=socNames.reduce((n,soc)=>n+bySociety[soc].length,0);
   document.getElementById('dv-rc').textContent=shown?'— '+shown+' order'+(shown!==1?'s':''):'';
