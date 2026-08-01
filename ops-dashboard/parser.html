@@ -2895,13 +2895,17 @@ function computeTripNumbers(orders){
   return{numberByTripKey,ordersByTripKey:byTrip,sortedTripKeys:sorted};
 }
 
-// "Trip 1 · 8/10" — shown on every society/trip group header (all tabs,
-// both Flat and By Trip view) so ops can see which trip a society belongs
-// to, and whether it's at/over the 10-order soft cap, without switching to
-// By Trip view. tripInfo comes from one computeTripNumbers(active) call
-// per render pass; order is any single representative order from the
+// "Trip 1 · 8/10" — shown on every group header, but only in By Trip view.
+// Flat view groups by SOCIETY, not trip — a society without any
+// combinable_group/cluster configured is its own singleton trip identity,
+// so showing this badge in Flat view meant every such society got its own
+// distinct "Trip N" (numbers in the teens/twenties on a day with lots of
+// unclustered societies) even though there's no actual trip concept in
+// Flat view to begin with. tripInfo comes from one computeTripNumbers(active)
+// call per render pass; order is any single representative order from the
 // group being labeled.
 function tripBadgeHtml(tripInfo,order){
+  if(viewGrouping!=='trip')return '';
   const key=deriveTrip(order);
   const num=tripInfo.numberByTripKey[key];
   if(num==null)return '';
