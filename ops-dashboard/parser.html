@@ -3715,10 +3715,10 @@ let overviewDeadlineOnly=false;
 // delivery status track different things (an order can be "Final" and
 // still pending delivery, or "Invoiced" and already delivered). ANDed on
 // top of whichever invoice-status bucket is active, same as the deadline
-// toggle. 'ofd' folds into 'pending' here — Overview only needs "has it
-// arrived yet", the finer ofd/not-dispatched split is what the Delivery
-// tab's own pills are for.
-let overviewDeliveryFilter='all'; // 'all' | 'pending' | 'partially_delivered' | 'delivered'
+// toggle. 'pending' means not yet dispatched at all — 'ofd' (out for
+// delivery) is its own separate bucket, not folded into pending, so it's
+// clear at a glance how many orders are still sitting vs. already on the road.
+let overviewDeliveryFilter='all'; // 'all' | 'pending' | 'ofd' | 'partially_delivered' | 'delivered'
 
 function orderMatchesOverviewFilter(order){
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
@@ -3726,7 +3726,8 @@ function orderMatchesOverviewFilter(order){
     const ds=order.deliveryStatus||'not_dispatched';
     if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
     if(overviewDeliveryFilter==='partially_delivered'&&ds!=='partially_delivered')return false;
-    if(overviewDeliveryFilter==='pending'&&(ds==='delivered'||ds==='partially_delivered'))return false;
+    if(overviewDeliveryFilter==='ofd'&&ds!=='ofd')return false;
+    if(overviewDeliveryFilter==='pending'&&ds!=='not_dispatched')return false;
   }
   if(toOverviewFilter==='all')return true;
   if(toOverviewFilter==='cancelled')return order.orderStatus==='cancelled';
@@ -3780,10 +3781,12 @@ function renderOverviewSummaryPills(tripInfo){
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
   const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;
-  const pendingDelivery=active.length-delivered-partiallyDelivered;
+  const ofd=active.filter(o=>o.deliveryStatus==='ofd').length;
+  const pendingDelivery=active.length-delivered-partiallyDelivered-ofd;
   const deliveryPills=[
     {key:'all',label:'All',count:active.length},
-    {key:'pending',label:'Pending Delivery',count:pendingDelivery},
+    {key:'pending',label:'Pending',count:pendingDelivery},
+    {key:'ofd',label:'Out For Delivery',count:ofd},
     {key:'partially_delivered',label:'Partially Delivered',count:partiallyDelivered},
     {key:'delivered',label:'Delivered',count:delivered},
   ];
