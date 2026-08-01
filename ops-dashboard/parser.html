@@ -2717,18 +2717,23 @@ function deriveSociety(customerName){
 
 // ── Trip view — a filter/grouping alternative to the plain society view,
 // shared across Overview/Packer/Delivery (one toggle, not per-tab). A
-// "trip" is: this order's trip_override if it has one, else its
-// community's combinable_group (communities sharing that label run
-// together), else the community's own name (an ungrouped community is its
-// own single-community trip). No geo-clustering/OSRM here yet — this is
-// purely the manual grouping communities.combinable_group already supports.
+// "trip" is, in priority order:
+//   1. this order's trip_override, if it has one (per-order manual pin)
+//   2. its community's combinable_group, if set (manual override that
+//      still wins over cluster — lets ops split a cluster into separate
+//      trips, or combine communities across different clusters, by hand)
+//   3. its community's cluster (Config -> Clusters) — same-cluster
+//      communities merge into one trip automatically by default
+//   4. the community's own name (uncustered communities stay their own
+//      single-community trip, same as before clusters existed)
 let viewGrouping='society'; // 'society' | 'trip'
 
 function deriveTrip(order){
   if(order.tripOverride)return order.tripOverride;
   const soc=deriveSociety(order.customer);
   const community=communitiesCache[soc];
-  return (community&&community.combinable_group)||soc;
+  if(!community)return soc;
+  return community.combinable_group||community.cluster||soc;
 }
 
 // order needs {customer, tripOverride} at minimum — every per-order object
