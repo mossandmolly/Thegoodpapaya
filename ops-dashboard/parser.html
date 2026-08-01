@@ -2471,12 +2471,14 @@ function renderOrdersList(){
         // since a replacement-only order shouldn't be billed/handled like a
         // normal paid one.
         const replacementOnly=!cancelled&&isReplacementOnlyOrder(order);
+        // Shown on the right end of the header, next to the rider tag/expand
+        // caret, not inline with the other left-side status badges.
+        const paidPill=(!cancelled&&fullyInvoiced&&!order.isPickup)?paidStatusBadgeHtml(order):'';
         const statusBadges=(order.isPickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
           (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
           (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus):'')+
-          (!cancelled&&fullyInvoiced&&!order.isPickup?paidStatusBadgeHtml(order):'')+
           (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'')+
           (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'');
 
@@ -2502,6 +2504,7 @@ function renderOrdersList(){
                 (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
               '</span>'+
               '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0">'+
+                paidPill+
                 (order.assignedRider?'<span class="dv-assigned-tag">🛵 '+escH(order.assignedRider)+'</span>':'')+
                 '<span class="dv-expand-caret">▸</span>'+
               '</span>'+
@@ -2521,6 +2524,7 @@ function renderOrdersList(){
             ):'')+
           '</span>'+
           '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0">'+
+            paidPill+
             (order.assignedRider?'<span class="dv-assigned-tag">🛵 '+escH(order.assignedRider)+'</span>':'')+
             '<span class="dv-expand-caret">▾</span>'+
           '</span>'+
