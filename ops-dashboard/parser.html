@@ -404,7 +404,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
         <div class="section-label">Parsed rows <span id="rc"></span> <span style="font-weight:400;text-transform:none;letter-spacing:normal">— edit any cell before pushing</span></div>
         <div class="table-scroll" style="max-height:480px">
           <table class="community-table" id="parsed-table"><thead><tr>
-            <th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Delivery instructions</th><th>Deliver after</th><th>Deliver by</th><th>Img</th><th></th>
+            <th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Delivery instructions</th><th>Deliver after</th><th>Deliver by</th><th title="No fruit sold — a rider just needs to collect something from this customer">Pickup</th><th>Img</th><th></th>
           </tr></thead><tbody id="parsed-tbody"></tbody></table>
         </div>
       </div>
@@ -1828,6 +1828,7 @@ function renderParsedTable(){
       '<td><input type="text" value="'+escH(r.delivery_instructions||'')+'" oninput="updateParsedRow('+i+',\'delivery_instructions\',this.value)"></td>'+
       '<td><input type="time" value="'+escH(r.deliver_after||'')+'" oninput="updateParsedRow('+i+',\'deliver_after\',this.value)"></td>'+
       '<td><input type="time" value="'+escH(r.deliver_by||'')+'" oninput="updateParsedRow('+i+',\'deliver_by\',this.value)"></td>'+
+      '<td style="text-align:center"><input type="checkbox" '+(r.is_pickup?'checked ':'')+'onchange="updateParsedRow('+i+',\'is_pickup\',this.checked)" title="Empty order — no fruit sold, just a pickup"></td>'+
       '<td>'+(typeof r.source_image==='number'?'<a class="or-link" onclick="highlightParserImage('+r.source_image+')">📷 '+(r.source_image+1)+'</a>':'—')+'</td>'+
       '<td><button class="del-btn" onclick="removeParsedRow('+i+')" title="Remove row">✕</button></td>'+
     '</tr>'
@@ -1880,6 +1881,11 @@ async function pushRows(rows,salesOrderIdFor){
       // any row in this customer's batch may carry either bound
       if(r.deliver_by&&!headers.get(soid).deliver_by)headers.get(soid).deliver_by=r.deliver_by;
       if(r.deliver_after&&!headers.get(soid).deliver_after)headers.get(soid).deliver_after=r.deliver_after;
+      // The pickup checkbox is per ROW in the parsed-orders table (there's
+      // no single per-customer block like Quick Order has), so one checked
+      // row is enough to flag the whole order as pickup even if an earlier
+      // row for the same customer wasn't checked.
+      if(r.is_pickup)headers.get(soid).is_pickup=true;
     }
   });
   const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
@@ -1913,7 +1919,11 @@ async function pushRows(rows,salesOrderIdFor){
   const toInsert=rows.map(r=>{
     const soid=salesOrderIdFor(r);
     const qty=parseFloat(r.quantity)||0;
-    const key=soid+'|'+r.item_name+'|'+qty;
+    // Pickup rows can arrive with no real item name (description carries
+    // what's being collected instead) — same 'Pickup' fallback Quick
+    // Order's own pickup path uses, so order_items.item_name is never null.
+    const itemName=r.item_name||'Pickup';
+    const key=soid+'|'+itemName+'|'+qty;
     // A duplicate of an earlier row within this SAME push (not just
     // against what's already in the DB) needs to be caught too — add
     // each key as it's assigned so a repeat later in the same batch also
@@ -1925,7 +1935,7 @@ async function pushRows(rows,salesOrderIdFor){
     status==='held'?held++:opened++;
     return{
       sales_order_id:     soid,
-      item_name:          r.item_name,
+      item_name:          itemName,
       description:        r.description||null,
       delivery_instructions: r.delivery_instructions||null,
       requested_quantity: qty,
@@ -1942,7 +1952,10 @@ async function pushRows(rows,salesOrderIdFor){
 }
 
 pushb.addEventListener('click',async()=>{
-  const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
+  // Pickup rows skip the normal "must have a real item name" requirement —
+  // same relaxed rule as Quick Order's pickup checkbox — as long as there's
+  // still a description to say what's being collected.
+  const rows=lastRows.filter(r=>r.customer_name&&(r.item_name||(r.is_pickup&&r.description)));
   if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
   if(entryDate!==CALENDAR_TODAY&&!await uxConfirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to '+entryDate+' instead of today?'))return;
   pushb.disabled=true;pushb.textContent='Pushing…';setPush('');
@@ -1961,7 +1974,7 @@ pushb.addEventListener('click',async()=>{
 });
 
 pushTomorrowBtn.addEventListener('click',async()=>{
-  const rows=lastRows.filter(r=>r.customer_name&&r.item_name);
+  const rows=lastRows.filter(r=>r.customer_name&&(r.item_name||(r.is_pickup&&r.description)));
   if(!rows.length){setPush('Nothing to push — parse some orders first','err');return;}
   if(!await uxConfirm('Push these '+rows.length+' row'+(rows.length!==1?'s':'')+' to TOMORROW\'s orders instead of today\'s?'))return;
   pushTomorrowBtn.disabled=true;pushTomorrowBtn.textContent='Pushing…';setPush('');
