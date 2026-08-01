@@ -148,6 +148,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
 .replacement-only-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
+.trip-number-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2f6690}
+.trip-number-badge.trip-over-cap{background:#b3261e}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
 .dv-queue-badge.hidden{display:none}
 .cluster-summary-box{background:#fff8f0;border:1px solid #f0dfc8;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px}
@@ -554,6 +556,21 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div class="modal-actions">
       <button class="btn-sec" id="nd-cancel" style="margin-bottom:0">Cancel</button>
       <button class="btn-parse" id="nd-confirm" style="margin-bottom:0">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- MOVE TO TRIP MODAL — dropdown of today's existing trips (by number/
+     cluster/order-count) plus a "create new trip" option, replacing the old
+     free-text prompt. -->
+<div class="modal-overlay hidden" id="move-trip-modal">
+  <div class="modal-box">
+    <h3>Move to trip</h3>
+    <label class="modal-label">Trip</label>
+    <select id="move-trip-select"></select>
+    <div class="modal-actions">
+      <button class="btn-sec" id="move-trip-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="move-trip-confirm" style="margin-bottom:0">Move</button>
     </div>
   </div>
 </div>
@@ -2376,6 +2393,10 @@ function renderOrdersList(){
   const socNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
     :Object.keys(bySociety).sort();
+  // Independent of the search filter above — trip numbers/caps reflect
+  // today's whole picture, not just what's currently visible, so they
+  // don't jump around as someone types into the search box.
+  const tripInfo=computeTripNumbers(Object.values(currentOrdersById).filter(o=>o.orderStatus!=='cancelled'));
   document.getElementById('to-collapse-btn').textContent=collapsedOverviewGroups.size?'▸ Expand All':'▾ Collapse All';
   if(!socNames.length){
     list.innerHTML='<div class="to-empty">'+(Object.keys(currentOrdersById).length?'No orders match this filter':'No orders for '+viewDate)+'</div>';
@@ -2389,7 +2410,7 @@ function renderOrdersList(){
     const collapsed=collapsedOverviewGroups.has(soc);
     return '<div class="society-header">'+
       (selectableSoids.length?'<input type="checkbox" class="inv-select" '+(allSelected?'checked ':'')+'onchange="toggleSocietySelectAll('+escH(JSON.stringify(selectableSoids))+',this.checked)" title="Select all orders in this society"> ':'')+
-      '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+deliveryWindowBadgesHtml(orders)+'</span>'+
+      '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</span>'+
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+(collapsed?'▸':'▾')+'</span>'+
       '</div>'+
       (collapsed?'':
@@ -2786,6 +2807,43 @@ function sortTripGroupNames(groupNames,ordersByName){
   });
 }
 
+const TRIP_ORDER_CAP=10;
+
+// Trip N — a group's 1-based position in today's cluster-priority order
+// (see sortTripGroupNames above), computed fresh from whichever order set
+// the caller already has loaded, grouped by the REAL trip key (deriveTrip)
+// — independent of viewGrouping, so a society shows its trip number even
+// in Flat view where the visible groups are societies, not trips. Not a
+// stored value: it's just "where does this trip rank right now," so it
+// shifts as today's order mix changes. Two societies sharing a
+// combinable_group get the same number.
+function computeTripNumbers(orders){
+  const byTrip={};
+  orders.forEach(o=>{
+    const key=deriveTrip(o);
+    (byTrip[key]=byTrip[key]||[]).push(o);
+  });
+  const sorted=sortTripGroupNames(Object.keys(byTrip),name=>byTrip[name]);
+  const numberByTripKey={};
+  sorted.forEach((key,i)=>{numberByTripKey[key]=i+1;});
+  return{numberByTripKey,ordersByTripKey:byTrip,sortedTripKeys:sorted};
+}
+
+// "Trip 1 · 8/10" — shown on every society/trip group header (all tabs,
+// both Flat and By Trip view) so ops can see which trip a society belongs
+// to, and whether it's at/over the 10-order soft cap, without switching to
+// By Trip view. tripInfo comes from one computeTripNumbers(active) call
+// per render pass; order is any single representative order from the
+// group being labeled.
+function tripBadgeHtml(tripInfo,order){
+  const key=deriveTrip(order);
+  const num=tripInfo.numberByTripKey[key];
+  if(num==null)return '';
+  const count=(tripInfo.ordersByTripKey[key]||[]).length;
+  const over=count>TRIP_ORDER_CAP;
+  return ' <span class="trip-number-badge'+(over?' trip-over-cap':'')+'" title="'+count+' of '+TRIP_ORDER_CAP+' orders in this trip">Trip '+num+' · '+count+'/'+TRIP_ORDER_CAP+'</span>';
+}
+
 // One shared toggle rendered identically on all three tabs — switching on
 // any of them applies everywhere, since it's the same global state.
 function renderGroupingToggle(){
@@ -2802,14 +2860,48 @@ function setViewGrouping(mode){
 
 // Moves just this one order into a different trip, independent of its
 // community — doesn't touch the community's own combinable_group, doesn't
-// affect any other order in the same community. Pass empty to clear the
-// override back to the community-derived default.
-async function moveOrderToTrip(soid){
+// affect any other order in the same community. Offers every trip
+// currently in use today (same numbering/ranking By Trip view shows) plus
+// a reset-to-default option and a way to spin up a brand new trip, rather
+// than typing a raw label blind.
+let moveTripTargetSoid=null;
+const moveTripModal=document.getElementById('move-trip-modal'),moveTripSelect=document.getElementById('move-trip-select');
+
+function moveOrderToTrip(soid){
   const order=currentOrdersById[soid]||deliveryOrders[soid];
-  const current=order?.tripOverride||'';
-  const entered=await uxPrompt('Move this order to which trip? (leave blank to reset to the default for its community)',current);
-  if(entered===null)return;
-  const tripOverride=entered.trim()||null;
+  if(!order)return;
+  moveTripTargetSoid=soid;
+
+  // Combine whichever tabs' data is currently loaded so the trip list is
+  // as complete as possible regardless of which screen this was opened from.
+  const pool=[...Object.values(currentOrdersById),...Object.values(deliveryOrders)]
+    .filter(o=>o.orderStatus!=='cancelled');
+  const tripInfo=computeTripNumbers(pool.length?pool:[order]);
+
+  const currentKey=order.tripOverride||deriveTrip(order);
+  const options=['<option value="">— Reset to community default —</option>'];
+  tripInfo.sortedTripKeys.forEach(key=>{
+    const num=tripInfo.numberByTripKey[key];
+    const count=tripInfo.ordersByTripKey[key].length;
+    options.push('<option value="'+escH(key)+'"'+(key===currentKey?' selected':'')+'>Trip '+num+' — '+escH(key)+' · '+count+'/'+TRIP_ORDER_CAP+'</option>');
+  });
+  options.push('<option value="__new__">+ Create new trip</option>');
+  moveTripSelect.innerHTML=options.join('');
+  moveTripModal.classList.remove('hidden');
+}
+
+document.getElementById('move-trip-cancel').addEventListener('click',()=>{moveTripModal.classList.add('hidden');});
+
+document.getElementById('move-trip-confirm').addEventListener('click',async()=>{
+  const soid=moveTripTargetSoid;
+  if(!soid)return;
+  const selected=moveTripSelect.value;
+  // A brand new trip just needs a fresh, unique underlying key — the
+  // "Trip N" number shown for it is computed fresh from cluster rank
+  // wherever it lands, never stored literally, so this doesn't need to be
+  // a pretty label.
+  const tripOverride=selected===''?null:(selected==='__new__'?('custom-trip-'+Date.now().toString(36)):selected);
+  moveTripModal.classList.add('hidden');
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/update-order-notes',{
       method:'POST',
@@ -2826,7 +2918,7 @@ async function moveOrderToTrip(soid){
   }catch(e){
     uxAlert('Failed to move order: '+e.message);
   }
-}
+});
 
 async function pillClick(id){
   const item=currentItemsById[id];
@@ -4076,6 +4168,20 @@ async function loadPackerView(){
     });
   });
 
+  // Default-expand whichever group(s) belong to today's #1-ranked trip so
+  // "what's next to go out" is visible without hunting for it — computed
+  // fresh on every real load, same as Delivery's equivalent.
+  const activePackerItems=packerItems.filter(i=>i.status!=='cancelled');
+  const pkTripInfo=computeTripNumbers(activePackerItems.map(packerOrderLike));
+  const pkTopKey=pkTripInfo.sortedTripKeys[0];
+  expandedPackerGroups=new Set();
+  if(pkTopKey!=null){
+    activePackerItems.forEach(i=>{
+      const orderLike=packerOrderLike(i);
+      if(deriveTrip(orderLike)===pkTopKey)expandedPackerGroups.add(deriveGroupKey(orderLike));
+    });
+  }
+
   renderPackerFilterPills();
   renderPackerGrid();
 }
@@ -4125,6 +4231,16 @@ function togglePackerStatusPill(status){
   else packerFilters.statuses.add(status);
   renderPackerFilterPills();
   renderPackerGrid();
+}
+
+// Adapts a raw packer item row to the {customer, tripOverride, deliverBy}
+// shape deriveTrip/sortTripGroupNames/computeTripNumbers expect — Packer
+// only carries item rows, not full order objects, and packerCustomerMap's
+// rows are straight from order_customer_lookup (raw deliver_by, not the
+// camelCase deliverBy Overview/Delivery's own order objects carry).
+function packerOrderLike(item){
+  const o=packerCustomerMap[item.sales_order_id];
+  return{customer:o?.customer_name||item.sales_order_id,tripOverride:o?.trip_override||null,deliverBy:o?.deliver_by||null};
 }
 
 function renderPackerGrid(){
@@ -4179,21 +4295,19 @@ function renderPackerGrid(){
   // item row, not a full order object.
   const byGroup={};
   filtered.forEach(item=>{
-    const o=packerCustomerMap[item.sales_order_id];
-    const orderLike={customer:o?.customer_name||item.sales_order_id,tripOverride:o?.trip_override||null};
-    const key=deriveGroupKey(orderLike);
+    const key=deriveGroupKey(packerOrderLike(item));
     (byGroup[key]=byGroup[key]||[]).push(item);
   });
   // Packer only has raw item rows per group, not order objects — adapt via
   // packerCustomerMap (raw deliver_by column, not the camelCase deliverBy
   // Overview/Delivery's own order objects carry) before handing off to the
-  // same trip-priority sort those two use.
+  // same trip-priority sort/numbering those two use.
   const groupNames=viewGrouping==='trip'
-    ?sortTripGroupNames(Object.keys(byGroup),name=>byGroup[name].map(item=>{
-        const o=packerCustomerMap[item.sales_order_id];
-        return{customer:o?.customer_name||item.sales_order_id,deliverBy:o?.deliver_by||null};
-      }))
+    ?sortTripGroupNames(Object.keys(byGroup),name=>byGroup[name].map(packerOrderLike))
     :Object.keys(byGroup).sort();
+  // Independent of the search/scope filters above — reflects today's whole
+  // picture so numbers/caps don't shift depending on which filter's active.
+  const tripInfo=computeTripNumbers(packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike));
   // Collapsed by default — same expanded-set convention as Overview/
   // Delivery's per-order collapse, just at the group level here. Each
   // header shows aggregate progress across every item in the bucket (the
@@ -4215,7 +4329,7 @@ function renderPackerGrid(){
       if(l)groupWindows.add(l);
     });
     return '<div class="society-header" style="grid-column:1/-1;cursor:pointer" onclick="togglePackerGroupExpanded('+escH(JSON.stringify(name))+')">'+
-      escH(name)+' <span class="sh-count">('+groupItems.length+' item'+(groupItems.length!==1?'s':'')+')</span>'+deliveryWindowBadgesFromSet(groupWindows)+
+      escH(name)+' <span class="sh-count">('+groupItems.length+' item'+(groupItems.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,packerOrderLike(groupItems[0]))+deliveryWindowBadgesFromSet(groupWindows)+
       ' '+packProgressPie(packedInGroup,activeGroupItems.length)+
       ' <span class="packed-count" style="color:#ffffff">'+packedInGroup+'/'+activeGroupItems.length+' items packed</span>'+
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff">'+(groupExpanded?'▾':'▸')+'</span>'+
@@ -4541,6 +4655,22 @@ async function loadDeliveryView(silent){
   });
 
   deliveryOrders=bySalesOrder;
+
+  // Default-expand whatever's in today's #1-ranked trip so "what's next to
+  // go out" is visible without having to hunt for it — only on a real
+  // (non-silent) load, so this doesn't fight a rider's own expand/collapse
+  // choices every time a background queue-flush quietly re-syncs.
+  if(!silent){
+    const activeOrders=Object.entries(deliveryOrders)
+      .map(([soid,o])=>({soid,...o}))
+      .filter(o=>o.orderStatus!=='cancelled');
+    const dvTripInfo=computeTripNumbers(activeOrders);
+    const topKey=dvTripInfo.sortedTripKeys[0];
+    expandedDeliveryOrders=topKey!=null
+      ?new Set(dvTripInfo.ordersByTripKey[topKey].map(o=>o.soid))
+      :new Set();
+  }
+
   renderDeliveryList();
   if(silent)list.scrollTop=scrollY;
 }
@@ -4716,6 +4846,9 @@ function renderDeliveryList(){
   const socNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
     :Object.keys(bySociety).sort();
+  // Independent of scope/search/status filters — reflects today's whole
+  // picture so numbers/caps don't shift depending on which filter's active.
+  const tripInfo=computeTripNumbers(Object.values(deliveryOrders).filter(o=>o.orderStatus!=='cancelled'));
   const totalLoaded=Object.keys(deliveryOrders).length;
   const shown=socNames.reduce((n,soc)=>n+bySociety[soc].length,0);
   document.getElementById('dv-rc').textContent=shown?'— '+shown+' order'+(shown!==1?'s':''):'';
@@ -4741,7 +4874,7 @@ function renderDeliveryList(){
     const selectAllCb=(selectionMode&&assignableSoids.length)
       ?'<input type="checkbox" class="inv-select" '+(assignableSoids.every(soid=>selectedDeliveryOrders.has(soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(assignableSoids))+',this.checked)" title="Select all assignable orders in this society"> '
       :'';
-    return '<div class="society-header">'+selectAllCb+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+deliveryWindowBadgesHtml(orders)+'</div>'+
+    return '<div class="society-header">'+selectAllCb+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</div>'+
       orders.map(order=>renderDeliveryCard(order,selectionMode)).join('');
   }).join('');
 
