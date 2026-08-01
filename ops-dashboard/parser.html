@@ -150,6 +150,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
 .replacement-only-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
+.paid-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
+.unpaid-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b23a3a}
 .trip-number-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2f6690}
 .trip-number-badge.trip-over-cap{background:#b3261e}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
@@ -2373,6 +2375,8 @@ async function loadTodaysOrders(){
         dispatchedAt:  o?.dispatched_at||null,
         deliveredAt:   o?.delivered_at||null,
         isPickup:      !!o?.is_pickup,
+        paymentCollected:      !!o?.payment_collected,
+        paymentCollectedMethod:o?.payment_collected_method||null,
         items:[],
       };
     }
@@ -2472,6 +2476,7 @@ function renderOrdersList(){
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
           (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus):'')+
+          (!cancelled&&fullyInvoiced&&!order.isPickup?paidStatusBadgeHtml(order):'')+
           (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'')+
           (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'');
 
@@ -2699,6 +2704,20 @@ function deliveryStatusBadgeHtml(deliveryStatus){
   if(deliveryStatus==='delivered')return ' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>';
   if(deliveryStatus==='ofd')return ' <span class="order-status-badge" style="background:#2f6690">OUT FOR DELIVERY</span>';
   return ' <span class="order-status-badge" style="background:#8a7a6a">NOT DISPATCHED</span>';
+}
+
+// Payment collection only means anything once something's actually in the
+// customer's hands — an order still out for delivery isn't "unpaid," it's
+// just not there yet, so this stays silent until delivered/partially
+// delivered. paymentCollectedMethod (cash/upi/etc) shows as a tooltip when
+// paid, since the badge itself has no room for it.
+function paidStatusBadgeHtml(order){
+  if(order.deliveryStatus!=='delivered'&&order.deliveryStatus!=='partially_delivered')return '';
+  if(order.paymentCollected){
+    const method=order.paymentCollectedMethod?' ('+escH(order.paymentCollectedMethod)+')':'';
+    return ' <span class="paid-badge" title="Payment collected'+method+'">💰 PAID</span>';
+  }
+  return ' <span class="unpaid-badge">⚠️ NOT PAID</span>';
 }
 
 // Renders one badge per distinct deliver-by/deliver-after window found in a
@@ -3776,7 +3795,10 @@ function renderOverviewSummaryPills(tripInfo){
 // ── Collapsible summary box shell — shared by all three summaries below,
 // so each can be expanded/collapsed independently without losing the
 // others' state. id must be stable across renders (not regenerated data).
-let collapsedSummaryBoxes=new Set();
+// Starts with all three ids pre-collapsed — Order Overview opens straight
+// to the actual order list, not a wall of summary boxes; tapping a title
+// still expands it same as before.
+let collapsedSummaryBoxes=new Set(['notdispatched','ofd','past']);
 function toggleSummaryBox(id){
   if(collapsedSummaryBoxes.has(id))collapsedSummaryBoxes.delete(id);
   else collapsedSummaryBoxes.add(id);
