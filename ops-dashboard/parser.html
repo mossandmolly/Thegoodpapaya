@@ -54,8 +54,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pack-progress-pie{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle;margin-left:2px}
 .order-row{background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:8px}
 .order-row.pickup-order{background:#f6effc;border-color:#c9a3ec}
-.order-row.leftover-order{background:#fff3e0;border-color:#f0b060}
-.pack-card.leftover-order{background:#fff3e0;border-color:#f0b060}
 .pickup-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
 /* Customer name on its own full-width line — squeezing it against the
    action links on narrow screens is what pushed it into a corner and
@@ -312,6 +310,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pack-card.status-packed{border-color:#b8d4e8;background:#e3eef7}
 .pack-card.status-final{border-color:#b8e0b8;background:#e3f3e3}
 .pack-card.status-cancelled{opacity:0.6;background:#f2f2f2}
+/* Must come after the status-based rules above — same specificity (two
+   classes), so source order decides the winner, and the leftover flag
+   needs to win regardless of which pack status (open/packed/final/etc)
+   the card is currently in. */
+.order-row.leftover-order{background:#fff3e0;border-color:#f0b060}
+.pack-card.leftover-order{background:#fff3e0;border-color:#f0b060}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
 .pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
@@ -3826,15 +3830,16 @@ function renderNotDispatchedClusterSummary(active){
 // Formal trips (grouped by the real trip key, deriveTrip — same identity/
 // numbering the rest of the trip system uses) can go out in more than one
 // DISPATCH WAVE: a rider takes part of it out, then either they or
-// someone else comes back later for the rest. Waves are purely time-gap
-// based (a >15min gap between one dispatch and the next starts a new
-// wave) — never conditioned on who's dispatching, so even the SAME rider
-// returning later for the remainder gets a distinct wave with its own
-// Start/Ready/End, not a continuation of the first one. Each trip can
+// someone else comes back later for the rest. A wave only ends once
+// something in it has actually been DELIVERED — that's the real-world
+// signal that the rider left with that batch and is out on the road, so
+// anything dispatched after that point is a genuinely new batch. A plain
+// time gap between two dispatches (e.g. the packer was just slow getting
+// the 3rd order ready) does NOT split a wave on its own — those orders
+// never left, so they're still the same outgoing batch. Each trip can
 // therefore show more than one Start/Ready/End row — see
 // renderOfdRiderSummary/renderPastTripsSummary, which iterate waves, not
 // whole trips.
-const DISPATCH_WAVE_GAP_MIN=15;
 function computeTripTimings(orders){
   const byTrip={};
   orders.forEach(o=>{
@@ -3849,11 +3854,11 @@ function computeTripTimings(orders){
     let current=null;
     timed.forEach(o=>{
       const t=new Date(o.dispatchedAt).getTime();
-      if(current&&(t-current.lastDispatchTime)<=DISPATCH_WAVE_GAP_MIN*60000){
+      const currentAlreadyOut=current&&current.orders.some(co=>co.deliveredAt&&new Date(co.deliveredAt).getTime()<=t);
+      if(current&&!currentAlreadyOut){
         current.orders.push(o);
-        current.lastDispatchTime=t;
       }else{
-        current={orders:[o],lastDispatchTime:t};
+        current={orders:[o]};
         waves.push(current);
       }
     });
