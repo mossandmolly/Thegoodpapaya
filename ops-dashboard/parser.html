@@ -2859,7 +2859,14 @@ function renderGroupingToggle(){
 function setViewGrouping(mode){
   viewGrouping=mode;
   if(document.getElementById('panel-today').classList.contains('active'))renderOrdersList();
-  if(document.getElementById('panel-packer').classList.contains('active'))renderPackerGrid();
+  // renderPackerGrid() alone never touches the grouping-toggle pills' DOM —
+  // only renderPackerFilterPills() does (same as every other Packer filter
+  // action calling both together) — without this the pill's active state
+  // never actually updated on Packer.
+  if(document.getElementById('panel-packer').classList.contains('active')){
+    renderPackerFilterPills();
+    renderPackerGrid();
+  }
   if(document.getElementById('panel-delivery').classList.contains('active'))renderDeliveryList();
 }
 
