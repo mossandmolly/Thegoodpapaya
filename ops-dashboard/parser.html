@@ -54,6 +54,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pack-progress-pie{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle;margin-left:2px}
 .order-row{background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:8px}
 .order-row.pickup-order{background:#f6effc;border-color:#c9a3ec}
+.order-row.leftover-order{background:#fff3e0;border-color:#f0b060}
+.pack-card.leftover-order{background:#fff3e0;border-color:#f0b060}
 .pickup-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
 /* Customer name on its own full-width line — squeezing it against the
    action links on narrow screens is what pushed it into a corner and
@@ -2322,14 +2324,8 @@ async function loadTodaysOrders(){
   ]);
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
 
-  if(data&&data.length){
-    const orderCount=new Set(data.map(i=>i.sales_order_id)).size;
-    document.getElementById('to-rc').textContent=
-      '— '+orderCount+' order'+(orderCount!==1?'s':'')+', '+data.length+' item'+(data.length!==1?'s':'');
-  }else{
-    document.getElementById('to-rc').textContent='';
-  }
   if(!data||!data.length){
+    document.getElementById('to-rc').textContent='';
     currentOrdersById={};
     currentItemsById={};
     list.innerHTML='<div class="to-empty">No orders for '+viewDate+'</div>';
@@ -2375,6 +2371,14 @@ async function loadTodaysOrders(){
   currentOrdersById=bySalesOrder;
   currentItemsById=byItemId;
 
+  // Pickup (no real sale) and replacement-only (nothing actually billed)
+  // orders don't count toward "real" order volume here — same exclusion
+  // isReplacementOnlyOrder/isPickup already drive on the cards themselves.
+  const realOrders=Object.values(currentOrdersById).filter(o=>!o.isPickup&&!isReplacementOnlyOrder(o));
+  document.getElementById('to-rc').textContent=realOrders.length
+    ?'— '+realOrders.length+' order'+(realOrders.length!==1?'s':'')+', '+data.length+' item'+(data.length!==1?'s':'')
+    :'';
+
   renderOrdersList();
 }
 
@@ -2385,11 +2389,11 @@ function renderOrdersList(){
   const list=document.getElementById('to-list');
   const dupIds=computeDuplicateItemIds(Object.values(currentItemsById));
 
-  // Set before any deriveGroupKey call below (that's what reads it, via
-  // effectiveTripKey) — today's whole picture, not filtered by search, so
-  // trip numbers/splits don't shift depending on what's typed into search.
-  todaysOrdersForSplit=Object.values(currentOrdersById).filter(o=>o.orderStatus!=='cancelled');
-  const tripInfo=computeTripNumbers(todaysOrdersForSplit);
+  // Set before render below — today's whole picture, not filtered by
+  // search, so isLeftoverOrder/trip numbers don't shift depending on
+  // what's typed into search.
+  todaysOrdersForLeftoverCheck=Object.values(currentOrdersById).filter(o=>o.orderStatus!=='cancelled');
+  const tripInfo=computeTripNumbers(todaysOrdersForLeftoverCheck);
 
   renderOverviewSummaryPills(tripInfo);
   document.getElementById('to-grouping-toggle').innerHTML=renderGroupingToggle();
@@ -2451,9 +2455,7 @@ function renderOrdersList(){
         // (never an order with no items at all) — worth a loud callout
         // since a replacement-only order shouldn't be billed/handled like a
         // normal paid one.
-        const activeOrderItems=activeItems(order);
-        const replacementOnly=!cancelled&&activeOrderItems.length>0&&
-          activeOrderItems.every(i=>/\b(replacement|replace|free)\b/i.test(i.description||''));
+        const replacementOnly=!cancelled&&isReplacementOnlyOrder(order);
         const statusBadges=(order.isPickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
           (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
@@ -2475,7 +2477,7 @@ function renderOrdersList(){
         // isn't a wall of expanded cards until you actually need one.
         const expandedOv=expandedOverviewOrders.has(order.soid);
         if(!expandedOv){
-          return '<div class="order-row'+(cancelled?' order-cancelled':'')+(order.isPickup?' pickup-order':'')+' dv-collapsed-card">'+
+          return '<div class="order-row'+(cancelled?' order-cancelled':'')+(order.isPickup?' pickup-order':'')+(!cancelled&&isLeftoverOrder(order)?' leftover-order':'')+' dv-collapsed-card">'+
             '<div class="dv-card-header" onclick="toggleOverviewOrderExpanded(\''+order.soid+'\')">'+
               '<span class="or-cust">'+
                 '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
@@ -2491,7 +2493,7 @@ function renderOrdersList(){
           '</div>';
         }
 
-        return '<div class="order-row'+(cancelled?' order-cancelled':'')+(order.isPickup?' pickup-order':'')+'">'+
+        return '<div class="order-row'+(cancelled?' order-cancelled':'')+(order.isPickup?' pickup-order':'')+(!cancelled&&isLeftoverOrder(order)?' leftover-order':'')+'">'+
           '<div class="dv-card-header" onclick="toggleOverviewOrderExpanded(\''+order.soid+'\')"><span class="or-cust">'+
             '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
             escH(order.customer)+
@@ -2762,38 +2764,32 @@ function deriveTrip(order){
   return community.combinable_group||community.cluster||soc;
 }
 
-// Populated whenever Overview or Delivery loads/re-renders fresh data —
-// used only by effectiveTripKey below, which needs to know about every
-// OTHER order sharing a trip (not just the one being grouped) to detect a
-// partially-picked-up trip. Same "ambient global refreshed on load"
-// pattern as communitiesCache/clustersCache, not dataset threading through
-// every render function.
-let todaysOrdersForSplit=[];
+// Populated whenever Overview, Packer, or Delivery loads/re-renders fresh
+// data — used only by isLeftoverOrder below, which needs to know about
+// every OTHER order sharing a trip (not just the one being checked) to
+// detect a partially-picked-up trip. Same "ambient global refreshed on
+// load" pattern as communitiesCache/clustersCache, not dataset threading
+// through every render function.
+let todaysOrdersForLeftoverCheck=[];
 
-// If a trip has a mix of already-delivered and never-dispatched orders (a
-// rider took part of it out and dropped at least one off, but never
-// touched the rest), the still-not_dispatched ones split into their own
-// trip identity from that point on — they're not really part of the
-// original trip anymore, that trip already went out and started
-// delivering. Whatever they split into then gets its own "Trip N" number
-// wherever it naturally ranks (see computeTripNumbers) — every trip after
-// it shifts up by one for free, since numbering is always just "how many
-// distinct trip keys rank ahead of this one," not a stored value.
-function effectiveTripKey(order){
+// A not_dispatched order whose trip already has at least one delivery
+// underway — a rider took part of the trip out and dropped at least one
+// off, but this particular order never even got picked up. Purely a
+// visual flag (highlighted so it pops and gets priority for whichever
+// trip goes out next) — doesn't touch trip identity/numbering at all.
+function isLeftoverOrder(order){
+  if(order.deliveryStatus!=='not_dispatched')return false;
   const base=deriveTrip(order);
-  if(order.deliveryStatus!=='not_dispatched')return base;
-  const hasDeliveredSibling=todaysOrdersForSplit.some(o=>
+  return todaysOrdersForLeftoverCheck.some(o=>
     o.orderStatus!=='cancelled'&&deriveTrip(o)===base&&
     (o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered')
   );
-  return hasDeliveredSibling?base+'::remainder':base;
 }
 
-// order needs {customer, tripOverride, deliveryStatus, orderStatus} at
-// minimum — every per-order object in Overview/Delivery already carries
-// all four.
+// order needs {customer, tripOverride} at minimum — every per-order object
+// in Overview/Delivery already carries both.
 function deriveGroupKey(order){
-  return viewGrouping==='trip'?effectiveTripKey(order):deriveSociety(order.customer);
+  return viewGrouping==='trip'?deriveTrip(order):deriveSociety(order.customer);
 }
 
 // ── Trip-view priority ordering ──────────────────────────────────────────
@@ -2870,17 +2866,16 @@ const TRIP_ORDER_CAP=10;
 
 // Trip N — a group's 1-based position in today's cluster-priority order
 // (see sortTripGroupNames above), computed fresh from whichever order set
-// the caller already has loaded, grouped by the effective trip key
-// (accounts for the partial-pickup split, see effectiveTripKey) —
-// independent of viewGrouping, so a society shows its trip number even in
-// Flat view where the visible groups are societies, not trips. Not a
+// the caller already has loaded, grouped by the real trip key (deriveTrip)
+// — independent of viewGrouping, so a society shows its trip number even
+// in Flat view where the visible groups are societies, not trips. Not a
 // stored value: it's just "where does this trip rank right now," so it
 // shifts as today's order mix changes. Two societies sharing a
 // combinable_group get the same number.
 function computeTripNumbers(orders){
   const byTrip={};
   orders.forEach(o=>{
-    const key=effectiveTripKey(o);
+    const key=deriveTrip(o);
     (byTrip[key]=byTrip[key]||[]).push(o);
   });
   const sorted=sortTripGroupNames(Object.keys(byTrip),name=>byTrip[name]);
@@ -2896,7 +2891,7 @@ function computeTripNumbers(orders){
 // per render pass; order is any single representative order from the
 // group being labeled.
 function tripBadgeHtml(tripInfo,order){
-  const key=effectiveTripKey(order);
+  const key=deriveTrip(order);
   const num=tripInfo.numberByTripKey[key];
   if(num==null)return '';
   const count=(tripInfo.ordersByTripKey[key]||[]).length;
@@ -2961,7 +2956,7 @@ function moveOrderToTrip(soid){
     .filter(o=>o.orderStatus!=='cancelled');
   const tripInfo=computeTripNumbers(pool.length?pool:[order]);
 
-  const currentKey=effectiveTripKey(order);
+  const currentKey=deriveTrip(order);
   const options=['<option value="">— Reset to community default —</option>'];
   tripInfo.sortedTripKeys.forEach(key=>{
     const num=tripInfo.numberByTripKey[key];
@@ -3621,6 +3616,15 @@ function activeItems(order){
   return (order&&order.items||[]).filter(i=>i.status!=='cancelled');
 }
 
+// Every active item's description flags it as replacement/replace/free —
+// never true for an order with no active items at all. Shared between the
+// Overview card badge and the overall order-count exclusion (pickup +
+// replacement-only orders don't count toward "real" order volume there).
+function isReplacementOnlyOrder(order){
+  const items=activeItems(order);
+  return items.length>0&&items.every(i=>/\b(replacement|replace|free)\b/i.test(i.description||''));
+}
+
 // True only while there's actually something to invoice: nothing left
 // open/held/packed, AND at least one item not yet 'invoiced'. Once every
 // (non-cancelled) item reads 'invoiced' the last invoice already covers the
@@ -3714,7 +3718,10 @@ function setOverviewDeliveryFilter(key){
 
 function renderOverviewSummaryPills(tripInfo){
   const orders=Object.values(currentOrdersById);
-  const total=orders.length;
+  // Pickup and replacement-only orders don't count toward "real" order
+  // volume in the overall total — same exclusion the to-rc header count
+  // above already applies.
+  const total=orders.filter(o=>!o.isPickup&&!isReplacementOnlyOrder(o)).length;
   const cancelled=orders.filter(o=>o.orderStatus==='cancelled').length;
   const active=orders.filter(o=>o.orderStatus!=='cancelled');
   const invoiced=active.filter(isFullyInvoiced).length;
@@ -3809,17 +3816,17 @@ function renderNotDispatchedClusterSummary(active){
   el.innerHTML=summaryBoxHtml('notdispatched','📍 Not Dispatched by Cluster ('+orders.length+')',rowsHtml);
 }
 
-// Formal trip timings for today — grouped by effectiveTripKey (the same
-// identity/numbering the rest of the trip system uses, not a time-burst
-// heuristic): trip start = first order marked OFD, trip ready = last
-// order marked OFD (the whole batch has left), trip end = last order
+// Formal trip timings for today — grouped by the real trip key (deriveTrip,
+// same identity/numbering the rest of the trip system uses, not a
+// time-burst heuristic): trip start = first order marked OFD, trip ready =
+// last order marked OFD (the whole batch has left), trip end = last order
 // marked delivered. Feeds both the OFD-by-trip summary (still in
 // progress) and the Past Orders summary (at least one delivery done)
 // below — a partially-delivered trip can appear in both at once.
 function computeTripTimings(orders){
   const byTrip={};
   orders.forEach(o=>{
-    const key=effectiveTripKey(o);
+    const key=deriveTrip(o);
     (byTrip[key]=byTrip[key]||{orders:[],riders:new Set(),dispatchTimes:[],deliverTimes:[]}).orders.push(o);
   });
   Object.values(byTrip).forEach(t=>{
@@ -3838,6 +3845,17 @@ function fmtTripTime(ms){
   return ms?new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—';
 }
 
+// "Ready" alone would just be "whenever the last order that WAS
+// dispatched went out" — it says nothing about whether the rider actually
+// cleared the whole trip. Qualifies it with a pick count whenever some of
+// the trip's orders never got dispatched at all, so "ready" never implies
+// "empty" when it isn't.
+function readyLabelFor(t){
+  const notPicked=t.orders.filter(o=>o.deliveryStatus==='not_dispatched').length;
+  const total=t.orders.length;
+  return 'Ready '+fmtTripTime(t.ready)+(notPicked?' ('+(total-notPicked)+'/'+total+' picked — '+notPicked+' left at store)':'');
+}
+
 function renderOfdRiderSummary(active,tripInfo){
   const el=document.getElementById('to-ofd-summary');
   if(!el)return;
@@ -3852,7 +3870,7 @@ function renderOfdRiderSummary(active,tripInfo){
     rows.push({num:num??9999,html:
       '<div class="cluster-summary-row">'+
         '<span class="cs-name">🛵 Trip '+(num??'?')+' · '+escH(riderLabel)+'</span>'+
-        '<span>Start '+fmtTripTime(t.start)+' · Ready '+fmtTripTime(t.ready)+' · '+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</span>'+
+        '<span>Start '+fmtTripTime(t.start)+' · '+readyLabelFor(t)+' · '+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</span>'+
         '<span class="cs-detail">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</span>'+
       '</div>'});
   });
@@ -3882,7 +3900,7 @@ function renderPastTripsSummary(active,tripInfo){
     rows.push({end:t.end||0,html:
       '<div class="cluster-summary-row">'+
         '<span class="cs-name">✅ Trip '+(num??'?')+' · '+escH(riderLabel)+'</span>'+
-        '<span>Start '+fmtTripTime(t.start)+' · Ready '+fmtTripTime(t.ready)+' · End '+fmtTripTime(t.end)+
+        '<span>Start '+fmtTripTime(t.start)+' · '+readyLabelFor(t)+' · End '+fmtTripTime(t.end)+
           (stillOut?' · '+stillOut+' still out':'')+'</span>'+
         '<span class="cs-detail">'+deliveredOrders.map(o=>escH(o.customer)).join(', ')+'</span>'+
       '</div>'});
@@ -4386,10 +4404,9 @@ function renderPackerGrid(){
   const search=packerFilters.search.trim().toLowerCase();
   const myFruits=riderName?(packersCache.find(p=>p.name===riderName)?.assigned_fruits||[]):[];
 
-  // Set before any deriveGroupKey call below (that's what reads it, via
-  // effectiveTripKey) — Packer contributes too, not just Overview/Delivery,
-  // so the split still works for someone who only ever has Packer open.
-  todaysOrdersForSplit=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
+  // Packer contributes too, not just Overview/Delivery, so
+  // isLeftoverOrder still works for someone who only ever has Packer open.
+  todaysOrdersForLeftoverCheck=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
 
   const filtered=packerItems.filter(item=>{
     if(packerScope==='mine'&&!myFruits.includes(item.item_name))return false;
@@ -4413,7 +4430,7 @@ function renderPackerGrid(){
   const dupIds=computeDuplicateItemIds(packerItems);
 
   const cardHtml=item=>
-    '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+'" data-id="'+item.id+'">'+
+    '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+'" data-id="'+item.id+'">'+
       '<div class="pk-status-badge status-'+item.status+'">'+escH(ITEM_STATUS_LABEL[item.status]||item.status)+'</div>'+
       '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+(packerCustomerMap[item.sales_order_id]?.is_pickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+'</div>'+
       '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+
@@ -4978,10 +4995,9 @@ function renderDeliveryList(){
   document.getElementById('dv-grouping-toggle').innerHTML=renderGroupingToggle();
   document.getElementById('dv-collapse-btn').textContent=expandedDeliveryOrders.size?'▾ Collapse All':'▸ Expand All';
 
-  // Set before any deriveGroupKey call below (that's what reads it, via
-  // effectiveTripKey) — the full unfiltered picture, not just what scope/
-  // search/status narrows down to.
-  todaysOrdersForSplit=Object.entries(deliveryOrders)
+  // Full unfiltered picture, not just what scope/search/status narrows
+  // down to, for isLeftoverOrder and trip numbering below.
+  todaysOrdersForLeftoverCheck=Object.entries(deliveryOrders)
     .map(([soid,order])=>({soid,...order}))
     .filter(o=>o.orderStatus!=='cancelled');
 
@@ -4999,7 +5015,7 @@ function renderDeliveryList(){
     :Object.keys(bySociety).sort();
   // Independent of scope/search/status filters — reflects today's whole
   // picture so numbers/caps don't shift depending on which filter's active.
-  const tripInfo=computeTripNumbers(todaysOrdersForSplit);
+  const tripInfo=computeTripNumbers(todaysOrdersForLeftoverCheck);
   const totalLoaded=Object.keys(deliveryOrders).length;
   const shown=socNames.reduce((n,soc)=>n+bySociety[soc].length,0);
   document.getElementById('dv-rc').textContent=shown?'— '+shown+' order'+(shown!==1?'s':''):'';
@@ -5284,7 +5300,7 @@ function renderDeliveryCard(order,selectionMode){
   // block for orders they're not working on right now. Tap to expand.
   const expanded=expandedDeliveryOrders.has(order.soid);
   if(!expanded){
-    return '<div class="order-row'+(order.isPickup?' pickup-order':'')+' dv-collapsed-card">'+
+    return '<div class="order-row'+(order.isPickup?' pickup-order':'')+(isLeftoverOrder(order)?' leftover-order':'')+' dv-collapsed-card">'+
       '<div class="dv-card-header" onclick="toggleDeliveryOrderExpanded(\''+order.soid+'\')">'+
         '<span class="or-cust">'+
           '<span onclick="event.stopPropagation()">'+selectCheckbox+'</span>'+
@@ -5298,7 +5314,7 @@ function renderDeliveryCard(order,selectionMode){
     '</div>';
   }
 
-  return '<div class="order-row'+(delivered?' dv-delivered':'')+(order.isPickup?' pickup-order':'')+'">'+
+  return '<div class="order-row'+(delivered?' dv-delivered':'')+(order.isPickup?' pickup-order':'')+(isLeftoverOrder(order)?' leftover-order':'')+'">'+
     '<div class="dv-card-header" onclick="toggleDeliveryOrderExpanded(\''+order.soid+'\')"><span class="or-cust">'+
       '<span onclick="event.stopPropagation()">'+selectCheckbox+'</span>'+
       escH(order.customer)+
