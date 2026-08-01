@@ -3823,31 +3823,52 @@ function renderNotDispatchedClusterSummary(active){
   el.innerHTML=summaryBoxHtml('notdispatched','📍 Not Dispatched by Cluster ('+orders.length+')',rowsHtml);
 }
 
-// Formal trip timings for today — grouped by the real trip key (deriveTrip,
-// same identity/numbering the rest of the trip system uses, not a
-// time-burst heuristic): trip start = first order marked OFD, trip ready =
-// last order marked OFD (the whole batch has left), trip end = last order
-// marked delivered. Feeds both the OFD-by-trip summary (still in
-// progress) and the Past Orders summary (at least one delivery done)
-// below — a partially-delivered trip can appear in both at once.
+// Formal trips (grouped by the real trip key, deriveTrip — same identity/
+// numbering the rest of the trip system uses) can go out in more than one
+// DISPATCH WAVE: a rider takes part of it out, then either they or
+// someone else comes back later for the rest. Waves are purely time-gap
+// based (a >15min gap between one dispatch and the next starts a new
+// wave) — never conditioned on who's dispatching, so even the SAME rider
+// returning later for the remainder gets a distinct wave with its own
+// Start/Ready/End, not a continuation of the first one. Each trip can
+// therefore show more than one Start/Ready/End row — see
+// renderOfdRiderSummary/renderPastTripsSummary, which iterate waves, not
+// whole trips.
+const DISPATCH_WAVE_GAP_MIN=15;
 function computeTripTimings(orders){
   const byTrip={};
   orders.forEach(o=>{
     const key=deriveTrip(o);
-    (byTrip[key]=byTrip[key]||{orders:[],riders:new Set(),dispatchTimes:[],deliverTimes:[]}).orders.push(o);
+    (byTrip[key]=byTrip[key]||[]).push(o);
   });
-  Object.values(byTrip).forEach(t=>{
-    t.orders.forEach(o=>{
-      if(o.assignedRider)t.riders.add(o.assignedRider);
-      if(o.dispatchedAt)t.dispatchTimes.push(new Date(o.dispatchedAt).getTime());
-      if(o.deliveredAt)t.deliverTimes.push(new Date(o.deliveredAt).getTime());
+  const result={};
+  Object.keys(byTrip).forEach(key=>{
+    const tripOrders=byTrip[key];
+    const timed=tripOrders.filter(o=>o.dispatchedAt).sort((a,b)=>new Date(a.dispatchedAt)-new Date(b.dispatchedAt));
+    const waves=[];
+    let current=null;
+    timed.forEach(o=>{
+      const t=new Date(o.dispatchedAt).getTime();
+      if(current&&(t-current.lastDispatchTime)<=DISPATCH_WAVE_GAP_MIN*60000){
+        current.orders.push(o);
+        current.lastDispatchTime=t;
+      }else{
+        current={orders:[o],lastDispatchTime:t};
+        waves.push(current);
+      }
     });
-    t.start=t.dispatchTimes.length?Math.min(...t.dispatchTimes):null;
-    t.ready=t.dispatchTimes.length?Math.max(...t.dispatchTimes):null;
-    t.firstDeliver=t.deliverTimes.length?Math.min(...t.deliverTimes):null;
-    t.end=t.deliverTimes.length?Math.max(...t.deliverTimes):null;
+    waves.forEach(w=>{
+      const dispatchTimes=w.orders.map(o=>new Date(o.dispatchedAt).getTime());
+      const deliverTimes=w.orders.filter(o=>o.deliveredAt).map(o=>new Date(o.deliveredAt).getTime());
+      w.riders=new Set(w.orders.map(o=>o.assignedRider).filter(Boolean));
+      w.start=Math.min(...dispatchTimes);
+      w.ready=Math.max(...dispatchTimes);
+      w.firstDeliver=deliverTimes.length?Math.min(...deliverTimes):null;
+      w.end=deliverTimes.length?Math.max(...deliverTimes):null;
+    });
+    result[key]={waves,leftoverOrders:tripOrders.filter(o=>o.deliveryStatus==='not_dispatched')};
   });
-  return byTrip;
+  return result;
 }
 
 // Visual timeline for one trip: Start (first OFD) -> Ready (last OFD) ->
@@ -3876,47 +3897,40 @@ function fmtTripTime(ms){
   return ms?new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—';
 }
 
-// "Ready" alone would just be "whenever the last order that WAS
-// dispatched went out" — it says nothing about whether the rider actually
-// cleared the whole trip. Qualifies it with a pick count whenever some of
-// the trip's orders never got dispatched at all, so "ready" never implies
-// "empty" when it isn't.
-function readyLabelFor(t){
-  const notPicked=t.orders.filter(o=>o.deliveryStatus==='not_dispatched').length;
-  const total=t.orders.length;
-  return 'Ready '+fmtTripTime(t.ready)+(notPicked?' ('+(total-notPicked)+'/'+total+' picked — '+notPicked+' left at store)':'');
-}
-
-// Grouped rider-first, trip-second — "who's doing what" is the natural
-// dispatcher question, and a rider normally has one trip at a time but can
-// show more than one sub-block if they somehow do. Each trip sub-block
-// carries its own progress bar (Start/Ready/1st drop/End).
+// Grouped rider-first, wave-second — "who's doing what" is the natural
+// dispatcher question. Each dispatch wave (not whole trip) is its own
+// sub-block with its own progress bar — a trip split across two waves
+// shows two separate Start/Ready rows, labeled "(Wave 1)"/"(Wave 2)" only
+// when a trip actually has more than one.
 function renderOfdRiderSummary(active,tripInfo){
   const el=document.getElementById('to-ofd-summary');
   if(!el)return;
   const timings=computeTripTimings(active);
   const byRider={};
   Object.keys(timings).forEach(key=>{
-    const t=timings[key];
-    const ofdOrders=t.orders.filter(o=>o.deliveryStatus==='ofd');
-    if(!ofdOrders.length)return;
+    const{waves}=timings[key];
     const num=tripInfo.numberByTripKey[key];
-    const riders=t.riders.size?[...t.riders].sort():['Unassigned'];
-    riders.forEach(rider=>{
-      (byRider[rider]=byRider[rider]||[]).push({t,num:num??9999,ofdOrders});
+    waves.forEach((w,i)=>{
+      const ofdOrders=w.orders.filter(o=>o.deliveryStatus==='ofd');
+      if(!ofdOrders.length)return;
+      const riders=w.riders.size?[...w.riders].sort():['Unassigned'];
+      riders.forEach(rider=>{
+        (byRider[rider]=byRider[rider]||[]).push({w,waveIdx:i+1,waveCount:waves.length,num:num??9999,ofdOrders});
+      });
     });
   });
   const riderNames=Object.keys(byRider).sort();
   if(!riderNames.length){el.innerHTML='';return;}
 
   const rowsHtml=riderNames.map(rider=>{
-    const trips=byRider[rider].sort((a,b)=>a.num-b.num);
-    const tripBlocks=trips.map(({t,num,ofdOrders})=>
-      '<div class="cs-detail" style="margin-top:6px;color:#5c4f42"><b>Trip '+num+'</b> — Start '+fmtTripTime(t.start)+' · '+readyLabelFor(t)+' · '+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</div>'+
-      tripProgressBarHtml(t)+
-      '<div class="cs-detail">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</div>'
-    ).join('');
-    return '<div class="cluster-summary-row" style="display:block"><span class="cs-name">🛵 '+escH(rider)+'</span>'+tripBlocks+'</div>';
+    const entries=byRider[rider].sort((a,b)=>a.num-b.num||a.waveIdx-b.waveIdx);
+    const blocks=entries.map(({w,waveIdx,waveCount,num,ofdOrders})=>{
+      const waveLabel=waveCount>1?' (Wave '+waveIdx+')':'';
+      return '<div class="cs-detail" style="margin-top:6px;color:#5c4f42"><b>Trip '+num+waveLabel+'</b> — Start '+fmtTripTime(w.start)+' · Ready '+fmtTripTime(w.ready)+' · '+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</div>'+
+        tripProgressBarHtml(w)+
+        '<div class="cs-detail">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</div>';
+    }).join('');
+    return '<div class="cluster-summary-row" style="display:block"><span class="cs-name">🛵 '+escH(rider)+'</span>'+blocks+'</div>';
   }).join('');
 
   const totalOfd=active.filter(o=>o.deliveryStatus==='ofd').length;
@@ -3924,37 +3938,49 @@ function renderOfdRiderSummary(active,tripInfo){
 }
 
 // New section: every trip with at least one delivery done today, with its
-// start/ready/end times and who delivered it — persists for the whole day
-// as a running log, not just "what's active right now." A trip that's
-// only partially delivered still shows here (with an "N still out" note)
-// AND in the OFD-by-trip summary above at the same time. Leftover (never
-// picked up, sibling already delivering — see isLeftoverOrder) houses
-// list first, ahead of the already-delivered ones, so what still needs
-// priority doesn't get buried at the end of a long list.
+// wave-by-wave start/ready/end times and who delivered each wave —
+// persists for the whole day as a running log, not just "what's active
+// right now." A trip only partially delivered still shows here (with an
+// "N still out" note on the relevant wave) AND in the OFD-by-rider summary
+// above at the same time. Never-dispatched leftovers (see
+// isLeftoverOrder) belong to no wave — listed once at the top of the
+// trip's block, highlighted, ahead of every wave's own house list, so
+// what still needs priority doesn't get buried underneath.
 function renderPastTripsSummary(active,tripInfo){
   const el=document.getElementById('to-past-trips-summary');
   if(!el)return;
   const timings=computeTripTimings(active);
   const rows=[];
   Object.keys(timings).forEach(key=>{
-    const t=timings[key];
-    const deliveredOrders=t.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered');
-    if(!deliveredOrders.length)return;
+    const{waves,leftoverOrders}=timings[key];
+    const deliveredWaves=waves.filter(w=>w.orders.some(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered'));
+    if(!deliveredWaves.length)return;
     const num=tripInfo.numberByTripKey[key];
-    const riderLabel=t.riders.size?[...t.riders].sort().join(', '):'Unassigned';
-    const leftoverOrders=t.orders.filter(o=>o.deliveryStatus==='not_dispatched');
-    const stillOut=t.orders.filter(o=>o.deliveryStatus==='ofd').length;
-    const houses=[
-      ...leftoverOrders.map(o=>'<span class="cs-house-leftover">'+escH(o.customer)+'</span>'),
-      ...deliveredOrders.map(o=>escH(o.customer)),
-    ].join(', ');
-    rows.push({end:t.end||0,html:
-      '<div class="cluster-summary-row">'+
+    const allRiders=new Set();
+    waves.forEach(w=>w.riders.forEach(r=>allRiders.add(r)));
+    const riderLabel=allRiders.size?[...allRiders].sort().join(', '):'Unassigned';
+
+    const leftoverHtml=leftoverOrders.length
+      ?'<div class="cs-detail">'+leftoverOrders.map(o=>'<span class="cs-house-leftover">'+escH(o.customer)+'</span>').join(', ')+' — not yet picked up</div>'
+      :'';
+
+    const waveBlocks=waves.map((w,i)=>{
+      const deliveredOrders=w.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered');
+      const stillOut=w.orders.filter(o=>o.deliveryStatus==='ofd').length;
+      if(!deliveredOrders.length&&!stillOut)return '';
+      const waveLabel=waves.length>1?' (Wave '+(i+1)+')':'';
+      return '<div class="cs-detail" style="margin-top:6px;color:#5c4f42"><b>Trip '+num+waveLabel+'</b> — Start '+fmtTripTime(w.start)+' · Ready '+fmtTripTime(w.ready)+' · End '+fmtTripTime(w.end)+
+          (stillOut?' · '+stillOut+' still out':'')+'</div>'+
+        tripProgressBarHtml(w)+
+        (deliveredOrders.length?'<div class="cs-detail">'+deliveredOrders.map(o=>escH(o.customer)).join(', ')+'</div>':'');
+    }).join('');
+
+    const latestEnd=Math.max(0,...waves.map(w=>w.end||0));
+    rows.push({end:latestEnd,html:
+      '<div class="cluster-summary-row" style="display:block">'+
         '<span class="cs-name">✅ Trip '+(num??'?')+' · '+escH(riderLabel)+'</span>'+
-        '<span>Start '+fmtTripTime(t.start)+' · '+readyLabelFor(t)+' · End '+fmtTripTime(t.end)+
-          (stillOut?' · '+stillOut+' still out':'')+'</span>'+
-        tripProgressBarHtml(t)+
-        '<span class="cs-detail">'+houses+'</span>'+
+        leftoverHtml+
+        waveBlocks+
       '</div>'});
   });
   if(!rows.length){el.innerHTML='';return;}
