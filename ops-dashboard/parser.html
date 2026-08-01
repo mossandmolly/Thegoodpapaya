@@ -427,6 +427,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="to-delivery-pills" class="filter-pills delivery-status-pills"></div>
   <div id="to-notdispatched-summary"></div>
   <div id="to-ofd-summary"></div>
+  <div id="to-past-trips-summary"></div>
   <div id="to-grouping-toggle" class="filter-pills status-pills"></div>
   <div class="push-row bulk-actions-row">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Invoices (0)</button>
@@ -2363,6 +2364,7 @@ async function loadTodaysOrders(){
         invoiceDownloadedAt:o?.invoice_downloaded_at||null,
         assignedRider: o?.assigned_rider||null,
         dispatchedAt:  o?.dispatched_at||null,
+        deliveredAt:   o?.delivered_at||null,
         isPickup:      !!o?.is_pickup,
         items:[],
       };
@@ -2383,7 +2385,13 @@ function renderOrdersList(){
   const list=document.getElementById('to-list');
   const dupIds=computeDuplicateItemIds(Object.values(currentItemsById));
 
-  renderOverviewSummaryPills();
+  // Set before any deriveGroupKey call below (that's what reads it, via
+  // effectiveTripKey) — today's whole picture, not filtered by search, so
+  // trip numbers/splits don't shift depending on what's typed into search.
+  todaysOrdersForSplit=Object.values(currentOrdersById).filter(o=>o.orderStatus!=='cancelled');
+  const tripInfo=computeTripNumbers(todaysOrdersForSplit);
+
+  renderOverviewSummaryPills(tripInfo);
   document.getElementById('to-grouping-toggle').innerHTML=renderGroupingToggle();
 
   // Group orders by society (default) or by trip (viewGrouping==='trip') —
@@ -2408,10 +2416,6 @@ function renderOrdersList(){
   const socNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
     :Object.keys(bySociety).sort();
-  // Independent of the search filter above — trip numbers/caps reflect
-  // today's whole picture, not just what's currently visible, so they
-  // don't jump around as someone types into the search box.
-  const tripInfo=computeTripNumbers(Object.values(currentOrdersById).filter(o=>o.orderStatus!=='cancelled'));
   document.getElementById('to-collapse-btn').textContent=collapsedOverviewGroups.size?'▸ Expand All':'▾ Collapse All';
   if(!socNames.length){
     list.innerHTML='<div class="to-empty">'+(Object.keys(currentOrdersById).length?'No orders match this filter':'No orders for '+viewDate)+'</div>';
@@ -2479,7 +2483,10 @@ function renderOrdersList(){
                 statusBadges+
                 (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
               '</span>'+
-              '<span class="dv-expand-caret">▸</span>'+
+              '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0">'+
+                (order.assignedRider?'<span class="dv-assigned-tag">🛵 '+escH(order.assignedRider)+'</span>':'')+
+                '<span class="dv-expand-caret">▸</span>'+
+              '</span>'+
             '</div>'+
           '</div>';
         }
@@ -2495,7 +2502,10 @@ function renderOrdersList(){
               :' <span class="pay-missing">Payment link not generated</span>'
             ):'')+
           '</span>'+
-          '<span class="dv-expand-caret">▾</span>'+
+          '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0">'+
+            (order.assignedRider?'<span class="dv-assigned-tag">🛵 '+escH(order.assignedRider)+'</span>':'')+
+            '<span class="dv-expand-caret">▾</span>'+
+          '</span>'+
           '</div>'+
           // Delivery-related notes (aggregated from item.delivery_instructions,
           // same as the Delivery tab's own note block) right under the
@@ -2752,10 +2762,38 @@ function deriveTrip(order){
   return community.combinable_group||community.cluster||soc;
 }
 
-// order needs {customer, tripOverride} at minimum — every per-order object
-// in Overview/Delivery already carries both.
+// Populated whenever Overview or Delivery loads/re-renders fresh data —
+// used only by effectiveTripKey below, which needs to know about every
+// OTHER order sharing a trip (not just the one being grouped) to detect a
+// partially-picked-up trip. Same "ambient global refreshed on load"
+// pattern as communitiesCache/clustersCache, not dataset threading through
+// every render function.
+let todaysOrdersForSplit=[];
+
+// If a trip has a mix of already-delivered and never-dispatched orders (a
+// rider took part of it out and dropped at least one off, but never
+// touched the rest), the still-not_dispatched ones split into their own
+// trip identity from that point on — they're not really part of the
+// original trip anymore, that trip already went out and started
+// delivering. Whatever they split into then gets its own "Trip N" number
+// wherever it naturally ranks (see computeTripNumbers) — every trip after
+// it shifts up by one for free, since numbering is always just "how many
+// distinct trip keys rank ahead of this one," not a stored value.
+function effectiveTripKey(order){
+  const base=deriveTrip(order);
+  if(order.deliveryStatus!=='not_dispatched')return base;
+  const hasDeliveredSibling=todaysOrdersForSplit.some(o=>
+    o.orderStatus!=='cancelled'&&deriveTrip(o)===base&&
+    (o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered')
+  );
+  return hasDeliveredSibling?base+'::remainder':base;
+}
+
+// order needs {customer, tripOverride, deliveryStatus, orderStatus} at
+// minimum — every per-order object in Overview/Delivery already carries
+// all four.
 function deriveGroupKey(order){
-  return viewGrouping==='trip'?deriveTrip(order):deriveSociety(order.customer);
+  return viewGrouping==='trip'?effectiveTripKey(order):deriveSociety(order.customer);
 }
 
 // ── Trip-view priority ordering ──────────────────────────────────────────
@@ -2832,16 +2870,17 @@ const TRIP_ORDER_CAP=10;
 
 // Trip N — a group's 1-based position in today's cluster-priority order
 // (see sortTripGroupNames above), computed fresh from whichever order set
-// the caller already has loaded, grouped by the REAL trip key (deriveTrip)
-// — independent of viewGrouping, so a society shows its trip number even
-// in Flat view where the visible groups are societies, not trips. Not a
+// the caller already has loaded, grouped by the effective trip key
+// (accounts for the partial-pickup split, see effectiveTripKey) —
+// independent of viewGrouping, so a society shows its trip number even in
+// Flat view where the visible groups are societies, not trips. Not a
 // stored value: it's just "where does this trip rank right now," so it
 // shifts as today's order mix changes. Two societies sharing a
 // combinable_group get the same number.
 function computeTripNumbers(orders){
   const byTrip={};
   orders.forEach(o=>{
-    const key=deriveTrip(o);
+    const key=effectiveTripKey(o);
     (byTrip[key]=byTrip[key]||[]).push(o);
   });
   const sorted=sortTripGroupNames(Object.keys(byTrip),name=>byTrip[name]);
@@ -2857,7 +2896,7 @@ function computeTripNumbers(orders){
 // per render pass; order is any single representative order from the
 // group being labeled.
 function tripBadgeHtml(tripInfo,order){
-  const key=deriveTrip(order);
+  const key=effectiveTripKey(order);
   const num=tripInfo.numberByTripKey[key];
   if(num==null)return '';
   const count=(tripInfo.ordersByTripKey[key]||[]).length;
@@ -2922,7 +2961,7 @@ function moveOrderToTrip(soid){
     .filter(o=>o.orderStatus!=='cancelled');
   const tripInfo=computeTripNumbers(pool.length?pool:[order]);
 
-  const currentKey=order.tripOverride||deriveTrip(order);
+  const currentKey=effectiveTripKey(order);
   const options=['<option value="">— Reset to community default —</option>'];
   tripInfo.sortedTripKeys.forEach(key=>{
     const num=tripInfo.numberByTripKey[key];
@@ -3673,7 +3712,7 @@ function setOverviewDeliveryFilter(key){
   renderOrdersList();
 }
 
-function renderOverviewSummaryPills(){
+function renderOverviewSummaryPills(tripInfo){
   const orders=Object.values(currentOrdersById);
   const total=orders.length;
   const cancelled=orders.filter(o=>o.orderStatus==='cancelled').length;
@@ -3708,7 +3747,27 @@ function renderOverviewSummaryPills(){
   ).join('');
 
   renderNotDispatchedClusterSummary(active);
-  renderOfdRiderSummary(active);
+  renderOfdRiderSummary(active,tripInfo);
+  renderPastTripsSummary(active,tripInfo);
+}
+
+// ── Collapsible summary box shell — shared by all three summaries below,
+// so each can be expanded/collapsed independently without losing the
+// others' state. id must be stable across renders (not regenerated data).
+let collapsedSummaryBoxes=new Set();
+function toggleSummaryBox(id){
+  if(collapsedSummaryBoxes.has(id))collapsedSummaryBoxes.delete(id);
+  else collapsedSummaryBoxes.add(id);
+  renderOrdersList();
+}
+function summaryBoxHtml(id,title,rowsHtml){
+  const collapsed=collapsedSummaryBoxes.has(id);
+  return '<div class="cluster-summary-box">'+
+    '<div class="cluster-summary-title" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="toggleSummaryBox('+escH(JSON.stringify(id))+')">'+
+      '<span>'+title+'</span><span class="dv-expand-caret" style="padding:0 0 0 8px;font-size:16px">'+(collapsed?'▸':'▾')+'</span>'+
+    '</div>'+
+    (collapsed?'':rowsHtml)+
+  '</div>';
 }
 
 // ── Not Dispatched by Cluster — a delivery-priority-ordered count of
@@ -3741,74 +3800,96 @@ function renderNotDispatchedClusterSummary(active){
   }
   entries.sort((a,b)=>rankOf(a.name.split(' + ')[0])-rankOf(b.name.split(' + ')[0]));
 
-  el.innerHTML='<div class="cluster-summary-box">'+
-    '<div class="cluster-summary-title">📍 Not Dispatched by Cluster ('+orders.length+')</div>'+
-    entries.map(e=>
-      '<div class="cluster-summary-row">'+
-        '<span class="cs-name">'+escH(e.name)+'</span><span>'+e.list.length+'</span>'+
-        '<span class="cs-detail">'+e.list.map(escH).join(', ')+'</span>'+
-      '</div>'
-    ).join('')+
-  '</div>';
+  const rowsHtml=entries.map(e=>
+    '<div class="cluster-summary-row">'+
+      '<span class="cs-name">'+escH(e.name)+'</span><span>'+e.list.length+'</span>'+
+      '<span class="cs-detail">'+e.list.map(escH).join(', ')+'</span>'+
+    '</div>'
+  ).join('');
+  el.innerHTML=summaryBoxHtml('notdispatched','📍 Not Dispatched by Cluster ('+orders.length+')',rowsHtml);
 }
 
-// A rider's OFD orders cluster into "trips" — dispatches in close
-// succession belong to the same trip; a bigger gap starts a new one. Trip
-// start time is the LAST dispatch in that burst (when the rider finished
-// loading everything and actually started driving/delivering), not the
-// first, per how the trip is meant to be reported.
-const TRIP_GAP_MINUTES=15;
-function groupOfdIntoTrips(orders){
-  const timed=orders.filter(o=>o.dispatchedAt).sort((a,b)=>new Date(a.dispatchedAt)-new Date(b.dispatchedAt));
-  const untimed=orders.filter(o=>!o.dispatchedAt);
-  const trips=[];
-  let current=null;
-  timed.forEach(o=>{
-    const t=new Date(o.dispatchedAt).getTime();
-    if(current&&(t-current.lastTime)<=TRIP_GAP_MINUTES*60000){
-      current.orders.push(o);
-      current.lastTime=t;
-    }else{
-      current={orders:[o],lastTime:t};
-      trips.push(current);
-    }
+// Formal trip timings for today — grouped by effectiveTripKey (the same
+// identity/numbering the rest of the trip system uses, not a time-burst
+// heuristic): trip start = first order marked OFD, trip ready = last
+// order marked OFD (the whole batch has left), trip end = last order
+// marked delivered. Feeds both the OFD-by-trip summary (still in
+// progress) and the Past Orders summary (at least one delivery done)
+// below — a partially-delivered trip can appear in both at once.
+function computeTripTimings(orders){
+  const byTrip={};
+  orders.forEach(o=>{
+    const key=effectiveTripKey(o);
+    (byTrip[key]=byTrip[key]||{orders:[],riders:new Set(),dispatchTimes:[],deliverTimes:[]}).orders.push(o);
   });
-  // Orders dispatched before this feature existed (no dispatched_at) — show
-  // them too rather than silently dropping them, just without a start time.
-  if(untimed.length)trips.push({orders:untimed,lastTime:null});
-  return trips;
+  Object.values(byTrip).forEach(t=>{
+    t.orders.forEach(o=>{
+      if(o.assignedRider)t.riders.add(o.assignedRider);
+      if(o.dispatchedAt)t.dispatchTimes.push(new Date(o.dispatchedAt).getTime());
+      if(o.deliveredAt)t.deliverTimes.push(new Date(o.deliveredAt).getTime());
+    });
+    t.start=t.dispatchTimes.length?Math.min(...t.dispatchTimes):null;
+    t.ready=t.dispatchTimes.length?Math.max(...t.dispatchTimes):null;
+    t.end=t.deliverTimes.length?Math.max(...t.deliverTimes):null;
+  });
+  return byTrip;
+}
+function fmtTripTime(ms){
+  return ms?new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—';
 }
 
-function renderOfdRiderSummary(active){
+function renderOfdRiderSummary(active,tripInfo){
   const el=document.getElementById('to-ofd-summary');
   if(!el)return;
-  const orders=active.filter(o=>o.deliveryStatus==='ofd');
-  if(!orders.length){el.innerHTML='';return;}
-
-  const byRider={};
-  orders.forEach(o=>{
-    const rider=o.assignedRider||'Unassigned';
-    (byRider[rider]=byRider[rider]||[]).push(o);
+  const timings=computeTripTimings(active);
+  const rows=[];
+  Object.keys(timings).forEach(key=>{
+    const t=timings[key];
+    const ofdOrders=t.orders.filter(o=>o.deliveryStatus==='ofd');
+    if(!ofdOrders.length)return;
+    const num=tripInfo.numberByTripKey[key];
+    const riderLabel=t.riders.size?[...t.riders].sort().join(', '):'Unassigned';
+    rows.push({num:num??9999,html:
+      '<div class="cluster-summary-row">'+
+        '<span class="cs-name">🛵 Trip '+(num??'?')+' · '+escH(riderLabel)+'</span>'+
+        '<span>Start '+fmtTripTime(t.start)+' · Ready '+fmtTripTime(t.ready)+' · '+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</span>'+
+        '<span class="cs-detail">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</span>'+
+      '</div>'});
   });
+  if(!rows.length){el.innerHTML='';return;}
+  rows.sort((a,b)=>a.num-b.num);
+  const totalOfd=active.filter(o=>o.deliveryStatus==='ofd').length;
+  el.innerHTML=summaryBoxHtml('ofd','🛵 Out For Delivery by Trip ('+totalOfd+')',rows.map(r=>r.html).join(''));
+}
 
-  const rows=Object.keys(byRider).sort().flatMap(rider=>
-    groupOfdIntoTrips(byRider[rider]).map(trip=>{
-      const startLabel=trip.lastTime
-        ?new Date(trip.lastTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})
-        :'no timestamp';
-      const houses=trip.orders.map(o=>escH(o.customer)).join(', ');
-      return '<div class="cluster-summary-row">'+
-        '<span class="cs-name">🛵 '+escH(rider)+'</span>'+
-        '<span>Trip started '+startLabel+' · '+trip.orders.length+' house'+(trip.orders.length!==1?'s':'')+'</span>'+
-        '<span class="cs-detail">'+houses+'</span>'+
-      '</div>';
-    })
-  );
-
-  el.innerHTML='<div class="cluster-summary-box">'+
-    '<div class="cluster-summary-title">🛵 Out For Delivery by Rider ('+orders.length+')</div>'+
-    rows.join('')+
-  '</div>';
+// New section: every trip with at least one delivery done today, with its
+// start/ready/end times and who delivered it — persists for the whole day
+// as a running log, not just "what's active right now." A trip that's
+// only partially delivered still shows here (with an "N still out" note)
+// AND in the OFD-by-trip summary above at the same time.
+function renderPastTripsSummary(active,tripInfo){
+  const el=document.getElementById('to-past-trips-summary');
+  if(!el)return;
+  const timings=computeTripTimings(active);
+  const rows=[];
+  Object.keys(timings).forEach(key=>{
+    const t=timings[key];
+    const deliveredOrders=t.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered');
+    if(!deliveredOrders.length)return;
+    const num=tripInfo.numberByTripKey[key];
+    const riderLabel=t.riders.size?[...t.riders].sort().join(', '):'Unassigned';
+    const stillOut=t.orders.filter(o=>o.deliveryStatus==='ofd').length;
+    rows.push({end:t.end||0,html:
+      '<div class="cluster-summary-row">'+
+        '<span class="cs-name">✅ Trip '+(num??'?')+' · '+escH(riderLabel)+'</span>'+
+        '<span>Start '+fmtTripTime(t.start)+' · Ready '+fmtTripTime(t.ready)+' · End '+fmtTripTime(t.end)+
+          (stillOut?' · '+stillOut+' still out':'')+'</span>'+
+        '<span class="cs-detail">'+deliveredOrders.map(o=>escH(o.customer)).join(', ')+'</span>'+
+      '</div>'});
+  });
+  if(!rows.length){el.innerHTML='';return;}
+  rows.sort((a,b)=>b.end-a.end); // most recently completed first
+  el.innerHTML=summaryBoxHtml('past','📜 Past Orders — Trips With Deliveries Today',rows.map(r=>r.html).join(''));
 }
 
 // One shared checkbox selection drives all three bulk actions — each button
@@ -4294,13 +4375,21 @@ function togglePackerStatusPill(status){
 // camelCase deliverBy Overview/Delivery's own order objects carry).
 function packerOrderLike(item){
   const o=packerCustomerMap[item.sales_order_id];
-  return{customer:o?.customer_name||item.sales_order_id,tripOverride:o?.trip_override||null,deliverBy:o?.deliver_by||null};
+  return{
+    customer:o?.customer_name||item.sales_order_id,tripOverride:o?.trip_override||null,deliverBy:o?.deliver_by||null,
+    deliveryStatus:o?.delivery_status||'not_dispatched',orderStatus:o?.status||'active',
+  };
 }
 
 function renderPackerGrid(){
   const grid=document.getElementById('pk-grid');
   const search=packerFilters.search.trim().toLowerCase();
   const myFruits=riderName?(packersCache.find(p=>p.name===riderName)?.assigned_fruits||[]):[];
+
+  // Set before any deriveGroupKey call below (that's what reads it, via
+  // effectiveTripKey) — Packer contributes too, not just Overview/Delivery,
+  // so the split still works for someone who only ever has Packer open.
+  todaysOrdersForSplit=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
 
   const filtered=packerItems.filter(item=>{
     if(packerScope==='mine'&&!myFruits.includes(item.item_name))return false;
@@ -4889,6 +4978,13 @@ function renderDeliveryList(){
   document.getElementById('dv-grouping-toggle').innerHTML=renderGroupingToggle();
   document.getElementById('dv-collapse-btn').textContent=expandedDeliveryOrders.size?'▾ Collapse All':'▸ Expand All';
 
+  // Set before any deriveGroupKey call below (that's what reads it, via
+  // effectiveTripKey) — the full unfiltered picture, not just what scope/
+  // search/status narrows down to.
+  todaysOrdersForSplit=Object.entries(deliveryOrders)
+    .map(([soid,order])=>({soid,...order}))
+    .filter(o=>o.orderStatus!=='cancelled');
+
   const bySociety={};
   scoped.forEach(order=>{
     if(search&&!order.customer.toLowerCase().includes(search))return;
@@ -4903,7 +4999,7 @@ function renderDeliveryList(){
     :Object.keys(bySociety).sort();
   // Independent of scope/search/status filters — reflects today's whole
   // picture so numbers/caps don't shift depending on which filter's active.
-  const tripInfo=computeTripNumbers(Object.values(deliveryOrders).filter(o=>o.orderStatus!=='cancelled'));
+  const tripInfo=computeTripNumbers(todaysOrdersForSplit);
   const totalLoaded=Object.keys(deliveryOrders).length;
   const shown=socNames.reduce((n,soc)=>n+bySociety[soc].length,0);
   document.getElementById('dv-rc').textContent=shown?'— '+shown+' order'+(shown!==1?'s':''):'';
