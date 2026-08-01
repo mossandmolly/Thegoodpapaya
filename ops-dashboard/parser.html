@@ -161,7 +161,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .cluster-summary-row .cs-name{font-weight:600}
 .cluster-summary-row .cs-detail{color:#8a7a6a;font-size:11px;flex-basis:100%}
 .trip-progress-bar{position:relative;height:6px;background:#eee0d0;border-radius:3px;margin:4px 0 10px;flex-basis:100%}
-.trip-bar-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;border:2px solid #ffffff;box-shadow:0 0 0 1px rgba(0,0,0,0.12)}
+.trip-bar-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;border:2px solid #ffffff;box-shadow:0 0 0 1px rgba(0,0,0,0.12);cursor:pointer}
 .trip-bar-dot.tb-start{background:#2f6690}
 .trip-bar-dot.tb-ready{background:#e8720c}
 .trip-bar-dot.tb-first{background:#8a4fbf}
@@ -3884,13 +3884,18 @@ function computeTripTimings(orders){
 // 1st drop (first delivery) -> End (last delivery), positioned by actual
 // elapsed time between whichever points exist so the bar reflects real
 // pacing, not just evenly-spaced steps. An in-progress trip (no end yet)
-// extends the bar to "now" as its provisional right edge.
+// extends the bar to "now" as its provisional right edge. Each dot shows
+// its timestamp + order count on hover (title, desktop) AND on tap
+// (onclick uxAlert — title tooltips don't fire on touch, so tapping is
+// the only way a rider/dispatcher on a phone ever sees this detail).
 function tripProgressBarHtml(t){
+  const total=t.orders.length;
+  const deliveredCount=t.orders.filter(o=>o.deliveredAt).length;
   const points=[
-    {label:'Start',time:t.start,cls:'tb-start'},
-    {label:'Ready',time:t.ready,cls:'tb-ready'},
-    {label:'1st drop',time:t.firstDeliver,cls:'tb-first'},
-    {label:'End',time:t.end,cls:'tb-end'},
+    {label:'Start',time:t.start,cls:'tb-start',detail:total+' order'+(total!==1?'s':'')+' dispatched'},
+    {label:'Ready',time:t.ready,cls:'tb-ready',detail:total+' order'+(total!==1?'s':'')+' out'},
+    {label:'1st drop',time:t.firstDeliver,cls:'tb-first',detail:'1st of '+total+' delivered'},
+    {label:'End',time:t.end,cls:'tb-end',detail:deliveredCount+' of '+total+' delivered'},
   ].filter(p=>p.time);
   if(!points.length)return '';
   const rangeStart=points[0].time;
@@ -3898,7 +3903,8 @@ function tripProgressBarHtml(t){
   const span=Math.max(rangeEnd-rangeStart,60000);
   const dots=points.map(p=>{
     const pct=Math.min(100,Math.max(0,((p.time-rangeStart)/span)*100));
-    return '<div class="trip-bar-dot '+p.cls+'" style="left:'+pct.toFixed(1)+'%" title="'+p.label+' '+fmtTripTime(p.time)+'"></div>';
+    const tip=p.label+' '+fmtTripTime(p.time)+' — '+p.detail;
+    return '<div class="trip-bar-dot '+p.cls+'" style="left:'+pct.toFixed(1)+'%" title="'+escH(tip)+'" onclick="event.stopPropagation();uxAlert('+escH(JSON.stringify(tip))+')"></div>';
   }).join('');
   return '<div class="trip-progress-bar">'+dots+'</div>';
 }
