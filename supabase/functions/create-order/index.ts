@@ -185,6 +185,7 @@ Deno.serve(async (req) => {
       invoice_status: h.invoice_status ?? 'pending',
       deliver_by:     h.deliver_by ?? null,
       deliver_after:  h.deliver_after ?? null,
+      is_pickup:      !!h.is_pickup,
     }));
 
     const res = await fetch(`${env('SUPABASE_URL')}/rest/v1/orders?on_conflict=sales_order_id`, {
