@@ -2410,7 +2410,7 @@ function renderOrdersList(){
     const collapsed=collapsedOverviewGroups.has(soc);
     return '<div class="society-header">'+
       (selectableSoids.length?'<input type="checkbox" class="inv-select" '+(allSelected?'checked ':'')+'onchange="toggleSocietySelectAll('+escH(JSON.stringify(selectableSoids))+',this.checked)" title="Select all orders in this society"> ':'')+
-      '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</span>'+
+      '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</span>'+
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+(collapsed?'▸':'▾')+'</span>'+
       '</div>'+
       (collapsed?'':
@@ -2849,6 +2849,22 @@ function tripBadgeHtml(tripInfo,order){
   return ' <span class="trip-number-badge'+(over?' trip-over-cap':'')+'" title="'+count+' of '+TRIP_ORDER_CAP+' orders in this trip">Trip '+num+' · '+count+'/'+TRIP_ORDER_CAP+'</span>';
 }
 
+// In By Trip view specifically, a group's header text should read as
+// "which societies does this trip actually cover" (e.g. "77degree +
+// Pristine"), not the raw underlying trip key — a cluster name or a
+// custom trip id looks like nonsense on its own, and even a real
+// society-derived key would otherwise silently swallow every OTHER
+// society merged into the same trip, making a multi-society trip look
+// like it belongs to just one (see: moving Pristine into 77degree's trip
+// used to make the header read only "77degree", with no trace of
+// Pristine). Flat view is untouched — groupKey there already IS the
+// society name.
+function tripHeaderLabel(groupKey,orders){
+  if(viewGrouping!=='trip')return groupKey;
+  const societies=[...new Set(orders.map(o=>deriveSociety(o.customer)))].sort();
+  return societies.join(' + ');
+}
+
 // One shared toggle rendered identically on all three tabs — switching on
 // any of them applies everywhere, since it's the same global state.
 function renderGroupingToggle(){
@@ -2894,8 +2910,12 @@ function moveOrderToTrip(soid){
   const options=['<option value="">— Reset to community default —</option>'];
   tripInfo.sortedTripKeys.forEach(key=>{
     const num=tripInfo.numberByTripKey[key];
-    const count=tripInfo.ordersByTripKey[key].length;
-    options.push('<option value="'+escH(key)+'"'+(key===currentKey?' selected':'')+'>Trip '+num+' — '+escH(key)+' · '+count+'/'+TRIP_ORDER_CAP+'</option>');
+    const tripOrders=tripInfo.ordersByTripKey[key];
+    // Named by which societies it actually covers ("77degree + Pristine"),
+    // not the raw underlying key — a cluster name or custom trip id reads
+    // as nonsense on its own here.
+    const label=[...new Set(tripOrders.map(o=>deriveSociety(o.customer)))].sort().join(' + ');
+    options.push('<option value="'+escH(key)+'"'+(key===currentKey?' selected':'')+'>Trip '+num+' — '+escH(label)+' · '+tripOrders.length+'/'+TRIP_ORDER_CAP+'</option>');
   });
   options.push('<option value="__new__">+ Create new trip</option>');
   moveTripSelect.innerHTML=options.join('');
@@ -4341,7 +4361,7 @@ function renderPackerGrid(){
       if(l)groupWindows.add(l);
     });
     return '<div class="society-header" style="grid-column:1/-1;cursor:pointer" onclick="togglePackerGroupExpanded('+escH(JSON.stringify(name))+')">'+
-      escH(name)+' <span class="sh-count">('+groupItems.length+' item'+(groupItems.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,packerOrderLike(groupItems[0]))+deliveryWindowBadgesFromSet(groupWindows)+
+      escH(tripHeaderLabel(name,groupItems.map(packerOrderLike)))+' <span class="sh-count">('+groupItems.length+' item'+(groupItems.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,packerOrderLike(groupItems[0]))+deliveryWindowBadgesFromSet(groupWindows)+
       ' '+packProgressPie(packedInGroup,activeGroupItems.length)+
       ' <span class="packed-count" style="color:#ffffff">'+packedInGroup+'/'+activeGroupItems.length+' items packed</span>'+
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff">'+(groupExpanded?'▾':'▸')+'</span>'+
@@ -4886,7 +4906,7 @@ function renderDeliveryList(){
     const selectAllCb=(selectionMode&&assignableSoids.length)
       ?'<input type="checkbox" class="inv-select" '+(assignableSoids.every(soid=>selectedDeliveryOrders.has(soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(assignableSoids))+',this.checked)" title="Select all assignable orders in this society"> '
       :'';
-    return '<div class="society-header">'+selectAllCb+escH(soc)+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</div>'+
+    return '<div class="society-header">'+selectAllCb+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</div>'+
       orders.map(order=>renderDeliveryCard(order,selectionMode)).join('');
   }).join('');
 
