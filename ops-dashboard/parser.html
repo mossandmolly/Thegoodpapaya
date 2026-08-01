@@ -3920,7 +3920,15 @@ function renderOfdRiderSummary(active,tripInfo){
       if(!ofdOrders.length)return;
       const riders=w.riders.size?[...w.riders].sort():['Unassigned'];
       riders.forEach(rider=>{
-        (byRider[rider]=byRider[rider]||[]).push({w,waveIdx:i+1,waveCount:waves.length,num:num??9999,ofdOrders});
+        // A wave can be shared by 2+ riders (e.g. both dispatched before
+        // either one delivered anything) — each rider's block must only
+        // list the houses THEY were actually assigned, not every house
+        // in the whole wave.
+        const riderOfdOrders=rider==='Unassigned'
+          ?ofdOrders.filter(o=>!o.assignedRider)
+          :ofdOrders.filter(o=>o.assignedRider===rider);
+        if(!riderOfdOrders.length)return;
+        (byRider[rider]=byRider[rider]||[]).push({w,waveIdx:i+1,waveCount:waves.length,num:num??9999,ofdOrders:riderOfdOrders});
       });
     });
   });
@@ -3974,10 +3982,22 @@ function renderPastTripsSummary(active,tripInfo){
       const stillOut=w.orders.filter(o=>o.deliveryStatus==='ofd').length;
       if(!deliveredOrders.length&&!stillOut)return '';
       const waveLabel=waves.length>1?' (Wave '+(i+1)+')':'';
+      // A wave can be shared by 2+ riders — the combined riderLabel up top
+      // (Trip N · RiderA, RiderB) shouldn't imply each of them delivered
+      // every house here, so split the delivered list per rider instead
+      // of one lumped list.
+      const byWaveRider={};
+      deliveredOrders.forEach(o=>{
+        const r=o.assignedRider||'Unassigned';
+        (byWaveRider[r]=byWaveRider[r]||[]).push(o);
+      });
+      const deliveredHtml=Object.keys(byWaveRider).sort().map(r=>
+        '<div class="cs-detail">🛵 '+escH(r)+': '+byWaveRider[r].map(o=>escH(o.customer)).join(', ')+'</div>'
+      ).join('');
       return '<div class="cs-detail" style="margin-top:6px;color:#5c4f42"><b>Trip '+num+waveLabel+'</b> — Start '+fmtTripTime(w.start)+' · Ready '+fmtTripTime(w.ready)+' · End '+fmtTripTime(w.end)+
           (stillOut?' · '+stillOut+' still out':'')+'</div>'+
         tripProgressBarHtml(w)+
-        (deliveredOrders.length?'<div class="cs-detail">'+deliveredOrders.map(o=>escH(o.customer)).join(', ')+'</div>':'');
+        deliveredHtml;
     }).join('');
 
     const latestEnd=Math.max(0,...waves.map(w=>w.end||0));
