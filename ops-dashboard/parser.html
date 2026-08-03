@@ -168,8 +168,19 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .trip-bar-dot.tb-ready{background:#e8720c}
 .trip-bar-dot.tb-first{background:#8a4fbf}
 .trip-bar-dot.tb-end{background:#2d6b2d}
-.cs-house-leftover{color:#b45f0e;font-weight:700}
 .dv-cancelled-card{opacity:0.7}
+.cs-rider-block{padding:10px 0;border-bottom:1px solid #f0dfc8}
+.cs-rider-block:last-child{border-bottom:none;padding-bottom:0}
+.cs-rider-block:first-child{padding-top:0}
+.cs-rider-name{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:800;color:#2b2320;margin-bottom:6px}
+.cs-rider-name .cs-rider-count{font-size:11px;font-weight:600;color:#8a7a6a}
+.cs-trip-block{background:#fffdf9;border:1px solid #f5ebd9;border-radius:6px;padding:8px 10px;margin-top:6px}
+.cs-trip-line{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:11px;color:#8a7a6a}
+.cs-trip-tag{font-weight:700;color:#b45f0e;font-size:12px}
+.cs-time-chip{display:inline-flex;flex-direction:column;line-height:1.2}
+.cs-time-chip .cs-time-label{font-size:9px;text-transform:uppercase;letter-spacing:0.3px;color:#8a7a6a}
+.cs-time-chip .cs-time-strong{font-size:13px;font-weight:800;color:#2b2320}
+.cs-trip-houses{margin-top:6px;font-size:11px;color:#5c4f42}
 .dv-cancelled-items{font-size:12px;color:#8a7a6a;text-decoration:line-through}
 .rider-badge{font-size:12px;color:#5c4f42;cursor:pointer;margin-right:14px}
 .rider-badge:hover{text-decoration:underline}
@@ -3933,7 +3944,7 @@ function computeTripTimings(orders){
       w.firstDeliver=deliverTimes.length?Math.min(...deliverTimes):null;
       w.end=deliverTimes.length?Math.max(...deliverTimes):null;
     });
-    result[key]={waves,leftoverOrders:tripOrders.filter(o=>o.deliveryStatus==='not_dispatched')};
+    result[key]={waves};
   });
   return result;
 }
@@ -4005,80 +4016,103 @@ function renderOfdRiderSummary(active,tripInfo){
 
   const rowsHtml=riderNames.map(rider=>{
     const entries=byRider[rider].sort((a,b)=>a.num-b.num||a.waveIdx-b.waveIdx);
+    const houseTotal=entries.reduce((n,e)=>n+e.ofdOrders.length,0);
     const blocks=entries.map(({w,waveIdx,waveCount,num,ofdOrders})=>{
-      const waveLabel=waveCount>1?' (Wave '+waveIdx+')':'';
-      return '<div class="cs-detail" style="margin-top:6px;color:#5c4f42"><b>Trip '+num+waveLabel+'</b> — Start '+fmtTripTime(w.start)+' · Ready '+fmtTripTime(w.ready)+' · '+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</div>'+
+      const waveLabel=waveCount>1?' · Wave '+waveIdx:'';
+      return '<div class="cs-trip-block">'+
+        '<div class="cs-trip-line">'+
+          '<span class="cs-trip-tag">Trip '+num+waveLabel+'</span>'+
+          '<span class="cs-time-chip"><span class="cs-time-label">Start</span><span class="cs-time-strong">'+fmtTripTime(w.start)+'</span></span>'+
+          '<span class="cs-time-chip"><span class="cs-time-label">Ready</span><span class="cs-time-strong">'+fmtTripTime(w.ready)+'</span></span>'+
+          '<span>'+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</span>'+
+        '</div>'+
         tripProgressBarHtml(w)+
-        '<div class="cs-detail">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</div>';
+        '<div class="cs-trip-houses">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</div>'+
+      '</div>';
     }).join('');
-    return '<div class="cluster-summary-row" style="display:block"><span class="cs-name">🛵 '+escH(rider)+'</span>'+blocks+'</div>';
+    return '<div class="cs-rider-block">'+
+      '<div class="cs-rider-name">🛵 '+escH(rider)+' <span class="cs-rider-count">— '+houseTotal+' house'+(houseTotal!==1?'s':'')+' out</span></div>'+
+      blocks+
+    '</div>';
   }).join('');
 
   const totalOfd=active.filter(o=>o.deliveryStatus==='ofd').length;
   el.innerHTML=summaryBoxHtml('ofd','🛵 Out For Delivery — By Rider & Trip ('+totalOfd+')',rowsHtml);
 }
 
-// New section: every trip with at least one delivery done today, with its
-// wave-by-wave start/ready/end times and who delivered each wave —
-// persists for the whole day as a running log, not just "what's active
-// right now." A trip only partially delivered still shows here (with an
-// "N still out" note on the relevant wave) AND in the OFD-by-rider summary
-// above at the same time. Never-dispatched leftovers (see
-// isLeftoverOrder) belong to no wave — listed once at the top of the
-// trip's block, highlighted, ahead of every wave's own house list, so
-// what still needs priority doesn't get buried underneath.
+// Aggregated rider-first, same as the OFD summary above — "what has each
+// rider actually delivered today" is the natural read for a running log,
+// not "what happened to each trip" (a trip a rider only partly worked
+// used to bury their houses inside a combined "RiderA, RiderB" header).
+// Start/End here are each rider's OWN dispatch/delivery timestamps within
+// the wave, not the whole wave's — two riders sharing a wave finish at
+// different times, and this should reflect that per rider. Never-
+// dispatched leftovers (see isLeftoverOrder) belong to no rider, so
+// they're not shown here — they're already highlighted on every order
+// card and listed in the Not Dispatched by Cluster box above.
 function renderPastTripsSummary(active,tripInfo){
   const el=document.getElementById('to-past-trips-summary');
   if(!el)return;
   const timings=computeTripTimings(active);
-  const rows=[];
+  const byRider={};
   Object.keys(timings).forEach(key=>{
-    const{waves,leftoverOrders}=timings[key];
-    const deliveredWaves=waves.filter(w=>w.orders.some(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered'));
-    if(!deliveredWaves.length)return;
+    const{waves}=timings[key];
     const num=tripInfo.numberByTripKey[key];
-    const allRiders=new Set();
-    waves.forEach(w=>w.riders.forEach(r=>allRiders.add(r)));
-    const riderLabel=allRiders.size?[...allRiders].sort().join(', '):'Unassigned';
-
-    const leftoverHtml=leftoverOrders.length
-      ?'<div class="cs-detail">'+leftoverOrders.map(o=>'<span class="cs-house-leftover">'+escH(o.customer)+'</span>').join(', ')+' — not yet picked up</div>'
-      :'';
-
-    const waveBlocks=waves.map((w,i)=>{
-      const deliveredOrders=w.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered');
-      const stillOut=w.orders.filter(o=>o.deliveryStatus==='ofd').length;
-      if(!deliveredOrders.length&&!stillOut)return '';
-      const waveLabel=waves.length>1?' (Wave '+(i+1)+')':'';
-      // A wave can be shared by 2+ riders — the combined riderLabel up top
-      // (Trip N · RiderA, RiderB) shouldn't imply each of them delivered
-      // every house here, so split the delivered list per rider instead
-      // of one lumped list.
-      const byWaveRider={};
-      deliveredOrders.forEach(o=>{
-        const r=o.assignedRider||'Unassigned';
-        (byWaveRider[r]=byWaveRider[r]||[]).push(o);
+    waves.forEach((w,i)=>{
+      const riders=w.riders.size?[...w.riders].sort():['Unassigned'];
+      riders.forEach(rider=>{
+        const riderOrders=rider==='Unassigned'
+          ?w.orders.filter(o=>!o.assignedRider)
+          :w.orders.filter(o=>o.assignedRider===rider);
+        const deliveredOrders=riderOrders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered');
+        if(!deliveredOrders.length)return; // nothing of theirs has landed yet — not "past" for this rider/wave
+        const stillOut=riderOrders.filter(o=>o.deliveryStatus==='ofd').length;
+        const dispatchTimes=riderOrders.filter(o=>o.dispatchedAt).map(o=>new Date(o.dispatchedAt).getTime());
+        const deliverTimes=deliveredOrders.filter(o=>o.deliveredAt).map(o=>new Date(o.deliveredAt).getTime());
+        const riderWave={
+          orders:riderOrders,
+          start:dispatchTimes.length?Math.min(...dispatchTimes):w.start,
+          ready:dispatchTimes.length?Math.max(...dispatchTimes):w.ready,
+          firstDeliver:deliverTimes.length?Math.min(...deliverTimes):null,
+          end:deliverTimes.length?Math.max(...deliverTimes):null,
+        };
+        (byRider[rider]=byRider[rider]||[]).push({
+          num:num??9999,waveIdx:i+1,waveCount:waves.length,
+          deliveredOrders,stillOut,riderWave,
+        });
       });
-      const deliveredHtml=Object.keys(byWaveRider).sort().map(r=>
-        '<div class="cs-detail">🛵 '+escH(r)+': '+byWaveRider[r].map(o=>escH(o.customer)).join(', ')+'</div>'
-      ).join('');
-      return '<div class="cs-detail" style="margin-top:6px;color:#5c4f42"><b>Trip '+num+waveLabel+'</b> — Start '+fmtTripTime(w.start)+' · Ready '+fmtTripTime(w.ready)+' · End '+fmtTripTime(w.end)+
-          (stillOut?' · '+stillOut+' still out':'')+'</div>'+
-        tripProgressBarHtml(w)+
-        deliveredHtml;
-    }).join('');
-
-    const latestEnd=Math.max(0,...waves.map(w=>w.end||0));
-    rows.push({end:latestEnd,html:
-      '<div class="cluster-summary-row" style="display:block">'+
-        '<span class="cs-name">✅ Trip '+(num??'?')+' · '+escH(riderLabel)+'</span>'+
-        leftoverHtml+
-        waveBlocks+
-      '</div>'});
+    });
   });
-  if(!rows.length){el.innerHTML='';return;}
-  rows.sort((a,b)=>b.end-a.end); // most recently completed first
-  el.innerHTML=summaryBoxHtml('past','📜 Past Orders — Trips With Deliveries Today',rows.map(r=>r.html).join(''));
+  const riderNames=Object.keys(byRider).sort();
+  if(!riderNames.length){el.innerHTML='';return;}
+
+  const riderRows=riderNames.map(rider=>{
+    const entries=byRider[rider].sort((a,b)=>(b.riderWave.end||0)-(a.riderWave.end||0));
+    const totalDelivered=entries.reduce((n,e)=>n+e.deliveredOrders.length,0);
+    const blocks=entries.map(({num,waveIdx,waveCount,deliveredOrders,stillOut,riderWave})=>{
+      const waveLabel=waveCount>1?' · Wave '+waveIdx:'';
+      return '<div class="cs-trip-block">'+
+        '<div class="cs-trip-line">'+
+          '<span class="cs-trip-tag">Trip '+num+waveLabel+'</span>'+
+          '<span class="cs-time-chip"><span class="cs-time-label">Start</span><span class="cs-time-strong">'+fmtTripTime(riderWave.start)+'</span></span>'+
+          '<span class="cs-time-chip"><span class="cs-time-label">End</span><span class="cs-time-strong">'+fmtTripTime(riderWave.end)+'</span></span>'+
+          '<span>'+deliveredOrders.length+' delivered'+(stillOut?' · '+stillOut+' still out':'')+'</span>'+
+        '</div>'+
+        tripProgressBarHtml(riderWave)+
+        '<div class="cs-trip-houses">'+deliveredOrders.map(o=>escH(o.customer)).join(', ')+'</div>'+
+      '</div>';
+    }).join('');
+    const latestEnd=Math.max(0,...entries.map(e=>e.riderWave.end||0));
+    return{end:latestEnd,html:
+      '<div class="cs-rider-block">'+
+        '<div class="cs-rider-name">✅ '+escH(rider)+' <span class="cs-rider-count">— '+totalDelivered+' delivered</span></div>'+
+        blocks+
+      '</div>'};
+  });
+  riderRows.sort((a,b)=>b.end-a.end); // rider with the most recently completed delivery first
+
+  const totalDeliveredToday=active.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered').length;
+  el.innerHTML=summaryBoxHtml('past','📜 Past Deliveries — By Rider ('+totalDeliveredToday+')',riderRows.map(r=>r.html).join(''));
 }
 
 // One shared checkbox selection drives all three bulk actions — each button
