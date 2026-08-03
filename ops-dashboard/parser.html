@@ -648,10 +648,15 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
-<!-- EDIT ITEM MODAL (qty + description) -->
+<!-- EDIT ITEM MODAL (item name + qty + description) -->
 <div class="modal-overlay hidden" id="ei-modal">
   <div class="modal-box">
     <h3>Edit item</h3>
+    <label class="modal-label">Item</label>
+    <div class="ac-wrap">
+      <input type="text" id="ei-item" autocomplete="off">
+      <div class="ac-list hidden" id="ei-item-list"></div>
+    </div>
     <label class="modal-label">Quantity</label>
     <input type="number" id="ei-qty" step="0.01" min="0">
     <label class="modal-label">Description</label>
@@ -3148,34 +3153,43 @@ function upsertBracketedNote(text,label,newValue){
   return (stripped?stripped+' ':'')+'['+label+': '+newValue+']';
 }
 
-async function updateQty(id,qty,description){
+async function updateQty(id,qty,description,itemName){
   const current=currentItemsById[id];
   // Always goes back to 'open', however far along it was — a requested-
   // quantity change means the packer needs to (re)pack the actual physical
   // amount again, it can't just be assumed to match the last packed/final
   // quantity (that used to silently copy the new qty straight into
   // final_quantity for already-invoiced items without anyone re-verifying
-  // it was actually packed that way).
+  // it was actually packed that way). Swapping which fruit the item even
+  // IS needs the same reset for the same reason.
   const qtyChanged=current&&Number(current.requested_quantity)!==Number(qty);
-  const finalDescription=qtyChanged?appendAddendum(description,'Required quantity changed'):(description||'');
-  // A quantity change also un-collects the item for delivery, same
+  const nameChanged=current&&itemName&&current.item_name!==itemName;
+  const changeNotes=[
+    qtyChanged?'Required quantity changed':null,
+    nameChanged?'Item changed from "'+current.item_name+'"':null,
+  ].filter(Boolean).join('; ');
+  const finalDescription=changeNotes?appendAddendum(description,changeNotes):(description||'');
+  // A quantity/item change also un-collects the item for delivery, same
   // reasoning as resetting to 'open' — whatever the rider already bagged
   // no longer matches what's actually owed.
   const update={requested_quantity:qty,description:finalDescription||null,status:'open',collected:false};
+  if(itemName)update.item_name=itemName;
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
   const{error}=await sb.from('order_items').update(update).eq('id',id);
   if(error){uxAlert('Failed to update: '+error.message);}
   await loadTodaysOrders();
 }
 
-// ── Edit item modal (quantity + description together) ───────────────────────
-const eiModal=document.getElementById('ei-modal'),eiQty=document.getElementById('ei-qty'),eiDesc=document.getElementById('ei-desc');
+// ── Edit item modal (item name + quantity + description together) ───────────
+const eiModal=document.getElementById('ei-modal'),eiItem=document.getElementById('ei-item'),eiItemList=document.getElementById('ei-item-list'),eiQty=document.getElementById('ei-qty'),eiDesc=document.getElementById('ei-desc');
+attachItemAutocomplete(eiItem,eiItemList);
 let eiTargetItem=null;
 
 function editItemPrompt(id){
   const item=currentItemsById[id];
   if(!item)return;
   eiTargetItem=id;
+  eiItem.value=item.item_name||'';
   eiQty.value=item.requested_quantity;
   eiDesc.value=item.description||'';
   eiModal.classList.remove('hidden');
@@ -3184,11 +3198,13 @@ function editItemPrompt(id){
 document.getElementById('ei-cancel').addEventListener('click',()=>{eiModal.classList.add('hidden');});
 
 document.getElementById('ei-save').addEventListener('click',async()=>{
+  const itemName=eiItem.value.trim();
   const qty=parseFloat(eiQty.value);
+  if(!itemName){uxAlert('Enter an item name');return;}
   if(isNaN(qty)||qty<0){uxAlert('Enter a valid quantity');return;}
   if(!await uxConfirm('Save this change to the order?'))return;
   eiModal.classList.add('hidden');
-  await updateQty(eiTargetItem,qty,eiDesc.value.trim());
+  await updateQty(eiTargetItem,qty,eiDesc.value.trim(),itemName);
 });
 
 // ── Order notes modal (admin note + deliver-by deadline) ─────────────────
