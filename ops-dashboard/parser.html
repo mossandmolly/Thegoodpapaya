@@ -2461,6 +2461,15 @@ function renderOrdersList(){
     bySociety[soc].push({soid,...order});
   });
 
+  // By Trip view only — still-pending orders (not yet packed/invoiced, or
+  // not yet delivered) sort above ones with nothing left to do, so what
+  // actually needs attention under a trip header isn't buried beneath
+  // orders that are already done. Stable sort keeps each tier's original
+  // relative order.
+  if(viewGrouping==='trip'){
+    Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>overviewOrderPendingRank(a)-overviewOrderPendingRank(b)));
+  }
+
   const socNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
     :Object.keys(bySociety).sort();
@@ -2849,10 +2858,41 @@ function isLeftoverOrder(order){
   );
 }
 
+// Trip keys (deriveTrip's output) that have already sent out a wave which
+// delivered at least one order — i.e. a rider has genuinely left with this
+// trip. Used to keep new/not-yet-dispatched orders from silently joining a
+// batch that's already out the door.
+function departedTripKeys(orders){
+  const keys=new Set();
+  orders.forEach(o=>{
+    if(o.orderStatus!=='cancelled'&&(o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered')){
+      keys.add(deriveTrip(o));
+    }
+  });
+  return keys;
+}
+
+// The grouping/numbering identity actually used for display (order-list
+// headers, trip badges, Trip N numbers) — deriveTrip() itself stays the
+// pure "which trip does this order belong to" identity (combinable_group/
+// cluster/society); this layers "has that trip already left" on top of it.
+// A still-not_dispatched order whose trip has already departed gets
+// bumped into that trip's NEXT instance instead of quietly joining a batch
+// that's already on the road — once it actually gets dispatched, it's real
+// wave history at that point and reverts to sharing the base trip identity
+// again (matches how OFD/Past's own wave-splitting already treats dispatch
+// history, not a fixed assignment, as the source of truth).
+const TRIP_NEXT_SUFFIX='::next';
+function effectiveTripKey(order,departedKeys){
+  const base=deriveTrip(order);
+  if(order.deliveryStatus==='not_dispatched'&&departedKeys.has(base))return base+TRIP_NEXT_SUFFIX;
+  return base;
+}
+
 // order needs {customer, tripOverride} at minimum — every per-order object
 // in Overview/Delivery already carries both.
 function deriveGroupKey(order){
-  return viewGrouping==='trip'?deriveTrip(order):deriveSociety(order.customer);
+  return viewGrouping==='trip'?effectiveTripKey(order,departedTripKeys(todaysOrdersForLeftoverCheck)):deriveSociety(order.customer);
 }
 
 // ── Trip-view priority ordering ──────────────────────────────────────────
@@ -2935,16 +2975,23 @@ const TRIP_ORDER_CAP=10;
 // stored value: it's just "where does this trip rank right now," so it
 // shifts as today's order mix changes. Two societies sharing a
 // combinable_group get the same number.
-function computeTripNumbers(orders){
+// opts.splitDeparted (default true) controls whether a departed trip's
+// still-pending orders get bumped to a separate "next" entry (see
+// effectiveTripKey) — the move-to-trip picker turns this off, since it
+// writes whichever key gets chosen straight into orders.trip_override, and
+// a "::next" key has no business being persisted as a literal trip identity.
+function computeTripNumbers(orders,opts){
+  const splitDeparted=!(opts&&opts.splitDeparted===false);
+  const departed=splitDeparted?departedTripKeys(orders):new Set();
   const byTrip={};
   orders.forEach(o=>{
-    const key=deriveTrip(o);
+    const key=splitDeparted?effectiveTripKey(o,departed):deriveTrip(o);
     (byTrip[key]=byTrip[key]||[]).push(o);
   });
   const sorted=sortTripGroupNames(Object.keys(byTrip),name=>byTrip[name]);
   const numberByTripKey={};
   sorted.forEach((key,i)=>{numberByTripKey[key]=i+1;});
-  return{numberByTripKey,ordersByTripKey:byTrip,sortedTripKeys:sorted};
+  return{numberByTripKey,ordersByTripKey:byTrip,sortedTripKeys:sorted,departedKeys:departed};
 }
 
 // "Trip 1 · 8/10" — shown on every group header, but only in By Trip view.
@@ -2958,7 +3005,7 @@ function computeTripNumbers(orders){
 // group being labeled.
 function tripBadgeHtml(tripInfo,order){
   if(viewGrouping!=='trip')return '';
-  const key=deriveTrip(order);
+  const key=effectiveTripKey(order,tripInfo.departedKeys);
   const num=tripInfo.numberByTripKey[key];
   if(num==null)return '';
   const count=(tripInfo.ordersByTripKey[key]||[]).length;
@@ -2979,7 +3026,11 @@ function tripBadgeHtml(tripInfo,order){
 function tripHeaderLabel(groupKey,orders){
   if(viewGrouping!=='trip')return groupKey;
   const societies=[...new Set(orders.map(o=>deriveSociety(o.customer)))].sort();
-  return societies.join(' + ');
+  const label=societies.join(' + ');
+  // Same society name would otherwise show twice with no way to tell them
+  // apart — this is the batch still waiting because the earlier one for
+  // this same trip has already left (see effectiveTripKey).
+  return groupKey.endsWith(TRIP_NEXT_SUFFIX)?label+' (next trip)':label;
 }
 
 // One shared toggle rendered identically on all three tabs — switching on
@@ -3019,9 +3070,12 @@ function moveOrderToTrip(soid){
 
   // Combine whichever tabs' data is currently loaded so the trip list is
   // as complete as possible regardless of which screen this was opened from.
+  // splitDeparted:false — this list's values get written straight into
+  // trip_override, so it must only ever offer plain, storable trip
+  // identities, never the auto-computed "::next" split.
   const pool=[...Object.values(currentOrdersById),...Object.values(deliveryOrders)]
     .filter(o=>o.orderStatus!=='cancelled');
-  const tripInfo=computeTripNumbers(pool.length?pool:[order]);
+  const tripInfo=computeTripNumbers(pool.length?pool:[order],{splitDeparted:false});
 
   const currentKey=deriveTrip(order);
   const options=['<option value="">— Reset to community default —</option>'];
@@ -3725,6 +3779,15 @@ function isFullyInvoiced(order){
   if(order.isPickup)return true;
   const active=activeItems(order);
   return !!(active.length&&active.every(i=>i.status==='invoiced'));
+}
+
+// Sort tier for By Trip view's within-group ordering — 0 for anything
+// still pending packing/invoicing OR still pending delivery, 1 once both
+// are done, 2 for cancelled (nothing further to do, ever).
+function overviewOrderPendingRank(order){
+  if(order.orderStatus==='cancelled')return 2;
+  if(isFullyInvoiced(order)&&order.deliveryStatus==='delivered')return 1;
+  return 0;
 }
 
 // Order-level status badge = the least-advanced status among its non-
@@ -4530,13 +4593,17 @@ async function loadPackerView(){
   // "what's next to go out" is visible without hunting for it — computed
   // fresh on every real load, same as Delivery's equivalent.
   const activePackerItems=packerItems.filter(i=>i.status!=='cancelled');
-  const pkTripInfo=computeTripNumbers(activePackerItems.map(packerOrderLike));
+  // Set early (renderPackerGrid below would set this same value moments
+  // later anyway) so deriveGroupKey's own departed-trip lookup is correct
+  // here rather than reading whatever tab rendered last.
+  todaysOrdersForLeftoverCheck=activePackerItems.map(packerOrderLike);
+  const pkTripInfo=computeTripNumbers(todaysOrdersForLeftoverCheck);
   const pkTopKey=pkTripInfo.sortedTripKeys[0];
   expandedPackerGroups=new Set();
   if(pkTopKey!=null){
     activePackerItems.forEach(i=>{
       const orderLike=packerOrderLike(i);
-      if(deriveTrip(orderLike)===pkTopKey)expandedPackerGroups.add(deriveGroupKey(orderLike));
+      if(effectiveTripKey(orderLike,pkTripInfo.departedKeys)===pkTopKey)expandedPackerGroups.add(deriveGroupKey(orderLike));
     });
   }
 
