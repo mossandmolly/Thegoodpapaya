@@ -2957,6 +2957,31 @@ function groupFullyDelivered(orders){
   return orders.length>0&&orders.every(o=>o.orderStatus==='cancelled'||o.deliveryStatus==='delivered');
 }
 
+// Pending hierarchy — how far behind a group's LEAST-advanced non-cancelled
+// order is: 0 not yet packed, 1 packed/ready but not dispatched, 2 out for
+// delivery, 3 partially delivered. A group with even one order still stuck
+// packing outranks one that's merely waiting to be dispatched, which
+// outranks one already on the road, which outranks one nearly done — the
+// group's overall tier is always its single worst order, same principle
+// orderOverallStatus uses per-order. Item-level "not yet packed" detection
+// needs real item data (order.items) — Packer's lightweight order-like
+// objects don't carry that, so those just fall back to tier 1 (can't tell
+// packed-vs-not from delivery status alone, and not_dispatched is the only
+// information available there).
+function groupPendingTier(orders){
+  let tier=null;
+  orders.forEach(o=>{
+    if(o.orderStatus==='cancelled')return;
+    let t;
+    if(o.deliveryStatus==='partially_delivered')t=3;
+    else if(o.deliveryStatus==='ofd')t=2;
+    else if(o.deliveryStatus==='delivered')t=4;
+    else t=(Array.isArray(o.items)&&!isReadyToInvoice(o)&&!isFullyInvoiced(o))?0:1; // not_dispatched
+    if(tier==null||t<tier)tier=t;
+  });
+  return tier??1;
+}
+
 // groupNames: the keys to order. ordersByName(name): returns that group's
 // orders (each {customer, deliverBy, orderStatus, deliveryStatus}) —
 // callers adapt their own group shape (order objects vs. packer items) to
@@ -2968,11 +2993,13 @@ function sortTripGroupNames(groupNames,ordersByName){
       urgency:groupUrgency(orders),
       clusterRank:groupClusterRank(orders),
       fullyDelivered:groupFullyDelivered(orders),
+      pendingTier:groupPendingTier(orders),
     }];
   }));
   return[...groupNames].sort((a,b)=>{
     const ma=meta.get(a),mb=meta.get(b);
     if(ma.fullyDelivered!==mb.fullyDelivered)return ma.fullyDelivered?1:-1;
+    if(ma.pendingTier!==mb.pendingTier)return ma.pendingTier-mb.pendingTier;
     if(ma.urgency!=null&&mb.urgency!=null)return ma.urgency-mb.urgency;
     if(ma.urgency!=null)return -1;
     if(mb.urgency!=null)return 1;
