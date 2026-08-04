@@ -19,7 +19,7 @@
 // confirmed to have the correct price. Not a general-purpose matcher.
 //
 // Input:  { dryRun?: boolean (default true), offset?: number, limit?: number }
-// Output: { processed, updated, skipped, errors, nextOffset, results: [...] }
+// Output: { processed, updated, skipped, errors, needsReview, nextOffset, results: [...] }
 //
 // dryRun (default true!) only fetches+diffs, never writes to Zoho — always
 // run with dryRun:true first and read the results before calling again with
@@ -31,6 +31,16 @@
 // Every one of these invoices is already Sent/Open (not a draft), so the
 // actual PUT includes a top-level "reason" string — Zoho's API rejects an
 // update to a non-draft invoice without one (error 110701).
+//
+// Each write is verified against what Zoho actually saved, not just that
+// the request succeeded — the request explicitly resends the original
+// quantity/rate for every line (only name/item_id change), but Zoho's own
+// UI is known to silently reset quantity to 1 when you re-pick an item on
+// a line, so this checks the returned invoice's total and each corrected
+// line's quantity/rate against their pre-edit values. Any drift marks that
+// result 'updated_needs_review' (counted separately in needsReview, not
+// lumped in with either 'updated' or a real API 'error') so it surfaces
+// instead of silently passing as a clean success.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -121,7 +131,7 @@ Deno.serve(async (req) => {
 
     const batch = CORRECTIONS.slice(offset, offset + limit);
     const results: any[] = [];
-    let updated = 0, skipped = 0, errors = 0;
+    let updated = 0, skipped = 0, errors = 0, needsReview = 0;
 
     for (const fix of batch) {
       try {
@@ -141,12 +151,21 @@ Deno.serve(async (req) => {
 
         const byWrongName = new Map(fix.corrections.map(c => [c.wrongName, c]));
         let touchedAny = false;
+        // Captured BEFORE editing, so the post-write check below can catch
+        // Zoho silently re-defaulting quantity/rate off the newly-linked
+        // item — same thing that happens picking a different item in the
+        // UI (resets qty to 1) — even though this request explicitly sends
+        // the original quantity/rate/description for every untouched field
+        // (the {...li} spread carries them through unchanged).
+        const before: Record<string, { quantity: number; rate: number; item_total: number }> = {};
         const newLineItems = (invoice.line_items || []).map((li: any) => {
           const c = byWrongName.get(li.name);
           if (!c) return li; // untouched — same rate/qty/description/tax as before
           touchedAny = true;
+          before[c.correctName] = { quantity: li.quantity, rate: li.rate, item_total: li.item_total };
           return { ...li, name: c.correctName, item_id: c.correctItemId };
         });
+        const beforeInvoiceTotal = invoice.total;
 
         if (!touchedAny) {
           results.push({ invoiceId: fix.invoiceId, invoiceNumber: fix.invoiceNumber, status: 'skipped', detail: 'no matching line found on this invoice (already fixed, or line text changed since the audit)' });
@@ -184,11 +203,39 @@ Deno.serve(async (req) => {
         if (!putRes.ok || putData.code !== 0) {
           throw new Error(putData.message || `update failed (${putRes.status})`);
         }
+
+        // Verify against what Zoho actually saved, not just that the PUT
+        // returned success — this is what catches Zoho silently resetting
+        // quantity/rate to the new item's defaults server-side (the exact
+        // failure mode possible here, since the UI does this when you
+        // re-pick an item).
+        const updatedInvoice = putData.invoice;
+        const drift: string[] = [];
+        if (updatedInvoice) {
+          if (Math.abs((updatedInvoice.total ?? 0) - beforeInvoiceTotal) > 0.01) {
+            drift.push(`invoice total changed: ${beforeInvoiceTotal} -> ${updatedInvoice.total}`);
+          }
+          for (const li of updatedInvoice.line_items || []) {
+            const b = before[li.name];
+            if (!b) continue;
+            if (Math.abs((li.quantity ?? 0) - b.quantity) > 0.001) {
+              drift.push(`"${li.name}" quantity changed: ${b.quantity} -> ${li.quantity}`);
+            }
+            if (Math.abs((li.rate ?? 0) - b.rate) > 0.01) {
+              drift.push(`"${li.name}" rate changed: ${b.rate} -> ${li.rate}`);
+            }
+          }
+        } else {
+          drift.push('Zoho did not return the updated invoice to verify against — check this one manually');
+        }
+
         results.push({
-          invoiceId: fix.invoiceId, invoiceNumber: fix.invoiceNumber, status: 'updated',
+          invoiceId: fix.invoiceId, invoiceNumber: fix.invoiceNumber,
+          status: drift.length ? 'updated_needs_review' : 'updated',
           changes: fix.corrections.map(c => `"${c.wrongName}" -> "${c.correctName}"`),
+          ...(drift.length ? { drift } : {}),
         });
-        updated++;
+        if (drift.length) needsReview++; else updated++;
       } catch (e: any) {
         results.push({ invoiceId: fix.invoiceId, invoiceNumber: fix.invoiceNumber, status: 'error', detail: e.message });
         errors++;
@@ -200,7 +247,7 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        dryRun, processed: batch.length, updated, skipped, errors,
+        dryRun, processed: batch.length, updated, skipped, errors, needsReview,
         totalInvoices: CORRECTIONS.length, offset, nextOffset, results,
       }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
