@@ -2488,6 +2488,7 @@ function renderOrdersList(){
     return '<div class="society-header">'+
       (selectableSoids.length?'<input type="checkbox" class="inv-select" '+(allSelected?'checked ':'')+'onchange="toggleSocietySelectAll('+escH(JSON.stringify(selectableSoids))+',this.checked)" title="Select all orders in this society"> ':'')+
       '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</span>'+
+      tripPendingBadgeHtml(tripInfo,orders[0])+
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+(collapsed?'▸':'▾')+'</span>'+
       '</div>'+
       (collapsed?'':
@@ -3023,18 +3024,29 @@ function tripBadgeHtml(tripInfo,order){
   const key=effectiveTripKey(order,tripInfo.departedKeys);
   const num=tripInfo.numberByTripKey[key];
   if(num==null)return '';
-  const tripOrders=tripInfo.ordersByTripKey[key]||[];
-  const count=tripOrders.length;
+  const count=(tripInfo.ordersByTripKey[key]||[]).length;
   const over=count>TRIP_ORDER_CAP;
+  return ' <span class="trip-number-badge'+(over?' trip-over-cap':'')+'" title="'+count+' of '+TRIP_ORDER_CAP+' orders in this trip">Trip '+num+' · '+count+'/'+TRIP_ORDER_CAP+'</span>';
+}
+
+// Separate from tripBadgeHtml above (rather than one combined string) so
+// callers can place it at the right end of the header — .society-header is
+// a flex row, and margin-left:auto here pushes this (and the expand caret
+// right after it, in whichever tabs have one) to the far right regardless
+// of how much other header content sits in between, instead of it getting
+// buried inline next to the trip number right after the title.
+function tripPendingBadgeHtml(tripInfo,order){
+  if(viewGrouping!=='trip')return '';
+  const key=effectiveTripKey(order,tripInfo.departedKeys);
+  if(tripInfo.numberByTripKey[key]==null)return '';
+  const tripOrders=tripInfo.ordersByTripKey[key]||[];
   // "Pending" here means not yet delivered — could be stuck at packing,
   // sitting not-dispatched, or already out but not dropped off yet; all of
   // that is one number so a dispatcher can tell at a glance whether this
   // trip still needs anything from them.
   const pending=tripOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus!=='delivered').length;
-  const pendingBadge=pending
-    ?' <span class="trip-pending-badge" title="'+pending+' order'+(pending!==1?'s':'')+' still not delivered">'+pending+' pending</span>'
-    :'';
-  return ' <span class="trip-number-badge'+(over?' trip-over-cap':'')+'" title="'+count+' of '+TRIP_ORDER_CAP+' orders in this trip">Trip '+num+' · '+count+'/'+TRIP_ORDER_CAP+'</span>'+pendingBadge;
+  if(!pending)return '';
+  return ' <span class="trip-pending-badge" style="margin-left:auto" title="'+pending+' order'+(pending!==1?'s':'')+' still not delivered">'+pending+' pending</span>';
 }
 
 // In By Trip view specifically, a group's header text should read as
@@ -4788,6 +4800,7 @@ function renderPackerGrid(){
       escH(tripHeaderLabel(name,groupItems.map(packerOrderLike)))+' <span class="sh-count">('+groupItems.length+' item'+(groupItems.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,packerOrderLike(groupItems[0]))+deliveryWindowBadgesFromSet(groupWindows)+
       ' '+packProgressPie(packedInGroup,activeGroupItems.length)+
       ' <span class="packed-count" style="color:#ffffff">'+packedInGroup+'/'+activeGroupItems.length+' items packed</span>'+
+      tripPendingBadgeHtml(tripInfo,packerOrderLike(groupItems[0]))+
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff">'+(groupExpanded?'▾':'▸')+'</span>'+
     '</div>'+
     (groupExpanded?groupItems.map(cardHtml).join(''):'');
@@ -5337,7 +5350,7 @@ function renderDeliveryList(){
     const selectAllCb=(selectionMode&&assignableSoids.length)
       ?'<input type="checkbox" class="inv-select" '+(assignableSoids.every(soid=>selectedDeliveryOrders.has(soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(assignableSoids))+',this.checked)" title="Select all assignable orders in this society"> '
       :'';
-    return '<div class="society-header">'+selectAllCb+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</div>'+
+    return '<div class="society-header">'+selectAllCb+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+tripPendingBadgeHtml(tripInfo,orders[0])+'</div>'+
       orders.map(order=>renderDeliveryCard(order,selectionMode)).join('');
   }).join('');
 
