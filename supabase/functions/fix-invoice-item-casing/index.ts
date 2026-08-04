@@ -28,6 +28,10 @@
 // Zoho's own API rate limit; nextOffset in the response tells you where to
 // resume, null once every invoice's been processed.
 //
+// Every one of these invoices is already Sent/Open (not a draft), so the
+// actual PUT includes a top-level "reason" string — Zoho's API rejects an
+// update to a non-draft invoice without one (error 110701).
+//
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 //   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORGANIZATION_ID
@@ -159,6 +163,12 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // Zoho requires a top-level "reason" string on any update to a
+        // Sent/Open (or otherwise non-draft) invoice — omitting it fails
+        // with error 110701 "Please enter the reason for updating a sent
+        // invoice." Line items/rate/qty/total are unchanged; only the
+        // item link is being corrected, which the reason states plainly
+        // in case anyone reviews the edit history later.
         const putRes = await fetch(zohoUrl(`/invoices/${fix.invoiceId}`, orgId), {
           method: 'PUT',
           headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
@@ -167,6 +177,7 @@ Deno.serve(async (req) => {
             reference_number: invoice.reference_number,
             date: invoice.date,
             line_items: newLineItems,
+            reason: 'Corrected item name casing to match Zoho catalog so this line links to the right inventory item — price, quantity, and total unchanged.',
           }),
         });
         const putData = await putRes.json();
