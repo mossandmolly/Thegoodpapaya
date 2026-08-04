@@ -361,12 +361,21 @@ Deno.serve(async (req) => {
     // Best-effort: keep the local catalog mirror fresh as a side effect of
     // every invoice, since Config/Stock/Packer still read it for unit labels
     // and autocomplete — but this never gates or blocks invoicing itself.
+    // Upserts on item_name (catalog's own unique column — see migration
+    // 013), not zoho_item_id: that index is only unique among non-null
+    // values, so conflicting on it silently fails to catch a pre-existing
+    // row at the same item_name under a different/no zoho_item_id, which
+    // then throws catalog's OWN item_name uniqueness constraint instead.
+    // i.name is Zoho's exact casing verbatim (matches sync-catalog) — Zoho
+    // item matching/pricing is case-sensitive, so this table must mirror
+    // that exactly for every order (built from this same autocomplete) to
+    // invoice against the right item.
     supabase.from('catalog').upsert(
       zohoItems.map(i => ({
         item_name: i.name, unit_price: i.rate, unit: i.unit, active: true,
         zoho_item_id: i.item_id, synced_at: new Date().toISOString(),
       })),
-      { onConflict: 'zoho_item_id' },
+      { onConflict: 'item_name' },
     ).then(({ error }) => { if (error) console.error('Catalog mirror refresh failed:', error.message); });
 
     const freeItems: string[] = [];

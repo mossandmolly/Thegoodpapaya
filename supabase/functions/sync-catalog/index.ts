@@ -34,10 +34,6 @@ async function requireAuth(req: Request): Promise<void> {
   if (!res.ok) throw new Error('Not authenticated');
 }
 
-function properCase(s: string): string {
-  return s.replace(/\S+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-}
-
 async function zohoToken(): Promise<string> {
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
@@ -95,15 +91,45 @@ Deno.serve(async (req) => {
 
     let synced = 0;
     for (const item of items) {
-      const itemName = properCase(item.name as string);
-      const { error } = await supabase.from('catalog').upsert({
+      // Zoho's own exact casing, verbatim — no re-casing. Zoho item
+      // matching/pricing is case-sensitive, so if the catalog (and, via
+      // the autocomplete it feeds, every order created manually or
+      // through the parser) doesn't carry the exact same casing Zoho
+      // uses, an invoice line item can fail to link to the right Zoho
+      // item and price incorrectly.
+      const itemName = item.name as string;
+      const zohoItemId = item.item_id as string;
+      const row = {
         item_name:    itemName,
         unit_price:   item.rate ?? 0,
         unit:         item.unit || 'kg',
         active:       true,
-        zoho_item_id: item.item_id,
+        zoho_item_id: zohoItemId,
         synced_at:    new Date().toISOString(),
-      }, { onConflict: 'zoho_item_id' });
+      };
+
+      // catalog.item_name is independently UNIQUE (see migration 013), and
+      // upserting on zoho_item_id alone doesn't know about that — a
+      // straight upsert here throws "duplicate key value violates ...
+      // catalog_item_name_key" whenever a row already sits at this exact
+      // item_name under a different (or no) zoho_item_id, e.g. a stale
+      // pre-Zoho-sync manual entry, or a name that only just changed
+      // casing to match Zoho exactly (see above). Look the row up by
+      // zoho_item_id first (the normal path once synced before); if
+      // there's no match, fall back to a case-insensitive item_name match
+      // and re-link THAT row instead of inserting a duplicate.
+      const { data: byId } = await supabase.from('catalog')
+        .select('id').eq('zoho_item_id', zohoItemId).maybeSingle();
+      let targetId = byId?.id as string | undefined;
+      if (!targetId) {
+        const { data: byName } = await supabase.from('catalog')
+          .select('id').ilike('item_name', itemName).maybeSingle();
+        targetId = byName?.id as string | undefined;
+      }
+
+      const { error } = targetId
+        ? await supabase.from('catalog').update(row).eq('id', targetId)
+        : await supabase.from('catalog').insert(row);
 
       if (error) throw new Error(`Catalog upsert failed for "${itemName}": ${error.message}`);
       synced++;
