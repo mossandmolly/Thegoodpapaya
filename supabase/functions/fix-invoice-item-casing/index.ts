@@ -174,9 +174,18 @@ Deno.serve(async (req) => {
         }
 
         if (dryRun) {
+          // No "after" to show yet (nothing's been written) — this is the
+          // current, real quantity/rate/line total for each line that will
+          // be resent UNCHANGED in the live run, alongside the name fix.
+          // Reviewing these numbers now is the way to catch a bad surprise
+          // before it happens rather than after.
           results.push({
             invoiceId: fix.invoiceId, invoiceNumber: fix.invoiceNumber, status: 'would_update',
-            changes: fix.corrections.map(c => `"${c.wrongName}" -> "${c.correctName}" (item_id ${c.correctItemId})`),
+            invoiceTotal: beforeInvoiceTotal,
+            changes: fix.corrections.map(c => {
+              const b = before[c.correctName];
+              return `"${c.wrongName}" -> "${c.correctName}" (item_id ${c.correctItemId}) — currently qty ${b.quantity}, rate ${b.rate}, line total ${b.item_total} (all sent unchanged)`;
+            }),
           });
           updated++;
           continue;
