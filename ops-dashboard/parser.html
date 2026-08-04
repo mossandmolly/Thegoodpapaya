@@ -4107,15 +4107,74 @@ function fmtTripTime(ms){
   return ms?new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—';
 }
 
-// Grouped rider-first, wave-second — "who's doing what" is the natural
-// dispatcher question. Each dispatch wave (not whole trip) is its own
-// sub-block with its own progress bar — a trip split across two waves
-// shows two separate Start/Ready rows, labeled "(Wave 1)"/"(Wave 2)" only
-// when a trip actually has more than one.
+// Same shape tripProgressBarHtml expects — reused to (re)compute stats for
+// a merged run below, not just a single wave.
+function computeRunStats(orders){
+  const dispatchTimes=orders.filter(o=>o.dispatchedAt).map(o=>new Date(o.dispatchedAt).getTime());
+  const deliverTimes=orders.filter(o=>o.deliveredAt).map(o=>new Date(o.deliveredAt).getTime());
+  return{
+    orders,
+    start:dispatchTimes.length?Math.min(...dispatchTimes):null,
+    ready:dispatchTimes.length?Math.max(...dispatchTimes):null,
+    firstDeliver:deliverTimes.length?Math.min(...deliverTimes):null,
+    end:deliverTimes.length?Math.max(...deliverTimes):null,
+  };
+}
+
+// A trip's waves only get an explicit "Wave N" label when they actually
+// span more than one rider — a single rider running 2 rounds of the same
+// trip isn't a "split" worth calling out (and it also can't ever get
+// merged by the overlap logic below, since by construction a same-rider
+// wave never starts until the previous one already had a delivery — see
+// computeTripTimings — so its window can't overlap an earlier one anyway).
+function tripsWithMultipleRiders(timings){
+  const result={};
+  Object.keys(timings).forEach(key=>{
+    const riders=new Set();
+    timings[key].waves.forEach(w=>w.riders.forEach(r=>riders.add(r)));
+    result[key]=riders.size>1;
+  });
+  return result;
+}
+
+// A rider's entries (one per trip/wave they took part in) whose time
+// windows overlap are obviously one continuous delivery run covering more
+// than one trip's orders — e.g. Trip 1 11:30-12:30 and Trip 2 11:50-12:40
+// for the same rider clearly means they picked up both in one go, not two
+// separate outings. windowEnd(entry) gives the run-merging comparison
+// (ready for OFD/in-progress, end for a finished delivery) — merged
+// entries drop their per-trip wave label (it's not one trip's wave
+// anymore) and show every trip number they covered instead.
+function mergeOverlappingRuns(entries,windowEnd){
+  const sorted=[...entries].sort((a,b)=>a.stat.start-b.stat.start);
+  const runs=[];
+  sorted.forEach(e=>{
+    const last=runs[runs.length-1];
+    if(last&&e.stat.start<=windowEnd(last.stat)){
+      last.nums.push(...e.nums);
+      last.orders=last.orders.concat(e.orders);
+      last.stat=computeRunStats(last.orders);
+      last.merged=true;
+    }else{
+      runs.push({nums:[...e.nums],waveLabel:e.waveLabel,orders:[...e.orders],stat:e.stat,merged:false});
+    }
+  });
+  return runs;
+}
+function runTripLabel(run){
+  return[...new Set(run.nums)].sort((a,b)=>a-b).map(n=>'Trip '+n).join(' + ')+(run.merged?'':run.waveLabel);
+}
+
+// Grouped rider-first, run-second — "who's doing what" is the natural
+// dispatcher question. Each dispatch wave is its own sub-block with its
+// own progress bar, UNLESS it overlaps another wave/trip the same rider is
+// also running (see mergeOverlappingRuns), in which case they combine into
+// one block covering every trip involved.
 function renderOfdRiderSummary(active,tripInfo){
   const el=document.getElementById('to-ofd-summary');
   if(!el)return;
   const timings=computeTripTimings(active);
+  const multiRiderTrip=tripsWithMultipleRiders(timings);
   const byRider={};
   Object.keys(timings).forEach(key=>{
     const{waves}=timings[key];
@@ -4133,7 +4192,10 @@ function renderOfdRiderSummary(active,tripInfo){
           ?ofdOrders.filter(o=>!o.assignedRider)
           :ofdOrders.filter(o=>o.assignedRider===rider);
         if(!riderOfdOrders.length)return;
-        (byRider[rider]=byRider[rider]||[]).push({w,waveIdx:i+1,waveCount:waves.length,num:num??9999,ofdOrders:riderOfdOrders});
+        (byRider[rider]=byRider[rider]||[]).push({
+          nums:[num??9999],waveLabel:multiRiderTrip[key]?' · Wave '+(i+1):'',
+          orders:riderOfdOrders,stat:computeRunStats(riderOfdOrders),
+        });
       });
     });
   });
@@ -4141,19 +4203,18 @@ function renderOfdRiderSummary(active,tripInfo){
   if(!riderNames.length){el.innerHTML='';return;}
 
   const rowsHtml=riderNames.map(rider=>{
-    const entries=byRider[rider].sort((a,b)=>a.num-b.num||a.waveIdx-b.waveIdx);
-    const houseTotal=entries.reduce((n,e)=>n+e.ofdOrders.length,0);
-    const blocks=entries.map(({w,waveIdx,waveCount,num,ofdOrders})=>{
-      const waveLabel=waveCount>1?' · Wave '+waveIdx:'';
+    const runs=mergeOverlappingRuns(byRider[rider],stat=>stat.ready);
+    const houseTotal=runs.reduce((n,r)=>n+r.orders.length,0);
+    const blocks=runs.map(r=>{
       return '<div class="cs-trip-block">'+
         '<div class="cs-trip-line">'+
-          '<span class="cs-trip-tag">Trip '+num+waveLabel+'</span>'+
-          '<span class="cs-time-chip"><span class="cs-time-label">Start</span><span class="cs-time-strong">'+fmtTripTime(w.start)+'</span></span>'+
-          '<span class="cs-time-chip"><span class="cs-time-label">Ready</span><span class="cs-time-strong">'+fmtTripTime(w.ready)+'</span></span>'+
-          '<span>'+ofdOrders.length+' house'+(ofdOrders.length!==1?'s':'')+' still out</span>'+
+          '<span class="cs-trip-tag">'+runTripLabel(r)+'</span>'+
+          '<span class="cs-time-chip"><span class="cs-time-label">Start</span><span class="cs-time-strong">'+fmtTripTime(r.stat.start)+'</span></span>'+
+          '<span class="cs-time-chip"><span class="cs-time-label">Ready</span><span class="cs-time-strong">'+fmtTripTime(r.stat.ready)+'</span></span>'+
+          '<span>'+r.orders.length+' house'+(r.orders.length!==1?'s':'')+' still out</span>'+
         '</div>'+
-        tripProgressBarHtml(w)+
-        '<div class="cs-trip-houses">'+ofdOrders.map(o=>escH(o.customer)).join(', ')+'</div>'+
+        tripProgressBarHtml(r.stat)+
+        '<div class="cs-trip-houses">'+r.orders.map(o=>escH(o.customer)).join(', ')+'</div>'+
       '</div>';
     }).join('');
     return '<div class="cs-rider-block">'+
@@ -4172,14 +4233,16 @@ function renderOfdRiderSummary(active,tripInfo){
 // used to bury their houses inside a combined "RiderA, RiderB" header).
 // Start/End here are each rider's OWN dispatch/delivery timestamps within
 // the wave, not the whole wave's — two riders sharing a wave finish at
-// different times, and this should reflect that per rider. Never-
-// dispatched leftovers (see isLeftoverOrder) belong to no rider, so
+// different times, and this should reflect that per rider. Overlapping
+// runs across different trips merge, same as the OFD summary above.
+// Never-dispatched leftovers (see isLeftoverOrder) belong to no rider, so
 // they're not shown here — they're already highlighted on every order
 // card and listed in the Not Dispatched by Cluster box above.
 function renderPastTripsSummary(active,tripInfo){
   const el=document.getElementById('to-past-trips-summary');
   if(!el)return;
   const timings=computeTripTimings(active);
+  const multiRiderTrip=tripsWithMultipleRiders(timings);
   const byRider={};
   Object.keys(timings).forEach(key=>{
     const{waves}=timings[key];
@@ -4192,19 +4255,9 @@ function renderPastTripsSummary(active,tripInfo){
           :w.orders.filter(o=>o.assignedRider===rider);
         const deliveredOrders=riderOrders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered');
         if(!deliveredOrders.length)return; // nothing of theirs has landed yet — not "past" for this rider/wave
-        const stillOut=riderOrders.filter(o=>o.deliveryStatus==='ofd').length;
-        const dispatchTimes=riderOrders.filter(o=>o.dispatchedAt).map(o=>new Date(o.dispatchedAt).getTime());
-        const deliverTimes=deliveredOrders.filter(o=>o.deliveredAt).map(o=>new Date(o.deliveredAt).getTime());
-        const riderWave={
-          orders:riderOrders,
-          start:dispatchTimes.length?Math.min(...dispatchTimes):w.start,
-          ready:dispatchTimes.length?Math.max(...dispatchTimes):w.ready,
-          firstDeliver:deliverTimes.length?Math.min(...deliverTimes):null,
-          end:deliverTimes.length?Math.max(...deliverTimes):null,
-        };
         (byRider[rider]=byRider[rider]||[]).push({
-          num:num??9999,waveIdx:i+1,waveCount:waves.length,
-          deliveredOrders,stillOut,riderWave,
+          nums:[num??9999],waveLabel:multiRiderTrip[key]?' · Wave '+(i+1):'',
+          orders:riderOrders,stat:computeRunStats(riderOrders),
         });
       });
     });
@@ -4213,22 +4266,23 @@ function renderPastTripsSummary(active,tripInfo){
   if(!riderNames.length){el.innerHTML='';return;}
 
   const riderRows=riderNames.map(rider=>{
-    const entries=byRider[rider].sort((a,b)=>(b.riderWave.end||0)-(a.riderWave.end||0));
-    const totalDelivered=entries.reduce((n,e)=>n+e.deliveredOrders.length,0);
-    const blocks=entries.map(({num,waveIdx,waveCount,deliveredOrders,stillOut,riderWave})=>{
-      const waveLabel=waveCount>1?' · Wave '+waveIdx:'';
+    const runs=mergeOverlappingRuns(byRider[rider],stat=>stat.end);
+    const totalDelivered=runs.reduce((n,r)=>n+r.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered').length,0);
+    const blocks=runs.map(r=>{
+      const deliveredOrders=r.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered');
+      const stillOut=r.orders.filter(o=>o.deliveryStatus==='ofd').length;
       return '<div class="cs-trip-block">'+
         '<div class="cs-trip-line">'+
-          '<span class="cs-trip-tag">Trip '+num+waveLabel+'</span>'+
-          '<span class="cs-time-chip"><span class="cs-time-label">Start</span><span class="cs-time-strong">'+fmtTripTime(riderWave.start)+'</span></span>'+
-          '<span class="cs-time-chip"><span class="cs-time-label">End</span><span class="cs-time-strong">'+fmtTripTime(riderWave.end)+'</span></span>'+
+          '<span class="cs-trip-tag">'+runTripLabel(r)+'</span>'+
+          '<span class="cs-time-chip"><span class="cs-time-label">Start</span><span class="cs-time-strong">'+fmtTripTime(r.stat.start)+'</span></span>'+
+          '<span class="cs-time-chip"><span class="cs-time-label">End</span><span class="cs-time-strong">'+fmtTripTime(r.stat.end)+'</span></span>'+
           '<span>'+deliveredOrders.length+' delivered'+(stillOut?' · '+stillOut+' still out':'')+'</span>'+
         '</div>'+
-        tripProgressBarHtml(riderWave)+
+        tripProgressBarHtml(r.stat)+
         '<div class="cs-trip-houses">'+deliveredOrders.map(o=>escH(o.customer)).join(', ')+'</div>'+
       '</div>';
     }).join('');
-    const latestEnd=Math.max(0,...entries.map(e=>e.riderWave.end||0));
+    const latestEnd=Math.max(0,...runs.map(r=>r.stat.end||0));
     return{end:latestEnd,html:
       '<div class="cs-rider-block">'+
         '<div class="cs-rider-name">✅ '+escH(rider)+' <span class="cs-rider-count">— '+totalDelivered+' delivered</span></div>'+
