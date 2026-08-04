@@ -37,10 +37,14 @@
 // quantity/rate for every line (only name/item_id change), but Zoho's own
 // UI is known to silently reset quantity to 1 when you re-pick an item on
 // a line, so this checks the returned invoice's total and each corrected
-// line's quantity/rate against their pre-edit values. Any drift marks that
-// result 'updated_needs_review' (counted separately in needsReview, not
-// lumped in with either 'updated' or a real API 'error') so it surfaces
-// instead of silently passing as a clean success.
+// line's quantity/rate against their pre-edit values. Flagging drift after
+// the fact still leaves the invoice sitting wrong in Zoho until someone
+// reads the log, so if anything drifted, one immediate follow-up write
+// forces quantity/rate back to the pre-edit values and re-verifies:
+//   - drift, then fixed by the follow-up  -> 'updated_auto_corrected' (counted in `updated`)
+//   - drift, follow-up couldn't fix it    -> 'updated_needs_review' (counted in `needsReview`, a human needs to look at that invoice in Zoho directly)
+// Only one follow-up attempt, never a retry loop — if Zoho is genuinely
+// resetting these server-side, hammering it won't help.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -238,13 +242,59 @@ Deno.serve(async (req) => {
           drift.push('Zoho did not return the updated invoice to verify against — check this one manually');
         }
 
+        // Flagging drift after the fact still leaves the invoice wrong in
+        // Zoho until someone reads the log — so if anything drifted, try
+        // ONE immediate self-heal: re-send the line items exactly as Zoho
+        // just saved them, but with quantity/rate forced back to the
+        // pre-edit values, and verify again. This can only run once (no
+        // retry loop) — if the account is genuinely resetting these
+        // server-side, hammering it wouldn't help and risks compounding
+        // whatever's going on; it surfaces as 'needs_review' instead so a
+        // human looks at that specific invoice directly.
+        let healed = false;
+        if (drift.length && updatedInvoice) {
+          const healedLineItems = (updatedInvoice.line_items || []).map((li: any) => {
+            const b = before[li.name];
+            if (!b) return li;
+            return { ...li, quantity: b.quantity, rate: b.rate };
+          });
+          const healRes = await fetch(zohoUrl(`/invoices/${fix.invoiceId}`, orgId), {
+            method: 'PUT',
+            headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              customer_id: updatedInvoice.customer_id,
+              reference_number: updatedInvoice.reference_number,
+              date: updatedInvoice.date,
+              line_items: healedLineItems,
+              reason: 'Restoring original quantity/rate after the item-name fix above unexpectedly changed them.',
+            }),
+          });
+          const healData = await healRes.json();
+          if (healRes.ok && healData.code === 0 && healData.invoice) {
+            const stillDrifting =
+              Math.abs((healData.invoice.total ?? 0) - beforeInvoiceTotal) > 0.01 ||
+              (healData.invoice.line_items || []).some((li: any) => {
+                const b = before[li.name];
+                return b && (Math.abs((li.quantity ?? 0) - b.quantity) > 0.001 || Math.abs((li.rate ?? 0) - b.rate) > 0.01);
+              });
+            if (!stillDrifting) {
+              healed = true;
+              drift.push('(auto-corrected — quantity/rate restored to original values on a follow-up write)');
+            } else {
+              drift.push('auto-correction attempted but did not fully restore original values — needs manual fix in Zoho');
+            }
+          } else {
+            drift.push(`auto-correction attempt failed: ${healData.message || healRes.status} — needs manual fix in Zoho`);
+          }
+        }
+
         results.push({
           invoiceId: fix.invoiceId, invoiceNumber: fix.invoiceNumber,
-          status: drift.length ? 'updated_needs_review' : 'updated',
+          status: !drift.length ? 'updated' : healed ? 'updated_auto_corrected' : 'updated_needs_review',
           changes: fix.corrections.map(c => `"${c.wrongName}" -> "${c.correctName}"`),
           ...(drift.length ? { drift } : {}),
         });
-        if (drift.length) needsReview++; else updated++;
+        if (drift.length && !healed) needsReview++; else updated++;
       } catch (e: any) {
         results.push({ invoiceId: fix.invoiceId, invoiceNumber: fix.invoiceNumber, status: 'error', detail: e.message });
         errors++;
