@@ -154,6 +154,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .unpaid-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b23a3a}
 .trip-number-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2f6690}
 .trip-number-badge.trip-over-cap{background:#b3261e}
+.trip-pending-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#c2570a}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
 .dv-queue-badge.hidden{display:none}
 .cluster-summary-box{background:#fff8f0;border:1px solid #f0dfc8;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px}
@@ -2947,16 +2948,30 @@ function groupUrgency(orders){
   return soonest;
 }
 
+// A group with nothing left pending (every non-cancelled order actually
+// delivered) has nothing left for a dispatcher to act on — sorted below
+// every group that still has something outstanding, regardless of cluster
+// rank/urgency, so the trip list reads as "what's still live" first.
+function groupFullyDelivered(orders){
+  return orders.length>0&&orders.every(o=>o.orderStatus==='cancelled'||o.deliveryStatus==='delivered');
+}
+
 // groupNames: the keys to order. ordersByName(name): returns that group's
-// orders (each {customer, deliverBy}) — callers adapt their own group
-// shape (order objects vs. packer items) to that before calling this.
+// orders (each {customer, deliverBy, orderStatus, deliveryStatus}) —
+// callers adapt their own group shape (order objects vs. packer items) to
+// that before calling this.
 function sortTripGroupNames(groupNames,ordersByName){
   const meta=new Map(groupNames.map(name=>{
     const orders=ordersByName(name);
-    return[name,{urgency:groupUrgency(orders),clusterRank:groupClusterRank(orders)}];
+    return[name,{
+      urgency:groupUrgency(orders),
+      clusterRank:groupClusterRank(orders),
+      fullyDelivered:groupFullyDelivered(orders),
+    }];
   }));
   return[...groupNames].sort((a,b)=>{
     const ma=meta.get(a),mb=meta.get(b);
+    if(ma.fullyDelivered!==mb.fullyDelivered)return ma.fullyDelivered?1:-1;
     if(ma.urgency!=null&&mb.urgency!=null)return ma.urgency-mb.urgency;
     if(ma.urgency!=null)return -1;
     if(mb.urgency!=null)return 1;
@@ -3008,9 +3023,18 @@ function tripBadgeHtml(tripInfo,order){
   const key=effectiveTripKey(order,tripInfo.departedKeys);
   const num=tripInfo.numberByTripKey[key];
   if(num==null)return '';
-  const count=(tripInfo.ordersByTripKey[key]||[]).length;
+  const tripOrders=tripInfo.ordersByTripKey[key]||[];
+  const count=tripOrders.length;
   const over=count>TRIP_ORDER_CAP;
-  return ' <span class="trip-number-badge'+(over?' trip-over-cap':'')+'" title="'+count+' of '+TRIP_ORDER_CAP+' orders in this trip">Trip '+num+' · '+count+'/'+TRIP_ORDER_CAP+'</span>';
+  // "Pending" here means not yet delivered — could be stuck at packing,
+  // sitting not-dispatched, or already out but not dropped off yet; all of
+  // that is one number so a dispatcher can tell at a glance whether this
+  // trip still needs anything from them.
+  const pending=tripOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus!=='delivered').length;
+  const pendingBadge=pending
+    ?' <span class="trip-pending-badge" title="'+pending+' order'+(pending!==1?'s':'')+' still not delivered">'+pending+' pending</span>'
+    :'';
+  return ' <span class="trip-number-badge'+(over?' trip-over-cap':'')+'" title="'+count+' of '+TRIP_ORDER_CAP+' orders in this trip">Trip '+num+' · '+count+'/'+TRIP_ORDER_CAP+'</span>'+pendingBadge;
 }
 
 // In By Trip view specifically, a group's header text should read as
