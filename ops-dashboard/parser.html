@@ -853,6 +853,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <input type="text" id="ux-modal-input" class="hidden">
     <div class="modal-actions">
       <button class="btn-sec hidden" id="ux-modal-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-sec hidden" id="ux-modal-secondary" style="margin-bottom:0"></button>
       <button class="btn-parse" id="ux-modal-ok" style="margin-bottom:0">OK</button>
     </div>
   </div>
@@ -873,6 +874,7 @@ const uxModal=document.getElementById('ux-modal'),
       uxModalMsg=document.getElementById('ux-modal-message'),
       uxModalInput=document.getElementById('ux-modal-input'),
       uxModalCancelBtn=document.getElementById('ux-modal-cancel'),
+      uxModalSecondaryBtn=document.getElementById('ux-modal-secondary'),
       uxModalOkBtn=document.getElementById('ux-modal-ok');
 let uxModalResolve=null;
 
@@ -881,6 +883,7 @@ function uxAlert(message){
     uxModalMsg.textContent=message;
     uxModalInput.classList.add('hidden');
     uxModalCancelBtn.classList.add('hidden');
+    uxModalSecondaryBtn.classList.add('hidden');
     uxModalOkBtn.textContent='OK';
     uxModal.classList.remove('hidden');
     uxModalResolve=()=>resolve();
@@ -893,6 +896,7 @@ function uxConfirm(message){
     uxModalInput.classList.add('hidden');
     uxModalCancelBtn.classList.remove('hidden');
     uxModalCancelBtn.textContent='Cancel';
+    uxModalSecondaryBtn.classList.add('hidden');
     uxModalOkBtn.textContent='Yes';
     uxModal.classList.remove('hidden');
     uxModalResolve=ok=>resolve(!!ok);
@@ -908,6 +912,7 @@ function uxPrompt(message,defaultValue){
     uxModalInput.value=defaultValue||'';
     uxModalCancelBtn.classList.remove('hidden');
     uxModalCancelBtn.textContent='Cancel';
+    uxModalSecondaryBtn.classList.add('hidden');
     uxModalOkBtn.textContent='OK';
     uxModal.classList.remove('hidden');
     uxModalInput.focus();
@@ -915,9 +920,34 @@ function uxPrompt(message,defaultValue){
   });
 }
 
+// Three-way choice — Cancel / a secondary action / the primary action —
+// for cases plain yes/no confirm can't express, like "cancel (keep as
+// record) vs. delete (remove completely) vs. never mind". Resolves
+// 'primary', 'secondary', or false (cancelled/dismissed).
+function uxChoice(message,primaryLabel,secondaryLabel,cancelLabel){
+  return new Promise(resolve=>{
+    uxModalMsg.textContent=message;
+    uxModalInput.classList.add('hidden');
+    uxModalCancelBtn.classList.remove('hidden');
+    uxModalCancelBtn.textContent=cancelLabel||'Cancel';
+    uxModalSecondaryBtn.classList.remove('hidden');
+    uxModalSecondaryBtn.textContent=secondaryLabel;
+    uxModalOkBtn.textContent=primaryLabel;
+    uxModal.classList.remove('hidden');
+    uxModalResolve=result=>resolve(result);
+  });
+}
+
 uxModalOkBtn.addEventListener('click',()=>{
   uxModal.classList.add('hidden');
-  if(uxModalResolve)uxModalResolve(true);
+  // 'primary' rather than a bare true — uxConfirm/uxPrompt only ever check
+  // truthiness so their behavior is unaffected, but uxChoice needs to tell
+  // its two non-cancel buttons apart by resolved value.
+  if(uxModalResolve)uxModalResolve('primary');
+});
+uxModalSecondaryBtn.addEventListener('click',()=>{
+  uxModal.classList.add('hidden');
+  if(uxModalResolve)uxModalResolve('secondary');
 });
 uxModalCancelBtn.addEventListener('click',()=>{
   uxModal.classList.add('hidden');
@@ -4899,18 +4929,26 @@ async function approveHeldItem(id){
   await loadTodaysOrders();
 }
 
-// Soft-remove, matching cancel-order's philosophy — never hard-delete an
-// order_items row, since that's history a packer/admin may need later.
-// Marks the item 'cancelled' (same greyed-out, struck-through treatment as
-// an item on a cancelled order, both in Today's Orders pills and Packer)
-// with a note appended to its description instead.
+// Default is still soft-remove, matching cancel-order's philosophy — marks
+// the item 'cancelled' (same greyed-out, struck-through treatment as an
+// item on a cancelled order, both in Today's Orders pills and Packer) with
+// a note appended to its description, keeping it as history a packer/admin
+// may need later. "Delete instead" is the explicit escape hatch for when
+// that history genuinely isn't wanted (a mis-tap, an accidental duplicate)
+// — actually removes the order_items row, not just marks it.
 async function deleteItem(id){
-  if(!await uxConfirm('Remove this item? It will be marked cancelled and kept as a record, not deleted.'))return;
+  const choice=await uxChoice('Remove this item?','Cancel (keep as record)','Delete instead (remove completely)');
+  if(!choice)return;
   const current=currentItemsById[id];
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
-  const description=appendAddendum(current?.description,'Item deleted');
-  const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',id);
-  if(error){uxAlert('Failed to remove item: '+error.message);return;}
+  if(choice==='secondary'){
+    const{error}=await sb.from('order_items').delete().eq('id',id);
+    if(error){uxAlert('Failed to delete item: '+error.message);return;}
+  }else{
+    const description=appendAddendum(current?.description,'Item deleted');
+    const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',id);
+    if(error){uxAlert('Failed to remove item: '+error.message);return;}
+  }
   if(current)await autoRegenerateInvoiceIfReady(current.sales_order_id);
   if(document.getElementById('panel-packer').classList.contains('active'))await loadPackerView();
   else await loadTodaysOrders();
