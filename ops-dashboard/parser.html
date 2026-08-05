@@ -1038,8 +1038,9 @@ async function initAppAfterLogin(){
     .catch(e=>console.error('Could not load clusters config',e))
     .then(()=>loadCommunitiesConfig())
     .catch(e=>console.error('Could not load communities config',e));
-  // Every order-creation path needs to look up standing instructions —
-  // same reasoning as clusters/communities above, loaded once at boot.
+  // Just pre-warms the Config panel's own cache (see migration 050 for
+  // where instructions actually get applied to new orders) — loaded at
+  // boot purely to avoid a flicker the first time Config opens.
   loadCustomerInstructionsCache()
     .catch(e=>console.error('Could not load customer instructions',e));
 
@@ -1356,10 +1357,10 @@ async function deleteCommunity(id,name){
 // uses — lowercase, letters/digits only, no spaces) rather than the exact
 // customer_name, so "Villa 60", "villa-60" and "Villa60" all resolve to one
 // entry regardless of which spelling a given order/Zoho sync happens to use.
-// Loaded once at app boot (not just on first Config visit) since every
-// order-creation path needs to look this up, not just the Config panel —
-// see the app-boot chain that also loads clusters/communities for the same
-// reason.
+// The actual application of instructions to new order_items happens in a
+// database trigger (migration 050), not here — this cache only backs the
+// Config panel's own table, loaded at app boot just to avoid a loading
+// flicker the first time that panel opens.
 let customerInstructionsCache={};
 
 async function loadCustomerInstructionsCache(){
@@ -1368,13 +1369,6 @@ async function loadCustomerInstructionsCache(){
   customerInstructionsCache={};
   (data||[]).forEach(r=>{customerInstructionsCache[r.normalized_key]=r;});
   renderCustomerInstructionsTable(data||[]);
-}
-
-// Looked up by every order-creation path — returns the instructions text
-// for this customer, or '' if none saved.
-function lookupCustomerInstructions(customerName){
-  const key=canonicalCustomerKey(customerName);
-  return key&&customerInstructionsCache[key]?customerInstructionsCache[key].instructions:'';
 }
 
 function renderCustomerInstructionsTable(rows){
@@ -2050,17 +2044,15 @@ async function pushRows(rows,salesOrderIdFor){
     const status=existingKeys.has(key)?'held':'open';
     existingKeys.add(key);
     status==='held'?held++:opened++;
-    // Standing instructions (Config → Customer Instructions) are crucial
-    // enough that every item needs them, not just ones a packer/rider
-    // happens to notice on the order header — merged onto every item, not
-    // just the first, via the same bracket-tag convention as admin notes
-    // (upsertBracketedNote) so re-pushing the same row never duplicates it.
-    const standing=lookupCustomerInstructions(r.customer_name);
+    // Standing instructions (Config → Customer Instructions) are merged in
+    // by a database trigger on order_items (migration 050) — enforced at
+    // the data layer, not here, so it applies no matter what inserts the
+    // row (this UI, an external automation tool, anything).
     return{
       sales_order_id:     soid,
       item_name:          itemName,
-      description:        standing?upsertBracketedNote(r.description,'Standing',standing):(r.description||null),
-      delivery_instructions: standing?upsertBracketedNote(r.delivery_instructions,'Standing',standing):(r.delivery_instructions||null),
+      description:        r.description||null,
+      delivery_instructions: r.delivery_instructions||null,
       requested_quantity: qty,
       status,
     };
@@ -3656,13 +3648,6 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
 
   if(!await uxConfirm((alreadyDispatched?'This order is already out for delivery/delivered — add ':'Add ')+itemName+' × '+qty+(alreadyDispatched?' as a separate order?':' to this order?')))return;
 
-  // Standing instructions (Config → Customer Instructions) are crucial
-  // enough that every item needs them, not just the ones present when the
-  // order was first created — merged in via the same bracket-tag convention
-  // as admin notes (upsertBracketedNote) so re-adding never duplicates it.
-  const standing=order?lookupCustomerInstructions(order.customer):'';
-  if(standing)description=upsertBracketedNote(description,'Standing',standing);
-
   let targetOrder=aiTargetOrder;
 
   if(alreadyDispatched){
@@ -3698,12 +3683,15 @@ document.getElementById('ai-add').addEventListener('click',async()=>{
   // to skip the pack cycle entirely and mark it ready to invoice on the
   // typed-in quantity alone, with nobody ever verifying it was packed).
   const orderWasInvoiced=!alreadyDispatched&&isFullyInvoiced(order);
+  // Standing instructions (Config → Customer Instructions) are merged in
+  // by a database trigger on order_items (migration 050) — enforced at
+  // the data layer, not here, so it applies no matter what inserts the
+  // row (this UI, an external automation tool, anything).
   const row={
     sales_order_id: targetOrder,
     item_name:      itemName,
     requested_quantity: qty,
     description:    description||null,
-    delivery_instructions: standing||null,
     no_bill:        noBill,
     status:         'open',
   };
