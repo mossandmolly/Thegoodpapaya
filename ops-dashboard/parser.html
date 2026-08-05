@@ -382,6 +382,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
          like utility actions rather than a primary nav tab. -->
     <button class="header-btn" onclick="switchTab('parser')" id="tab-parser">📸 Parser</button>
     <button class="header-btn" onclick="switchTab('config')">⚙️ Config</button>
+    <a class="signout-link" onclick="hardRefresh()" title="Force-reload the latest deployed version — use this if something looks off after an update">🔄 Refresh</a>
     <a class="signout-link" onclick="signOut()">Sign out</a>
   </div>
 </div>
@@ -1123,6 +1124,16 @@ function switchTab(name){
 function openQuickAdd(){
   switchTab('parser');
   document.getElementById('quick-order-section').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// A plain location.reload() can still be served from cache by the browser
+// (or an in-between proxy) — most of the team is on phones/tablets, which
+// have no Ctrl/Cmd+Shift+R to bypass that. Navigating to a URL with a
+// fresh query string every time makes it a request the browser has never
+// cached a response for, forcing an actual network fetch of whatever's
+// currently deployed.
+function hardRefresh(){
+  location.href=location.pathname+'?_r='+Date.now();
 }
 
 // ── Config UI ─────────────────────────────────────────────────────────────
