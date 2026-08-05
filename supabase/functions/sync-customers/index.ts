@@ -282,18 +282,25 @@ Deno.serve(async (req) => {
     const orgId    = await getOrgId(token);
     const contacts = await fetchAllContacts(token, orgId);
 
-    // Deduplicate: when two Zoho contacts clean to the same name,
-    // keep the one whose original name is already closest to proper casing.
-    const seen = new Map<string, { zohoId: string; score: number }>();
+    // Deduplicate: grouped by the fully-stripped canonical key (letters/
+    // digits only — "Villa-60", "Villa 60" and "Villa60" are all the same
+    // customer), not just the loosely-cleaned display string — cleaning
+    // alone still left those three as different keys, since it turns "-"
+    // into a space rather than removing it, so "Villa-60"/"Villa60" (no
+    // space either way) never collided. Within a group, keep whichever
+    // original name is already closest to proper casing.
+    const seen = new Map<string, { zohoId: string; score: number; name: string }>();
     for (const c of contacts) {
-      const name  = cleanCustomerName(c.contact_name as string);
+      const name = cleanCustomerName(c.contact_name as string);
       if (!name) continue;
+      const key = customerCanonicalKey(name);
+      if (!key) continue;
       const score = casingScore(c.contact_name as string, name);
-      const prev  = seen.get(name);
-      if (!prev || score > prev.score) seen.set(name, { zohoId: c.contact_id, score });
+      const prev  = seen.get(key);
+      if (!prev || score > prev.score) seen.set(key, { zohoId: c.contact_id, score, name });
     }
 
-    const rows = [...seen.entries()].map(([customer_name, { zohoId }]) => ({
+    const rows = [...seen.values()].map(({ zohoId, name: customer_name }) => ({
       customer_name,
       zoho_contact_id: zohoId,
       active:          true,
