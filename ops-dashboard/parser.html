@@ -390,6 +390,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab" onclick="switchTab('packer')" id="tab-packer">📦 Packer</button>
   <button class="tab" onclick="switchTab('delivery')" id="tab-delivery">🚚 Delivery</button>
   <button class="tab" onclick="switchTab('stock')" id="tab-stock">📊 Stock</button>
+  <button class="tab" onclick="openQuickAdd()" id="tab-quickadd">⚡ Quick Add</button>
 </div>
 
 <!-- PARSER -->
@@ -1114,6 +1115,14 @@ function switchTab(name){
   if(name==='packer')loadPackerView();
   if(name==='delivery')loadDeliveryView();
   if(name==='stock')loadStockView();
+}
+
+// Shortcut tab — jumps straight to Quick Order Entry inside the Parser
+// panel instead of making someone open Parser (a header link, not a main
+// tab) and scroll past the screenshot-upload section to find it.
+function openQuickAdd(){
+  switchTab('parser');
+  document.getElementById('quick-order-section').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 // ── Config UI ─────────────────────────────────────────────────────────────
