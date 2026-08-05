@@ -65,9 +65,21 @@ begin
 
   set constraints all deferred;
 
+  -- information_schema.columns also lists VIEWS (order_customer_lookup
+  -- exposes sales_order_id) — a simple single-table view like that one is
+  -- auto-updatable in Postgres, so an UPDATE against it silently rewrites
+  -- the underlying orders row's sales_order_id *by itself*, before the
+  -- explicit orders update below runs — which then matches zero rows
+  -- (nothing has the old id anymore) and silently no-ops, leaving
+  -- customer_name unchanged. Restrict to base tables only (pg_class
+  -- relkind 'r') so the loop can never again touch orders except through
+  -- the one explicit statement that sets both columns together.
   for t in
-    select table_name from information_schema.columns
-    where table_schema = 'public' and column_name = 'sales_order_id' and table_name <> 'orders'
+    select c.table_name
+    from information_schema.columns c
+    join pg_class pc on pc.relname = c.table_name and pc.relkind = 'r'
+    join pg_namespace pn on pn.oid = pc.relnamespace and pn.nspname = c.table_schema
+    where c.table_schema = 'public' and c.column_name = 'sales_order_id' and c.table_name <> 'orders'
   loop
     execute format(
       'update public.%I set sales_order_id = $1 where sales_order_id = $2',
