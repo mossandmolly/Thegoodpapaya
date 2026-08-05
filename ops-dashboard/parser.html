@@ -391,6 +391,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab" onclick="switchTab('packer')" id="tab-packer">📦 Packer</button>
   <button class="tab" onclick="switchTab('delivery')" id="tab-delivery">🚚 Delivery</button>
   <button class="tab" onclick="switchTab('stock')" id="tab-stock">📊 Stock</button>
+  <button class="tab" onclick="switchTab('purchases')" id="tab-purchases" style="margin-left:auto">🧺 Purchases</button>
   <button class="tab" onclick="openQuickAdd()" id="tab-quickadd">⚡ Quick Add</button>
 </div>
 
@@ -533,6 +534,21 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <table class="community-table" id="stock-table"><thead><tr>
       <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Packed/Invoiced</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
+  </div>
+</div>
+
+<!-- PURCHASES (buyer role) — review purchase tranches logged under Stock >
+     Purchased and log the ₹ cost against each one. -->
+<div class="panel" id="panel-purchases">
+  <div class="section-label date-header-row">
+    <span>Purchases <span id="purchases-rc"></span></span>
+    <input type="date" class="date-picker-compact" id="purchases-date-picker" onchange="setViewDate(this.value)">
+  </div>
+  <input type="text" class="pk-search" id="purchases-search" placeholder="🔍 Search fruit..." oninput="renderPurchasesTable()">
+  <div class="stock-table-wrap">
+    <table class="community-table" id="purchases-table"><thead><tr>
+      <th>Fruit</th><th>Qty</th><th>Source</th><th>Time</th><th>Cost (₹)</th>
+    </tr></thead><tbody id="purchases-tbody"></tbody></table>
   </div>
 </div>
 
@@ -1002,6 +1018,7 @@ async function authToken(){
 // still read order data directly if someone went looking for it — it just
 // keeps the normal workflow confined to the one relevant tab.
 let isDeliveryRole=false;
+let isBuyerRole=false;
 
 // Neither the delivery login nor the shared packer/admin login distinguish
 // individual people — there's no per-person auth for either role, so
@@ -1044,8 +1061,15 @@ function renderRiderBadge(){
 }
 
 function applyRoleRestrictions(){
+  if(isBuyerRole){
+    ['tab-parser','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el)el.style.display='none';
+    });
+    return;
+  }
   if(!isDeliveryRole)return;
-  ['tab-parser','tab-today','tab-packer','tab-stock'].forEach(id=>{
+  ['tab-parser','tab-today','tab-packer','tab-stock','tab-purchases','tab-quickadd'].forEach(id=>{
     const el=document.getElementById(id);
     if(el)el.style.display='none';
   });
@@ -1059,6 +1083,7 @@ async function initAppAfterLogin(){
 
   const{data:{session}}=await sb.auth.getSession();
   isDeliveryRole=session?.user?.user_metadata?.role==='delivery';
+  isBuyerRole=session?.user?.user_metadata?.role==='buyer';
   applyRoleRestrictions();
   await ensureRiderName();
   syncViewDatePickers();
@@ -1082,7 +1107,9 @@ async function initAppAfterLogin(){
   loadCustomerInstructionsCache()
     .catch(e=>console.error('Could not load customer instructions',e));
 
-  if(isDeliveryRole){
+  if(isBuyerRole){
+    switchTab('purchases');
+  }else if(isDeliveryRole){
     switchTab('delivery');
   }else{
     ensureCustomerNameOptions();
@@ -1140,7 +1167,8 @@ function switchTab(name){
   // guard the actual switch here too — the other tab buttons are hidden via
   // CSS, not removed, so anything that still calls switchTab() directly
   // (e.g. a stray onclick) can't escape into a tab this session shouldn't see.
-  if(isDeliveryRole)name='delivery';
+  if(isBuyerRole)name='purchases';
+  else if(isDeliveryRole)name='delivery';
   // Matched by id, not position — Parser/Config are header-btn links now,
   // not part of the main .tabs row, so the old fixed-index array no longer
   // lines up with what's actually in there.
@@ -1152,6 +1180,7 @@ function switchTab(name){
   if(name==='packer')loadPackerView();
   if(name==='delivery')loadDeliveryView();
   if(name==='stock')loadStockView();
+  if(name==='purchases')loadPurchasesView();
 }
 
 // Shortcut tab — jumps straight to Quick Order Entry inside the Parser
@@ -2521,7 +2550,7 @@ const VIEW_DATE_MIN=addDays(CALENDAR_TODAY,-15);
 const VIEW_DATE_MAX=ENTRY_DATE_MAX;
 
 function syncViewDatePickers(){
-  [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker'),document.getElementById('dv-date-picker'),document.getElementById('stock-date-picker')].forEach(el=>{
+  [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker'),document.getElementById('dv-date-picker'),document.getElementById('stock-date-picker'),document.getElementById('purchases-date-picker')].forEach(el=>{
     if(!el)return;
     el.min=VIEW_DATE_MIN;
     el.max=VIEW_DATE_MAX;
@@ -2544,6 +2573,7 @@ function setViewDate(dateStr){
   if(document.getElementById('panel-packer').classList.contains('active'))loadPackerView();
   if(document.getElementById('panel-delivery').classList.contains('active'))loadDeliveryView();
   if(document.getElementById('panel-stock').classList.contains('active'))loadStockView();
+  if(document.getElementById('panel-purchases').classList.contains('active'))loadPurchasesView();
 }
 
 async function loadTodaysOrders(){
@@ -6916,6 +6946,48 @@ async function deleteStockPurchase(id){
   const idx=arr.findIndex(p=>p.id===id);
   if(idx>-1)arr.splice(idx,1);
   renderStockPurchaseList();
+}
+
+// ── Purchases (buyer role) ───────────────────────────────────────────────
+// Buyer reviews the purchase tranches already logged under Stock >
+// Purchased for the viewed date, and logs the ₹ cost against each one —
+// the one field stock_purchases never had until migration 054.
+let purchasesRows=[];
+
+async function loadPurchasesView(){
+  document.getElementById('purchases-date-picker').value=viewDate;
+  const tbody=document.getElementById('purchases-tbody');
+  tbody.innerHTML='<tr><td colspan="5" class="to-empty">Loading…</td></tr>';
+  const{data,error}=await sb.from('stock_purchases')
+    .select('id,item_name,qty,source,created_at,cost')
+    .eq('date',viewDate)
+    .order('item_name');
+  if(error){tbody.innerHTML='<tr><td colspan="5" class="to-empty">'+escH(error.message)+'</td></tr>';return;}
+  purchasesRows=data||[];
+  renderPurchasesTable();
+}
+
+function renderPurchasesTable(){
+  const tbody=document.getElementById('purchases-tbody');
+  const q=(document.getElementById('purchases-search').value||'').trim().toLowerCase();
+  const rows=purchasesRows.filter(r=>!q||r.item_name.toLowerCase().includes(q));
+  document.getElementById('purchases-rc').textContent=rows.length?('('+rows.length+')'):'';
+  tbody.innerHTML=rows.length?rows.map(r=>
+    '<tr><td>'+escH(r.item_name)+'</td><td>'+r.qty+'</td><td>'+escH(r.source||'—')+'</td>'+
+    '<td>'+new Date(r.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</td>'+
+    '<td><input type="number" class="stock-qty-input" step="0.01" min="0" placeholder="₹" value="'+(r.cost??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
+      '<button class="pk-tick" disabled onclick="savePurchaseCost(this.previousElementSibling,'+escH(JSON.stringify(r.id))+')" title="Save cost">✓</button></td></tr>'
+  ).join(''):'<tr><td colspan="5" class="to-empty">No purchases logged for this date</td></tr>';
+}
+
+async function savePurchaseCost(inputEl,id){
+  const cost=inputEl.value===''?null:parseFloat(inputEl.value);
+  if(cost!=null&&(isNaN(cost)||cost<0)){uxAlert('Enter a valid cost');return;}
+  const{error}=await sb.from('stock_purchases').update({cost}).eq('id',id);
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  const row=purchasesRows.find(r=>r.id===id);
+  if(row)row.cost=cost;
+  inputEl.nextElementSibling.disabled=true;
 }
 
 </script>
