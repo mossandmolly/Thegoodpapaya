@@ -4937,7 +4937,7 @@ async function approveHeldItem(id){
 // that history genuinely isn't wanted (a mis-tap, an accidental duplicate)
 // — actually removes the order_items row, not just marks it.
 async function deleteItem(id){
-  const choice=await uxChoice('Remove this item?','Cancel (keep as record)','Delete instead (remove completely)');
+  const choice=await uxChoice('Remove this item?','Cancel for packing','Delete clean','Go back');
   if(!choice)return;
   const current=currentItemsById[id];
   // If this order was already invoiced, clears the old Zoho invoice first —
