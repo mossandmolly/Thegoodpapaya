@@ -2012,6 +2012,35 @@ function setPush(msg,cls){ps.textContent=msg;ps.className='push-status'+(cls?' '
 // + held-duplicate-check flow either way, just a different sales_order_id
 // per row.
 async function pushRows(rows,salesOrderIdFor){
+  // 0. Redirect any row whose target order is already OFD/delivered to a
+  // freshly split "-N" order instead of silently joining one that's
+  // already left — same rule addItemPrompt applies for a single item,
+  // applied here once so it covers every path that funnels through this
+  // function (parser push, push-tomorrow, Quick Order Entry) instead of
+  // needing to be re-implemented per caller. No per-row confirmation here
+  // (this can be a 100+ row bulk push) — split happens silently, reported
+  // back in the return value so the caller can mention it in its status line.
+  const rawSoids=[...new Set(rows.map(r=>salesOrderIdFor(r)))];
+  const remap=new Map();
+  if(rawSoids.length){
+    const DISPATCH_CHUNK=200;
+    const dispatchedIds=new Set();
+    for(let i=0;i<rawSoids.length;i+=DISPATCH_CHUNK){
+      const{data,error}=await sb.from('order_customer_lookup')
+        .select('sales_order_id,delivery_status')
+        .in('sales_order_id',rawSoids.slice(i,i+DISPATCH_CHUNK));
+      if(error)throw new Error('dispatch check: '+error.message);
+      (data||[]).forEach(o=>{if((o.delivery_status||'not_dispatched')!=='not_dispatched')dispatchedIds.add(o.sales_order_id);});
+    }
+    for(const soid of dispatchedIds){
+      const n=await nextSplitSuffix(soid);
+      remap.set(soid,soid+'-'+n);
+    }
+  }
+  const rawSalesOrderIdFor=salesOrderIdFor;
+  salesOrderIdFor=r=>{const raw=rawSalesOrderIdFor(r);return remap.get(raw)||raw;};
+  const splitCount=remap.size;
+
   // 1. Header row per unique customer — create if missing, never overwrite an existing one
   const headers=new Map();
   rows.forEach(r=>{
@@ -2102,7 +2131,7 @@ async function pushRows(rows,salesOrderIdFor){
     const{error}=await sb.from('order_items').insert(toInsert.slice(i,i+INSERT_CHUNK));
     if(error)throw new Error('insert: '+error.message);
   }
-  return{opened,held};
+  return{opened,held,splitCount};
 }
 
 pushb.addEventListener('click',async()=>{
@@ -2118,8 +2147,8 @@ pushb.addEventListener('click',async()=>{
     // date) — always swapped for the entry-date picker's value, so the
     // final destination is always exactly what's showing there, regardless
     // of what date the parse itself guessed.
-    const{opened,held}=await pushRows(rows,r=>entryDate+r.sales_order.slice(10));
-    setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':''),'ok');
+    const{opened,held,splitCount}=await pushRows(rows,r=>entryDate+r.sales_order.slice(10));
+    setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':'')+(splitCount?' · '+splitCount+' order'+(splitCount!==1?'s':'')+' already out for delivery, split into new order'+(splitCount!==1?'s':''):''),'ok');
     pushb.textContent='✅ Pushed';
   }catch(e){
     setPush('❌ '+e.message,'err');
@@ -2139,8 +2168,8 @@ pushTomorrowBtn.addEventListener('click',async()=>{
     // TOMORROW, which would double-jump to two days out once it's already
     // past 7pm). Deliberately ignores the entry-date picker — this is a
     // fixed "send today's whole batch to tomorrow" shortcut, not tied to it.
-    const{opened,held}=await pushRows(rows,r=>addDays(CALENDAR_TODAY,1)+r.sales_order.slice(10));
-    setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed to tomorrow'+(held?' ('+held+' held as duplicate)':''),'ok');
+    const{opened,held,splitCount}=await pushRows(rows,r=>addDays(CALENDAR_TODAY,1)+r.sales_order.slice(10));
+    setPush('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed to tomorrow'+(held?' ('+held+' held as duplicate)':'')+(splitCount?' · '+splitCount+' order'+(splitCount!==1?'s':'')+' already out for delivery, split into new order'+(splitCount!==1?'s':''):''),'ok');
     ok=true;
   }catch(e){
     setPush('❌ '+e.message,'err');
@@ -2347,8 +2376,8 @@ qoSubmitBtn.addEventListener('click',async()=>{
 
   qoSubmitBtn.disabled=true;qoSubmitBtn.textContent='Submitting…';setQoStatus('');
   try{
-    const{opened,held}=await pushRows(rows,r=>entryDate+'-'+canonicalCustomerKey(r.customer_name));
-    setQoStatus('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':''),'ok');
+    const{opened,held,splitCount}=await pushRows(rows,r=>entryDate+'-'+canonicalCustomerKey(r.customer_name));
+    setQoStatus('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':'')+(splitCount?' · '+splitCount+' order'+(splitCount!==1?'s':'')+' already out for delivery, split into new order'+(splitCount!==1?'s':''):''),'ok');
     qoBlocksEl.innerHTML='';qoBlockCount=0;
     await addQoBlock();
   }catch(e){
