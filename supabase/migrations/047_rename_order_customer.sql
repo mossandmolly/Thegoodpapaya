@@ -26,7 +26,7 @@ begin
     where contype = 'f'
       and confrelid = 'public.orders'::regclass
       and (
-        select array_agg(attname)
+        select array_agg(attname::text)
         from unnest(confkey) k(attnum)
         join pg_attribute a on a.attrelid = confrelid and a.attnum = k.attnum
       ) = array['sales_order_id']
