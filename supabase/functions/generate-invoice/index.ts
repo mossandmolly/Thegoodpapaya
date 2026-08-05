@@ -285,7 +285,7 @@ async function createZohoInvoice(
   contactId: string,
   salesOrderId: string,
   date: string,
-  lineItems: Array<{ name: string; requested_qty: number; qty: number; rate: number; description?: string }>,
+  lineItems: Array<{ name: string; requested_qty: number; qty: number; rate: number; description?: string; item_id?: string }>,
   token: string,
   orgId: string,
 ): Promise<{ invoice_id: string; invoice_number: string; invoice_total: number }> {
@@ -293,7 +293,12 @@ async function createZohoInvoice(
     customer_id:      contactId,
     reference_number: salesOrderId,
     date,
+    // item_id, when known, is what actually links this line to the right
+    // Zoho catalog item — name alone is Zoho's case-sensitive fallback,
+    // exactly what created "ghost" unlinked items before (see the comment
+    // where lineItems gets built).
     line_items: lineItems.map(i => ({
+      ...(i.item_id ? { item_id: i.item_id } : {}),
       name:        i.name,
       description: i.description || '',
       quantity:    i.qty,
@@ -363,6 +368,17 @@ Deno.serve(async (req) => {
     const zohoItems = await fetchZohoItems(token, orgId);
     const catalogNames = zohoItems.map(i => i.name);
     const rateByLowerName = new Map(zohoItems.map(i => [i.name.toLowerCase(), i.rate]));
+    // The actual fix for "ghost items" (see fix-invoice-item-casing, the
+    // one-off batch correction already run for historical invoices): Zoho
+    // was never told which catalog item a line is, only its name — so any
+    // casing mismatch between order_items.item_name and Zoho's own item
+    // name (e.g. an AI-parsed "Kiwi Green" vs the catalog's "Kiwi green")
+    // makes Zoho create a brand new unlinked item instead of matching the
+    // existing one. Sending item_id explicitly (looked up case-
+    // insensitively, same as rate already is) makes the match exact and
+    // casing-proof — the name field becomes informational only once an id
+    // is present.
+    const itemIdByLowerName = new Map(zohoItems.map(i => [i.name.toLowerCase(), i.item_id]));
 
     // Best-effort: keep the local catalog mirror fresh as a side effect of
     // every invoice, since Config/Stock/Packer still read it for unit labels
@@ -386,7 +402,7 @@ Deno.serve(async (req) => {
 
     const freeItems: string[] = [];
     const unresolved: Array<{ item_name: string; suggestions: string[] }> = [];
-    const lineItems: Array<{ name: string; requested_qty: number; qty: number; rate: number; description?: string }> = [];
+    const lineItems: Array<{ name: string; requested_qty: number; qty: number; rate: number; description?: string; item_id?: string }> = [];
 
     for (const i of items) {
       const isFree = isFreeItem(i);
@@ -395,13 +411,16 @@ Deno.serve(async (req) => {
         lineItems.push({
           name: i.item_name, requested_qty: i.requested_quantity ?? 0,
           qty: i.final_quantity ?? 0, rate: 0, description: i.description || undefined,
+          item_id: itemIdByLowerName.get((i.item_name as string).toLowerCase()),
         });
         continue;
       }
 
-      let rate = rateByLowerName.get((i.item_name as string).toLowerCase());
+      let lookupKey = (i.item_name as string).toLowerCase();
+      let rate = rateByLowerName.get(lookupKey);
       if (rate === undefined && overrides[i.item_name]) {
-        rate = rateByLowerName.get(overrides[i.item_name].toLowerCase());
+        lookupKey = overrides[i.item_name].toLowerCase();
+        rate = rateByLowerName.get(lookupKey);
       }
       if (rate === undefined) {
         unresolved.push({ item_name: i.item_name, suggestions: closestCatalogNames(i.item_name, catalogNames) });
@@ -411,6 +430,7 @@ Deno.serve(async (req) => {
       lineItems.push({
         name: i.item_name, requested_qty: i.requested_quantity ?? 0,
         qty: i.final_quantity ?? 0, rate, description: i.description || undefined,
+        item_id: itemIdByLowerName.get(lookupKey),
       });
     }
 
