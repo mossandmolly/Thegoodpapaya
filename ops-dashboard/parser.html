@@ -640,6 +640,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
     <label class="modal-label">Quantity</label>
     <input type="number" id="ai-qty" step="0.01" min="0" placeholder="e.g. 0.5">
+    <label class="modal-label">Description <span style="font-weight:400;color:#8a7a6a">(optional — mention "replacement"/"exchange" for ₹0 billing)</span></label>
+    <input type="text" id="ai-desc" placeholder="e.g. replacement for yesterday's spoiled papaya">
+    <label class="modal-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="ai-nobill" style="width:auto;margin:0"> Don't bill this item
+    </label>
+    <div class="note" id="ai-split-note" style="display:none;color:#b3261e;margin-top:4px">This order is already out for delivery/delivered — this item will go out as a separate order instead of joining it.</div>
     <div class="modal-actions">
       <button class="btn-sec" id="ai-cancel" style="margin-bottom:0">Cancel</button>
       <button class="btn-parse" id="ai-add" style="margin-bottom:0">Add</button>
@@ -806,6 +812,21 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <table class="community-table"><thead><tr>
         <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th>Cluster</th><th></th>
       </tr></thead><tbody id="community-tbody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>📝 Customer Instructions <span style="font-size:11px;color:#8a7a6a;font-weight:400">(standing fruit/delivery instructions — auto-added to every order)</span></h3>
+    <p class="note">Matched by customer name ignoring case, spaces and special characters — "Sunshine Signature Villa 60", "sunshine signature villa-60" and a plain "SunshineSignatureVilla60" from Zoho all resolve to the same entry. Whatever's saved here gets added as a note on every item of every new order that customer places, automatically, at the moment the order is created — no need to remember to add it by hand.</p>
+    <div class="add-row">
+      <input type="text" id="new-ci-name" placeholder="Customer name e.g. Villa 60">
+      <input type="text" id="new-ci-instructions" placeholder="Standing instructions e.g. Always slightly raw mangoes, leave at gate" style="flex:2">
+      <button onclick="addCustomerInstruction()">Add</button>
+    </div>
+    <div class="table-scroll">
+      <table class="community-table"><thead><tr>
+        <th>Customer</th><th>Instructions</th><th></th>
+      </tr></thead><tbody id="ci-tbody"></tbody></table>
     </div>
   </div>
 </div>
@@ -1017,6 +1038,10 @@ async function initAppAfterLogin(){
     .catch(e=>console.error('Could not load clusters config',e))
     .then(()=>loadCommunitiesConfig())
     .catch(e=>console.error('Could not load communities config',e));
+  // Every order-creation path needs to look up standing instructions —
+  // same reasoning as clusters/communities above, loaded once at boot.
+  loadCustomerInstructionsCache()
+    .catch(e=>console.error('Could not load customer instructions',e));
 
   if(isDeliveryRole){
     switchTab('delivery');
@@ -1101,6 +1126,7 @@ async function renderConfig(){
   // the full cluster list to already be in clustersCache when it renders.
   await loadClustersConfig();
   loadCommunitiesConfig();
+  loadCustomerInstructionsCache();
 }
 
 // ── Communities (lat/lng + trip grouping) ────────────────────────────────
@@ -1323,6 +1349,80 @@ async function deleteCommunity(id,name){
   const{error}=await sb.from('communities').delete().eq('id',id);
   if(error){uxAlert('Failed to delete: '+error.message);return;}
   await loadCommunitiesConfig();
+}
+
+// ── Customer standing instructions ────────────────────────────────────────
+// Keyed by canonicalCustomerKey (same normalization sales_order_id already
+// uses — lowercase, letters/digits only, no spaces) rather than the exact
+// customer_name, so "Villa 60", "villa-60" and "Villa60" all resolve to one
+// entry regardless of which spelling a given order/Zoho sync happens to use.
+// Loaded once at app boot (not just on first Config visit) since every
+// order-creation path needs to look this up, not just the Config panel —
+// see the app-boot chain that also loads clusters/communities for the same
+// reason.
+let customerInstructionsCache={};
+
+async function loadCustomerInstructionsCache(){
+  const{data,error}=await sb.from('customer_instructions').select('*').order('display_name');
+  if(error){console.error('Could not load customer instructions',error);return;}
+  customerInstructionsCache={};
+  (data||[]).forEach(r=>{customerInstructionsCache[r.normalized_key]=r;});
+  renderCustomerInstructionsTable(data||[]);
+}
+
+// Looked up by every order-creation path — returns the instructions text
+// for this customer, or '' if none saved.
+function lookupCustomerInstructions(customerName){
+  const key=canonicalCustomerKey(customerName);
+  return key&&customerInstructionsCache[key]?customerInstructionsCache[key].instructions:'';
+}
+
+function renderCustomerInstructionsTable(rows){
+  const tbody=document.getElementById('ci-tbody');
+  if(!tbody)return;
+  tbody.innerHTML=rows.map(r=>
+    '<tr>'+
+      '<td>'+escH(r.display_name)+'</td>'+
+      '<td><input type="text" id="ci-instr-'+escH(r.normalized_key)+'" value="'+escH(r.instructions)+'" style="width:100%"></td>'+
+      '<td style="white-space:nowrap">'+
+        '<button class="del-btn" style="color:#2d6b2d" onclick="saveCustomerInstruction('+escH(JSON.stringify(r.normalized_key))+')" title="Save">💾</button>'+
+        '<button class="del-btn" onclick="deleteCustomerInstruction('+escH(JSON.stringify(r.normalized_key))+','+escH(JSON.stringify(r.display_name))+')" title="Delete">✕</button>'+
+      '</td>'+
+    '</tr>'
+  ).join('');
+}
+
+async function saveCustomerInstruction(key){
+  const instructions=document.getElementById('ci-instr-'+key).value.trim();
+  if(!instructions){uxAlert('Instructions can\'t be empty — delete the row instead if it\'s no longer needed.');return;}
+  const{error}=await sb.from('customer_instructions').update({instructions}).eq('normalized_key',key);
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  await loadCustomerInstructionsCache();
+}
+
+async function addCustomerInstruction(){
+  const nameInput=document.getElementById('new-ci-name');
+  const instrInput=document.getElementById('new-ci-instructions');
+  const name=formatCustomerName(nameInput.value.trim());
+  const instructions=instrInput.value.trim();
+  if(!name||!instructions){uxAlert('Both customer name and instructions are required.');return;}
+  const key=canonicalCustomerKey(name);
+  if(!key){uxAlert('That name doesn\'t contain any letters or digits.');return;}
+  if(customerInstructionsCache[key]){
+    uxAlert('"'+customerInstructionsCache[key].display_name+'" already has instructions saved — that\'s the same customer (ignoring case/spacing). Edit that row instead of adding a new one.');
+    return;
+  }
+  const{error}=await sb.from('customer_instructions').insert({normalized_key:key,display_name:name,instructions});
+  if(error){uxAlert('Failed to add: '+error.message);return;}
+  nameInput.value='';instrInput.value='';
+  await loadCustomerInstructionsCache();
+}
+
+async function deleteCustomerInstruction(key,name){
+  if(!await uxConfirm('Remove standing instructions for "'+name+'"? New orders from this customer will stop getting them added automatically.'))return;
+  const{error}=await sb.from('customer_instructions').delete().eq('normalized_key',key);
+  if(error){uxAlert('Failed to delete: '+error.message);return;}
+  await loadCustomerInstructionsCache();
 }
 
 // Quick-pick dropdown for the packer-assignment fruits box — sourced from
@@ -1950,11 +2050,17 @@ async function pushRows(rows,salesOrderIdFor){
     const status=existingKeys.has(key)?'held':'open';
     existingKeys.add(key);
     status==='held'?held++:opened++;
+    // Standing instructions (Config → Customer Instructions) are crucial
+    // enough that every item needs them, not just ones a packer/rider
+    // happens to notice on the order header — merged onto every item, not
+    // just the first, via the same bracket-tag convention as admin notes
+    // (upsertBracketedNote) so re-pushing the same row never duplicates it.
+    const standing=lookupCustomerInstructions(r.customer_name);
     return{
       sales_order_id:     soid,
       item_name:          itemName,
-      description:        r.description||null,
-      delivery_instructions: r.delivery_instructions||null,
+      description:        standing?upsertBracketedNote(r.description,'Standing',standing):(r.description||null),
+      delivery_instructions: standing?upsertBracketedNote(r.delivery_instructions,'Standing',standing):(r.delivery_instructions||null),
       requested_quantity: qty,
       status,
     };
@@ -3501,6 +3607,14 @@ async function addItemPrompt(salesOrderId){
   aiTargetOrder=salesOrderId;
   aiItemSel.value='';
   aiQty.value='';
+  document.getElementById('ai-desc').value='';
+  document.getElementById('ai-nobill').checked=false;
+  // Already out for delivery/delivered — a new item can't just join it
+  // silently, the rider/packer would never see it. Shown up front so
+  // nobody's surprised a "+ add item" click quietly created a second order.
+  const order=currentOrdersById[salesOrderId];
+  const alreadyDispatched=order&&order.deliveryStatus!=='not_dispatched';
+  document.getElementById('ai-split-note').style.display=alreadyDispatched?'block':'none';
   aiModal.classList.remove('hidden');
   try{
     await ensureCatalogItems();
@@ -3512,31 +3626,94 @@ async function addItemPrompt(salesOrderId){
 
 document.getElementById('ai-cancel').addEventListener('click',()=>{aiModal.classList.add('hidden');});
 
+// Finds the next free "-N" suffix for a post-dispatch split (see
+// document.getElementById('ai-add') below) — order_items has open RLS
+// (unlike orders), so this queries it directly rather than needing a
+// round trip through an edge function just to read existing split ids.
+async function nextSplitSuffix(baseId){
+  const{data,error}=await sb.from('order_items')
+    .select('sales_order_id').like('sales_order_id',baseId+'-%');
+  if(error)throw new Error(error.message);
+  const re=new RegExp('^'+baseId.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'-(\\d+)$');
+  let max=0;
+  (data||[]).forEach(r=>{
+    const m=re.exec(r.sales_order_id);
+    if(m)max=Math.max(max,parseInt(m[1],10));
+  });
+  return max+1;
+}
+
 document.getElementById('ai-add').addEventListener('click',async()=>{
   const itemName=aiItemSel.value.trim();
   const qty=parseFloat(aiQty.value);
+  const noBill=document.getElementById('ai-nobill').checked;
+  let description=document.getElementById('ai-desc').value.trim();
   if(!itemName){uxAlert('Choose an item');return;}
   if(isNaN(qty)||qty<0){uxAlert('Enter a valid quantity');return;}
-  if(!await uxConfirm('Add '+itemName+' × '+qty+' to this order?'))return;
+
+  const order=currentOrdersById[aiTargetOrder];
+  const alreadyDispatched=order&&order.deliveryStatus!=='not_dispatched';
+
+  if(!await uxConfirm((alreadyDispatched?'This order is already out for delivery/delivered — add ':'Add ')+itemName+' × '+qty+(alreadyDispatched?' as a separate order?':' to this order?')))return;
+
+  // Standing instructions (Config → Customer Instructions) are crucial
+  // enough that every item needs them, not just the ones present when the
+  // order was first created — merged in via the same bracket-tag convention
+  // as admin notes (upsertBracketedNote) so re-adding never duplicates it.
+  const standing=order?lookupCustomerInstructions(order.customer):'';
+  if(standing)description=upsertBracketedNote(description,'Standing',standing);
+
+  let targetOrder=aiTargetOrder;
+
+  if(alreadyDispatched){
+    // Split off a new order instead of joining one that's already left —
+    // same date prefix + customer key, "-N" suffix. Goes through Packer
+    // like any other fresh order (not marked ready/OFD by this action).
+    try{
+      const n=await nextSplitSuffix(aiTargetOrder);
+      const newSalesOrderId=aiTargetOrder+'-'+n;
+      const createRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+        body:JSON.stringify({headers:[{
+          sales_order_id: newSalesOrderId,
+          customer_name:  order.customer,
+          source:         'manual',
+          payment_method: 'cod',
+          invoice_status: 'pending',
+        }]}),
+      });
+      const createData=await createRes.json();
+      if(!createRes.ok)throw new Error(createData.error||'Could not create the split order header');
+      targetOrder=newSalesOrderId;
+    }catch(e){
+      uxAlert('Failed to split order: '+e.message);
+      return;
+    }
+  }
+
   // Always enters as 'open', however far along the rest of the order is —
   // a newly added item hasn't actually been packed yet, so it can't be
   // assumed final just because the order was already invoiced (that used
   // to skip the pack cycle entirely and mark it ready to invoice on the
   // typed-in quantity alone, with nobody ever verifying it was packed).
-  const order=currentOrdersById[aiTargetOrder];
-  const orderWasInvoiced=isFullyInvoiced(order);
+  const orderWasInvoiced=!alreadyDispatched&&isFullyInvoiced(order);
   const row={
-    sales_order_id: aiTargetOrder,
+    sales_order_id: targetOrder,
     item_name:      itemName,
     requested_quantity: qty,
+    description:    description||null,
+    delivery_instructions: standing||null,
+    no_bill:        noBill,
     status:         'open',
   };
   if(orderWasInvoiced)await invalidateOrderInvoiceIfNeeded(aiTargetOrder);
 
   // Adding an item to a cancelled order reopens it: order goes back to
   // active, previously-cancelled items stay cancelled as history, only this
-  // new item is fresh/open.
-  if(order&&order.orderStatus==='cancelled'){
+  // new item is fresh/open. Only applies when joining the SAME (existing)
+  // order — a split creates a brand new order, nothing to reopen.
+  if(!alreadyDispatched&&order&&order.orderStatus==='cancelled'){
     try{
       const res=await fetch(SUPABASE_URL+'/functions/v1/reopen-order',{
         method:'POST',
@@ -3848,7 +4025,7 @@ function activeItems(order){
 // replacement-only orders don't count toward "real" order volume there).
 function isReplacementOnlyOrder(order){
   const items=activeItems(order);
-  return items.length>0&&items.every(i=>/\b(replacement|replace|free)\b/i.test(i.description||''));
+  return items.length>0&&items.every(i=>isFreeItem(i));
 }
 
 // True only while there's actually something to invoice: nothing left
@@ -5148,9 +5325,14 @@ document.addEventListener('visibilitychange',()=>{
 });
 
 // Same rule generate-invoice bills at ₹0 by — an item whose description
-// flags it as a replacement/free sample shouldn't show a rate/amount that
-// contradicts what actually gets billed.
-const FREE_ITEM_RE=/\b(replacement|free sample|free)\b/i;
+// flags it as a replacement/exchange/free sample shouldn't show a rate/
+// amount that contradicts what actually gets billed. Mirrors
+// generate-invoice/index.ts's own FREE_ITEM_RE — keep both in sync.
+const FREE_ITEM_RE=/\b(replacement|exchange|free sample|free)\b/i;
+// no_bill is the explicit override (a "don't bill" checkbox at add-item
+// time) — either this OR the description keyword is enough to zero-bill,
+// same as generate-invoice checks it.
+function isFreeItem(item){return FREE_ITEM_RE.test(item.description||'')||!!item.no_bill;}
 
 // order.items includes cancelled items now (loadDeliveryView no longer
 // filters them out at the query level, so a whole-order cancellation still
@@ -5329,7 +5511,7 @@ function renderDeliverySummaryPills(scopedOrders){
 // doesn't disagree with what was actually billed. Returns null (shown as
 // "—") only if the item name isn't in the catalog at all.
 function deliveryItemAmount(item){
-  if(FREE_ITEM_RE.test(item.description||''))return 0;
+  if(isFreeItem(item))return 0;
   const cat=deliveryCatalogByItem[item.item_name.toLowerCase()];
   if(!cat)return null;
   const qty=item.final_quantity??item.requested_quantity;
@@ -5635,7 +5817,7 @@ function renderDeliveryCard(order,selectionMode){
         const qty=item.final_quantity??item.requested_quantity;
         const cat=deliveryCatalogByItem[item.item_name.toLowerCase()];
         const amount=deliveryItemAmount(item);
-        const isFree=FREE_ITEM_RE.test(item.description||'');
+        const isFree=isFreeItem(item);
         // "Collected" (physically bagged) is only ever toggled before
         // dispatch — once the order's OFD or delivered, each collected item
         // instead shows an "OFD" tag (not just a bare checkmark), so it's

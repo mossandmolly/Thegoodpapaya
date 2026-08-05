@@ -65,6 +65,13 @@ function formatCommunityName(s: string): string {
   return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t;
 }
 
+// Same normalization customer_instructions is keyed by (see migration 048)
+// and canonicalCustomerKey in ops-dashboard/parser.html — mirrors it here,
+// keep both in sync if the rule ever changes.
+function customerCanonicalKey(s: string): string {
+  return (s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 type SocietyLookup = { displayByKey: Record<string, string>; keysByLength: string[] };
 
 // The `communities` table is the sole source of truth for known society
@@ -298,6 +305,34 @@ Deno.serve(async (req) => {
       .upsert(rows, { onConflict: 'customer_name' });
 
     if (error) throw new Error(`Sync failed: ${error.message}`);
+
+    // Standing instructions (customer_instructions, migration 048) are
+    // looked up by normalized key at order-creation time, not tied to a
+    // specific customers row — so a brand new name variant synced here
+    // already gets the same instructions automatically, no copying needed.
+    // What IS worth doing: keep display_name pointed at whatever spelling
+    // Zoho — the source of truth — currently uses for that customer,
+    // instead of possibly-typo'd text from whoever first typed it into the
+    // Config panel. Best-effort, never fails the sync.
+    let instructionsRelinked = 0;
+    try {
+      const { data: existingInstructions } = await supabase
+        .from('customer_instructions')
+        .select('normalized_key, display_name');
+      const byKey = new Map((existingInstructions || []).map((r: any) => [r.normalized_key, r.display_name]));
+      const relinks = rows
+        .map(r => ({ key: customerCanonicalKey(r.customer_name), name: r.customer_name }))
+        .filter(r => r.key && byKey.has(r.key) && byKey.get(r.key) !== r.name);
+      for (const r of relinks) {
+        const { error: relinkErr } = await supabase
+          .from('customer_instructions')
+          .update({ display_name: r.name })
+          .eq('normalized_key', r.key);
+        if (!relinkErr) instructionsRelinked++;
+      }
+    } catch (_e) {
+      // swallow — display_name freshness is cosmetic, not load-bearing
+    }
 
     // Best-effort: backfill communities from every synced customer name.
     // Never fails the sync — a name-pattern miss shouldn't block it.

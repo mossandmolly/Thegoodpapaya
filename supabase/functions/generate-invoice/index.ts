@@ -42,7 +42,13 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const FREE_ITEM_RE = /\b(replacement|free sample|free)\b/i;
+// Mirrors ops-dashboard/parser.html's own FREE_ITEM_RE — keep both in
+// sync. no_bill (order_items column, migration 049) is the explicit
+// "don't bill" override — either it or the keyword is enough to zero-bill.
+const FREE_ITEM_RE = /\b(replacement|exchange|free sample|free)\b/i;
+function isFreeItem(i: { description?: string | null; no_bill?: boolean }): boolean {
+  return FREE_ITEM_RE.test(i.description ?? '') || !!i.no_bill;
+}
 
 // Small edit-distance so a typo'd or aliased item name ("Papaya Ripe" vs
 // "Ripe Papaya") still surfaces the right catalog row instead of just failing.
@@ -383,7 +389,7 @@ Deno.serve(async (req) => {
     const lineItems: Array<{ name: string; requested_qty: number; qty: number; rate: number; description?: string }> = [];
 
     for (const i of items) {
-      const isFree = FREE_ITEM_RE.test(i.description ?? '');
+      const isFree = isFreeItem(i);
       if (isFree) {
         freeItems.push(i.item_name);
         lineItems.push({
