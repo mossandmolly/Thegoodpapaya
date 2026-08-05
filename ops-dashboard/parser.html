@@ -920,9 +920,10 @@ function uxPrompt(message,defaultValue){
   });
 }
 
-// Three-way choice — Cancel / a secondary action / the primary action —
-// for cases plain yes/no confirm can't express, like "cancel (keep as
-// record) vs. delete (remove completely) vs. never mind". Resolves
+// Two- or three-way choice — Cancel / an optional secondary action / the
+// primary action — for cases plain yes/no confirm can't express, like
+// "cancel for packing vs. delete clean vs. go back". Pass a falsy
+// secondaryLabel for a plain two-way (primary vs. go back). Resolves
 // 'primary', 'secondary', or false (cancelled/dismissed).
 function uxChoice(message,primaryLabel,secondaryLabel,cancelLabel){
   return new Promise(resolve=>{
@@ -930,8 +931,8 @@ function uxChoice(message,primaryLabel,secondaryLabel,cancelLabel){
     uxModalInput.classList.add('hidden');
     uxModalCancelBtn.classList.remove('hidden');
     uxModalCancelBtn.textContent=cancelLabel||'Cancel';
-    uxModalSecondaryBtn.classList.remove('hidden');
-    uxModalSecondaryBtn.textContent=secondaryLabel;
+    uxModalSecondaryBtn.classList.toggle('hidden',!secondaryLabel);
+    uxModalSecondaryBtn.textContent=secondaryLabel||'';
     uxModalOkBtn.textContent=primaryLabel;
     uxModal.classList.remove('hidden');
     uxModalResolve=result=>resolve(result);
@@ -2775,7 +2776,7 @@ function renderOrdersList(){
           (order.adminNotes?'<div class="dv-notes">📝 '+escH(order.adminNotes)+'</div>':'')+
           '<div class="or-pills">'+order.items.map(item=>{
             const itemCancelled=item.status==='cancelled';
-            return '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+'"'+(itemCancelled?'':' onclick="pillClick(\''+item.id+'\')"')+'>'+
+            return '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+(itemCancelled?' — tap to delete clean':'')+'" onclick="pillClick(\''+item.id+'\')">'+
               (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
               (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
               escH(item.item_name)+' × '+item.requested_quantity+
@@ -3386,7 +3387,9 @@ document.getElementById('move-trip-confirm').addEventListener('click',async()=>{
 async function pillClick(id){
   const item=currentItemsById[id];
   if(!item)return;
-  if(item.status==='held'){
+  if(item.status==='cancelled'){
+    deleteItem(id);
+  }else if(item.status==='held'){
     if(await uxConfirm('Approve this item? It will move to packing.'))approveHeldItem(id);
   }else{
     editItemPrompt(id);
@@ -4937,14 +4940,20 @@ async function approveHeldItem(id){
 // that history genuinely isn't wanted (a mis-tap, an accidental duplicate)
 // — actually removes the order_items row, not just marks it.
 async function deleteItem(id){
-  const choice=await uxChoice('Remove this item?','Cancel for packing','Delete clean','Go back');
-  if(!choice)return;
   const current=currentItemsById[id];
+  // An already-cancelled item (tapped from its pill) has nothing left to
+  // "cancel for packing" — the only meaningful choice left is a clean
+  // hard-delete or leaving it as the cancelled record it already is.
+  const alreadyCancelled=current&&current.status==='cancelled';
+  const choice=alreadyCancelled
+    ?await uxChoice('This item is already cancelled — delete it completely?','Delete clean',null,'Go back')
+    :await uxChoice('Remove this item?','Cancel for packing','Delete clean','Go back');
+  if(!choice)return;
   // If this order was already invoiced, clears the old Zoho invoice first —
   // an item disappearing (either way) means that invoice no longer matches
   // reality, whatever happens next.
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
-  if(choice==='secondary'){
+  if(alreadyCancelled||choice==='secondary'){
     const{error}=await sb.from('order_items').delete().eq('id',id);
     if(error){uxAlert('Failed to delete item: '+error.message);return;}
   }else{
