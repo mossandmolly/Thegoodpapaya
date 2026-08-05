@@ -20,9 +20,11 @@
 -- here is the exact same one the trigger would already be picking live.
 do $$
 declare
-  grp        record;
-  winner     text;
-  phone_row  record;
+  grp          record;
+  winner       text;
+  phone_row    record;
+  has_phones   boolean := to_regclass('public.customer_phones') is not null;
+  has_notes    boolean := to_regclass('public.customer_notes')  is not null;
 begin
   for grp in
     select normalized_key
@@ -42,28 +44,38 @@ begin
     -- exact number under their own name (same person registered twice).
     -- Row-by-row with an exception guard so one such collision doesn't
     -- abort the whole cleanup; the loser's copy just gets dropped along
-    -- with its customers row below (ON DELETE CASCADE) in that case.
-    for phone_row in
-      select customer_name, phone_number from public.customer_phones
-       where customer_name in (
-         select customer_name from public.customers
-          where normalized_key = grp.normalized_key and customer_name <> winner
-       )
-    loop
-      begin
-        update public.customer_phones set customer_name = winner
-         where customer_name = phone_row.customer_name and phone_number = phone_row.phone_number;
-      exception when unique_violation then
-        null;
-      end;
-    end loop;
+    -- with its customers row below (ON DELETE CASCADE, if the table
+    -- exists at all — the migration that defines it, 019, doesn't appear
+    -- to have actually landed in this database).
+    if has_phones then
+      for phone_row in execute
+        'select customer_name, phone_number from public.customer_phones
+          where customer_name in (
+            select customer_name from public.customers
+             where normalized_key = $1 and customer_name <> $2
+          )'
+        using grp.normalized_key, winner
+      loop
+        begin
+          execute
+            'update public.customer_phones set customer_name = $1
+              where customer_name = $2 and phone_number = $3'
+            using winner, phone_row.customer_name, phone_row.phone_number;
+        exception when unique_violation then
+          null;
+        end;
+      end loop;
+    end if;
 
-    update public.customer_notes
-       set customer_name = winner
-     where customer_name in (
-       select customer_name from public.customers
-        where normalized_key = grp.normalized_key and customer_name <> winner
-     );
+    if has_notes then
+      execute
+        'update public.customer_notes set customer_name = $1
+          where customer_name in (
+            select customer_name from public.customers
+             where normalized_key = $2 and customer_name <> $1
+          )'
+        using winner, grp.normalized_key;
+    end if;
 
     delete from public.customers
      where normalized_key = grp.normalized_key and customer_name <> winner;
