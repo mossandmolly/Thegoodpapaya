@@ -2601,6 +2601,7 @@ function renderOrdersList(){
               // item comes in fresh/open).
               '<a class="or-link" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
               '<a class="or-link" onclick="openOrderNotesModal(\''+order.soid+'\')">+ notes</a>'+
+              '<a class="or-link" onclick="renameOrderCustomerPrompt(\''+order.soid+'\')">✎ rename</a>'+
               (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
               // Move-by-a-day only makes sense relative to today/tomorrow —
               // viewing an older date via the date picker just omits this,
@@ -3405,6 +3406,36 @@ document.getElementById('on-save').addEventListener('click',async()=>{
     uxAlert(e.message);
   }
 });
+
+// ── Rename order customer ────────────────────────────────────────────────
+// sales_order_id is "YYYY-MM-DD-CustomerName" (derived from the name, not
+// independent — see migration 020), so renaming has to go through the
+// rename-order-customer edge function, which renames the orders row's
+// primary key itself and cascades that to order_items/invoice_queue in one
+// transaction (migration 047). A plain `orders.update({customer_name})`
+// would leave the id pointing at the old name forever.
+async function renameOrderCustomerPrompt(soid){
+  const order=currentOrdersById[soid];
+  const current=order?.customer||'';
+  const next=await uxPrompt('Rename customer for this order:',current);
+  if(next===null)return;
+  const trimmed=next.trim();
+  if(!trimmed||trimmed===current)return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/rename-order-customer',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,new_customer_name:trimmed}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not rename customer');
+    evictCustomerLookupCache([soid,data.new_sales_order_id]);
+  }catch(e){
+    uxAlert(e.message);
+    return;
+  }
+  await loadTodaysOrders();
+}
 
 // ── Add-item modal (catalog autocomplete + qty in one form) ─────────────────
 let catalogItems=null;
