@@ -819,15 +819,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
   <div class="config-section">
     <h3>📝 Customer Instructions <span style="font-size:11px;color:#8a7a6a;font-weight:400">(standing fruit/delivery instructions — auto-added to every order)</span></h3>
-    <p class="note">Matched by customer name ignoring case, spaces and special characters — "Sunshine Signature Villa 60", "sunshine signature villa-60" and a plain "SunshineSignatureVilla60" from Zoho all resolve to the same entry. Whatever's saved here gets added as a note on every item of every new order that customer places, automatically, at the moment the order is created — no need to remember to add it by hand.</p>
+    <p class="note">Matched by customer name ignoring case, spaces and special characters — "Sunshine Signature Villa 60", "sunshine signature villa-60" and a plain "SunshineSignatureVilla60" from Zoho all resolve to the same customer. A customer can have more than one instruction — e.g. a Packer-only note and a separate Delivery-only note — each gets added automatically to only the order_items field that audience actually sees (packing note vs delivery note), at the moment the order is created.</p>
     <div class="add-row">
       <input type="text" id="new-ci-name" placeholder="Customer name e.g. Villa 60">
-      <input type="text" id="new-ci-instructions" placeholder="Standing instructions e.g. Always slightly raw mangoes, leave at gate" style="flex:2">
+      <input type="text" id="new-ci-instructions" placeholder="Standing instructions e.g. Always slightly raw mangoes" style="flex:2">
+      <select id="new-ci-target" style="max-width:120px">
+        <option value="both">Both</option>
+        <option value="packer">Packer</option>
+        <option value="delivery">Delivery</option>
+      </select>
       <button onclick="addCustomerInstruction()">Add</button>
     </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Customer</th><th>Instructions</th><th></th>
+        <th>Customer</th><th>Instructions</th><th>Seen by</th><th></th>
       </tr></thead><tbody id="ci-tbody"></tbody></table>
     </div>
   </div>
@@ -1381,14 +1386,18 @@ async function deleteCommunity(id,name){
 // database trigger (migration 050), not here — this cache only backs the
 // Config panel's own table, loaded at app boot just to avoid a loading
 // flicker the first time that panel opens.
-let customerInstructionsCache={};
+// Array, not keyed by normalized_key — a customer can now have more than
+// one instruction (different audiences), so there's no longer a single
+// row per key to key a cache by.
+let customerInstructionsCache=[];
+
+const CI_TARGET_LABEL={packer:'Packer',delivery:'Delivery',both:'Both'};
 
 async function loadCustomerInstructionsCache(){
-  const{data,error}=await sb.from('customer_instructions').select('*').order('display_name');
+  const{data,error}=await sb.from('customer_instructions').select('*').order('display_name').order('created_at');
   if(error){console.error('Could not load customer instructions',error);return;}
-  customerInstructionsCache={};
-  (data||[]).forEach(r=>{customerInstructionsCache[r.normalized_key]=r;});
-  renderCustomerInstructionsTable(data||[]);
+  customerInstructionsCache=data||[];
+  renderCustomerInstructionsTable(customerInstructionsCache);
 }
 
 function renderCustomerInstructionsTable(rows){
@@ -1397,19 +1406,23 @@ function renderCustomerInstructionsTable(rows){
   tbody.innerHTML=rows.map(r=>
     '<tr>'+
       '<td>'+escH(r.display_name)+'</td>'+
-      '<td><input type="text" id="ci-instr-'+escH(r.normalized_key)+'" value="'+escH(r.instructions)+'" style="width:100%"></td>'+
+      '<td><input type="text" id="ci-instr-'+r.id+'" value="'+escH(r.instructions)+'" style="width:100%"></td>'+
+      '<td><select id="ci-target-'+r.id+'">'+
+        Object.keys(CI_TARGET_LABEL).map(t=>'<option value="'+t+'"'+(t===r.target?' selected':'')+'>'+CI_TARGET_LABEL[t]+'</option>').join('')+
+      '</select></td>'+
       '<td style="white-space:nowrap">'+
-        '<button class="del-btn" style="color:#2d6b2d" onclick="saveCustomerInstruction('+escH(JSON.stringify(r.normalized_key))+')" title="Save">💾</button>'+
-        '<button class="del-btn" onclick="deleteCustomerInstruction('+escH(JSON.stringify(r.normalized_key))+','+escH(JSON.stringify(r.display_name))+')" title="Delete">✕</button>'+
+        '<button class="del-btn" style="color:#2d6b2d" onclick="saveCustomerInstruction('+escH(JSON.stringify(r.id))+')" title="Save">💾</button>'+
+        '<button class="del-btn" onclick="deleteCustomerInstruction('+escH(JSON.stringify(r.id))+','+escH(JSON.stringify(r.display_name))+')" title="Delete">✕</button>'+
       '</td>'+
     '</tr>'
   ).join('');
 }
 
-async function saveCustomerInstruction(key){
-  const instructions=document.getElementById('ci-instr-'+key).value.trim();
+async function saveCustomerInstruction(id){
+  const instructions=document.getElementById('ci-instr-'+id).value.trim();
+  const target=document.getElementById('ci-target-'+id).value;
   if(!instructions){uxAlert('Instructions can\'t be empty — delete the row instead if it\'s no longer needed.');return;}
-  const{error}=await sb.from('customer_instructions').update({instructions}).eq('normalized_key',key);
+  const{error}=await sb.from('customer_instructions').update({instructions,target}).eq('id',id);
   if(error){uxAlert('Failed to save: '+error.message);return;}
   await loadCustomerInstructionsCache();
 }
@@ -1417,24 +1430,30 @@ async function saveCustomerInstruction(key){
 async function addCustomerInstruction(){
   const nameInput=document.getElementById('new-ci-name');
   const instrInput=document.getElementById('new-ci-instructions');
+  const targetSel=document.getElementById('new-ci-target');
   const name=formatCustomerName(nameInput.value.trim());
   const instructions=instrInput.value.trim();
+  const target=targetSel.value;
   if(!name||!instructions){uxAlert('Both customer name and instructions are required.');return;}
   const key=canonicalCustomerKey(name);
   if(!key){uxAlert('That name doesn\'t contain any letters or digits.');return;}
-  if(customerInstructionsCache[key]){
-    uxAlert('"'+customerInstructionsCache[key].display_name+'" already has instructions saved — that\'s the same customer (ignoring case/spacing). Edit that row instead of adding a new one.');
+  // Soft check only — a customer having multiple instructions is expected
+  // now (e.g. one Packer + one Delivery), just guard against literally
+  // re-adding the exact same note under the exact same audience by accident.
+  const dupe=customerInstructionsCache.find(r=>r.normalized_key===key&&r.target===target&&r.instructions.trim().toLowerCase()===instructions.toLowerCase());
+  if(dupe){
+    uxAlert('"'+dupe.display_name+'" already has this exact instruction saved for '+CI_TARGET_LABEL[target]+'.');
     return;
   }
-  const{error}=await sb.from('customer_instructions').insert({normalized_key:key,display_name:name,instructions});
+  const{error}=await sb.from('customer_instructions').insert({normalized_key:key,display_name:name,instructions,target});
   if(error){uxAlert('Failed to add: '+error.message);return;}
-  nameInput.value='';instrInput.value='';
+  nameInput.value='';instrInput.value='';targetSel.value='both';
   await loadCustomerInstructionsCache();
 }
 
-async function deleteCustomerInstruction(key,name){
-  if(!await uxConfirm('Remove standing instructions for "'+name+'"? New orders from this customer will stop getting them added automatically.'))return;
-  const{error}=await sb.from('customer_instructions').delete().eq('normalized_key',key);
+async function deleteCustomerInstruction(id,name){
+  if(!await uxConfirm('Remove this standing instruction for "'+name+'"? New orders from this customer will stop getting it added automatically. (Any other instructions saved for this customer are unaffected.)'))return;
+  const{error}=await sb.from('customer_instructions').delete().eq('id',id);
   if(error){uxAlert('Failed to delete: '+error.message);return;}
   await loadCustomerInstructionsCache();
 }
