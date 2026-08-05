@@ -4940,41 +4940,25 @@ async function deleteItem(id){
   const choice=await uxChoice('Remove this item?','Cancel (keep as record)','Delete instead (remove completely)');
   if(!choice)return;
   const current=currentItemsById[id];
+  // If this order was already invoiced, clears the old Zoho invoice first —
+  // an item disappearing (either way) means that invoice no longer matches
+  // reality, whatever happens next.
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
-  let orderNowEmpty=false;
   if(choice==='secondary'){
     const{error}=await sb.from('order_items').delete().eq('id',id);
     if(error){uxAlert('Failed to delete item: '+error.message);return;}
-    // orders rows are never hard-deleted in this app (see cancel-order's own
-    // comment — Zoho invoice/Razorpay/invoice_queue cleanup all has to
-    // happen through that same path first) — so a hard-deleted last item
-    // would otherwise leave an empty order sitting around looking active.
-    // Close it out properly instead, same as cancelling it by hand would.
-    if(current){
-      const{count,error:countErr}=await sb.from('order_items')
-        .select('id',{count:'exact',head:true}).eq('sales_order_id',current.sales_order_id);
-      if(!countErr&&count===0)orderNowEmpty=true;
-    }
   }else{
     const description=appendAddendum(current?.description,'Item deleted');
     const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',id);
     if(error){uxAlert('Failed to remove item: '+error.message);return;}
   }
-  if(orderNowEmpty){
-    try{
-      const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-        body:JSON.stringify({sales_order_id:current.sales_order_id}),
-      });
-      const data=await res.json();
-      if(!res.ok)throw new Error(data.error||'Could not close out the now-empty order');
-    }catch(e){
-      uxAlert('Item deleted, but could not close out the now-empty order automatically: '+e.message);
-    }
-  }else if(current){
-    await autoRegenerateInvoiceIfReady(current.sales_order_id);
-  }
+  // Same follow-up regardless of cancel vs. hard-delete: if every remaining
+  // item on this order is now cancelled/gone, closes the order out properly
+  // (cancel-order — orders rows are never hard-deleted here, see its own
+  // comment on why); if what's left is all final/ready, auto-generates a
+  // fresh invoice; otherwise leaves it as-is for "generate invoice" to
+  // pick up manually once it's actually ready.
+  if(current)await autoRegenerateInvoiceIfReady(current.sales_order_id);
   if(document.getElementById('panel-packer').classList.contains('active'))await loadPackerView();
   else await loadTodaysOrders();
 }
