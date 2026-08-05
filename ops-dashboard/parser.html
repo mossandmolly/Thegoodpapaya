@@ -4941,15 +4941,40 @@ async function deleteItem(id){
   if(!choice)return;
   const current=currentItemsById[id];
   if(current)await invalidateOrderInvoiceIfNeeded(current.sales_order_id);
+  let orderNowEmpty=false;
   if(choice==='secondary'){
     const{error}=await sb.from('order_items').delete().eq('id',id);
     if(error){uxAlert('Failed to delete item: '+error.message);return;}
+    // orders rows are never hard-deleted in this app (see cancel-order's own
+    // comment — Zoho invoice/Razorpay/invoice_queue cleanup all has to
+    // happen through that same path first) — so a hard-deleted last item
+    // would otherwise leave an empty order sitting around looking active.
+    // Close it out properly instead, same as cancelling it by hand would.
+    if(current){
+      const{count,error:countErr}=await sb.from('order_items')
+        .select('id',{count:'exact',head:true}).eq('sales_order_id',current.sales_order_id);
+      if(!countErr&&count===0)orderNowEmpty=true;
+    }
   }else{
     const description=appendAddendum(current?.description,'Item deleted');
     const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',id);
     if(error){uxAlert('Failed to remove item: '+error.message);return;}
   }
-  if(current)await autoRegenerateInvoiceIfReady(current.sales_order_id);
+  if(orderNowEmpty){
+    try{
+      const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+        body:JSON.stringify({sales_order_id:current.sales_order_id}),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Could not close out the now-empty order');
+    }catch(e){
+      uxAlert('Item deleted, but could not close out the now-empty order automatically: '+e.message);
+    }
+  }else if(current){
+    await autoRegenerateInvoiceIfReady(current.sales_order_id);
+  }
   if(document.getElementById('panel-packer').classList.contains('active'))await loadPackerView();
   else await loadTodaysOrders();
 }
