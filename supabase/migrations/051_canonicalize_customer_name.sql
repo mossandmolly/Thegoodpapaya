@@ -60,9 +60,21 @@ begin
     return new;
   end if;
 
+  -- If customers already has more than one row for this key (a
+  -- pre-existing duplicate from before this migration, or before the
+  -- sync-customers dedup fix), the choice can't be arbitrary — that would
+  -- just reintroduce the exact "which spelling wins" inconsistency this
+  -- migration exists to remove. Prefer a Zoho-verified row over one only
+  -- ever auto-created from an order (zoho_contact_id is null for those —
+  -- see orders_ensure_customer, migration 019/020), then whichever
+  -- synced most recently, then alphabetical as a last, purely-for-
+  -- determinism tiebreak. This is a safety net for the transition, not a
+  -- fix for the underlying duplicate — see this migration's diagnostic
+  -- query up top.
   select customer_name into canonical
     from public.customers
    where normalized_key = norm_key
+   order by (zoho_contact_id is not null) desc, synced_at desc nulls last, customer_name asc
    limit 1;
 
   if canonical is not null then
