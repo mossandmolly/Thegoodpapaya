@@ -14,14 +14,18 @@
 //
 // invoice_queue (migration 020) — otherwise unused, see its own header
 // comment for the abandoned async-batch design it was built for — is
-// repurposed here as a claim/lock per sales_order_id: a run only calls
-// generate-invoice for an order after successfully inserting a 'processing'
-// row, and always deletes it afterwards (success or failure). That closes
-// the one real race this design has: two overlapping cron runs (e.g. a
-// slow run still going when the next minute fires) both picking the same
-// order and creating two Zoho invoices back to back. A row stuck from a
-// crashed run (never reached the cleanup) is treated as stale after 5
-// minutes and reclaimed rather than blocking that order forever.
+// repurposed here for two things per sales_order_id:
+//   'processing' row = an in-flight claim, so two overlapping cron runs
+//     (e.g. a slow run still going when the next minute fires) can't both
+//     pick the same order and create two Zoho invoices back to back. A row
+//     stuck 'processing' from a crashed run is treated as stale after 5
+//     minutes and reclaimed rather than blocking that order forever.
+//   'failed' row = a cooldown. Retrying a failing order every single
+//     minute forever (e.g. one that always hits a Zoho error) is exactly
+//     the kind of retry storm that can trip/extend Zoho's own OAuth rate
+//     limit ("too many requests continuously") — so a failure parks that
+//     order for BACKOFF_MS before it's eligible to be picked up again,
+//     instead of hammering Zoho every minute.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
@@ -41,30 +45,38 @@ const CORS = {
 };
 
 const STALE_LOCK_MS = 5 * 60 * 1000;
+const BACKOFF_MS     = 10 * 60 * 1000;
 
-// Claims sales_order_id for this run by inserting a 'processing' row.
-// Returns false (do not process) if another run already holds a fresh
-// claim; reclaims and returns true if the existing claim is stale.
-async function claim(supabase: any, salesOrderId: string): Promise<boolean> {
-  const { error: insErr } = await supabase
-    .from('invoice_queue')
-    .insert({ sales_order_id: salesOrderId, status: 'processing' });
-  if (!insErr) return true;
+type ClaimResult = 'claimed' | 'locked' | 'cooldown';
 
+// Claims sales_order_id for this run. Any existing row blocks the claim
+// unless it's a 'processing' lock stale for > STALE_LOCK_MS (crashed prior
+// run) or a 'failed' cooldown older than BACKOFF_MS (backoff has expired)
+// — in either case the stale row is replaced with a fresh 'processing' one.
+async function claim(supabase: any, salesOrderId: string): Promise<ClaimResult> {
   const { data: existing } = await supabase
-    .from('invoice_queue').select('created_at').eq('sales_order_id', salesOrderId).maybeSingle();
-  if (!existing || Date.now() - new Date(existing.created_at as string).getTime() < STALE_LOCK_MS) {
-    return false; // held by a live (or recent-enough-to-assume-live) run
+    .from('invoice_queue').select('status,updated_at').eq('sales_order_id', salesOrderId).maybeSingle();
+
+  if (existing) {
+    const ageMs = Date.now() - new Date(existing.updated_at as string).getTime();
+    if (existing.status === 'processing' && ageMs < STALE_LOCK_MS) return 'locked';
+    if (existing.status === 'failed' && ageMs < BACKOFF_MS) return 'cooldown';
+    await supabase.from('invoice_queue').delete().eq('sales_order_id', salesOrderId);
   }
-  await supabase.from('invoice_queue').delete().eq('sales_order_id', salesOrderId);
-  const { error: retryErr } = await supabase
-    .from('invoice_queue')
-    .insert({ sales_order_id: salesOrderId, status: 'processing' });
-  return !retryErr;
+
+  const { error: insErr } = await supabase
+    .from('invoice_queue').insert({ sales_order_id: salesOrderId, status: 'processing' });
+  return insErr ? 'locked' : 'claimed'; // lost a race to another concurrent run
 }
 
-async function release(supabase: any, salesOrderId: string): Promise<void> {
+async function markSucceeded(supabase: any, salesOrderId: string): Promise<void> {
   await supabase.from('invoice_queue').delete().eq('sales_order_id', salesOrderId);
+}
+
+async function markFailed(supabase: any, salesOrderId: string, message: string): Promise<void> {
+  await supabase.from('invoice_queue')
+    .update({ status: 'failed', error_message: message.slice(0, 500) })
+    .eq('sales_order_id', salesOrderId);
 }
 
 Deno.serve(async (req) => {
@@ -115,8 +127,8 @@ Deno.serve(async (req) => {
     const errors: Array<{ sales_order_id: string; error: string }> = [];
 
     for (const salesOrderId of eligible) {
-      const claimed = await claim(supabase, salesOrderId);
-      if (!claimed) { skipped.push(salesOrderId); continue; }
+      const claimResult = await claim(supabase, salesOrderId);
+      if (claimResult !== 'claimed') { skipped.push(salesOrderId); continue; }
 
       try {
         const res = await fetch(`${env('SUPABASE_URL')}/functions/v1/generate-invoice`, {
@@ -131,14 +143,18 @@ Deno.serve(async (req) => {
         const data = await res.json();
         if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
         if (data.needs_resolution) {
-          skipped.push(salesOrderId); // ambiguous item name — needs a human to pick a rate override
+          // Ambiguous item name — needs a human to pick a rate override via
+          // the manual flow; parking it in cooldown too so this doesn't
+          // burn a Zoho items-list fetch every minute for no reason.
+          await markFailed(supabase, salesOrderId, 'needs_resolution: ' + JSON.stringify(data.unresolved));
+          skipped.push(salesOrderId);
         } else {
+          await markSucceeded(supabase, salesOrderId);
           invoiced.push(salesOrderId);
         }
       } catch (e: any) {
+        await markFailed(supabase, salesOrderId, e.message);
         errors.push({ sales_order_id: salesOrderId, error: e.message });
-      } finally {
-        await release(supabase, salesOrderId);
       }
     }
 
