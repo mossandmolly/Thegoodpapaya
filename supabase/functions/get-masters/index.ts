@@ -24,11 +24,12 @@ async function sbSelect(table: string, select = '*', extra = ''): Promise<any[]>
 
 async function sbUpsert(table: string, rows: any[], onConflict: string) {
   if (!rows.length) return;
-  await fetch(`${env('SUPABASE_URL')}/rest/v1/${table}?on_conflict=${onConflict}`, {
+  const res = await fetch(`${env('SUPABASE_URL')}/rest/v1/${table}?on_conflict=${onConflict}`, {
     method:  'POST',
     headers: { ...sbHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal' },
     body:    JSON.stringify(rows),
   });
+  if (!res.ok) console.error(`sbUpsert(${table}) failed (${res.status}):`, await res.text());
 }
 
 // ── Name normalisation ────────────────────────────────────────────────────────
@@ -115,7 +116,26 @@ function deduplicateItems(items: { name: string; unit: string }[]): { name: stri
 
 // ── Zoho helpers ──────────────────────────────────────────────────────────────
 
+// In-memory (fast path within a warm isolate) backed by the shared
+// zoho_token_cache row (migration 046) — this used to refresh on every
+// single call, force=1 or not, with no caching at all.
+let cachedToken = '';
+let tokenExpiry = 0;
+
 async function getZohoToken(): Promise<{ access_token: string; orgId: string } | null> {
+  const orgId = env('ZOHO_ORG_ID') || env('ZOHO_ORGANIZATION_ID');
+  if (!orgId) return null;
+
+  if (cachedToken && Date.now() < tokenExpiry - 60_000) return { access_token: cachedToken, orgId };
+
+  const cachedRows = await sbSelect('zoho_token_cache', 'access_token,expires_at', '&id=eq.1');
+  const cached = cachedRows[0];
+  if (cached && new Date(cached.expires_at).getTime() > Date.now() + 60_000) {
+    cachedToken = cached.access_token;
+    tokenExpiry = new Date(cached.expires_at).getTime();
+    return { access_token: cachedToken, orgId };
+  }
+
   const cid = env('ZOHO_CLIENT_ID'), cs = env('ZOHO_CLIENT_SECRET'), rt = env('ZOHO_REFRESH_TOKEN');
   if (!cid || !cs || !rt) return null;
 
@@ -124,13 +144,14 @@ async function getZohoToken(): Promise<{ access_token: string; orgId: string } |
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'refresh_token', client_id: cid, client_secret: cs, refresh_token: rt }).toString(),
   });
-  const { access_token } = await tokenRes.json();
+  const { access_token, expires_in } = await tokenRes.json();
   if (!access_token) return null;
 
-  const orgId = env('ZOHO_ORG_ID') || env('ZOHO_ORGANIZATION_ID');
-  if (!orgId) return null;
+  cachedToken = access_token;
+  tokenExpiry = Date.now() + (expires_in ?? 3600) * 1000;
+  await sbUpsert('zoho_token_cache', [{ id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString() }], 'id');
 
-  return { access_token, orgId };
+  return { access_token: cachedToken, orgId };
 }
 
 async function fetchAndCacheItems(accessToken: string, orgId: string): Promise<number> {

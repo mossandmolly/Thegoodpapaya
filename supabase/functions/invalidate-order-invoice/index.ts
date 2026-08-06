@@ -54,7 +54,27 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-async function getZohoToken(): Promise<string> {
+// Two-tier cache: an in-memory one (fast path within a warm isolate) backed
+// by the shared `zoho_token_cache` row (migration 046) — this function used
+// to refresh on every single call with no caching at all, which is exactly
+// the kind of load that trips Zoho's "too many requests continuously"
+// throttle, especially since this fires silently as a side effect of
+// routine packer/delivery actions (see this file's own header comment),
+// not just a deliberate click.
+let cachedToken = '';
+let tokenExpiry = 0;
+
+async function getZohoToken(supabase: ReturnType<typeof createClient>): Promise<string> {
+  if (cachedToken && Date.now() < tokenExpiry - 60_000) return cachedToken;
+
+  const { data: row } = await supabase
+    .from('zoho_token_cache').select('access_token,expires_at').eq('id', 1).maybeSingle();
+  if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000) {
+    cachedToken = row.access_token;
+    tokenExpiry = new Date(row.expires_at).getTime();
+    return cachedToken;
+  }
+
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -67,7 +87,13 @@ async function getZohoToken(): Promise<string> {
   });
   const data = await res.json();
   if (!data.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(data)}`);
-  return data.access_token;
+  cachedToken = data.access_token;
+  tokenExpiry = Date.now() + (data.expires_in ?? 3600) * 1000;
+  const { error: cacheErr } = await supabase.from('zoho_token_cache').upsert({
+    id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString(),
+  });
+  if (cacheErr) console.error('zoho_token_cache upsert failed:', cacheErr.message);
+  return cachedToken;
 }
 
 function zohoUrl(path: string, orgId: string): string {
@@ -131,7 +157,7 @@ Deno.serve(async (req) => {
     if (orderErr || !order) throw new Error(`Order ${sales_order_id} not found`);
 
     if (order.zoho_invoice_id) {
-      const token = await getZohoToken();
+      const token = await getZohoToken(supabase);
       const orgId = env('ZOHO_ORGANIZATION_ID');
       const payments = await fetchAppliedPayments(order.zoho_invoice_id, token, orgId);
       for (const p of payments) {
