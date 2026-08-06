@@ -179,9 +179,10 @@ async function getZohoToken(supabase: ReturnType<typeof createClient>): Promise<
   if (!data.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(data)}`);
   cachedToken = data.access_token;
   tokenExpiry = Date.now() + (data.expires_in ?? 3600) * 1000;
-  await supabase.from('zoho_token_cache').upsert({
+  const { error: cacheErr } = await supabase.from('zoho_token_cache').upsert({
     id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString(),
   });
+  if (cacheErr) console.error('zoho_token_cache upsert failed:', cacheErr.message);
   return cachedToken;
 }
 
