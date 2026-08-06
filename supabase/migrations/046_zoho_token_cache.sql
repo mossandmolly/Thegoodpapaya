@@ -20,6 +20,15 @@ create table if not exists public.zoho_token_cache (
   constraint zoho_token_cache_single_row check (id = 1)
 );
 
+-- getZohoToken()'s upsert only ever sets access_token/expires_at, relying
+-- on this trigger (not an explicit value) to keep updated_at meaningful —
+-- it's the one field that tells you how often a real Zoho refresh actually
+-- happened, as opposed to a cache hit.
+drop trigger if exists zoho_token_cache_updated_at on public.zoho_token_cache;
+create trigger zoho_token_cache_updated_at
+  before update on public.zoho_token_cache
+  for each row execute function update_updated_at();
+
 alter table public.zoho_token_cache enable row level security;
 -- Service-role only, same as `orders` — this is an internal credential
 -- cache, never read or written directly by the frontend.
