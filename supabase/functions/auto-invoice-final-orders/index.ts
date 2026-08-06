@@ -58,7 +58,7 @@ const CORS = {
 };
 
 const STALE_LOCK_MS = 5 * 60 * 1000;
-const BACKOFF_MS     = 10 * 60 * 1000;
+const BACKOFF_MS     = 5 * 60 * 1000;
 
 type ClaimResult = 'claimed' | 'locked' | 'cooldown';
 
