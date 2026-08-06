@@ -39,6 +39,7 @@
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 //   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORGANIZATION_ID
+//   CRON_SECRET (only read when a request sends x-cron-secret)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -116,7 +117,16 @@ function env(key: string) {
 // the platform level. Requiring a real logged-in user session here is what
 // actually restricts this to signed-in ops staff (it also touches real Zoho
 // invoices and Razorpay payment links, so this matters more than most).
+//
+// x-cron-secret is the one exception — auto-invoice-final-orders (see
+// migration 055) calls this on a schedule with no user session to send, the
+// same shared-secret pattern export-csv/purge-delivery-photos already use.
 async function requireAuth(req: Request): Promise<void> {
+  const cronSecret = req.headers.get('x-cron-secret');
+  if (cronSecret) {
+    if (cronSecret !== env('CRON_SECRET')) throw new Error('Not authorized');
+    return;
+  }
   const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jwt) throw new Error('Not authenticated');
   const res = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, {
@@ -128,7 +138,7 @@ async function requireAuth(req: Request): Promise<void> {
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-cron-secret',
 };
 
 // ── Zoho OAuth ────────────────────────────────────────────────────────────────
