@@ -12,6 +12,13 @@
 // generate-invoice for each one exactly as the manual "Generate Invoice"
 // button would.
 //
+// Scoped to TODAY's orders only (IST calendar date, matching parser.html's
+// own CALENDAR_TODAY) — an old order still sitting 'final' days later is a
+// backlog item someone needs to look at, not something that should get
+// silently auto-invoiced out of nowhere the moment this job happens to
+// notice it. sales_order_id's own YYYY-MM-DD-... prefix (see parser.html)
+// is what "today" is matched against.
+//
 // invoice_queue (migration 020) — otherwise unused, see its own header
 // comment for the abandoned async-batch design it was built for — is
 // repurposed here for two things per sales_order_id:
@@ -36,6 +43,12 @@ function env(key: string) {
   const val = Deno.env.get(key);
   if (!val) throw new Error(`Missing env: ${key}`);
   return val;
+}
+
+// Same IST-calendar-date rule as parser.html's CALENDAR_TODAY — plain UTC
+// would drift onto the wrong day for a chunk of the evening/morning IST.
+function todayIST(): string {
+  return new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 const CORS = {
@@ -89,7 +102,9 @@ Deno.serve(async (req) => {
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
     const { data: finalRows, error: finalErr } = await supabase
-      .from('order_items').select('sales_order_id').eq('status', 'final');
+      .from('order_items').select('sales_order_id')
+      .eq('status', 'final')
+      .like('sales_order_id', `${todayIST()}-%`);
     if (finalErr) throw new Error(finalErr.message);
 
     const candidateIds = [...new Set((finalRows ?? []).map(r => r.sales_order_id as string))];
