@@ -227,7 +227,23 @@ function casingScore(original: string, cleaned: string): number {
   return score;
 }
 
-async function zohoToken(): Promise<string> {
+// In-memory (fast path within a warm isolate) backed by the shared
+// zoho_token_cache row (migration 046) — this used to refresh on every
+// single click of the "Customers" sync button, with no caching at all.
+let cachedToken = '';
+let tokenExpiry = 0;
+
+async function zohoToken(supabase: ReturnType<typeof createClient>): Promise<string> {
+  if (cachedToken && Date.now() < tokenExpiry - 60_000) return cachedToken;
+
+  const { data: row } = await supabase
+    .from('zoho_token_cache').select('access_token,expires_at').eq('id', 1).maybeSingle();
+  if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000) {
+    cachedToken = row.access_token;
+    tokenExpiry = new Date(row.expires_at).getTime();
+    return cachedToken;
+  }
+
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -240,7 +256,13 @@ async function zohoToken(): Promise<string> {
   });
   const d = await res.json();
   if (!d.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(d)}`);
-  return d.access_token;
+  cachedToken = d.access_token;
+  tokenExpiry = Date.now() + (d.expires_in ?? 3600) * 1000;
+  const { error: cacheErr } = await supabase.from('zoho_token_cache').upsert({
+    id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString(),
+  });
+  if (cacheErr) console.error('zoho_token_cache upsert failed:', cacheErr.message);
+  return cachedToken;
 }
 
 async function getOrgId(token: string): Promise<string> {
@@ -278,7 +300,7 @@ Deno.serve(async (req) => {
   try {
     await requireAuth(req);
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
-    const token    = await zohoToken();
+    const token    = await zohoToken(supabase);
     const orgId    = await getOrgId(token);
     const contacts = await fetchAllContacts(token, orgId);
 
