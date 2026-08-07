@@ -6,6 +6,11 @@ alter table invoice_line_items
   add column if not exists amount_paid  numeric;   -- cumulative payments received
 
 -- Update get_invoices_by_phone to return new columns
+-- create or replace can't change a function's return-column list — has to
+-- be dropped first, or this fails with "cannot change return type of
+-- existing function" (42P13) once this migration runs against a database
+-- that already has the 003 version of this function.
+drop function if exists get_invoices_by_phone(text);
 create or replace function get_invoices_by_phone(p_phone text)
 returns table (
   id uuid, customer_name text, phone_number text, invoice_date date,
@@ -33,6 +38,7 @@ language sql security definer stable as $$
   order by ili.invoice_date desc, ili.invoice_number desc;
 $$;
 
+drop function if exists get_invoices_by_customer(text);
 create or replace function get_invoices_by_customer(p_name text)
 returns table (
   id uuid, customer_name text, phone_number text, invoice_date date,
