@@ -288,7 +288,13 @@ async function deleteZohoInvoice(invoiceId: string, token: string, orgId: string
     headers: { Authorization: `Zoho-oauthtoken ${token}` },
   });
   const data = await res.json();
-  if (data.code !== 0) throw new Error(`Zoho delete invoice failed: ${data.message}`);
+  // code 0 = success; 5 = not found — already gone (e.g. someone deleted it
+  // directly in Zoho), which is exactly as good as this call having deleted
+  // it itself, so regeneration should proceed rather than fail. Same
+  // exception cancel-order/invalidate-order-invoice already make.
+  if (data.code !== 0 && data.code !== 5) {
+    throw new Error(`Zoho delete invoice failed (${data.code}): ${data.message}`);
+  }
 }
 
 // ── Create Zoho Books invoice ─────────────────────────────────────────────────
