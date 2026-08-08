@@ -131,8 +131,8 @@ async function deleteZohoInvoice(invoiceId: string, token: string, orgId: string
     headers: { Authorization: `Zoho-oauthtoken ${token}` },
   });
   const data = await res.json();
-  // code 0 = success; 5 = not found (already gone — treat as OK)
-  if (data.code !== 0 && data.code !== 5) {
+  // code 0 = success; 5/1002 = not found (already gone — treat as OK)
+  if (data.code !== 0 && data.code !== 5 && data.code !== 1002) {
     throw new Error(`Zoho delete invoice failed (${data.code}): ${data.message}`);
   }
 }
