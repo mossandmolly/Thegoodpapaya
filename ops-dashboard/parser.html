@@ -7037,7 +7037,7 @@ let expensesRows=[];
 async function loadExpensesView(){
   const tbody=document.getElementById('expenses-tbody');
   tbody.innerHTML='<tr><td colspan="5" class="to-empty">Loading…</td></tr>';
-  const{data,error}=await sb.from('expenses')
+  const{data,error}=await sb.from('daily_expenses')
     .select('id,category,description,amount,created_at')
     .eq('date',viewDate)
     .order('created_at');
@@ -7067,7 +7067,7 @@ document.getElementById('expense-add-btn').addEventListener('click',async()=>{
   const description=document.getElementById('expense-description').value.trim()||null;
   const amount=parseFloat(document.getElementById('expense-amount').value);
   if(!amount||amount<=0){uxAlert('Enter a valid amount');return;}
-  const{data,error}=await sb.from('expenses')
+  const{data,error}=await sb.from('daily_expenses')
     .insert({date:viewDate,category,description,amount})
     .select().single();
   if(error){uxAlert('Failed to save: '+error.message);return;}
@@ -7079,7 +7079,7 @@ document.getElementById('expense-add-btn').addEventListener('click',async()=>{
 
 async function deleteExpense(id){
   if(!await uxConfirm('Remove this expense entry?'))return;
-  const{error}=await sb.from('expenses').delete().eq('id',id);
+  const{error}=await sb.from('daily_expenses').delete().eq('id',id);
   if(error){uxAlert('Failed: '+error.message);return;}
   const idx=expensesRows.findIndex(r=>r.id===id);
   if(idx>-1)expensesRows.splice(idx,1);
