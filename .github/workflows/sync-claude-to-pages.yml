@@ -23,5 +23,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin ${{ github.ref_name }}
-          git merge origin/${{ github.ref_name }} --no-edit -X theirs --allow-unrelated-histories
+          git merge origin/${{ github.ref_name }} --no-edit -X theirs --allow-unrelated-histories || true
+          # -X theirs only auto-resolves content conflicts, not modify/delete
+          # or rename/delete ones (e.g. a file removed on the Claude branch
+          # but still present on shopify-theme) — for anything still
+          # unmerged, honor the incoming branch's decision and remove it.
+          git diff --name-only --diff-filter=U | xargs -r git rm -f --
+          git commit --no-edit || true
           git push origin shopify-theme
