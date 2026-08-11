@@ -1,24 +1,25 @@
-// Supabase Edge Function — cancel-order
+// Supabase Edge Function — invalidate-order-invoice
 //
-// We never hard-delete an order (this function used to — that's the old
-// behavior, from before the order_items rebuild). Cancelling is now a
-// terminal status change:
-//  1. If a Zoho invoice exists: unapply any payments (left as unused/
-//     available credit on the customer's Zoho account — Zoho's own payment
-//     model treats an unapplied payment as customer credit automatically, no
-//     separate credit-note step needed) then delete the invoice.
-//  2. Cancel the Razorpay payment link, if one exists (best-effort).
-//  3. Delete invoice_queue and invoice_line_items rows for this
-//     sales_order_id — neither has a cascade that would clean them up once
-//     we stop deleting the orders row.
-//  4. Set orders.status = 'cancelled', invoice_status = 'cancelled', and
-//     clear the now-stale Zoho/Razorpay fields (the orders row itself stays
-//     — never deleted).
-//  5. Set every order_items row for this sales_order_id to status =
-//     'cancelled', regardless of what stage each item was at.
+// Called whenever Today's Orders edits an already-invoiced order (item
+// added, quantity/description changed) — the existing Zoho invoice no
+// longer reflects reality the moment that happens, so it's deleted right
+// away rather than left sitting in Zoho showing stale numbers until the
+// next explicit "generate invoice" click.
+//
+// Unlike cancel-order, this does NOT touch order/item status — the order
+// stays exactly as active/final/invoiced as the caller already set it; this
+// only clears the invoice + payment link side of things.
+//
+//  1. If a Zoho invoice exists: unapply any payments (left as unused
+//     customer credit in Zoho automatically) then delete the invoice.
+//  2. Cancel the Razorpay payment link, if any — it was sized for the now-
+//     deleted invoice's total.
+//  3. Delete invoice_queue / invoice_line_items rows for this sales_order_id.
+//  4. Clear orders.zoho_invoice_id/invoice_number/invoice_total/balance_due/
+//     razorpay_link_id/razorpay_url and reset invoice_status to 'pending'.
 //
 // Input:  { sales_order_id: string }
-// Output: { sales_order_id, cancelled: true, results: string[] }
+// Output: { sales_order_id, invalidated: true }
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -50,19 +51,16 @@ async function requireAuth(req: Request): Promise<void> {
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// ── Zoho OAuth ────────────────────────────────────────────────────────────────
 // Two-tier cache: an in-memory one (fast path within a warm isolate) backed
-// by a shared `zoho_token_cache` row in Postgres — generate-invoice,
-// cancel-order, and download-invoice each run as separate functions with
-// their OWN isolates, so an in-memory-only cache meant switching between
-// actions (e.g. cancelling orders right after generating invoices) still
-// hit Zoho's OAuth endpoint fresh from each function, defeating the whole
-// point of caching ("You have made too many requests continuously"). The
-// DB row lets every function reuse the same token and refresh it only once
-// across the whole system.
+// by the shared `zoho_token_cache` row (migration 046) — this function used
+// to refresh on every single call with no caching at all, which is exactly
+// the kind of load that trips Zoho's "too many requests continuously"
+// throttle, especially since this fires silently as a side effect of
+// routine packer/delivery actions (see this file's own header comment),
+// not just a deliberate click.
 let cachedToken = '';
 let tokenExpiry = 0;
 
@@ -105,15 +103,12 @@ function zohoUrl(path: string, orgId: string): string {
 
 async function fetchAppliedPayments(
   invoiceId: string, token: string, orgId: string,
-): Promise<Array<{ payment_id: string; amount_applied: number }>> {
+): Promise<Array<{ payment_id: string }>> {
   const res  = await fetch(zohoUrl(`/invoices/${invoiceId}/payments`, orgId), {
     headers: { Authorization: `Zoho-oauthtoken ${token}` },
   });
   const data = await res.json();
-  return (data.payments ?? []).map((p: any) => ({
-    payment_id:     p.payment_id as string,
-    amount_applied: parseFloat(p.amount_applied ?? p.amount ?? 0),
-  }));
+  return (data.payments ?? []).map((p: any) => ({ payment_id: p.payment_id as string }));
 }
 
 async function unapplyPayment(
@@ -137,7 +132,6 @@ async function deleteZohoInvoice(invoiceId: string, token: string, orgId: string
   }
 }
 
-// ── Razorpay ──────────────────────────────────────────────────────────────────
 async function cancelRazorpayLink(linkId: string): Promise<void> {
   try {
     const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
@@ -148,7 +142,6 @@ async function cancelRazorpayLink(linkId: string): Promise<void> {
   } catch (_) {} // best effort
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
@@ -163,66 +156,36 @@ Deno.serve(async (req) => {
       .from('orders').select('*').eq('sales_order_id', sales_order_id).single();
     if (orderErr || !order) throw new Error(`Order ${sales_order_id} not found`);
 
-    const results: string[] = [];
-
-    if (order.status === 'cancelled') {
-      return new Response(
-        JSON.stringify({ ok: true, sales_order_id, results: ['Already cancelled'] }),
-        { headers: { ...CORS, 'Content-Type': 'application/json' } },
-      );
-    }
-
-    // 1. Unapply payments (left as unused customer credit in Zoho) + delete invoice
     if (order.zoho_invoice_id) {
-      try {
-        const token  = await getZohoToken(supabase);
-        const orgId  = env('ZOHO_ORGANIZATION_ID');
-        const payments = await fetchAppliedPayments(order.zoho_invoice_id, token, orgId);
-        for (const p of payments) {
-          await unapplyPayment(order.zoho_invoice_id, p.payment_id, token, orgId);
-        }
-        await deleteZohoInvoice(order.zoho_invoice_id, token, orgId);
-        results.push(`Zoho invoice ${order.zoho_invoice_id} deleted (${payments.length} payment(s) unapplied as customer credit)`);
-      } catch (e: any) {
-        results.push(`Zoho delete failed (non-fatal): ${e.message}`);
+      const token = await getZohoToken(supabase);
+      const orgId = env('ZOHO_ORGANIZATION_ID');
+      const payments = await fetchAppliedPayments(order.zoho_invoice_id, token, orgId);
+      for (const p of payments) {
+        await unapplyPayment(order.zoho_invoice_id, p.payment_id, token, orgId);
       }
+      await deleteZohoInvoice(order.zoho_invoice_id, token, orgId);
     }
 
-    // 2. Cancel Razorpay link, if any
     if (order.razorpay_link_id) {
       await cancelRazorpayLink(order.razorpay_link_id);
-      results.push('Razorpay link cancelled');
     }
 
-    // 3. Clean up invoice_queue / invoice_line_items — neither has a cascade
-    // that fires now that we don't delete the orders row.
     await supabase.from('invoice_queue').delete().eq('sales_order_id', sales_order_id);
-    const { error: liErr } = await supabase
-      .from('invoice_line_items').delete().eq('sales_order_id', sales_order_id);
-    if (liErr) throw new Error(`Could not clean up invoice_line_items: ${liErr.message}`);
+    await supabase.from('invoice_line_items').delete().eq('sales_order_id', sales_order_id);
 
-    // 4. Soft-cancel the order — never delete the row itself
-    const { error: orderUpdErr } = await supabase.from('orders').update({
-      status:            'cancelled',
-      zoho_invoice_id:   null,
-      invoice_number:    null,
-      invoice_total:     null,
-      balance_due:       null,
-      invoice_status:    'cancelled',
-      razorpay_link_id:  null,
-      razorpay_url:      null,
+    const { error: updErr } = await supabase.from('orders').update({
+      zoho_invoice_id:  null,
+      invoice_number:   null,
+      invoice_total:    null,
+      balance_due:      null,
+      invoice_status:   'pending',
+      razorpay_link_id: null,
+      razorpay_url:     null,
     }).eq('sales_order_id', sales_order_id);
-    if (orderUpdErr) throw new Error(orderUpdErr.message);
-
-    // 5. Every item on this order becomes 'cancelled', whatever stage it was at
-    const { error: itemsUpdErr } = await supabase
-      .from('order_items').update({ status: 'cancelled' }).eq('sales_order_id', sales_order_id);
-    if (itemsUpdErr) throw new Error(itemsUpdErr.message);
-
-    results.push('Order and items marked cancelled');
+    if (updErr) throw new Error(updErr.message);
 
     return new Response(
-      JSON.stringify({ ok: true, sales_order_id, results }),
+      JSON.stringify({ sales_order_id, invalidated: true }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
