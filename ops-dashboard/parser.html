@@ -7037,6 +7037,8 @@ async function savePurchaseCost(inputEl,id){
 // electricity, etc.) logged against the same viewed date as Purchases,
 // but unrelated to any specific fruit tranche — see migration 066.
 let expensesRows=[];
+let editingExpenseId=null;
+const EXPENSE_CATEGORIES=['Packaging','Housekeeping','Transport','Rent & Electricity','Other'];
 
 async function loadExpensesView(){
   const tbody=document.getElementById('expenses-tbody');
@@ -7058,12 +7060,46 @@ function renderExpensesTable(){
     return;
   }
   const total=expensesRows.reduce((s,r)=>s+Number(r.amount),0);
-  tbody.innerHTML=expensesRows.map(r=>
-    '<tr><td>'+escH(r.category)+'</td><td>'+escH(r.description||'—')+'</td><td>'+Number(r.amount).toFixed(2)+'</td>'+
+  tbody.innerHTML=expensesRows.map(r=>{
+    const idJson=escH(JSON.stringify(r.id));
+    if(r.id===editingExpenseId){
+      return '<tr>'+
+        '<td><select id="exp-edit-cat">'+EXPENSE_CATEGORIES.map(c=>'<option'+(c===r.category?' selected':'')+'>'+escH(c)+'</option>').join('')+'</select></td>'+
+        '<td><input type="text" id="exp-edit-desc" value="'+escH(r.description||'')+'" placeholder="optional"></td>'+
+        '<td><input type="number" id="exp-edit-amt" step="0.01" min="0" value="'+r.amount+'"></td>'+
+        '<td>'+new Date(r.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</td>'+
+        '<td><button class="pk-tick" onclick="saveExpenseEdit('+idJson+')" title="Save">✓</button> '+
+          '<button class="del-btn" onclick="cancelEditExpense()" title="Cancel">✕</button></td></tr>';
+    }
+    return '<tr><td>'+escH(r.category)+'</td><td>'+escH(r.description||'—')+'</td><td>'+Number(r.amount).toFixed(2)+'</td>'+
     '<td>'+new Date(r.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</td>'+
-    '<td><button class="del-btn" onclick="deleteExpense('+escH(JSON.stringify(r.id))+')">✕</button></td></tr>'
-  ).join('')+
+    '<td><button class="pk-tick" onclick="editExpense('+idJson+')" title="Edit">✎</button> '+
+      '<button class="del-btn" onclick="deleteExpense('+idJson+')" title="Delete">✕</button></td></tr>';
+  }).join('')+
   '<tr><td colspan="2" style="font-weight:600">Total</td><td style="font-weight:600">'+total.toFixed(2)+'</td><td></td><td></td></tr>';
+}
+
+function editExpense(id){
+  editingExpenseId=id;
+  renderExpensesTable();
+}
+
+function cancelEditExpense(){
+  editingExpenseId=null;
+  renderExpensesTable();
+}
+
+async function saveExpenseEdit(id){
+  const category=document.getElementById('exp-edit-cat').value;
+  const description=document.getElementById('exp-edit-desc').value.trim()||null;
+  const amount=parseFloat(document.getElementById('exp-edit-amt').value);
+  if(!amount||amount<=0){uxAlert('Enter a valid amount');return;}
+  const{error}=await sb.from('daily_expenses').update({category,description,amount}).eq('id',id);
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  const row=expensesRows.find(r=>r.id===id);
+  if(row){row.category=category;row.description=description;row.amount=amount;}
+  editingExpenseId=null;
+  renderExpensesTable();
 }
 
 document.getElementById('expense-add-btn').addEventListener('click',async()=>{
