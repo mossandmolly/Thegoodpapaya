@@ -226,6 +226,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    whole thing lays out flat and just scrolls with the page like any
    other content, not a scrollbox-within-a-scrollbox. */
 .stock-table-wrap{width:100%;overflow-x:visible}
+.expense-add-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.expense-add-row select,.expense-add-row input[type="text"]{flex:1 1 160px;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;background:#ffffff}
+.expense-add-row input[type="number"]{flex:0 1 120px;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;background:#ffffff}
+.expense-add-row button{flex:0 0 auto}
 .stock-fruit-pills{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
 .stock-fruit-pill{display:inline-flex;align-items:center;gap:6px;background:#fdf3e7;border:1px solid #f0dcc0;border-radius:14px;padding:5px 6px 5px 12px;font-size:12px;color:#5c4f42}
 .stock-fruit-pill button{background:none;border:none;color:#b3261e;cursor:pointer;font-size:13px;font-weight:700;padding:0 4px;line-height:1}
@@ -553,6 +557,25 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <tfoot><tr class="purchases-total-row hidden" id="purchases-total-row">
       <td colspan="4">Total</td><td id="purchases-total-cost"></td>
     </tr></tfoot></table>
+  </div>
+
+  <div class="section-label" style="margin-top:20px">Expenses <span id="expenses-rc"></span></div>
+  <div class="expense-add-row">
+    <select id="expense-category">
+      <option>Packaging</option>
+      <option>Housekeeping</option>
+      <option>Transport</option>
+      <option>Rent &amp; Electricity</option>
+      <option>Other</option>
+    </select>
+    <input type="text" id="expense-description" placeholder="Description (optional)">
+    <input type="number" id="expense-amount" step="0.01" min="0" placeholder="Amount (₹)">
+    <button class="btn-parse" id="expense-add-btn" style="margin-bottom:0">Add</button>
+  </div>
+  <div class="stock-table-wrap">
+    <table class="community-table" id="expenses-table"><thead><tr>
+      <th>Category</th><th>Description</th><th>Amount (₹)</th><th>Time</th><th></th>
+    </tr></thead><tbody id="expenses-tbody"></tbody></table>
   </div>
 </div>
 
@@ -6969,6 +6992,7 @@ async function loadPurchasesView(){
   if(error){tbody.innerHTML='<tr><td colspan="5" class="to-empty">'+escH(error.message)+'</td></tr>';return;}
   purchasesRows=data||[];
   renderPurchasesTable();
+  loadExpensesView();
 }
 
 function renderPurchasesTable(){
@@ -7002,6 +7026,64 @@ async function savePurchaseCost(inputEl,id){
   if(row)row.cost=cost;
   inputEl.nextElementSibling.disabled=true;
   renderPurchasesTable();
+}
+
+// ── Expenses (buyer role) ────────────────────────────────────────────────
+// Day-to-day running costs (packaging, housekeeping, transport, rent/
+// electricity, etc.) logged against the same viewed date as Purchases,
+// but unrelated to any specific fruit tranche — see migration 066.
+let expensesRows=[];
+
+async function loadExpensesView(){
+  const tbody=document.getElementById('expenses-tbody');
+  tbody.innerHTML='<tr><td colspan="5" class="to-empty">Loading…</td></tr>';
+  const{data,error}=await sb.from('expenses')
+    .select('id,category,description,amount,created_at')
+    .eq('date',viewDate)
+    .order('created_at');
+  if(error){tbody.innerHTML='<tr><td colspan="5" class="to-empty">'+escH(error.message)+'</td></tr>';return;}
+  expensesRows=data||[];
+  renderExpensesTable();
+}
+
+function renderExpensesTable(){
+  const tbody=document.getElementById('expenses-tbody');
+  document.getElementById('expenses-rc').textContent=expensesRows.length?('('+expensesRows.length+')'):'';
+  if(!expensesRows.length){
+    tbody.innerHTML='<tr><td colspan="5" class="to-empty">No expenses logged for this date</td></tr>';
+    return;
+  }
+  const total=expensesRows.reduce((s,r)=>s+Number(r.amount),0);
+  tbody.innerHTML=expensesRows.map(r=>
+    '<tr><td>'+escH(r.category)+'</td><td>'+escH(r.description||'—')+'</td><td>'+Number(r.amount).toFixed(2)+'</td>'+
+    '<td>'+new Date(r.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</td>'+
+    '<td><button class="del-btn" onclick="deleteExpense('+escH(JSON.stringify(r.id))+')">✕</button></td></tr>'
+  ).join('')+
+  '<tr><td colspan="2" style="font-weight:600">Total</td><td style="font-weight:600">'+total.toFixed(2)+'</td><td></td><td></td></tr>';
+}
+
+document.getElementById('expense-add-btn').addEventListener('click',async()=>{
+  const category=document.getElementById('expense-category').value;
+  const description=document.getElementById('expense-description').value.trim()||null;
+  const amount=parseFloat(document.getElementById('expense-amount').value);
+  if(!amount||amount<=0){uxAlert('Enter a valid amount');return;}
+  const{data,error}=await sb.from('expenses')
+    .insert({date:viewDate,category,description,amount})
+    .select().single();
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  expensesRows.push(data);
+  document.getElementById('expense-description').value='';
+  document.getElementById('expense-amount').value='';
+  renderExpensesTable();
+});
+
+async function deleteExpense(id){
+  if(!await uxConfirm('Remove this expense entry?'))return;
+  const{error}=await sb.from('expenses').delete().eq('id',id);
+  if(error){uxAlert('Failed: '+error.message);return;}
+  const idx=expensesRows.findIndex(r=>r.id===id);
+  if(idx>-1)expensesRows.splice(idx,1);
+  renderExpensesTable();
 }
 
 </script>
