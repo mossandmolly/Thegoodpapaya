@@ -234,6 +234,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .community-table td{padding:4px 6px;border-bottom:1px solid #f1e9df;color:#5c4f42}
 .community-table input{width:90px;padding:4px 6px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit;background:#ffffff}
 .community-table input[type="text"]{width:110px}
+.purchases-total-row td{font-weight:700;color:#5c4f42;border-bottom:none;border-top:2px solid #eee0d0}
 .stock-qty-input{width:80px;padding:5px 7px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit}
 .stock-badge{display:inline-flex;align-items:center;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap}
 .stock-badge.stock-need{background:#fbe9e7;color:#b3261e}
@@ -548,7 +549,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="stock-table-wrap">
     <table class="community-table" id="purchases-table"><thead><tr>
       <th>Fruit</th><th>Qty</th><th>Source</th><th>Time</th><th>Cost (₹)</th>
-    </tr></thead><tbody id="purchases-tbody"></tbody></table>
+    </tr></thead><tbody id="purchases-tbody"></tbody>
+    <tfoot><tr class="purchases-total-row hidden" id="purchases-total-row">
+      <td colspan="4">Total</td><td id="purchases-total-cost"></td>
+    </tr></tfoot></table>
   </div>
 </div>
 
@@ -6978,6 +6982,15 @@ function renderPurchasesTable(){
     '<td><input type="number" class="stock-qty-input" step="0.01" min="0" placeholder="₹" value="'+(r.cost??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
       '<button class="pk-tick" disabled onclick="savePurchaseCost(this.previousElementSibling,'+escH(JSON.stringify(r.id))+')" title="Save cost">✓</button></td></tr>'
   ).join(''):'<tr><td colspan="5" class="to-empty">No purchases logged for this date</td></tr>';
+
+  const totalRow=document.getElementById('purchases-total-row');
+  if(rows.length){
+    const total=rows.reduce((sum,r)=>sum+(r.cost!=null?Number(r.cost):0),0);
+    document.getElementById('purchases-total-cost').textContent='₹'+total.toLocaleString('en-IN',{maximumFractionDigits:2});
+    totalRow.classList.remove('hidden');
+  }else{
+    totalRow.classList.add('hidden');
+  }
 }
 
 async function savePurchaseCost(inputEl,id){
@@ -6988,6 +7001,7 @@ async function savePurchaseCost(inputEl,id){
   const row=purchasesRows.find(r=>r.id===id);
   if(row)row.cost=cost;
   inputEl.nextElementSibling.disabled=true;
+  renderPurchasesTable();
 }
 
 </script>
