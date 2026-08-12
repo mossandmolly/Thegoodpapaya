@@ -6518,6 +6518,7 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
     await performDvAction('mark_delivered',payload);
     await loadDeliveryView();
     if(photosSkipped)uxAlert('Delivered. Photos weren\'t attached — you can add them later from the order card once you have signal.');
+    maybeRefreshRiderQrsAfterDelivery(order?.customer,order?.assignedRider||riderName);
   }catch(e){
     if(isNetworkFailure(e)){
       queueDvAction('mark_delivered',payload);
@@ -6531,6 +6532,43 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
     confirmBtn.textContent='Confirm Delivered';
   }
 });
+
+// Dynamic QRs only stay active ~2hrs — if a rider just delivered the last
+// house in a society, their remaining OFD orders (in other societies) might
+// sit unvisited long enough for those QRs to expire before they arrive.
+// Refresh (close + recreate) each one to reset the clock, but only once the
+// completed society genuinely has nothing left OFD for this same rider —
+// not on every single delivery, which would burn through Razorpay QR
+// creations for no reason.
+async function maybeRefreshRiderQrsAfterDelivery(deliveredCustomerName,rider){
+  if(!deliveredCustomerName||!rider)return;
+  const finishedSociety=deriveSociety(deliveredCustomerName);
+  const remainingInSociety=Object.values(deliveryOrders).some(o=>
+    o.assignedRider===rider&&o.deliveryStatus==='ofd'&&deriveSociety(o.customer)===finishedSociety
+  );
+  if(remainingInSociety)return;
+
+  const soidsToRefresh=Object.keys(deliveryOrders).filter(soid=>{
+    const o=deliveryOrders[soid];
+    return o.assignedRider===rider&&o.deliveryStatus==='ofd'&&o.qrImageUrl;
+  });
+  if(!soidsToRefresh.length)return;
+
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/refresh-delivery-qr',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_ids:soidsToRefresh}),
+    });
+    const data=await res.json();
+    if(!res.ok)return; // best-effort — a refresh failure shouldn't interrupt the rider
+    (data.results||[]).forEach(r=>{
+      const o=deliveryOrders[r.sales_order_id];
+      if(o)o.qrImageUrl=r.qr_image_url;
+    });
+    renderDeliveryList();
+  }catch(e){/* best-effort, offline or otherwise — next delivery will retry */}
+}
 
 async function undoDelivered(soid){
   if(!await uxConfirm('Undo delivery for this order?'))return;
