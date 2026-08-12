@@ -2502,7 +2502,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -2542,7 +2542,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -2647,6 +2647,7 @@ async function loadTodaysOrders(){
         customer:      o?.customer_name||key,
         phone:         o?.phone||null,
         razorpayUrl:   o?.razorpay_url||null,
+        qrImageUrl:    o?.qr_image_url||null,
         invoiceStatus: o?.invoice_status||null,
         orderStatus:   o?.status||'active',
         deliveryStatus:o?.delivery_status||'not_dispatched',
@@ -5564,6 +5565,7 @@ async function loadDeliveryView(silent){
         invoiceStatus:         o?.invoice_status||null,
         invoiceTotal:          o?.invoice_total??null,
         razorpayUrl:           o?.razorpay_url||null,
+        qrImageUrl:            o?.qr_image_url||null,
         deliveryStatus:        o?.delivery_status||'pending',
         deliveredAt:           o?.delivered_at||null,
         deliveryNotes:         o?.delivery_notes||null,
@@ -5906,6 +5908,7 @@ async function dispatchOrder(soid){
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not dispatch order');
     evictCustomerLookupCache(soid);
+    if(order&&data.qr_image_url){order.qrImageUrl=data.qr_image_url;renderDeliveryList();}
   }catch(e){
     if(isNetworkFailure(e)){
       queueDvAction('dispatch_order',{soid,rider:riderName});
@@ -6015,17 +6018,16 @@ function renderDeliveryCard(order,selectionMode){
     // should never have to squint to tell those apart.
     '<div class="dv-total-bar"><span>Total</span><span>₹'+total.toFixed(0)+'</span></div>';
 
-  // Only worth showing while there's still money to collect — once the
-  // rider's confirmed payment, or there's no payment link on file at all,
-  // a scan-to-pay QR has nothing to add. Rendered via a public QR-image API
-  // (a plain <img>, no extra JS dependency to fail silently) — the payment
-  // link only lets someone pay this one invoice, not a secret worth hiding
-  // from that API.
-  const qrBlock=(order.razorpayUrl&&!order.paymentCollected)
+  // A real Razorpay Dynamic QR Code (created by dispatch-order the moment
+  // this order went OFD), not the old payment-link-turned-into-a-QR-image
+  // via a third-party API — that's still generated separately (order.
+  // razorpayUrl) for the "Generate Payment Link" flow on Order Overview,
+  // but no longer shown here. Only worth showing while there's still money
+  // to collect — once the rider's confirmed payment there's nothing to add.
+  const qrBlock=(order.qrImageUrl&&!order.paymentCollected)
     ?'<div class="dv-qr-block">'+
         '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+'</div>'+
-        '<img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data='+encodeURIComponent(order.razorpayUrl)+'" width="160" height="160" alt="Payment QR">'+
-        '<a class="or-link" href="'+escH(order.razorpayUrl)+'" target="_blank">or open payment link</a>'+
+        '<img src="'+escH(order.qrImageUrl)+'" width="160" height="160" alt="Payment QR">'+
       '</div>'
     :'';
 

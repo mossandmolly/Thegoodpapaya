@@ -3,7 +3,9 @@
 // Verifies HMAC-SHA256 signature, then cumulatively adds the payment amount to
 // orders.amount_paid and recalculates balance_due.
 //
-// The Razorpay payment link notes MUST include sales_order_id.
+// Handles two event types, both requiring sales_order_id in notes:
+//   - payment_link.paid  — the manual "Generate Payment Link" flow
+//   - qr_code.credited   — the delivery-panel Dynamic QR (dispatch-order)
 // amount_paid is never reset — it accumulates across all payments and invoice regenerations.
 //
 // Required secrets: RAZORPAY_WEBHOOK_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -40,14 +42,15 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 });
   }
 
-  // Only act on payment_link.paid
-  if (payload.event !== 'payment_link.paid') {
+  if (payload.event !== 'payment_link.paid' && payload.event !== 'qr_code.credited') {
     return new Response(JSON.stringify({ ok: true, ignored: true }), { status: 200 });
   }
 
-  const linkEntity    = payload.payload?.payment_link?.entity;
   const paymentEntity = payload.payload?.payment?.entity;
-  const salesOrderId  = linkEntity?.notes?.sales_order_id as string | undefined;
+  const notesEntity    = payload.event === 'qr_code.credited'
+    ? payload.payload?.qr_code?.entity
+    : payload.payload?.payment_link?.entity;
+  const salesOrderId  = notesEntity?.notes?.sales_order_id as string | undefined;
   const amountPaise   = paymentEntity?.amount as number | undefined;
 
   if (!salesOrderId) {
