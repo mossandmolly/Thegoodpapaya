@@ -6019,15 +6019,23 @@ function renderDeliveryCard(order,selectionMode){
     '<div class="dv-total-bar"><span>Total</span><span>₹'+total.toFixed(0)+'</span></div>';
 
   // A real Razorpay Dynamic QR Code (created by dispatch-order the moment
-  // this order went OFD), not the old payment-link-turned-into-a-QR-image
-  // via a third-party API — that's still generated separately (order.
-  // razorpayUrl) for the "Generate Payment Link" flow on Order Overview,
-  // but no longer shown here. Only worth showing while there's still money
-  // to collect — once the rider's confirmed payment there's nothing to add.
+  // this order went OFD) is the default. If the rider marked it delivered-
+  // but-not-paid, mark-delivered's switchToPaymentLink already closed that
+  // QR (qrImageUrl goes null) and generated a payment link instead — shown
+  // here as a QR-of-that-link via a public QR-image API, since payment
+  // links don't come with their own hosted QR image the way Dynamic QR
+  // Codes do. Only worth showing while there's still money to collect —
+  // once the rider's confirmed payment there's nothing to add.
   const qrBlock=(order.qrImageUrl&&!order.paymentCollected)
     ?'<div class="dv-qr-block">'+
         '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+'</div>'+
         '<img src="'+escH(order.qrImageUrl)+'" width="160" height="160" alt="Payment QR">'+
+      '</div>'
+    :(order.razorpayUrl&&!order.paymentCollected)
+    ?'<div class="dv-qr-block">'+
+        '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+' (payment link sent)</div>'+
+        '<img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data='+encodeURIComponent(order.razorpayUrl)+'" width="160" height="160" alt="Payment QR">'+
+        '<a class="or-link" href="'+escH(order.razorpayUrl)+'" target="_blank">or open payment link</a>'+
       '</div>'
     :'';
 

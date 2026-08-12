@@ -40,8 +40,16 @@
 // orders" pattern that lets any packer finish someone else's item lets any
 // rider deliver an order they weren't personally assigned).
 //
+// A rider marking an order delivered-but-not-paid means whatever dynamic QR
+// was showing (see dispatch-order/refresh-delivery-qr) is now the wrong
+// mechanism — the delivery moment it was meant for has passed. This closes
+// that QR and, in its place, generates a Razorpay payment link (notified to
+// the customer over SMS/WhatsApp) so collection can continue after the
+// rider's left. Best-effort: failures here never fail the delivered-status
+// update itself, which has already succeeded by the time this runs.
+//
 // Required env vars:
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -49,6 +57,73 @@ function env(key: string) {
   const val = Deno.env.get(key);
   if (!val) throw new Error(`Missing env: ${key}`);
   return val;
+}
+
+async function closeQrCode(qrCodeId: string, auth: string): Promise<void> {
+  try {
+    await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${qrCodeId}/close`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}` },
+    });
+  } catch (_e) {} // best effort
+}
+
+async function cancelPaymentLink(linkId: string, auth: string): Promise<void> {
+  try {
+    await fetch(`https://api.razorpay.com/v1/payment_links/${linkId}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}` },
+    });
+  } catch (_e) {} // best effort
+}
+
+async function createNotPaidPaymentLink(
+  amountPaise: number, customerName: string, phone: string, salesOrderId: string, auth: string,
+): Promise<{ id: string; short_url: string } | null> {
+  const res = await fetch('https://api.razorpay.com/v1/payment_links', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount: amountPaise, currency: 'INR',
+      description: `The Good Papaya — order ${salesOrderId}`,
+      customer: { name: customerName, contact: `+91${phone.replace(/^\+91/, '')}` },
+      notify: { sms: true, whatsapp: true, email: false },
+      reminder_enable: true,
+      notes: { sales_order_id: salesOrderId, source: 'not-paid-delivery' },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) { console.error(`[mark-delivered] Payment link creation failed for ${salesOrderId}:`, data?.error?.description); return null; }
+  return { id: data.id, short_url: data.short_url };
+}
+
+async function switchToPaymentLink(supabase: any, salesOrderId: string): Promise<void> {
+  const { data: order } = await supabase
+    .from('orders')
+    .select('customer_name, phone, invoice_total, invoice_status, qr_code_id, razorpay_link_id')
+    .eq('sales_order_id', salesOrderId)
+    .maybeSingle();
+  if (!order) return;
+
+  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
+  const updates: Record<string, unknown> = {};
+
+  if (order.qr_code_id) {
+    await closeQrCode(order.qr_code_id, auth);
+    updates.qr_code_id = null;
+    updates.qr_image_url = null;
+  }
+  if (order.invoice_status === 'done' && order.invoice_total > 0 && order.phone) {
+    if (order.razorpay_link_id) await cancelPaymentLink(order.razorpay_link_id, auth);
+    const link = await createNotPaidPaymentLink(
+      Math.round(order.invoice_total * 100), order.customer_name, order.phone, salesOrderId, auth,
+    );
+    if (link) { updates.razorpay_link_id = link.id; updates.razorpay_url = link.short_url; }
+  }
+
+  if (Object.keys(updates).length) {
+    await supabase.from('orders').update(updates).eq('sales_order_id', salesOrderId);
+  }
 }
 
 // This function uses the service role internally, so it bypasses RLS
@@ -180,6 +255,11 @@ Deno.serve(async (req) => {
       .single();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);
+
+    if (delivered === true && !payment_collected) {
+      try { await switchToPaymentLink(supabase, sales_order_id); }
+      catch (e: any) { console.error(`[mark-delivered] switchToPaymentLink failed for ${sales_order_id}:`, e.message); }
+    }
 
     return new Response(
       JSON.stringify(data),
