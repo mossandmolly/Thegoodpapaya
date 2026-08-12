@@ -204,6 +204,100 @@ async function cancelPaymentLink(linkId: string) {
   } catch (_e) {} // best effort
 }
 
+async function closeQrCode(qrCodeId: string) {
+  try {
+    const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
+    await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${qrCodeId}/close`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}` },
+    });
+  } catch (_e) {} // best effort
+}
+
+async function createOrderQr(amountPaise: number, salesOrderId: string, customerName: string): Promise<{ id: string; image_url: string } | null> {
+  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
+  const res = await fetch('https://api.razorpay.com/v1/payments/qr_codes', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'upi_qr', name: `Order ${salesOrderId}`, usage: 'single_use',
+      fixed_amount: true, payment_amount: amountPaise,
+      description: `The Good Papaya — order ${salesOrderId}`,
+      close_by: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+      notes: { sales_order_id: salesOrderId, customer_name: customerName, source: 'delivery-qr' },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) { console.error('[sync] QR creation failed:', data?.error?.description); return null; }
+  return { id: data.id, image_url: data.image_url };
+}
+
+async function createOrderPaymentLink(amountPaise: number, customerName: string, phone: string, salesOrderId: string): Promise<{ id: string; short_url: string } | null> {
+  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
+  const res = await fetch('https://api.razorpay.com/v1/payment_links', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount: amountPaise, currency: 'INR',
+      description: `The Good Papaya — order ${salesOrderId}`,
+      customer: { name: customerName, contact: `+91${phone.replace(/^\+91/, '')}` },
+      notify: { sms: true, whatsapp: true, email: false },
+      reminder_enable: false,
+      notes: { sales_order_id: salesOrderId, source: 'ops-dashboard' },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) { console.error('[sync] Payment link creation failed:', data?.error?.description); return null; }
+  return { id: data.id, short_url: data.short_url };
+}
+
+// ── Orders reconciliation (Delivery panel / Order Overview surfaces) ──
+// Separate from the invoice_line_items tracking above. orders.
+// razorpay_link_id and orders.qr_code_id/qr_image_url are what the
+// ops-dashboard's Delivery panel and Order Overview actually display —
+// until now nothing kept those in sync with Zoho directly (only the
+// Razorpay webhook did, and only for payments actually made through
+// Razorpay; a payment recorded directly in Zoho, or a manual discount,
+// left a stale, still-payable link/QR behind). Runs every 5 minutes
+// alongside the invoice_line_items sync above, keyed by the same Zoho
+// invoice's reference_number (== sales_order_id).
+async function reconcileOrderPayment(
+  salesOrderId: string, customerName: string, phone: string | null,
+  invoiceBalance: number, amountPaid: number,
+) {
+  const order = await sbSelectOne('orders',
+    `sales_order_id=eq.${encodeURIComponent(salesOrderId)}&select=razorpay_link_id,qr_code_id,balance_due`
+  );
+  if (!order) return; // not an ops-dashboard order (e.g. shop/website order) — nothing to reconcile
+
+  const balanceUnchanged = order.balance_due != null &&
+    Math.round(parseFloat(order.balance_due) * 100) === Math.round(invoiceBalance * 100);
+
+  // Always keep the numbers themselves current, even when nothing else
+  // changes — this is what covers a cash payment or manual discount
+  // recorded only in Zoho, with no Razorpay payment to trigger the webhook.
+  const updates: Record<string, unknown> = { amount_paid: amountPaid, balance_due: invoiceBalance };
+
+  if (!balanceUnchanged) {
+    if (order.qr_code_id)        { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null;      updates.qr_image_url = null; }
+    if (order.razorpay_link_id)  { await cancelPaymentLink(order.razorpay_link_id); updates.razorpay_link_id = null; updates.razorpay_url = null; }
+
+    if (invoiceBalance > 0) {
+      // Regenerate whichever mechanism was already active — don't invent a
+      // new one for an order nobody's dispatched/linked yet.
+      if (order.qr_code_id) {
+        const qr = await createOrderQr(Math.round(invoiceBalance * 100), salesOrderId, customerName);
+        if (qr) { updates.qr_code_id = qr.id; updates.qr_image_url = qr.image_url; }
+      } else if (order.razorpay_link_id && phone) {
+        const link = await createOrderPaymentLink(Math.round(invoiceBalance * 100), customerName, phone, salesOrderId);
+        if (link) { updates.razorpay_link_id = link.id; updates.razorpay_url = link.short_url; }
+      }
+    }
+  }
+
+  await sbUpsert('orders', [{ sales_order_id: salesOrderId, ...updates }], 'sales_order_id');
+}
+
 // ── Remove invoice from Supabase + cancel payment link ────────
 async function removeInvoice(zohoInvoiceId: string, invoiceNumber: string, reason: string) {
   const row = await sbSelectOne('invoice_line_items',
@@ -257,6 +351,16 @@ async function processInvoice(summary: any) {
   const paymentStatus =
     detail.status === 'paid'           ? 'paid' :
     detail.status === 'partially_paid' ? 'partially_paid' : 'pending';
+
+  // Best-effort, independent of the invoice_line_items sync below — a
+  // failure here shouldn't stop that from completing.
+  if (detail.reference_number) {
+    try {
+      await reconcileOrderPayment(detail.reference_number, customerName, phone, invoiceBalance, amountPaid);
+    } catch (e: any) {
+      console.error(`[sync] Order reconcile failed for ${detail.reference_number}:`, e.message);
+    }
+  }
 
   // ── Razorpay link: create/reuse/recreate based on outstanding balance ──
   let paymentLink: string | null = null;
