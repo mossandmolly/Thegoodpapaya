@@ -199,6 +199,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    team needs day-to-day, unlike the entry-date picker on the Parser page. */
 .date-header-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .date-picker-compact{width:auto;text-transform:none;letter-spacing:normal;padding:4px 8px;font-size:11px;border:1px solid #eee0d0;border-radius:6px;background:#fdf8f3;color:#5c4f42;font-family:inherit;margin-bottom:0}
+.dv-location-badge{font-size:11px;font-weight:400;color:#8a7a6a}
 .parser-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px}
 .parser-split-table{flex:3 1 420px;min-width:280px}
 .parser-split-images{flex:1 1 260px;min-width:220px;max-width:300px;max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;position:sticky;top:10px}
@@ -499,7 +500,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <!-- DELIVERY -->
 <div class="panel" id="panel-delivery">
   <div class="section-label date-header-row">
-    <span><span id="dv-label">Delivery</span> <span id="dv-rc"></span></span>
+    <span><span id="dv-label">Delivery</span> <span id="dv-rc"></span> <span id="dv-location-indicator" class="dv-location-badge"></span></span>
     <input type="date" class="date-picker-compact" id="dv-date-picker" onchange="setViewDate(this.value)">
   </div>
   <div class="dv-queue-badge hidden" id="dv-queue-badge"></div>
@@ -1208,6 +1209,7 @@ function switchTab(name){
   if(name==='delivery')loadDeliveryView();
   if(name==='stock')loadStockView();
   if(name==='purchases')loadPurchasesView();
+  if(name==='delivery')startLocationPing();else stopLocationPing();
 }
 
 // Shortcut tab — jumps straight to Quick Order Entry inside the Parser
@@ -3071,6 +3073,63 @@ function deriveSociety(customerName){
   if(fuzzyKey)return SOCIETY_DISPLAY_BY_KEY[fuzzyKey];
 
   return formatCommunityName(raw);
+}
+
+// ── Rider location (Delivery panel only) ─────────────────────────────────
+// While a rider has the Delivery tab open, periodically records their GPS
+// position — used to guess which society they're currently near (nearest
+// match against community_locations, one-time geocoded — see
+// geocode-communities.js) so ops can see roughly where a rider is without
+// them having to report in. Best-effort throughout: geolocation can be
+// denied, unavailable, or fail silently on a bad signal, and none of that
+// should ever interrupt the actual delivery workflow.
+let locationPingTimer=null;
+let communityLocationsCache=null;
+
+async function loadCommunityLocationsCache(){
+  if(communityLocationsCache)return communityLocationsCache;
+  const{data,error}=await sb.from('community_locations').select('community_name,lat,lng').not('lat','is',null);
+  communityLocationsCache=error?[]:(data||[]);
+  return communityLocationsCache;
+}
+
+function haversineKm(lat1,lng1,lat2,lng2){
+  const R=6371,toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1),dLng=toRad(lng2-lng1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function nearestCommunity(lat,lng){
+  if(!communityLocationsCache||!communityLocationsCache.length)return null;
+  let best=null;
+  for(const c of communityLocationsCache){
+    const d=haversineKm(lat,lng,c.lat,c.lng);
+    if(!best||d<best.distanceKm)best={name:c.community_name,distanceKm:d};
+  }
+  return best;
+}
+
+async function pingRiderLocation(){
+  if(!riderName||!navigator.geolocation)return;
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const{latitude:lat,longitude:lng}=pos.coords;
+    await sb.from('rider_locations').upsert({rider_name:riderName,lat,lng},{onConflict:'rider_name'});
+    await loadCommunityLocationsCache();
+    const nearest=nearestCommunity(lat,lng);
+    const el=document.getElementById('dv-location-indicator');
+    if(el)el.textContent=nearest&&nearest.distanceKm<5?('📍 near '+nearest.name):'';
+  },()=>{/* denied/unavailable — silently skip, don't nag the rider */},{enableHighAccuracy:false,timeout:15000,maximumAge:60000});
+}
+
+function startLocationPing(){
+  if(locationPingTimer)return;
+  pingRiderLocation();
+  locationPingTimer=setInterval(pingRiderLocation,3*60*1000);
+}
+
+function stopLocationPing(){
+  if(locationPingTimer){clearInterval(locationPingTimer);locationPingTimer=null;}
 }
 
 // ── Trip view — a filter/grouping alternative to the plain society view,
