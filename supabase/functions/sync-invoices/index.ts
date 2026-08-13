@@ -174,26 +174,6 @@ function normalisePhone(raw: string): string | null {
 }
 
 // ── Razorpay ──────────────────────────────────────────────────
-async function createPaymentLink(invoiceNumber: string, customerName: string, phone: string, amountInPaise: number) {
-  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
-  const res = await fetch('https://api.razorpay.com/v1/payment_links', {
-    method: 'POST',
-    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      amount: amountInPaise, currency: 'INR',
-      description: `Payment for ${invoiceNumber} - The Good Papaya`,
-      customer: { name: customerName, contact: phone.replace('+', '') },
-      notify: { sms: true, email: false },
-      reminder_enable: true,
-      notes: { invoice_number: invoiceNumber },
-      callback_url: 'https://thegoodpapaya.com/pages/invoices?payment=success',
-      callback_method: 'get',
-    }),
-  });
-  const data = await res.json();
-  return { id: data.id, short_url: data.short_url };
-}
-
 async function cancelPaymentLink(linkId: string) {
   try {
     const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
@@ -279,7 +259,7 @@ async function reconcileOrderPayment(
   const updates: Record<string, unknown> = { amount_paid: amountPaid, balance_due: invoiceBalance };
 
   if (!balanceUnchanged) {
-    if (order.qr_code_id)        { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null;      updates.qr_image_url = null; }
+    if (order.qr_code_id)        { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null;      updates.qr_image_url = null; updates.qr_created_at = null; }
     if (order.razorpay_link_id)  { await cancelPaymentLink(order.razorpay_link_id); updates.razorpay_link_id = null; updates.razorpay_url = null; }
 
     if (invoiceBalance > 0) {
@@ -287,7 +267,7 @@ async function reconcileOrderPayment(
       // new one for an order nobody's dispatched/linked yet.
       if (order.qr_code_id) {
         const qr = await createOrderQr(Math.round(invoiceBalance * 100), salesOrderId, customerName);
-        if (qr) { updates.qr_code_id = qr.id; updates.qr_image_url = qr.image_url; }
+        if (qr) { updates.qr_code_id = qr.id; updates.qr_image_url = qr.image_url; updates.qr_created_at = new Date().toISOString(); }
       } else if (order.razorpay_link_id && phone) {
         const link = await createOrderPaymentLink(Math.round(invoiceBalance * 100), customerName, phone, salesOrderId);
         if (link) { updates.razorpay_link_id = link.id; updates.razorpay_url = link.short_url; }
@@ -296,6 +276,55 @@ async function reconcileOrderPayment(
   }
 
   await sbUpsert('orders', [{ sales_order_id: salesOrderId, ...updates }], 'sales_order_id');
+}
+
+// Called when the Zoho invoice behind an order disappears (voided) — closes
+// whatever was active on the order without recreating anything, since
+// there's no invoice left to bill against.
+async function closeOrderPaymentMechanisms(salesOrderId: string) {
+  const order = await sbSelectOne('orders',
+    `sales_order_id=eq.${encodeURIComponent(salesOrderId)}&select=qr_code_id,razorpay_link_id`
+  );
+  if (!order || (!order.qr_code_id && !order.razorpay_link_id)) return;
+
+  const updates: Record<string, unknown> = {};
+  if (order.qr_code_id)       { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null; updates.qr_image_url = null; updates.qr_created_at = null; }
+  if (order.razorpay_link_id) { await cancelPaymentLink(order.razorpay_link_id); updates.razorpay_link_id = null; updates.razorpay_url = null; }
+  await sbUpsert('orders', [{ sales_order_id: salesOrderId, ...updates }], 'sales_order_id');
+}
+
+// ── Proactive QR refresh sweep ─────────────────────────────────
+// Razorpay auto-closes a dynamic QR after its close_by (~2hrs), but nothing
+// otherwise updates our own stored qr_image_url — the Delivery panel could
+// keep showing a QR Razorpay's already silently killed. Rather than wait
+// for that and just clear it, refresh (close + recreate, resetting the
+// clock) any QR that's reached 90 minutes old and is still needed — safely
+// before the hard 2hr expiry, with margin for this sweep's own ~5min
+// cadence. Purely a time check: no rider location or delivery-sequence
+// awareness needed.
+async function sweepStaleQrCodes() {
+  const cutoff = new Date(Date.now() - 90 * 60 * 1000).toISOString();
+  const stale = await sbSelectMany('orders',
+    `qr_code_id=not.is.null&delivery_status=eq.ofd&payment_collected=eq.false&qr_created_at=lt.${encodeURIComponent(cutoff)}&select=sales_order_id,customer_name,invoice_total,qr_code_id`
+  );
+  if (!stale.length) return;
+  console.log(`[sync] ${stale.length} QR(s) older than 90 minutes — refreshing`);
+
+  for (const order of stale) {
+    try {
+      await closeQrCode(order.qr_code_id);
+      const qr = await createOrderQr(Math.round(order.invoice_total * 100), order.sales_order_id, order.customer_name);
+      if (qr) {
+        await sbUpsert('orders', [{
+          sales_order_id: order.sales_order_id,
+          qr_code_id: qr.id, qr_image_url: qr.image_url, qr_created_at: new Date().toISOString(),
+        }], 'sales_order_id');
+        console.log(`[sync] Refreshed QR for ${order.sales_order_id}`);
+      }
+    } catch (e: any) {
+      console.error(`[sync] QR refresh failed for ${order.sales_order_id}:`, e.message);
+    }
+  }
 }
 
 // ── Remove invoice from Supabase + cancel payment link ────────
@@ -328,9 +357,15 @@ async function processInvoice(summary: any) {
   const detail = await fetchInvoiceDetail(summary.invoice_id);
   if (!detail) return;
 
-  // Voided invoice → remove from Supabase
+  // Voided invoice → remove from Supabase, and close whatever payment
+  // mechanism was active on the order (previously left dangling — the
+  // invoice backing it is gone, so it should never be payable anymore).
   if (detail.status === 'void') {
     await removeInvoice(detail.invoice_id, detail.invoice_number, 'voided in Zoho');
+    if (detail.reference_number) {
+      try { await closeOrderPaymentMechanisms(detail.reference_number); }
+      catch (e: any) { console.error(`[sync] Void cleanup failed for ${detail.reference_number}:`, e.message); }
+    }
     return;
   }
 
@@ -362,40 +397,11 @@ async function processInvoice(summary: any) {
     }
   }
 
-  // ── Razorpay link: create/reuse/recreate based on outstanding balance ──
-  let paymentLink: string | null = null;
-  let paymentLinkId: string | null = null;
-
-  const existing = await sbSelectOne('invoice_line_items',
-    `zoho_invoice_id=eq.${zohoInvoiceId}&payment_link=not.is.null&select=payment_link,payment_link_id,balance,invoice_total`
-  );
-
-  // Compare stored balance (or total if balance not yet stored) vs current
-  const storedBalance = parseFloat(existing?.balance ?? existing?.invoice_total ?? '-1');
-  const balanceChanged = existing && Math.round(storedBalance * 100) !== Math.round(invoiceBalance * 100);
-
-  if (existing && !balanceChanged) {
-    // Reuse — nothing changed
-    paymentLink   = existing.payment_link;
-    paymentLinkId = existing.payment_link_id;
-  } else {
-    // Cancel old link if balance changed
-    if (existing?.payment_link_id && balanceChanged) {
-      await cancelPaymentLink(existing.payment_link_id);
-      console.log(`[sync] Cancelled old link for ${invoiceNumber} — balance changed (${storedBalance} → ${invoiceBalance})`);
-    }
-    // Create new link for outstanding balance (not total) — only if phone is known
-    if (paymentStatus !== 'paid' && invoiceBalance > 0 && phone) {
-      try {
-        const rpl = await createPaymentLink(invoiceNumber, customerName, phone, Math.round(invoiceBalance * 100));
-        paymentLink   = rpl.short_url;
-        paymentLinkId = rpl.id;
-        console.log(`[sync] ${balanceChanged ? 'Recreated' : 'Created'} Razorpay link for ${invoiceNumber} — ₹${invoiceBalance}`);
-      } catch (e: any) { console.error(`[sync] Razorpay failed for ${invoiceNumber}:`, e.message); }
-    }
-  }
-
   // ── Upsert line items ─────────────────────────────────────────
+  // Pure data mirror of what's actually on the Zoho invoice — no payment
+  // link/QR logic here at all. orders (via reconcileOrderPayment above) is
+  // the only table that ever holds a live payment link or QR; this table
+  // exists purely to reflect Zoho's own invoice line items.
   const rows = (detail.line_items ?? []).map((li: any) => {
     const finalQty     = parseFloat(li.quantity);
     const requestedQty = li.custom_fields?.find((cf: any) => cf.api_name === 'cf_requested_quantity')?.value ?? finalQty;
@@ -412,8 +418,6 @@ async function processInvoice(summary: any) {
       invoice_total:      invoiceTotal,
       balance:            invoiceBalance,
       amount_paid:        amountPaid,
-      payment_link:       paymentLink,
-      payment_link_id:    paymentLinkId,
       payment_status:     paymentStatus,
       sales_order_id:     detail.reference_number || null,
       pdf_url:            `https://inventory.zoho.in/app#/invoices/${zohoInvoiceId}`,
@@ -465,6 +469,11 @@ async function syncInvoices() {
   // Also check for deletions in today's invoices
   try { await reconcileTodayDeletions(); }
   catch (e: any) { console.error(`[sync] Today reconcile error:`, e.message); }
+
+  // Independent of anything above — a QR needing a refresh isn't tied to
+  // whether its invoice happened to change today.
+  try { await sweepStaleQrCodes(); }
+  catch (e: any) { console.error(`[sync] QR sweep error:`, e.message); }
 
   console.log('[sync] Done.');
 }

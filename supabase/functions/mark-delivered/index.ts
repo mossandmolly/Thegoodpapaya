@@ -112,6 +112,7 @@ async function switchToPaymentLink(supabase: any, salesOrderId: string): Promise
     await closeQrCode(order.qr_code_id, auth);
     updates.qr_code_id = null;
     updates.qr_image_url = null;
+    updates.qr_created_at = null;
   }
 
   if (!order.phone) {
@@ -141,6 +142,35 @@ async function switchToPaymentLink(supabase: any, salesOrderId: string): Promise
   if (Object.keys(updates).length) {
     await supabase.from('orders').update(updates).eq('sales_order_id', salesOrderId);
   }
+}
+
+// A rider marking an order delivered-and-paid (cash or otherwise) settles
+// it through a channel other than the QR/link entirely — either one left
+// dangling and still live would mean the customer (or anyone with the
+// image) could still pay it again after the fact. Just closes whatever's
+// active; unlike switchToPaymentLink, nothing new gets created here.
+async function closeActivePaymentMechanisms(supabase: any, salesOrderId: string): Promise<void> {
+  const { data: order } = await supabase
+    .from('orders')
+    .select('qr_code_id, razorpay_link_id')
+    .eq('sales_order_id', salesOrderId)
+    .maybeSingle();
+  if (!order || (!order.qr_code_id && !order.razorpay_link_id)) return;
+
+  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
+  const updates: Record<string, unknown> = {};
+  if (order.qr_code_id) {
+    await closeQrCode(order.qr_code_id, auth);
+    updates.qr_code_id = null;
+    updates.qr_image_url = null;
+    updates.qr_created_at = null;
+  }
+  if (order.razorpay_link_id) {
+    await cancelPaymentLink(order.razorpay_link_id, auth);
+    updates.razorpay_link_id = null;
+    updates.razorpay_url = null;
+  }
+  await supabase.from('orders').update(updates).eq('sales_order_id', salesOrderId);
 }
 
 // This function uses the service role internally, so it bypasses RLS
@@ -273,9 +303,13 @@ Deno.serve(async (req) => {
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);
 
-    if (delivered === true && !payment_collected) {
-      try { await switchToPaymentLink(supabase, sales_order_id); }
-      catch (e: any) { console.error(`[mark-delivered] switchToPaymentLink failed for ${sales_order_id}:`, e.message); }
+    if (delivered === true) {
+      try {
+        if (payment_collected) await closeActivePaymentMechanisms(supabase, sales_order_id);
+        else await switchToPaymentLink(supabase, sales_order_id);
+      } catch (e: any) {
+        console.error(`[mark-delivered] payment mechanism cleanup failed for ${sales_order_id}:`, e.message);
+      }
     }
 
     return new Response(
