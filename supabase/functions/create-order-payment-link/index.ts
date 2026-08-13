@@ -111,6 +111,11 @@ Deno.serve(async (req) => {
       phone,
       razorpay_link_id: link.id,
       razorpay_url:     link.short_url,
+      // A manually-generated link is the expected way to resolve whatever
+      // admin_action_needed flagged (most commonly: no phone was on file
+      // for the automatic delivered-not-paid link — see mark-delivered).
+      admin_action_needed: false,
+      admin_action_reason: null,
     }).eq('sales_order_id', sales_order_id);
 
     return new Response(
