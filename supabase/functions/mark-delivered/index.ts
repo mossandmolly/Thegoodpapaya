@@ -113,12 +113,29 @@ async function switchToPaymentLink(supabase: any, salesOrderId: string): Promise
     updates.qr_code_id = null;
     updates.qr_image_url = null;
   }
-  if (order.invoice_status === 'done' && order.invoice_total > 0 && order.phone) {
+
+  if (!order.phone) {
+    // No number on file to send a link to — this used to fail completely
+    // silently. Flag it so ops actually sees it needs a human: add a
+    // phone number, then generate a payment link manually.
+    updates.admin_action_needed = true;
+    updates.admin_action_reason = 'Delivered, not paid — no phone number on file to send a payment link to.';
+  } else if (order.invoice_status === 'done' && order.invoice_total > 0) {
     if (order.razorpay_link_id) await cancelPaymentLink(order.razorpay_link_id, auth);
     const link = await createNotPaidPaymentLink(
       Math.round(order.invoice_total * 100), order.customer_name, order.phone, salesOrderId, auth,
     );
-    if (link) { updates.razorpay_link_id = link.id; updates.razorpay_url = link.short_url; }
+    if (link) {
+      updates.razorpay_link_id = link.id;
+      updates.razorpay_url = link.short_url;
+      updates.admin_action_needed = false;
+      updates.admin_action_reason = null;
+    } else {
+      // Phone was present but Razorpay itself rejected/failed the request —
+      // equally worth a human's attention, just a different reason.
+      updates.admin_action_needed = true;
+      updates.admin_action_reason = 'Delivered, not paid — automatic payment link creation failed. Try again from Order Overview.';
+    }
   }
 
   if (Object.keys(updates).length) {
