@@ -106,6 +106,41 @@ async function razorpayCreateLink(
   return { id: data.id, short_url: data.short_url };
 }
 
+// ── Razorpay Dynamic QR Code — the delivery-panel mechanism (dispatch-order/
+// sync-invoices) — kept in sync with a regenerated invoice the same way the
+// payment link above is. orders.qr_code_id/razorpay_link_id are mutually
+// exclusive at any given time (see reconcileOrderPayment in sync-invoices),
+// so only whichever one is currently active on the order gets touched here —
+// never both, and never invented fresh if neither was active yet.
+async function razorpayCloseQr(qrCodeId: string, auth: string): Promise<void> {
+  await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${qrCodeId}/close`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}` },
+  });
+}
+
+async function razorpayCreateQr(
+  amountPaise: number, customerName: string, salesOrderId: string, auth: string,
+): Promise<{ id: string; image_url: string }> {
+  const res = await fetch('https://api.razorpay.com/v1/payments/qr_codes', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type:           'upi_qr',
+      name:            `Order ${salesOrderId}`,
+      usage:          'single_use',
+      fixed_amount:    true,
+      payment_amount:  amountPaise,
+      description:    `The Good Papaya — order ${salesOrderId}`,
+      close_by:        Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+      notes:          { sales_order_id: salesOrderId, customer_name: customerName, source: 'delivery-qr' },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.description || 'Razorpay QR error');
+  return { id: data.id, image_url: data.image_url };
+}
+
 function env(key: string) {
   const val = Deno.env.get(key);
   if (!val) throw new Error(`Missing env: ${key}`);
@@ -499,18 +534,30 @@ Deno.serve(async (req) => {
       .update({ status: 'invoiced' })
       .in('id', items.map((i: any) => i.id));
 
-    // Best-effort: (re)generate the Razorpay payment link so it always
-    // reflects the current invoice total. Only possible if a phone is on
-    // file — otherwise the ops dashboard shows "Generate Payment Link" for
-    // someone to add one manually.
+    // Best-effort: (re)generate whichever payment mechanism was already
+    // active on this order so it reflects the current invoice total — never
+    // invents one that wasn't there before (an order nobody's dispatched or
+    // manually linked yet stays untouched), and never creates a second one
+    // alongside whichever's already active (orders.qr_code_id and
+    // razorpay_link_id are mutually exclusive by design).
     let paymentLink: string | null = null;
-    if (order.phone) {
-      try {
-        const keyId     = Deno.env.get('RAZORPAY_KEY_ID');
-        const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
-        if (keyId && keySecret) {
-          const auth = btoa(`${keyId}:${keySecret}`);
-          if (order.razorpay_link_id) await razorpayCancelLink(order.razorpay_link_id, auth);
+    try {
+      const keyId     = Deno.env.get('RAZORPAY_KEY_ID');
+      const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
+      if (keyId && keySecret) {
+        const auth = btoa(`${keyId}:${keySecret}`);
+        if (order.qr_code_id) {
+          await razorpayCloseQr(order.qr_code_id, auth);
+          const qr = await razorpayCreateQr(
+            Math.round(invoice_total * 100), order.customer_name, sales_order_id, auth,
+          );
+          await supabase.from('orders').update({
+            qr_code_id:    qr.id,
+            qr_image_url:  qr.image_url,
+            qr_created_at: new Date().toISOString(),
+          }).eq('sales_order_id', sales_order_id);
+        } else if (order.razorpay_link_id && order.phone) {
+          await razorpayCancelLink(order.razorpay_link_id, auth);
           const link = await razorpayCreateLink(
             Math.round(invoice_total * 100), order.customer_name, order.phone, sales_order_id, auth,
           );
@@ -520,9 +567,9 @@ Deno.serve(async (req) => {
           }).eq('sales_order_id', sales_order_id);
           paymentLink = link.short_url;
         }
-      } catch (_e) {
-        // swallow — payment link is a nice-to-have, not load-bearing for invoicing
       }
+    } catch (_e) {
+      // swallow — payment link/QR refresh is a nice-to-have, not load-bearing for invoicing
     }
 
     return new Response(

@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
             Math.round(order.invoice_total * 100), sales_order_id, order.customer_name,
           );
           await supabase.from('orders')
-            .update({ qr_code_id: qr.id, qr_image_url: qr.image_url })
+            .update({ qr_code_id: qr.id, qr_image_url: qr.image_url, qr_created_at: new Date().toISOString() })
             .eq('sales_order_id', sales_order_id);
           qrImageUrl = qr.image_url;
         }

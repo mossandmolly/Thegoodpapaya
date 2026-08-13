@@ -2822,10 +2822,7 @@ function renderOrdersList(){
             escH(order.customer)+
             statusBadges+
             (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
-            (!cancelled&&!order.isPickup&&fullyInvoiced?(order.razorpayUrl
-              ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link" onclick="event.stopPropagation()">💳 payment link</a>'
-              :' <span class="pay-missing">Payment link not generated</span>'
-            ):'')+
+            paymentMechanismHtml(order)+
           '</span>'+
           '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0">'+
             paidPill+
@@ -3023,6 +3020,52 @@ function deliveryStatusBadgeHtml(deliveryStatus){
 function adminActionBadgeHtml(order){
   if(!order.adminActionNeeded)return '';
   return ' <span class="admin-action-badge" title="'+escH(order.adminActionReason||'Admin action needed')+'">⚠ Admin action needed</span>';
+}
+
+// orders.qr_code_id and razorpay_link_id are mutually exclusive by design
+// (see migration 072 / sync-invoices) — shows whichever is actually active,
+// never both, plus a "Generate" action that force-clears whatever's active
+// and creates a fresh payment link. Order Overview only (the Delivery
+// panel's own dv-qr-block already covers the QR/link display there).
+function paymentMechanismHtml(order){
+  if(order.isPickup)return '';
+  const mechanism=order.qrImageUrl
+    ?' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();openImgLightbox('+escH(JSON.stringify(order.qrImageUrl))+')">📱 View QR</a>'
+    :order.razorpayUrl
+      ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link" onclick="event.stopPropagation()">💳 payment link</a>'
+      :' <span class="pay-missing">Payment link not generated</span>';
+  return mechanism+
+    ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();regeneratePaymentLinkSingle('+escH(JSON.stringify(order.soid))+')" title="Clear the existing QR/link and generate a new payment link">🔄 Generate</a>';
+}
+
+async function regeneratePaymentLinkSingle(soid){
+  const order=currentOrdersById[soid];
+  if(!order)return;
+  const existing=order.qrImageUrl?'QR code':order.razorpayUrl?'payment link':null;
+  const warning=existing
+    ?'This clears the existing '+existing+' — it will stop working — and generates a new payment link instead. If the customer already has the old one saved, it will no longer work. Continue?'
+    :'Generate a payment link for this order?';
+  if(!await uxConfirm(warning))return;
+
+  let phone=order.phone;
+  if(!phone){
+    const entered=await uxPrompt('Phone number (10 digits):');
+    if(!entered||!entered.trim())return;
+    phone=entered.trim();
+  }
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/create-order-payment-link',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,phone}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not generate payment link');
+    evictCustomerLookupCache(soid);
+    await loadTodaysOrders();
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+  }
 }
 
 // Payment collection only means anything once something's actually in the
@@ -4751,7 +4794,7 @@ function updateBulkButtons(){
   invBtn.textContent='🧾 Generate Invoices ('+invoiceIds.length+')';
   invBtn.disabled=invoiceIds.length===0;
 
-  const paylinkIds=selected.filter(x=>isFullyInvoiced(x.order)&&!x.order.razorpayUrl).map(x=>x.soid);
+  const paylinkIds=selected.filter(x=>isFullyInvoiced(x.order)&&!x.order.razorpayUrl&&!x.order.qrImageUrl).map(x=>x.soid);
   const payBtn=document.getElementById('to-bulk-paylink');
   payBtn.textContent='💳 Payment Links ('+paylinkIds.length+')';
   payBtn.disabled=paylinkIds.length===0;
@@ -4847,7 +4890,7 @@ async function generatePaymentLinksBulk(salesOrderIds){
 }
 
 document.getElementById('to-bulk-paylink').addEventListener('click',()=>{
-  const ids=[...selectedOrders].filter(soid=>isFullyInvoiced(currentOrdersById[soid])&&!currentOrdersById[soid].razorpayUrl);
+  const ids=[...selectedOrders].filter(soid=>isFullyInvoiced(currentOrdersById[soid])&&!currentOrdersById[soid].razorpayUrl&&!currentOrdersById[soid].qrImageUrl);
   generatePaymentLinksBulk(ids);
 });
 
@@ -6627,7 +6670,6 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
     await performDvAction('mark_delivered',payload);
     await loadDeliveryView();
     if(photosSkipped)uxAlert('Delivered. Photos weren\'t attached — you can add them later from the order card once you have signal.');
-    maybeRefreshRiderQrsAfterDelivery(order?.customer,order?.assignedRider||riderName);
   }catch(e){
     if(isNetworkFailure(e)){
       queueDvAction('mark_delivered',payload);
@@ -6641,43 +6683,6 @@ document.getElementById('dv-confirm').addEventListener('click',async()=>{
     confirmBtn.textContent='Confirm Delivered';
   }
 });
-
-// Dynamic QRs only stay active ~2hrs — if a rider just delivered the last
-// house in a society, their remaining OFD orders (in other societies) might
-// sit unvisited long enough for those QRs to expire before they arrive.
-// Refresh (close + recreate) each one to reset the clock, but only once the
-// completed society genuinely has nothing left OFD for this same rider —
-// not on every single delivery, which would burn through Razorpay QR
-// creations for no reason.
-async function maybeRefreshRiderQrsAfterDelivery(deliveredCustomerName,rider){
-  if(!deliveredCustomerName||!rider)return;
-  const finishedSociety=deriveSociety(deliveredCustomerName);
-  const remainingInSociety=Object.values(deliveryOrders).some(o=>
-    o.assignedRider===rider&&o.deliveryStatus==='ofd'&&deriveSociety(o.customer)===finishedSociety
-  );
-  if(remainingInSociety)return;
-
-  const soidsToRefresh=Object.keys(deliveryOrders).filter(soid=>{
-    const o=deliveryOrders[soid];
-    return o.assignedRider===rider&&o.deliveryStatus==='ofd'&&o.qrImageUrl;
-  });
-  if(!soidsToRefresh.length)return;
-
-  try{
-    const res=await fetch(SUPABASE_URL+'/functions/v1/refresh-delivery-qr',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_ids:soidsToRefresh}),
-    });
-    const data=await res.json();
-    if(!res.ok)return; // best-effort — a refresh failure shouldn't interrupt the rider
-    (data.results||[]).forEach(r=>{
-      const o=deliveryOrders[r.sales_order_id];
-      if(o)o.qrImageUrl=r.qr_image_url;
-    });
-    renderDeliveryList();
-  }catch(e){/* best-effort, offline or otherwise — next delivery will retry */}
-}
 
 async function undoDelivered(soid){
   if(!await uxConfirm('Undo delivery for this order?'))return;
