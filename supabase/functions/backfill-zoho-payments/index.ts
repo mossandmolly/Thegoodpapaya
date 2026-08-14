@@ -19,7 +19,10 @@
 // now uses — never a name-keyed lookup). If Zoho already shows the invoice
 // paid, it's left untouched.
 //
-// Input:  { dryRun?: boolean (default true), offset?: number, limit?: number }
+// Input:  { dryRun?: boolean (default true), offset?: number, limit?: number, datePrefix?: string }
+// datePrefix (e.g. "2026-08-14") scopes to one day's orders only — omit to
+// scan all-time (oldest date first, since sales_order_id sorts
+// alphabetically).
 // Output: { processed, alreadyPaidInZoho, recorded, errors, nextOffset, results: [...] }
 //
 // dryRun (default true!) only fetches each invoice's Zoho balance and
@@ -146,11 +149,18 @@ Deno.serve(async (req) => {
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
     const orgId     = env('ZOHO_ORGANIZATION_ID');
 
-    const { data: orders, error: ordersErr } = await supabase
+    // Optional datePrefix (e.g. "2026-08-14") scopes this to one day's
+    // orders instead of all-time — sales_order_id sorts alphabetically, so
+    // an unscoped run walks oldest-date-first (2026-07-... before
+    // 2026-08-...), not most-recent-first.
+    const datePrefix: string | undefined = body.datePrefix;
+    let query = supabase
       .from('orders')
       .select('sales_order_id, zoho_invoice_id, amount_paid')
       .eq('payment_collected', true)
-      .not('zoho_invoice_id', 'is', null)
+      .not('zoho_invoice_id', 'is', null);
+    if (datePrefix) query = query.like('sales_order_id', `${datePrefix}-%`);
+    const { data: orders, error: ordersErr } = await query
       .order('sales_order_id')
       .range(offset, offset + limit - 1);
     if (ordersErr) throw new Error(ordersErr.message);
