@@ -76,6 +76,24 @@ function zohoUrl(path: string, orgId: string): string {
   return `https://www.zohoapis.in/books/v3${path}${sep}organization_id=${orgId}`;
 }
 
+// Zoho's own customer_id for the invoice we're already paying — read
+// straight off the invoice itself rather than a second, name-keyed lookup
+// against the local customers table. sales_order_id -> order.zoho_invoice_id
+// is already an unambiguous 1:1 link (customer_name is not: it's needed
+// dedup/canonicalization work all along), so this makes recordZohoPayment
+// self-contained and immune to customers.zoho_contact_id ever being stale
+// or missing (as it was for a newly-invoiced customer — see generate-invoice's
+// getOrCreateContact backfill).
+async function fetchZohoInvoiceCustomerId(
+  invoiceId: string, token: string, orgId: string,
+): Promise<string | null> {
+  const res  = await fetch(zohoUrl(`/invoices/${invoiceId}`, orgId), {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+  const data = await res.json();
+  return data?.invoice?.customer_id ?? null;
+}
+
 // Records the payment against the Zoho invoice directly (POST
 // /customerpayments) rather than just PATCHing invoice status — this is
 // what actually moves Zoho's own outstanding-balance figure, which is the
@@ -144,7 +162,7 @@ Deno.serve(async (req) => {
   // Load current amounts
   const { data: order, error: orderErr } = await supabase
     .from('orders')
-    .select('amount_paid, invoice_total, zoho_invoice_id, customer_name')
+    .select('amount_paid, invoice_total, zoho_invoice_id')
     .eq('sales_order_id', salesOrderId)
     .single();
 
@@ -190,16 +208,16 @@ Deno.serve(async (req) => {
   // an otherwise-successful webhook into a retry storm from Razorpay.
   if (order.zoho_invoice_id) {
     try {
-      const { data: customer } = await supabase
-        .from('customers').select('zoho_contact_id')
-        .eq('customer_name', order.customer_name).maybeSingle();
-      if (customer?.zoho_contact_id) {
+      const token = await getZohoToken(supabase);
+      const orgId = env('ZOHO_ORGANIZATION_ID');
+      const zohoCustomerId = await fetchZohoInvoiceCustomerId(order.zoho_invoice_id, token, orgId);
+      if (zohoCustomerId) {
         await recordZohoPayment(
-          supabase, order.zoho_invoice_id, customer.zoho_contact_id, amountRupees,
+          supabase, order.zoho_invoice_id, zohoCustomerId, amountRupees,
           paymentEntity?.id, payload.event === 'qr_code.credited' ? 'qr' : 'payment_link',
         );
       } else {
-        console.warn(`Razorpay webhook: no zoho_contact_id for "${order.customer_name}" — skipped Zoho payment recording`);
+        console.warn(`Razorpay webhook: could not resolve Zoho customer_id for invoice ${order.zoho_invoice_id} — skipped Zoho payment recording`);
       }
     } catch (e: any) {
       console.error(`Zoho payment recording failed for ${salesOrderId}:`, e.message);
