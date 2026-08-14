@@ -246,7 +246,7 @@ async function reconcileOrderPayment(
   invoiceBalance: number, amountPaid: number,
 ) {
   const order = await sbSelectOne('orders',
-    `sales_order_id=eq.${encodeURIComponent(salesOrderId)}&select=razorpay_link_id,qr_code_id,balance_due`
+    `sales_order_id=eq.${encodeURIComponent(salesOrderId)}&select=razorpay_link_id,qr_code_id,balance_due,payment_collected`
   );
   if (!order) return; // not an ops-dashboard order (e.g. shop/website order) — nothing to reconcile
 
@@ -257,6 +257,16 @@ async function reconcileOrderPayment(
   // changes — this is what covers a cash payment or manual discount
   // recorded only in Zoho, with no Razorpay payment to trigger the webhook.
   const updates: Record<string, unknown> = { amount_paid: amountPaid, balance_due: invoiceBalance };
+
+  // Fallback for whatever the webhook might have missed (a payment
+  // recorded directly in Zoho, a failed webhook delivery, etc.) — only
+  // flips false→true, never re-stamps payment_collected_at on a cycle
+  // where nothing actually changed.
+  if (invoiceBalance <= 0 && !order.payment_collected) {
+    updates.payment_collected = true;
+    updates.payment_collected_method = 'online';
+    updates.payment_collected_at = new Date().toISOString();
+  }
 
   if (!balanceUnchanged) {
     if (order.qr_code_id)        { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null;      updates.qr_image_url = null; updates.qr_created_at = null; }

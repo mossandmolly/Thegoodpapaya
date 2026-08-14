@@ -156,9 +156,21 @@ Deno.serve(async (req) => {
   const newAmountPaid = (order.amount_paid ?? 0) + amountRupees;
   const balanceDue    = Math.max(0, (order.invoice_total ?? 0) - newAmountPaid);
 
+  const updates: Record<string, unknown> = { amount_paid: newAmountPaid, balance_due: balanceDue };
+  // A real Razorpay payment just landed and covers the full invoice —
+  // reflect that immediately (this is what the Delivery panel/Order
+  // Overview actually check to show "PAID"), not just the raw numbers.
+  // A partial payment (balance still > 0) doesn't flip this — only a
+  // rider's own delivered-and-paid confirmation should mark those.
+  if (balanceDue <= 0) {
+    updates.payment_collected = true;
+    updates.payment_collected_method = 'online';
+    updates.payment_collected_at = new Date().toISOString();
+  }
+
   const { error } = await supabase
     .from('orders')
-    .update({ amount_paid: newAmountPaid, balance_due: balanceDue })
+    .update(updates)
     .eq('sales_order_id', salesOrderId);
 
   if (error) console.error('Orders update failed:', error.message);
