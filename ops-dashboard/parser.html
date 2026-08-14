@@ -601,15 +601,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="modal-overlay hidden" id="dv-modal">
   <div class="modal-box">
     <h3>Mark delivered</h3>
-    <div class="dv-already-paid-note hidden" id="dv-already-paid-note">✓ Already paid online (QR/link) — defaulted to Paid below</div>
-    <label class="modal-label">Payment</label>
-    <div class="dv-pay-toggle">
-      <button type="button" class="dv-pay-btn" id="dv-pay-unpaid" onclick="setDvPaymentChoice(false)">Delivered — Not Paid</button>
-      <button type="button" class="dv-pay-btn" id="dv-pay-paid" onclick="setDvPaymentChoice(true)">Delivered &amp; Paid</button>
+    <div class="dv-already-paid-note hidden" id="dv-already-paid-note">✓ Already paid online — no need to ask about payment</div>
+    <div id="dv-payment-section">
+      <label class="modal-label">Payment</label>
+      <div class="dv-pay-toggle">
+        <button type="button" class="dv-pay-btn" id="dv-pay-unpaid" onclick="setDvPaymentChoice(false)">Delivered — Not Paid</button>
+        <button type="button" class="dv-pay-btn" id="dv-pay-paid" onclick="setDvPaymentChoice(true)">Delivered &amp; Paid</button>
+      </div>
+      <label class="dv-cash-row hidden" id="dv-cash-row">
+        <input type="checkbox" id="dv-cash-toggle"> Paid in cash
+      </label>
     </div>
-    <label class="dv-cash-row hidden" id="dv-cash-row">
-      <input type="checkbox" id="dv-cash-toggle"> Paid in cash
-    </label>
     <label class="modal-label">Delivery comment (optional)</label>
     <textarea id="dv-notes" rows="3" placeholder="e.g. left at gate, handed to security..."></textarea>
     <label class="modal-label">Photos (optional)</label>
@@ -6601,16 +6603,19 @@ function openMarkDeliveredModal(soid){
   dvTargetOrder=soid;
   dvNotesEl.value='';
   dvPhotoInput.value='';
-  // If payment already came in online (QR scanned before the rider even
-  // arrived — razorpay-webhook/sync-invoices set this), default to Paid
-  // instead of the usual Not Paid — defaulting to Not Paid here would let
-  // a rider who doesn't notice accidentally flip a real payment back to
-  // unpaid and trigger a fresh (unnecessary, confusing) payment link.
+  // Payment and delivery stay independent — a QR scan updates payment
+  // status on its own (razorpay-webhook/sync-invoices), separately from
+  // whether/when a rider taps delivered. If it's already paid online,
+  // there's nothing left to ask the rider about payment at all — hide the
+  // choice entirely (not just pre-select it) so there's no way to
+  // accidentally flip a real payment back to unpaid. Only shown when
+  // payment genuinely still needs collecting.
   const order=deliveryOrders[soid];
   const alreadyPaidOnline=order&&order.paymentCollected&&order.paymentCollectedMethod!=='cash';
+  document.getElementById('dv-payment-section').classList.toggle('hidden',!!alreadyPaidOnline);
+  document.getElementById('dv-already-paid-note').classList.toggle('hidden',!alreadyPaidOnline);
   setDvPaymentChoice(!!alreadyPaidOnline);
   document.getElementById('dv-cash-toggle').checked=false;
-  document.getElementById('dv-already-paid-note').classList.toggle('hidden',!alreadyPaidOnline);
   dvModal.classList.remove('hidden');
 }
 
