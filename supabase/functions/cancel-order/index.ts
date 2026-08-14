@@ -148,6 +148,21 @@ async function cancelRazorpayLink(linkId: string): Promise<void> {
   } catch (_) {} // best effort
 }
 
+// orders.qr_code_id was previously left untouched by cancel-order entirely
+// — the dynamic QR stayed live on Razorpay's side even after the order (and
+// its invoice) was gone, and the stale reference would resurface later if
+// the order got reopened/reinvoiced, since generate-invoice's "regenerate
+// whichever was active" logic would find it still set.
+async function closeRazorpayQr(qrCodeId: string): Promise<void> {
+  try {
+    const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
+    await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${qrCodeId}/close`, {
+      method:  'POST',
+      headers: { Authorization: `Basic ${auth}` },
+    });
+  } catch (_) {} // best effort
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -188,10 +203,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 2. Cancel Razorpay link, if any
+    // 2. Cancel Razorpay link/QR, if any
     if (order.razorpay_link_id) {
       await cancelRazorpayLink(order.razorpay_link_id);
       results.push('Razorpay link cancelled');
+    }
+    if (order.qr_code_id) {
+      await closeRazorpayQr(order.qr_code_id);
+      results.push('Razorpay QR closed');
     }
 
     // 3. Clean up invoice_queue / invoice_line_items — neither has a cascade
@@ -211,6 +230,9 @@ Deno.serve(async (req) => {
       invoice_status:    'cancelled',
       razorpay_link_id:  null,
       razorpay_url:      null,
+      qr_code_id:        null,
+      qr_image_url:      null,
+      qr_created_at:     null,
     }).eq('sales_order_id', sales_order_id);
     if (orderUpdErr) throw new Error(orderUpdErr.message);
 
