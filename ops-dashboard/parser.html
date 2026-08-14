@@ -3025,7 +3025,11 @@ function adminActionBadgeHtml(order){
 // and creates a fresh payment link. Order Overview only (the Delivery
 // panel's own dv-qr-block already covers the QR/link display there).
 function paymentMechanismHtml(order){
-  if(order.isPickup)return '';
+  // Nothing to show/generate before the order's actually invoiced — a
+  // payment link only ever makes sense once there's a real invoice total
+  // to charge, same gate the collapsed card used before this became a
+  // function of its own.
+  if(order.isPickup||order.orderStatus==='cancelled'||!isFullyInvoiced(order))return '';
   const mechanism=order.qrImageUrl
     ?' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();openImgLightbox('+escH(JSON.stringify(order.qrImageUrl))+')">📱 View QR</a>'
     :order.razorpayUrl
