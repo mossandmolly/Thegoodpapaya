@@ -268,8 +268,18 @@ function canonicalKey(name: string): string {
 }
 
 // ── Find or create a Zoho contact ────────────────────────────────────────────
+// Backfills customers.zoho_contact_id here, best-effort, the moment a
+// contact_id is resolved — previously this only ever got written by the
+// separate sync-customers function, which someone has to trigger manually.
+// A customer's very first invoice would create/find their Zoho contact fine
+// (invoicing itself never depended on the local row), but left
+// customers.zoho_contact_id null until the next manual sync — silently
+// breaking razorpay-webhook's recordZohoPayment lookup (keyed on this same
+// column) for every payment in between. Keyed on customer_name, same as
+// order.customer_name that razorpay-webhook looks up by.
 async function getOrCreateContact(
   name: string, phone: string | null, token: string, orgId: string,
+  supabase: ReturnType<typeof createClient>,
 ): Promise<string> {
   const search = await fetch(
     zohoUrl(`/contacts?contact_name=${encodeURIComponent(name)}`, orgId),
@@ -280,18 +290,29 @@ async function getOrCreateContact(
   const existing = sd.contacts?.find(
     (c: any) => canonicalKey(c.contact_name) === targetKey,
   );
-  if (existing) return existing.contact_id;
 
-  const body: any = { contact_name: name, contact_type: 'customer' };
-  if (phone) body.contact_persons = [{ phone }];
-  const create = await fetch(zohoUrl('/contacts', orgId), {
-    method: 'POST',
-    headers: zohoHeaders(token),
-    body: JSON.stringify(body),
-  });
-  const cd = await create.json();
-  if (cd.code !== 0) throw new Error(`Zoho create contact failed: ${cd.message}`);
-  return cd.contact.contact_id;
+  let contactId: string;
+  if (existing) {
+    contactId = existing.contact_id;
+  } else {
+    const body: any = { contact_name: name, contact_type: 'customer' };
+    if (phone) body.contact_persons = [{ phone }];
+    const create = await fetch(zohoUrl('/contacts', orgId), {
+      method: 'POST',
+      headers: zohoHeaders(token),
+      body: JSON.stringify(body),
+    });
+    const cd = await create.json();
+    if (cd.code !== 0) throw new Error(`Zoho create contact failed: ${cd.message}`);
+    contactId = cd.contact.contact_id;
+  }
+
+  supabase.from('customers').upsert(
+    { customer_name: name, zoho_contact_id: contactId, active: true },
+    { onConflict: 'customer_name' },
+  ).then(({ error }) => { if (error) console.error('customers.zoho_contact_id backfill failed:', error.message); });
+
+  return contactId;
 }
 
 // ── Payments applied to a Zoho invoice ───────────────────────────────────────
@@ -513,7 +534,7 @@ Deno.serve(async (req) => {
     const contactId = await getOrCreateContact(
       order.customer_name,
       order.phone ? `+91${order.phone.replace(/^\+91/, '')}` : null,
-      token, orgId,
+      token, orgId, supabase,
     );
 
     // Slow path: existing invoice — unapply payments, delete, recreate, reapply
