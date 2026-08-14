@@ -2683,12 +2683,18 @@ async function loadTodaysOrders(){
   currentOrdersById=bySalesOrder;
   currentItemsById=byItemId;
 
-  // Pickup (no real sale) and replacement-only (nothing actually billed)
-  // orders don't count toward "real" order volume here — same exclusion
-  // isReplacementOnlyOrder/isPickup already drive on the cards themselves.
-  const realOrders=Object.values(currentOrdersById).filter(o=>!o.isPickup&&!isReplacementOnlyOrder(o));
+  // Pickup (no real sale), cancelled (never invoiced), and replacement-only
+  // (nothing actually billed) orders don't count toward "real" order volume
+  // here — same exclusion isReplacementOnlyOrder/isPickup already drive on
+  // the cards themselves. Item count sums activeItems per counted order
+  // rather than the raw fetched total, so a cancelled item inside an
+  // otherwise-real order (or every item on an excluded order) doesn't
+  // inflate the "M items" figure either — same "won't be invoiced" rule
+  // applied consistently at both levels.
+  const realOrders=Object.values(currentOrdersById).filter(o=>!o.isPickup&&o.orderStatus!=='cancelled'&&!isReplacementOnlyOrder(o));
+  const realItemCount=realOrders.reduce((sum,o)=>sum+activeItems(o).length,0);
   document.getElementById('to-rc').textContent=realOrders.length
-    ?'— '+realOrders.length+' order'+(realOrders.length!==1?'s':'')+', '+data.length+' item'+(data.length!==1?'s':'')
+    ?'— '+realOrders.length+' order'+(realOrders.length!==1?'s':'')+', '+realItemCount+' item'+(realItemCount!==1?'s':'')
     :'';
 
   renderOrdersList();
