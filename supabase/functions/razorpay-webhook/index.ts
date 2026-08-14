@@ -166,6 +166,16 @@ Deno.serve(async (req) => {
     updates.payment_collected = true;
     updates.payment_collected_method = 'online';
     updates.payment_collected_at = new Date().toISOString();
+    // Whichever mechanism this payment came through is already spent —
+    // a single_use QR auto-closes itself on Razorpay's side, and a paid
+    // link stops accepting further payment — so this just clears our own
+    // stored reference rather than leaving it to resurface on a future
+    // regeneration (no separate close/cancel API call needed here).
+    updates.qr_code_id = null;
+    updates.qr_image_url = null;
+    updates.qr_created_at = null;
+    updates.razorpay_link_id = null;
+    updates.razorpay_url = null;
   }
 
   const { error } = await supabase
