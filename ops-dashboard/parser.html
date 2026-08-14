@@ -2869,6 +2869,7 @@ function renderOrdersList(){
                 :viewDate===CALENDAR_TODAY?'<a class="or-link" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'
                 :''
               ))+
+              (cancelled?'':'<a class="or-link" style="color:#b3261e" onclick="cancelOrderSingle(\''+order.soid+'\')">🗑 cancel order</a>')+
             '</span>'+
           '</div>'+
         '</div>';
@@ -3062,6 +3063,30 @@ async function regeneratePaymentLinkSingle(soid){
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not generate payment link');
+    evictCustomerLookupCache(soid);
+    await loadTodaysOrders();
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+  }
+}
+
+// Cancels the entire order via the existing cancel-order endpoint (same
+// one the bulk-select "Cancel" action already used) — deletes the Zoho
+// invoice if any (payment kept as customer credit, not refunded), cancels
+// the Razorpay link/QR, and sets the order + every item to 'cancelled'.
+// Soft-cancel only, never a hard delete — adding a new item later
+// (create-order) reopens it automatically.
+async function cancelOrderSingle(soid){
+  if(!await uxConfirm('Cancel this entire order?\n\nThis deletes its Zoho invoice (if any) and Razorpay link/QR — any payment already made is kept as customer credit in Zoho, not refunded. This cannot be undone from here.'))return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not cancel order');
+    selectedOrders.delete(soid);
     evictCustomerLookupCache(soid);
     await loadTodaysOrders();
   }catch(e){

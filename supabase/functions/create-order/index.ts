@@ -195,6 +195,35 @@ Deno.serve(async (req) => {
     });
     if (!res.ok) throw new Error(await res.text());
 
+    // ignore-duplicates leaves an already-existing order row completely
+    // untouched — including status:'cancelled' from before. This function
+    // being called at all means fresh order_items are about to be inserted
+    // under these sales_order_ids, so any of them still sitting cancelled
+    // need reopening first (same effect as reopen-order, the single-item
+    // "Add Item" modal's equivalent path) — otherwise the new items land
+    // under a parent order that still reads cancelled.
+    try {
+      const ids = rows.map(r => r.sales_order_id);
+      const cancelledRes = await fetch(
+        `${env('SUPABASE_URL')}/rest/v1/orders?sales_order_id=in.(${ids.map(id => `"${id}"`).join(',')})&status=eq.cancelled&select=sales_order_id`,
+        { headers: sbHeaders() },
+      );
+      const cancelled: { sales_order_id: string }[] = cancelledRes.ok ? await cancelledRes.json() : [];
+      if (cancelled.length) {
+        await fetch(
+          `${env('SUPABASE_URL')}/rest/v1/orders?sales_order_id=in.(${cancelled.map(c => `"${c.sales_order_id}"`).join(',')})`,
+          {
+            method: 'PATCH',
+            headers: { ...sbHeaders(), Prefer: 'return=minimal' },
+            body: JSON.stringify({ status: 'active', invoice_status: 'pending' }),
+          },
+        );
+      }
+    } catch (_e) {
+      // swallow — best-effort; a failure here shouldn't block the order push,
+      // worst case the order just stays cancelled and needs a manual reopen
+    }
+
     // Best-effort: grow the communities table from these customer names.
     // Never fails the request — a name-check pattern miss shouldn't block order creation.
     try {
