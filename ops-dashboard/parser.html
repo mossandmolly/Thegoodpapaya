@@ -201,6 +201,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .date-header-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .date-picker-compact{width:auto;text-transform:none;letter-spacing:normal;padding:4px 8px;font-size:11px;border:1px solid #eee0d0;border-radius:6px;background:#fdf8f3;color:#5c4f42;font-family:inherit;margin-bottom:0}
 .dv-location-badge{font-size:11px;font-weight:400;color:#8a7a6a}
+.dv-already-paid-note{background:#e3f3e3;color:#2d6b2d;font-size:12px;font-weight:600;padding:8px 12px;border-radius:6px;margin-bottom:12px}
 .parser-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px}
 .parser-split-table{flex:3 1 420px;min-width:280px}
 .parser-split-images{flex:1 1 260px;min-width:220px;max-width:300px;max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;position:sticky;top:10px}
@@ -600,6 +601,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="modal-overlay hidden" id="dv-modal">
   <div class="modal-box">
     <h3>Mark delivered</h3>
+    <div class="dv-already-paid-note hidden" id="dv-already-paid-note">✓ Already paid online (QR/link) — defaulted to Paid below</div>
     <label class="modal-label">Payment</label>
     <div class="dv-pay-toggle">
       <button type="button" class="dv-pay-btn" id="dv-pay-unpaid" onclick="setDvPaymentChoice(false)">Delivered — Not Paid</button>
@@ -6603,7 +6605,16 @@ function openMarkDeliveredModal(soid){
   dvTargetOrder=soid;
   dvNotesEl.value='';
   dvPhotoInput.value='';
-  setDvPaymentChoice(false);
+  // If payment already came in online (QR scanned before the rider even
+  // arrived — razorpay-webhook/sync-invoices set this), default to Paid
+  // instead of the usual Not Paid — defaulting to Not Paid here would let
+  // a rider who doesn't notice accidentally flip a real payment back to
+  // unpaid and trigger a fresh (unnecessary, confusing) payment link.
+  const order=deliveryOrders[soid];
+  const alreadyPaidOnline=order&&order.paymentCollected&&order.paymentCollectedMethod!=='cash';
+  setDvPaymentChoice(!!alreadyPaidOnline);
+  document.getElementById('dv-cash-toggle').checked=false;
+  document.getElementById('dv-already-paid-note').classList.toggle('hidden',!alreadyPaidOnline);
   dvModal.classList.remove('hidden');
 }
 
