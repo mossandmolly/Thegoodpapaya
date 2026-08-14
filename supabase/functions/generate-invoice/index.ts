@@ -372,6 +372,24 @@ async function createZohoInvoice(
   };
 }
 
+// Zoho creates every invoice as 'draft' by default — a draft invoice can't
+// have a payment properly recorded/reflected against it (Zoho's own
+// customerpayments API and balance tracking expect a real, issued
+// invoice), which is why payments coming in via Razorpay were failing to
+// show as paid anywhere downstream. Marking it sent immediately after
+// creation is what actually makes it a live, payable invoice. Best-effort
+// — a failure here shouldn't fail invoice generation itself, though it
+// does mean this specific invoice would need a manual "mark as sent" in
+// Zoho to unblock payment tracking.
+async function markZohoInvoiceSent(invoiceId: string, token: string, orgId: string): Promise<void> {
+  try {
+    await fetch(zohoUrl(`/invoices/${invoiceId}/status/sent`, orgId), {
+      method: 'POST',
+      headers: zohoHeaders(token),
+    });
+  } catch (_e) {} // best effort
+}
+
 async function applyPaymentToInvoice(
   invoiceId: string, paymentId: string, amount: number, token: string, orgId: string,
 ): Promise<void> {
@@ -512,6 +530,7 @@ Deno.serve(async (req) => {
     const { invoice_id, invoice_number, invoice_total } = await createZohoInvoice(
       contactId, sales_order_id, invoiceDate, lineItems, token, orgId,
     );
+    await markZohoInvoiceSent(invoice_id, token, orgId);
 
     // Reapply prior payments to new invoice
     for (const p of priorPayments) {
