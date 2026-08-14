@@ -125,7 +125,7 @@ async function recordPayment(
       payment_mode:     'onlinepayment',
       amount,
       date:              new Date().toISOString().slice(0, 10),
-      reference_number:  'Backfill — pre-existing payment not yet recorded in Zoho',
+      reference_number:  'Backfill: unrecorded payment', // Zoho caps this field at 50 chars
       invoices: [{ invoice_id: invoiceId, amount_applied: amount }],
     }),
   });
