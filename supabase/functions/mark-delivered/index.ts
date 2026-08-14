@@ -232,6 +232,29 @@ Deno.serve(async (req) => {
           .limit(1);
         deliveryStatus = (cancelledItems && cancelledItems.length) ? 'partially_delivered' : 'delivered';
       }
+
+      // A rider's screen can be stale (limited connectivity — they may not
+      // have refreshed since a QR payment landed) — never trust a "not
+      // paid" claim blindly on a fresh delivered:true call; check the
+      // server's own current state first. If it's already paid online,
+      // ignore the stale claim entirely rather than flipping a real
+      // payment back to unpaid and triggering a needless fresh payment
+      // link. (This never runs on the separate undo-delivery path, which
+      // sends delivered:false, not a payment claim.)
+      let effectivePaymentCollected = !!payment_collected;
+      let effectivePaymentMethod    = payment_collected_method || null;
+      if (delivered && !payment_collected) {
+        const { data: current } = await supabase
+          .from('orders')
+          .select('payment_collected, payment_collected_method')
+          .eq('sales_order_id', sales_order_id)
+          .maybeSingle();
+        if (current?.payment_collected) {
+          effectivePaymentCollected = true;
+          effectivePaymentMethod = current.payment_collected_method || 'online';
+        }
+      }
+
       // payment_collected/_method/_at travel with delivered_at, not with
       // notes/photos — un-marking a delivery means the payment the rider
       // claimed to have collected at that (now-undone) delivery is undone
@@ -244,9 +267,9 @@ Deno.serve(async (req) => {
       update.delivery_status          = deliveryStatus;
       update.delivered_at             = delivered ? new Date().toISOString() : null;
       update.delivered_by             = delivered ? (rider || null) : null;
-      update.payment_collected        = delivered ? !!payment_collected : false;
-      update.payment_collected_method = delivered && payment_collected ? (payment_collected_method || null) : null;
-      update.payment_collected_at     = delivered && payment_collected ? new Date().toISOString() : null;
+      update.payment_collected        = delivered ? effectivePaymentCollected : false;
+      update.payment_collected_method = delivered && effectivePaymentCollected ? effectivePaymentMethod : null;
+      update.payment_collected_at     = delivered && effectivePaymentCollected ? new Date().toISOString() : null;
     } else if (sync_partial_status) {
       const { data: current } = await supabase
         .from('orders')
@@ -305,7 +328,11 @@ Deno.serve(async (req) => {
 
     if (delivered === true) {
       try {
-        if (payment_collected) await closeActivePaymentMechanisms(supabase, sales_order_id);
+        // data.payment_collected is the value actually just persisted above
+        // (post server-side-override, not necessarily what the client
+        // claimed) — using it here, not the raw request field, is what
+        // makes the override actually take effect on which action runs.
+        if (data.payment_collected) await closeActivePaymentMechanisms(supabase, sales_order_id);
         else await switchToPaymentLink(supabase, sales_order_id);
       } catch (e: any) {
         console.error(`[mark-delivered] payment mechanism cleanup failed for ${sales_order_id}:`, e.message);
