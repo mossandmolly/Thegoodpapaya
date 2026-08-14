@@ -3098,17 +3098,20 @@ async function cancelOrderSingle(soid){
   }
 }
 
-// Payment collection only means anything once something's actually in the
-// customer's hands — an order still out for delivery isn't "unpaid," it's
-// just not there yet, so this stays silent until delivered/partially
-// delivered. paymentCollectedMethod (cash/upi/etc) shows as a tooltip when
-// paid, since the badge itself has no room for it.
+// PAID is shown as soon as payment_collected is true — a QR/link payment
+// can land before the order is even out for delivery, and that's a real
+// positive signal worth surfacing immediately. NOT PAID stays silent until
+// delivered/partially delivered though: an order still out for delivery
+// isn't "unpaid," it's just not there yet, so a red badge on every
+// not-yet-delivered order would just be noise. paymentCollectedMethod
+// (cash/upi/etc) shows as a tooltip when paid, since the badge itself has
+// no room for it.
 function paidStatusBadgeHtml(order){
-  if(order.deliveryStatus!=='delivered'&&order.deliveryStatus!=='partially_delivered')return '';
   if(order.paymentCollected){
     const method=order.paymentCollectedMethod?' ('+escH(order.paymentCollectedMethod)+')':'';
     return ' <span class="paid-badge" title="Payment collected'+method+'">💰 PAID</span>';
   }
+  if(order.deliveryStatus!=='delivered'&&order.deliveryStatus!=='partially_delivered')return '';
   return ' <span class="unpaid-badge">⚠️ NOT PAID</span>';
 }
 
@@ -6216,11 +6219,19 @@ function renderDeliveryCard(order,selectionMode){
 
   const deliveryStatusBadge=deliveryStatusBadgeHtml(order.deliveryStatus);
 
+  // Delivered: shows both PAID and NOT PAID — at that point it's a genuine
+  // outstanding-payment flag worth calling out. Still-OFD: only shows PAID
+  // (a real positive signal — payment landed before the rider even got
+  // there) — NOT PAID stays silent, since that's just the normal default
+  // state of every order that hasn't been paid or delivered yet, not
+  // something worth a red badge on every single OFD card.
   const paymentBadge=delivered
     ?(order.paymentCollected
       ?' <span class="order-status-badge" style="background:#2f6690">PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
       :' <span class="order-status-badge" style="background:#b3261e">NOT PAID</span>')
-    :'';
+    :(order.paymentCollected
+      ?' <span class="order-status-badge" style="background:#2f6690">PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
+      :'');
 
   const assignedTag=order.assignedRider
     ?'<span class="dv-assigned-tag">🛵 rider: '+escH(order.assignedRider)+'</span>'
@@ -6265,6 +6276,7 @@ function renderDeliveryCard(order,selectionMode){
           pickupTag+
           deliveryStatusBadge+
           adminActionBadgeHtml(order)+
+          paymentBadge+
           deliverByTag+
         '</span>'+
         '<span class="dv-expand-caret">▸</span>'+
