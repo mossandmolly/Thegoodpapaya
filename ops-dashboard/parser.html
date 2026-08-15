@@ -6212,13 +6212,13 @@ function renderDeliveryCard(order,selectionMode){
   // once the rider's confirmed payment there's nothing to add.
   const qrBlock=(order.qrImageUrl&&!order.paymentCollected)
     ?'<div class="dv-qr-block">'+
-        '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+'</div>'+
-        '<img src="'+escH(order.qrImageUrl)+'" width="160" height="160" alt="Payment QR">'+
+        '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+' — tap to enlarge</div>'+
+        '<img src="'+escH(order.qrImageUrl)+'" width="160" height="160" alt="Payment QR" style="cursor:pointer" onclick="openImgLightbox(this.src)">'+
       '</div>'
     :(order.razorpayUrl&&!order.paymentCollected)
     ?'<div class="dv-qr-block">'+
-        '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+' (payment link sent)</div>'+
-        '<img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data='+encodeURIComponent(order.razorpayUrl)+'" width="160" height="160" alt="Payment QR">'+
+        '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+' (payment link sent) — tap to enlarge</div>'+
+        '<img src="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data='+encodeURIComponent(order.razorpayUrl)+'" width="160" height="160" alt="Payment QR" style="cursor:pointer" onclick="openImgLightbox(this.src)">'+
         '<a class="or-link" href="'+escH(order.razorpayUrl)+'" target="_blank">or open payment link</a>'+
       '</div>'
     :'';
