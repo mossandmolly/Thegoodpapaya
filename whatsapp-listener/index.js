@@ -379,6 +379,30 @@ const groupNames = {} // jid -> subject cache
 const discoveredGroups = new Set()
 
 let reconnectAttempts = 0
+let currentSock = null
+let shuttingDown = false
+
+// Closing the socket cleanly on shutdown (redeploy, Ctrl-C) matters: killing
+// the process mid-write can leave the Signal Protocol session files
+// (pre-key-N.json, session-*.json) out of sync with what WhatsApp's server
+// still thinks is current, which WhatsApp then reports back as a session
+// "conflict" (code 440) on every future reconnect — a self-inflicted loop
+// that looks like two clients fighting over one session when there's really
+// just one, with corrupted state. sock.end() logs off the socket without
+// revoking the underlying link, unlike sock.logout().
+async function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[shutdown] ${signal} received, closing WhatsApp connection cleanly…`)
+  try {
+    currentSock?.end(undefined)
+  } catch (e) {
+    console.error('[shutdown] error closing socket:', e.message)
+  }
+  setTimeout(() => process.exit(0), 500)
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
 
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
@@ -418,6 +442,7 @@ async function start() {
       ? { defaultQueryTimeoutMs: undefined, browser: ['Windows', 'Chrome', '114.0.5735.198'] }
       : {}),
   })
+  currentSock = sock
 
   sock.ev.on('creds.update', saveCreds)
 
@@ -439,6 +464,7 @@ async function start() {
     const { connection, lastDisconnect, qr } = u
     if (qr && !PAIRING_PHONE_NUMBER) qrcode.generate(qr, { small: true }) // scan once with the secondary number
     if (connection === 'close') {
+      if (shuttingDown) return // intentional shutdown — don't reconnect
       const code = lastDisconnect?.error?.output?.statusCode
       const reason = lastDisconnect?.error?.message || 'unknown reason'
       console.log(`connection closed — code=${code} reason="${reason}"`)
@@ -447,9 +473,16 @@ async function start() {
         console.log('logged out — delete ./auth and re-scan to reconnect')
         return
       }
-      const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts)
+      // A "conflict" (connectionReplaced) means WhatsApp's server still
+      // thinks a previous connection using this session is active — almost
+      // always because we reconnected faster than the server finished
+      // tearing down the last one, which just triggers another conflict on
+      // the new attempt too. Waiting it out (rather than the usual fast
+      // 1s-then-backoff retry) gives the server time to actually release it.
+      const conflict = code === DisconnectReason.connectionReplaced
+      const delay = conflict ? 15000 : Math.min(30000, 1000 * 2 ** reconnectAttempts)
       reconnectAttempts++
-      console.log(`reconnecting in ${delay}ms`)
+      console.log(`reconnecting in ${delay}ms${conflict ? ' (session conflict — waiting longer for WhatsApp to release the previous connection)' : ''}`)
       setTimeout(start, delay)
     } else if (connection === 'open') {
       reconnectAttempts = 0
