@@ -894,16 +894,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="section-label date-header-row">
     <span>📡 Live WhatsApp Orders <span id="live-rc"></span></span>
   </div>
-  <p class="note">Fed by the WhatsApp group listener — a separate running list from the parser above, refreshes automatically. Edit a row and hit 💾 to correct it before pushing.</p>
+  <p class="note">Fed by the WhatsApp group listener — a separate running list from the parser above, refreshes automatically. Edit a row and hit 💾 to correct it before pushing. Check rows to act on just those — with nothing checked, Push/Clear/Move act on every row shown. Per-row 📅 moves that one row to tomorrow (e.g. an evening order that should land on tomorrow's run), 🗑 clears just that row (stays in the database, only hidden here) without pushing it.</p>
   <div class="table-scroll">
     <table class="community-table" id="live-table"><thead><tr>
-      <th>Time</th><th>Group</th><th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Sales order</th><th></th>
+      <th><input type="checkbox" id="live-select-all" onchange="toggleLiveSelectAll(this.checked)"></th><th>Time</th><th>Group</th><th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Sales order</th><th></th>
     </tr></thead><tbody id="live-tbody"></tbody></table>
   </div>
   <div class="push-row" style="margin-top:14px">
     <button class="btn-push" id="live-push">📤 Push to Operations</button>
+    <button class="btn-sec" id="live-next-day">📅 Move All to Next Day</button>
     <button class="btn-sec" id="live-copy">📋 Copy TSV</button>
-    <button class="btn-sec" id="live-clear">🗑 Clear</button>
+    <button class="btn-sec" id="live-clear">🗑 Clear All</button>
   </div>
   <div class="push-status" id="live-status"></div>
 </div>
@@ -2318,6 +2319,12 @@ pushTomorrowBtn.addEventListener('click',async()=>{
 // header + order_items line, held-duplicate + already-dispatched-split
 // detection included), then soft-clears (not deletes) whatever it pushed.
 let liveRows=[];
+// Selected row ids — when empty, the bulk Push/Clear/Move buttons act on
+// every row shown (same as before this existed); when non-empty, they act
+// only on the checked rows. Pruned to whatever's currently loaded on every
+// render so a stale id from a since-pushed/cleared row can't linger and
+// throw off the "all selected" checkbox state or bulk counts.
+let liveSelected=new Set();
 
 async function loadLiveView(){
   // Auto-refresh must never clobber a row someone's mid-edit on.
@@ -2329,8 +2336,64 @@ async function loadLiveView(){
   renderLiveTable();
 }
 
+// Target set for the bulk action buttons — selection if any, else everything.
+function liveTargetRows(){
+  return liveSelected.size?liveRows.filter(r=>liveSelected.has(r.id)):liveRows;
+}
+
+function toggleLiveSelect(id,checked){
+  if(checked)liveSelected.add(id);else liveSelected.delete(id);
+  updateLiveActionLabels();
+}
+
+function toggleLiveSelectAll(checked){
+  if(checked)liveRows.forEach(r=>liveSelected.add(r.id));
+  else liveSelected.clear();
+  renderLiveTable();
+}
+
+function updateLiveActionLabels(){
+  const n=liveSelected.size;
+  const pushBtn=document.getElementById('live-push');
+  const clearBtn=document.getElementById('live-clear');
+  const nextDayBtn=document.getElementById('live-next-day');
+  if(pushBtn)pushBtn.textContent=n?'📤 Push '+n+' Selected':'📤 Push to Operations';
+  if(clearBtn)clearBtn.textContent=n?'🗑 Clear '+n+' Selected':'🗑 Clear All';
+  if(nextDayBtn)nextDayBtn.textContent=n?'📅 Move '+n+' Selected to Next Day':'📅 Move All to Next Day';
+  const selectAll=document.getElementById('live-select-all');
+  if(selectAll){
+    selectAll.checked=n>0&&n===liveRows.length;
+    selectAll.indeterminate=n>0&&n<liveRows.length;
+  }
+}
+
+// order_date + N, and the matching date prefix swapped into sales_order
+// (format is "YYYY-MM-DD-CustomerKey" — same slice(10) trick pushTomorrowBtn
+// above uses to keep the customer-key half untouched).
+function nextDayUpdateFor(row){
+  const newDate=addDays(row.order_date||CALENDAR_TODAY,1);
+  return{order_date:newDate,sales_order:row.sales_order?newDate+row.sales_order.slice(10):row.sales_order};
+}
+
+async function moveLiveRowToNextDay(id){
+  const row=liveRows.find(r=>r.id===id);
+  if(!row)return;
+  const{error}=await sb.from('whatsapp_parsed_orders').update(nextDayUpdateFor(row)).eq('id',id);
+  if(error){uxAlert('Failed to move: '+error.message);return;}
+  await loadLiveView();
+}
+
+async function clearLiveRow(id){
+  const{error}=await sb.from('whatsapp_parsed_orders').update({cleared:true}).eq('id',id);
+  if(error){uxAlert('Failed to clear: '+error.message);return;}
+  liveSelected.delete(id);
+  await loadLiveView();
+}
+
 function renderLiveRow(r){
+  const checked=liveSelected.has(r.id)?' checked':'';
   return '<tr data-id="'+r.id+'">'+
+    '<td><input type="checkbox"'+checked+' onchange="toggleLiveSelect('+escH(JSON.stringify(r.id))+',this.checked)"></td>'+
     '<td>'+escH(new Date(r.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}))+'</td>'+
     '<td>'+escH(r.group_name||'')+'</td>'+
     '<td><input type="text" id="live-cust-'+r.id+'" value="'+escH(r.customer_name)+'"></td>'+
@@ -2338,16 +2401,23 @@ function renderLiveRow(r){
     '<td><input type="text" id="live-desc-'+r.id+'" value="'+escH(r.description||'')+'"></td>'+
     '<td><input type="text" id="live-qty-'+r.id+'" value="'+escH(r.quantity||'')+'" style="width:56px"></td>'+
     '<td><input type="text" id="live-so-'+r.id+'" value="'+escH(r.sales_order||'')+'"></td>'+
-    '<td><button class="del-btn" style="color:#2d6b2d" onclick="saveLiveRow('+escH(JSON.stringify(r.id))+')" title="Save">💾</button></td>'+
+    '<td style="white-space:nowrap">'+
+      '<button class="del-btn" style="color:#2d6b2d" onclick="saveLiveRow('+escH(JSON.stringify(r.id))+')" title="Save">💾</button>'+
+      '<button class="del-btn" onclick="moveLiveRowToNextDay('+escH(JSON.stringify(r.id))+')" title="Move this row to next day">📅</button>'+
+      '<button class="del-btn" onclick="clearLiveRow('+escH(JSON.stringify(r.id))+')" title="Clear this row (stays in DB, just hidden)">🗑</button>'+
+    '</td>'+
   '</tr>';
 }
 
 function renderLiveTable(){
   const tbody=document.getElementById('live-tbody');
   if(!tbody)return;
+  const ids=new Set(liveRows.map(r=>r.id));
+  for(const id of[...liveSelected])if(!ids.has(id))liveSelected.delete(id);
   const rc=document.getElementById('live-rc');
   if(rc)rc.textContent=liveRows.length?'— '+liveRows.length+' row'+(liveRows.length!==1?'s':''):'';
   tbody.innerHTML=liveRows.map(renderLiveRow).join('');
+  updateLiveActionLabels();
 }
 
 async function saveLiveRow(id){
@@ -2381,26 +2451,46 @@ document.getElementById('live-copy').addEventListener('click',()=>{
 });
 
 document.getElementById('live-push').addEventListener('click',async()=>{
-  const rows=liveRows.filter(r=>r.customer_name&&r.item_name);
+  const targets=liveTargetRows();
+  const rows=targets.filter(r=>r.customer_name&&r.item_name);
   if(!rows.length){setLiveStatus('Nothing to push — no live rows yet','err');return;}
   const btn=document.getElementById('live-push');
   btn.disabled=true;btn.textContent='Pushing…';setLiveStatus('');
   try{
     const{opened,held,splitCount}=await pushRows(rows,r=>r.sales_order);
     await sb.from('whatsapp_parsed_orders').update({cleared:true}).in('id',rows.map(r=>r.id));
+    liveSelected.clear();
     setLiveStatus('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':'')+(splitCount?' · '+splitCount+' order'+(splitCount!==1?'s':'')+' already out for delivery, split into new order'+(splitCount!==1?'s':''):''),'ok');
     await loadLiveView();
   }catch(e){
     setLiveStatus('❌ '+e.message,'err');
   }
-  btn.disabled=false;btn.textContent='📤 Push to Operations';
+  btn.disabled=false;
+  updateLiveActionLabels();
+});
+
+document.getElementById('live-next-day').addEventListener('click',async()=>{
+  const targets=liveTargetRows();
+  if(!targets.length){setLiveStatus('Nothing to move — no live rows yet','err');return;}
+  if(!await uxConfirm('Move '+targets.length+' row(s) to next day (order date +1)?'))return;
+  const btn=document.getElementById('live-next-day');
+  btn.disabled=true;setLiveStatus('');
+  const results=await Promise.all(targets.map(r=>sb.from('whatsapp_parsed_orders').update(nextDayUpdateFor(r)).eq('id',r.id)));
+  const failed=results.filter(r=>r.error);
+  liveSelected.clear();
+  if(failed.length)setLiveStatus('❌ '+failed.length+' of '+targets.length+' failed to move','err');
+  else setLiveStatus('✅ Moved '+targets.length+' row'+(targets.length!==1?'s':'')+' to next day','ok');
+  btn.disabled=false;
+  await loadLiveView();
 });
 
 document.getElementById('live-clear').addEventListener('click',async()=>{
-  if(!liveRows.length)return;
-  if(!await uxConfirm('Clear '+liveRows.length+' row(s) from the list? They stay in the database, just hidden here.'))return;
-  const{error}=await sb.from('whatsapp_parsed_orders').update({cleared:true}).in('id',liveRows.map(r=>r.id));
+  const targets=liveTargetRows();
+  if(!targets.length)return;
+  if(!await uxConfirm('Clear '+targets.length+' row(s) from the list? They stay in the database, just hidden here.'))return;
+  const{error}=await sb.from('whatsapp_parsed_orders').update({cleared:true}).in('id',targets.map(r=>r.id));
   if(error){setLiveStatus('❌ '+error.message,'err');return;}
+  liveSelected.clear();
   await loadLiveView();
 });
 
