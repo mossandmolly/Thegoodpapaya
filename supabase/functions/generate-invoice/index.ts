@@ -352,6 +352,14 @@ async function deleteZohoInvoice(invoiceId: string, token: string, orgId: string
   }
 }
 
+// GST place of supply is the customer's delivery location, not where we
+// source fruit from (wholesale origin is irrelevant to GST) — every
+// delivery today is a Bangalore-area residential address, so this is
+// Karnataka on every invoice. Named here as a single source of truth
+// rather than a literal in the request body, since the day a delivery
+// goes outside Karnataka this needs to become per-order, not a constant.
+const PLACE_OF_SUPPLY = 'KA';
+
 // ── Create Zoho Books invoice ─────────────────────────────────────────────────
 async function createZohoInvoice(
   contactId: string,
@@ -365,6 +373,7 @@ async function createZohoInvoice(
     customer_id:      contactId,
     reference_number: salesOrderId,
     date,
+    place_of_supply:  PLACE_OF_SUPPLY,
     // item_id, when known, is what actually links this line to the right
     // Zoho catalog item — name alone is Zoho's case-sensitive fallback,
     // exactly what created "ghost" unlinked items before (see the comment
