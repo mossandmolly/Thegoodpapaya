@@ -282,7 +282,7 @@ async function flush(jid) {
     const result = await callParser(lines, today, groupName)
     logResult(groupName, b.items.length, result)
     if (result?.rows?.length) {
-      await insertParsedRows(result.rows, today, groupName)
+      await insertParsedRows(result.rows, today, groupName, lines)
     }
   } catch (e) {
     console.error('[parser] request failed:', e.message)
@@ -321,7 +321,7 @@ async function callParser(lines, today, groupName) {
 // Writes parsed rows into the `whatsapp_parsed_orders` table that the parser
 // page's "Live" tab reads from. Nothing here touches orders/order_items —
 // that only happens when a human clicks "Push to operations" in the UI.
-async function insertParsedRows(rows, today, groupName) {
+async function insertParsedRows(rows, today, groupName, rawText) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
   const records = rows.map((r) => ({
     order_date: r.order_date || today,
@@ -335,6 +335,11 @@ async function insertParsedRows(rows, today, groupName) {
     deliver_after: r.deliver_after || null,
     quantity: r.quantity != null ? String(r.quantity) : null,
     sales_order: r.sales_order || null,
+    // The whole batch's raw tagged text, not just this row's slice of it —
+    // Claude doesn't report which line(s) produced which row, and every row
+    // from one batch sharing the same raw_text is still enough for a human
+    // to compare a parsed row against what was actually typed.
+    raw_text: rawText || null,
   }))
   const resp = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/whatsapp_parsed_orders`, {
     method: 'POST',

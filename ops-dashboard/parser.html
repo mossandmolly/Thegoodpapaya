@@ -50,6 +50,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .listener-status.ls-ok{background:#eaf5e6;color:#3f7a34}
 .listener-status.ls-warn{background:#fdf3d8;color:#9a6a00}
 .listener-status.ls-err{background:#fbe7e4;color:#b3261e}
+.live-raw-text{max-width:220px;max-height:90px;overflow-y:auto;white-space:pre-wrap;font-size:11px;line-height:1.4;color:#5c4f42;background:#fdf8f3;border:1px solid #eee0d0;border-radius:6px;padding:6px 8px}
 .to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px}
 .society-header{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#ffffff;background:#c2570a;margin:18px 0 8px;padding:9px 12px;border-radius:8px}
 .society-header:first-child{margin-top:0}
@@ -927,10 +928,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <span>📡 Live WhatsApp Orders <span id="live-rc"></span></span>
   </div>
   <div id="live-listener-status" class="listener-status hidden"></div>
-  <p class="note">Fed by the WhatsApp group listener — a separate running list from the parser above, refreshes automatically. Edit a row and hit 💾 to correct it before pushing. Check rows to act on just those — with nothing checked, Push/Clear/Move act on every row shown. Per-row 📅 moves that one row to tomorrow (e.g. an evening order that should land on tomorrow's run), 🗑 clears just that row (stays in the database, only hidden here) without pushing it.</p>
+  <p class="note">Fed by the WhatsApp group listener — a separate running list from the parser above, refreshes automatically. Edit a row and hit 💾 to correct it before pushing. Check rows to act on just those — with nothing checked, Push/Clear/Move act on every row shown. Per-row 📅 moves that one row to tomorrow (e.g. an evening order that should land on tomorrow's run), 🗑 clears just that row (stays in the database, only hidden here) without pushing it. "Raw message" shows the original WhatsApp text a row was parsed from — rows from the same batch share the same raw text, since the parser doesn't report which exact line produced which row.</p>
   <div class="table-scroll">
     <table class="community-table" id="live-table"><thead><tr>
-      <th><input type="checkbox" id="live-select-all" onchange="toggleLiveSelectAll(this.checked)"></th><th>Time</th><th>Group</th><th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Sales order</th><th></th>
+      <th><input type="checkbox" id="live-select-all" onchange="toggleLiveSelectAll(this.checked)"></th><th>Time</th><th>Group</th><th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Sales order</th><th>Raw message</th><th></th>
     </tr></thead><tbody id="live-tbody"></tbody></table>
   </div>
   <div class="push-row" style="margin-top:14px">
@@ -2470,6 +2471,7 @@ function renderLiveRow(r){
     '<td><input type="text" id="live-desc-'+r.id+'" value="'+escH(r.description||'')+'"></td>'+
     '<td><input type="text" id="live-qty-'+r.id+'" value="'+escH(r.quantity||'')+'" style="width:56px"></td>'+
     '<td><input type="text" id="live-so-'+r.id+'" value="'+escH(r.sales_order||'')+'"></td>'+
+    '<td><div class="live-raw-text">'+escH(r.raw_text||'')+'</div></td>'+
     '<td style="white-space:nowrap">'+
       '<button class="del-btn" style="color:#2d6b2d" onclick="saveLiveRow('+escH(JSON.stringify(r.id))+')" title="Save">💾</button>'+
       '<button class="del-btn" onclick="moveLiveRowToNextDay('+escH(JSON.stringify(r.id))+')" title="Move this row to next day">📅</button>'+
