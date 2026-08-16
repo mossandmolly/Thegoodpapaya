@@ -1,0 +1,13 @@
+# Railway deployment
+# https://railway.app → New project → Deploy from GitHub repo → select whatsapp-listener dir
+#
+# ./auth is the WhatsApp session — it must persist across deploys/restarts,
+# so attach a Railway volume mounted at /app/auth (Settings → Volumes).
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "node index.js"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

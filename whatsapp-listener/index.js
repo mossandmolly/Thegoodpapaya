@@ -1,0 +1,461 @@
+// WhatsApp group listener -> Good Papaya order parser
+// Read-only. Never sends. Run on a dedicated secondary number.
+//
+// The listener itself has no order intelligence — it just batches raw
+// message text (with sender identity and reply/quote context) per group
+// and forwards it to the same /.netlify/functions/parse proxy that
+// parser.html's image-upload flow calls, using the exact same rules
+// prompt (kept in sync with ops-dashboard/parser.html's SYS constant).
+// All parsing decisions happen in that Claude call, not here.
+//
+// Requires Node 20+ (uses built-in fetch).
+// npm install
+
+import 'dotenv/config'
+import makeWASocket, {
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  DisconnectReason,
+} from '@whiskeysockets/baileys'
+import qrcode from 'qrcode-terminal'
+import P from 'pino'
+import fs from 'fs'
+
+// ============== CONFIG ==============
+const GROUP_JIDS = new Set(
+  (process.env.GROUP_JIDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+) // leave empty first run to discover group JIDs
+
+const PARSE_FUNCTION_URL = process.env.PARSE_FUNCTION_URL || ''
+const SUPABASE_URL = process.env.SUPABASE_URL || ''
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+
+const BATCH_WINDOW_MS = parseInt(process.env.BATCH_WINDOW_MS || '45000', 10)
+const AUTH_DIR = './auth'
+const LOG_FILE = './parsed-orders.log.jsonl'
+// ====================================
+
+const logger = P({ level: 'silent' })
+
+// Log crashes instead of letting them die silently — a crash here means
+// Railway restarts the whole container (wiping ./auth without a volume
+// attached), so seeing why it happened matters.
+process.on('uncaughtException', (e) => console.error('[fatal] uncaughtException:', e))
+process.on('unhandledRejection', (e) => console.error('[fatal] unhandledRejection:', e))
+
+function todayIST() {
+  return new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10)
+}
+
+// ── Parser rules — kept in sync with the SYS constant in ops-dashboard/parser.html ──
+// Same canonical item list / aliases / pc-to-kg table / society list / rules the
+// tested image-upload parser uses. If those are edited on the parser page's Config
+// tab, that's session-only (resets on refresh) — these are the shared defaults both
+// start from, same as a fresh browser tab would.
+const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"]
+
+const FRUITS = ["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango"]
+
+const PKG = {"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50}
+
+const ALIASES = {"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orange","sweet orange":"Mandarin orange","yellaki":"Yelakki banana","yellakki":"Yelakki banana","yalakki":"Yelakki banana","yalaki":"Yelakki banana","elaichi banana":"Yelakki banana","elachi banana":"Yelakki banana","banana":"Yelakki banana","y banana":"Yelakki banana","y bananas":"Yelakki banana","langda":"Langra mango","langdaa":"Langra mango","langra":"Langra mango","langa":"Langra mango","kesar":"Kesar mango","alphonso":"Alphonso mango","dasheri":"Dasheri mango","dussehri":"Dasheri mango","badami":"Badami mango","beganpalli":"Banganapalli mango","baganpalli":"Banganapalli mango","pedanpally":"Banganapalli mango","banganphalli":"Banganapalli mango","baiganphali":"Banganapalli mango","bagganpalli":"Banganapalli mango","cherry sweet":"Cherry Indian","cherry":"Cherry Indian","grapes":"Green grapes","litchi":"Lychee","lichi":"Lychee","sweet lime":"Mosambi","rocket apple":"Rockit apple","rock apple":"Rockit apple","rambuttan":"Rambutan","rambutten":"Rambutan","rambhutan":"Rambutan","rambuthan":"Rambutan","imanpasad":"Imampasand mango","imampasad":"Imampasand mango","thai guava":"Guava white","white guava":"Guava white","dragon fruit red":"Dragon red","dragonfruit red":"Dragon red"}
+
+function buildSystemPrompt(today, groupName) {
+  const aliasLines = Object.entries(ALIASES).map(([k, v]) => k + '→' + v).join(', ')
+  const pkgLines = Object.entries(PKG).map(([k, v]) => k + '=' + v + 'kg/pc').join(', ')
+  const societyList = SOCIETIES.join(', ')
+
+  return `You are an order parser for Good Papaya, a fresh produce delivery business in Bengaluru.
+
+TODAY: ${today}
+
+You are reading LIVE messages from the WhatsApp group "${groupName}", not a screenshot. Each line below is tagged "[SenderName]: message text" — SenderName is the sender's real WhatsApp display name. A line may also be tagged "(replying to: "...")" when it's a reply to an earlier message.
+
+CANONICAL ITEMS: ${FRUITS.join(', ')}
+
+KG/PC CONVERSIONS: ${pkgLines}
+
+ALIASES: ${aliasLines}
+
+RULES:
+1. customer_name = society name + door/flat number ONLY, derived from the tagged SenderName, society first then door.
+   KNOWN SOCIETIES: ${societyList}
+   Also use judgement to identify new societies not on this list.
+   STRIP: Indian first/last names (Kalika, Radhika, Kavita, Shalu, Sapna, Femina, Usha, Harpreet, Swati, Nandhini, Komali, Monika, Gayathri, Anu, Nikesha, Chanchal, Sampada, Chanda, Soumya, Anupreet etc), Indian city names (Delhi, Mumbai, Bangalore etc), builder prefixes (APR, Prestige, Brigade unless part of society name).
+   NEVER strip the society name itself. When in doubt whether a word is a person name or society name, KEEP it.
+   REORDER if needed: society always before door e.g. "B303 T4"→"T4 B303", "Sapna T4 B303"→"T4 B303".
+   Examples: "Kalika Villa 384"→"Villa 384", "Radhika Meda A705"→"Meda A705", "Kavita Ferns E402"→"Ferns E402", "Usha Espana L401"→"Espana L401", "Harpreet Lakefront E501"→"Lakefront E501", "Rupal APR Villa 269"→"Villa 269"
+
+2. IGNORE ONLY: 👍 reacted messages, payment/UPI confirmations, deleted messages, system messages (member added/removed)
+
+3. item_name = canonical name only, NO qualifiers in item_name
+
+4. description = EVERYTHING except the base fruit name and quantity:
+   - All qualifiers: ripe, sweet, medium, large, small, organic, ready to eat, semi-ripe, not very ripe, long, striped etc
+   - Delivery instructions: "door pe rakh dena", "leave at door", "call before delivery" etc
+   - Conditions: "only if sweet", "if available", "not overripe" etc
+   - Piece count: ALWAYS include "N pieces" when order is by count e.g. "2 pieces", "ripe, 3 pieces", "ready to eat, 1 piece"
+   - Complaints or special requests also go here
+
+4a. delivery_instructions = a SEPARATE copy of anything from the message
+    that's specifically an instruction for the delivery person, not the
+    packer — e.g. "deliver after 4pm", "before 10am only", "don't ring the
+    bell", "leave with security", "don't collect money" / "already paid" /
+    COD notes, gate codes, "call before coming up". This is IN ADDITION to
+    also including that same text in description per rule 4 above — it's
+    not a replacement, both fields get it. Empty string "" if the message
+    has nothing delivery-specific (most orders won't).
+
+4b. deliver_by = a structured "HH:MM" (24-hour) LATEST-time deadline ONLY
+    if the customer stated a hard latest-time to receive the order — e.g.
+    "need by 4pm"→"16:00", "before 10am"→"10:00", "by 6:30pm"→"18:30",
+    "between 2 and 4pm"→"16:00" (the later bound). Only fill it in when a
+    specific clock time is actually stated — NOT for vague urgency ("asap",
+    "soon", "whenever"). Empty string "" if no explicit latest-time was
+    given (most orders won't have one).
+
+4c. deliver_after = a structured "HH:MM" (24-hour) EARLIEST-time
+    constraint — the mirror of deliver_by, for phrasing like "deliver after
+    4pm"→"16:00", "not before 10am"→"10:00", "between 2 and 4pm"→"14:00"
+    (the earlier bound — same "between" statement fills BOTH deliver_by and
+    deliver_after together, one bound each). Empty string "" if no explicit
+    earliest-time was given (most orders won't have one).
+
+5. Quantity rules:
+   - g/gm/gms/kg stated → convert to kg decimal (500g=0.5, 300gm=0.3, half kg=0.5, 1/2kg=0.5, 2kg=2)
+   - N pc / N pieces / plain N → if fruit in KG/PC table: qty = N × kg/pc, add "N pieces" to description
+   - fruit NOT in table with piece count → qty = raw count, flag yellow, add "N pieces" to description
+   - Rambutan with piece count → qty = raw count, flag (no conversion yet), add "N pieces" to description
+   - no quantity → qty = 1, flag yellow
+
+6. sales_order = ${today}-CustomerNameNoSpaces
+
+7. final_quantity and status = always empty string ""
+
+8. Plain "mango" no variety → item_name="Mango", flag for manual variety entry
+
+9. Plain "grapes" → Green grapes
+
+10. DEFAULTS — when no variety specified, use these:
+    - "orange" → Mandarin orange (add "confirm mandarin variety" to description)
+    - "pomegranate" → Pomegranate large
+    - "watermelon" → Watermelon (NOT Watermelon striped — only use striped if customer explicitly says striped)
+    - "muskmelon" → Muskmelon (NOT Muskmelon striped — only use striped if explicitly stated)
+    - "guava" → Guava white
+    - "banana" → Yelakki banana
+    - "cherry" → Cherry Indian
+    - "apple" → Gala apple
+
+11. SOCIETY NAME — if a customer's tagged name has no recognizable society (just a door/flat number, or a generic WhatsApp profile name):
+    - The group name is "${groupName}" — infer the society from it if possible (e.g. "77 degree fresh fruits group" → society is "77degree")
+    - OR look at other messages in this batch from customers who do have a society name
+    - Prepend the inferred society to the door number
+    - If you cannot determine society from any context → keep door number only and flag
+
+12. REPLY/ADD-ON ORDERS — a message tagged "(replying to: "...")" is a reply to an earlier message:
+    - Output ONLY the NEW items in that message, not the items in the quoted text shown in the tag
+    - The quoted text is the ORIGINAL order — ignore it, it was already parsed
+    - This applies regardless of exact wording — "also add", "plus", "and also", or any reply to their own order
+    - If the reply is just a confirmation, address, or non-order text → ignore entirely
+    - For add-on items, prepend "add-on" to the description e.g. "add-on, ripe" or just "add-on" if no other qualifiers
+
+CRITICAL:
+- description never blank if any qualifier/note/condition/piece count exists
+- Always include "N pieces" in description when order was by count
+- item_name = base fruit only, no qualifiers ever
+- Watermelon/Muskmelon = plain variety by default, NEVER striped unless explicitly said
+- "orange" = Mandarin orange always, never mango
+
+Return ONLY valid compact JSON, no markdown fences:
+{"rows":[{"order_date":"${today}","customer_name":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":""}],"flags":[]}`
+}
+
+function parseJson(raw) {
+  const m = raw.match(/\{[\s\S]*\}/)
+  if (!m) throw new Error('No JSON: ' + raw.slice(0, 150))
+  try {
+    return JSON.parse(m[0])
+  } catch (e) {
+    try {
+      return JSON.parse(m[0].replace(/,(\s*[}\]])/g, '$1').replace(/[\x00-\x1F\x7F]/g, ' '))
+    } catch (e2) {
+      throw new Error('JSON parse failed: ' + e.message)
+    }
+  }
+}
+
+// Unwrap ephemeral / view-once wrapper messages so disappearing-message
+// groups don't silently produce empty text.
+function unwrapMessage(message, depth = 0) {
+  if (!message || depth > 3) return message
+  const wrapperKeys = [
+    'ephemeralMessage',
+    'viewOnceMessage',
+    'viewOnceMessageV2',
+    'viewOnceMessageV2Extension',
+    'documentWithCaptionMessage',
+  ]
+  for (const key of wrapperKeys) {
+    if (message[key]?.message) return unwrapMessage(message[key].message, depth + 1)
+  }
+  return message
+}
+
+function textFromMessageObj(m) {
+  if (!m) return null
+  return (
+    m.conversation ||
+    m.extendedTextMessage?.text ||
+    m.imageMessage?.caption ||
+    m.videoMessage?.caption ||
+    m.documentMessage?.caption ||
+    null
+  )
+}
+
+function contextInfoOf(m) {
+  if (!m) return null
+  return (
+    m.extendedTextMessage?.contextInfo ||
+    m.imageMessage?.contextInfo ||
+    m.videoMessage?.contextInfo ||
+    m.documentMessage?.contextInfo ||
+    null
+  )
+}
+
+// Extracts { text, quotedText } — quotedText is set when this message is a
+// WhatsApp reply, so rule 12 (add-on detection) can work on live text the
+// same way it does on screenshots with a visible quoted grey box.
+function extractMessage(msg) {
+  const m = unwrapMessage(msg.message)
+  const text = textFromMessageObj(m)
+  if (!text) return null
+  const ctx = contextInfoOf(m)
+  const quotedText = ctx?.quotedMessage ? textFromMessageObj(unwrapMessage(ctx.quotedMessage)) : null
+  return { text, quotedText }
+}
+
+function formatMessageLine({ sender, text, quotedText }) {
+  const tag = `[${sender}]`
+  const reply = quotedText ? ` (replying to: "${quotedText.slice(0, 120)}")` : ''
+  return `${tag}${reply}: ${text}`
+}
+
+// ---- Batching: collect messages per group, flush to the parser after a quiet window ----
+const batches = new Map() // jid -> { timer, items: [] }
+
+function queueMessage(jid, item) {
+  let b = batches.get(jid)
+  if (!b) {
+    b = { timer: null, items: [] }
+    batches.set(jid, b)
+  }
+  b.items.push(item)
+  if (!b.timer) {
+    b.timer = setTimeout(() => flush(jid), BATCH_WINDOW_MS)
+  }
+}
+
+async function flush(jid) {
+  const b = batches.get(jid)
+  batches.delete(jid)
+  if (!b || b.items.length === 0) return
+
+  const groupName = groupNames[jid] || jid
+  const today = todayIST()
+  const lines = b.items.map(formatMessageLine).join('\n')
+
+  console.log(`[parser] sending batch of ${b.items.length} message(s) from "${groupName}"`)
+  try {
+    const result = await callParser(lines, today, groupName)
+    logResult(groupName, b.items.length, result)
+    if (result?.rows?.length) {
+      const phoneBySender = new Map(b.items.map((m) => [m.sender, m.phone]))
+      await insertParsedRows(result.rows, today, groupName, phoneBySender)
+    }
+  } catch (e) {
+    console.error('[parser] request failed:', e.message)
+    logResult(groupName, b.items.length, { error: e.message })
+  }
+}
+
+async function callParser(lines, today, groupName) {
+  if (!PARSE_FUNCTION_URL) {
+    console.log('[parser] PARSE_FUNCTION_URL not set — printing batch instead:')
+    console.log(lines)
+    return null
+  }
+  const resp = await fetch(PARSE_FUNCTION_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      system: buildSystemPrompt(today, groupName),
+      messages: [{ role: 'user', content: 'Parse all orders from these live WhatsApp messages. Return only valid compact JSON.\n\n' + lines }],
+    }),
+  })
+  const txt = await resp.text()
+  let data
+  try {
+    data = JSON.parse(txt)
+  } catch (e) {
+    throw new Error(`HTTP ${resp.status}: ${txt.slice(0, 150)}`)
+  }
+  if (data.error) throw new Error(JSON.stringify(data.error))
+  if (!data.content?.length) throw new Error('No content: ' + data.stop_reason)
+  return parseJson(data.content.map((x) => x.text || '').join(''))
+}
+
+// Writes parsed rows into the `whatsapp_parsed_orders` table that the parser
+// page's "Live" tab reads from. Nothing here touches orders/order_items —
+// that only happens when a human clicks "Push to operations" in the UI.
+async function insertParsedRows(rows, today, groupName, phoneBySender) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
+  const records = rows.map((r) => ({
+    order_date: r.order_date || today,
+    group_name: groupName,
+    customer_name: r.customer_name,
+    phone: phoneBySender.get(r.customer_name) || null,
+    item_name: r.item_name,
+    description: r.description || null,
+    delivery_instructions: r.delivery_instructions || null,
+    deliver_by: r.deliver_by || null,
+    deliver_after: r.deliver_after || null,
+    quantity: r.quantity != null ? String(r.quantity) : null,
+    sales_order: r.sales_order || null,
+  }))
+  const resp = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/whatsapp_parsed_orders`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify(records),
+  })
+  if (!resp.ok) throw new Error(`table insert failed: ${await resp.text()}`)
+  console.log(`[table] inserted ${records.length} row(s) into whatsapp_parsed_orders`)
+}
+
+function logResult(groupName, sentCount, result) {
+  const entry = { at: new Date().toISOString(), groupName, sent: sentCount, result }
+  try {
+    fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n')
+  } catch (e) {
+    console.error('[log] failed to write audit log:', e.message)
+  }
+
+  if (!result || result.error) return
+  if (result.rows) {
+    console.log(`[parser] ${result.rows.length} row(s) parsed` + (result.flags?.length ? `, ${result.flags.length} flag(s)` : ''))
+    for (const r of result.rows) {
+      console.log(`  - ${r.customer_name} | ${r.item_name} ${r.quantity}kg ${r.description || ''}`.trim())
+    }
+    for (const f of result.flags || []) console.log(`  ⚠ ${f}`)
+  }
+}
+
+// ---- Guard against Baileys occasionally re-emitting the same upsert event ----
+const seenMessageIds = new Set()
+function alreadySeen(id) {
+  if (seenMessageIds.has(id)) return true
+  seenMessageIds.add(id)
+  if (seenMessageIds.size > 5000) seenMessageIds.clear()
+  return false
+}
+
+const groupNames = {} // jid -> subject cache
+const discoveredGroups = new Set()
+
+let reconnectAttempts = 0
+
+async function start() {
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
+  try {
+    const existing = fs.readdirSync(AUTH_DIR)
+    console.log(`[auth] ${AUTH_DIR} has ${existing.length} file(s): ${existing.join(', ') || '(empty)'}`)
+  } catch (e) {
+    console.log(`[auth] could not read ${AUTH_DIR}: ${e.message}`)
+  }
+  const { version } = await fetchLatestBaileysVersion() // pin to current protocol -> lowers detection risk
+
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger,
+    markOnlineOnConnect: false, // stay low-profile; your phone remains the "primary"
+    syncFullHistory: false, // only new messages, not full backfill
+    qrTimeout: 120000, // give 2 minutes per QR instead of WhatsApp's tighter default before it refreshes
+  })
+
+  sock.ev.on('creds.update', saveCreds)
+
+  sock.ev.on('connection.update', (u) => {
+    const { connection, lastDisconnect, qr } = u
+    if (qr) qrcode.generate(qr, { small: true }) // scan once with the secondary number
+    if (connection === 'close') {
+      const code = lastDisconnect?.error?.output?.statusCode
+      const reason = lastDisconnect?.error?.message || 'unknown reason'
+      console.log(`connection closed — code=${code} reason="${reason}"`)
+      const loggedOut = code === DisconnectReason.loggedOut
+      if (loggedOut) {
+        console.log('logged out — delete ./auth and re-scan to reconnect')
+        return
+      }
+      const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts)
+      reconnectAttempts++
+      console.log(`reconnecting in ${delay}ms`)
+      setTimeout(start, delay)
+    } else if (connection === 'open') {
+      reconnectAttempts = 0
+      console.log('connected — listening' + (GROUP_JIDS.size ? '' : ' (discovery mode: printing all group JIDs)'))
+    }
+  })
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return // ignore history/sync batches
+    for (const msg of messages) {
+      const jid = msg.key.remoteJid
+      if (!jid?.endsWith('@g.us')) continue // groups only
+      if (msg.key.fromMe) continue
+      if (msg.key.id && alreadySeen(`${jid}:${msg.key.id}`)) continue
+
+      if (!groupNames[jid]) {
+        try {
+          groupNames[jid] = (await sock.groupMetadata(jid)).subject
+        } catch {
+          groupNames[jid] = jid
+        }
+      }
+
+      // Discovery mode: no groups configured -> print every group's name + JID once.
+      if (GROUP_JIDS.size === 0) {
+        if (!discoveredGroups.has(jid)) {
+          discoveredGroups.add(jid)
+          console.log(`[discover] ${groupNames[jid]}  =>  ${jid}`)
+        }
+        continue
+      }
+      if (!GROUP_JIDS.has(jid)) continue
+
+      const extracted = extractMessage(msg)
+      if (!extracted) continue
+
+      queueMessage(jid, {
+        sender: msg.pushName || 'unknown',
+        phone: (msg.key.participant || '').split('@')[0],
+        text: extracted.text,
+        quotedText: extracted.quotedText,
+        timestamp: new Date(Number(msg.messageTimestamp || 0) * 1000).toISOString(),
+      })
+    }
+  })
+}
+
+start()
