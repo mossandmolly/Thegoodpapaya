@@ -6233,10 +6233,10 @@ function renderDeliveryCard(order,selectionMode){
   // something worth a red badge on every single OFD card.
   const paymentBadge=delivered
     ?(order.paymentCollected
-      ?' <span class="order-status-badge" style="background:#2f6690">PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
+      ?' <span class="order-status-badge" style="background:#1a9e46;font-size:12px;padding:3px 12px">✓ PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
       :' <span class="order-status-badge" style="background:#b3261e">NOT PAID</span>')
     :(order.paymentCollected
-      ?' <span class="order-status-badge" style="background:#2f6690">PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
+      ?' <span class="order-status-badge" style="background:#1a9e46;font-size:12px;padding:3px 12px">✓ PAID'+(order.paymentCollectedMethod==='cash'?' · CASH':'')+'</span>'
       :'');
 
   const assignedTag=order.assignedRider
