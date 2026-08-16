@@ -449,18 +449,24 @@ async function start() {
 
   sock.ev.on('creds.update', saveCreds)
 
-  // Pairing-code path: request it once, right after the socket is created,
-  // only if this device isn't already linked. Avoids the QR-scan race
-  // entirely — WhatsApp shows this code for you to type in yourself instead
-  // of a camera-scannable, fast-expiring QR image.
+  // Pairing-code path: request it once, only if this device isn't already
+  // linked. Avoids the QR-scan race entirely — WhatsApp shows this code for
+  // you to type in yourself instead of a camera-scannable, fast-expiring QR
+  // image. Delayed a few seconds rather than fired immediately after
+  // makeWASocket() — requesting it before the underlying WebSocket has
+  // actually finished its opening handshake causes an immediate
+  // "Connection Closed" / 401, a known Baileys race, not a real pairing
+  // failure.
   if (PAIRING_PHONE_NUMBER && !sock.authState.creds.registered) {
-    try {
-      const code = await sock.requestPairingCode(PAIRING_PHONE_NUMBER)
-      console.log(`[pairing] Enter this code on your phone: ${code}`)
-      console.log('[pairing] WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"')
-    } catch (e) {
-      console.error('[pairing] requestPairingCode failed:', e.message)
-    }
+    setTimeout(async () => {
+      try {
+        const code = await sock.requestPairingCode(PAIRING_PHONE_NUMBER)
+        console.log(`[pairing] Enter this code on your phone: ${code}`)
+        console.log('[pairing] WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"')
+      } catch (e) {
+        console.error('[pairing] requestPairingCode failed:', e.message)
+      }
+    }, 3000)
   }
 
   sock.ev.on('connection.update', async (u) => {
