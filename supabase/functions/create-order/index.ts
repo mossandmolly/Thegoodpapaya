@@ -10,7 +10,7 @@
 // and upserts it into `communities` — grows that reference table from real
 // order data instead of maintaining a static list.
 //
-// Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status?, deliver_by?, deliver_after? }] }
+// Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status?, deliver_by?, deliver_after?, phone? }] }
 // Output: { created: <count submitted> }
 //
 // Existing rows are left untouched (ignore-duplicates on sales_order_id) —
@@ -186,6 +186,9 @@ Deno.serve(async (req) => {
       deliver_by:     h.deliver_by ?? null,
       deliver_after:  h.deliver_after ?? null,
       is_pickup:      !!h.is_pickup,
+      // Only set on first insert — ignore-duplicates below means this never
+      // overwrites a phone an existing order already has on file.
+      phone:          h.phone ?? null,
     }));
 
     const res = await fetch(`${env('SUPABASE_URL')}/rest/v1/orders?on_conflict=sales_order_id`, {
