@@ -396,6 +396,12 @@ async function start() {
     markOnlineOnConnect: false, // stay low-profile; your phone remains the "primary"
     syncFullHistory: false, // only new messages, not full backfill
     qrTimeout: 120000, // give 2 minutes per QR instead of WhatsApp's tighter default before it refreshes
+    // Both needed for requestPairingCode() specifically — the default query
+    // timeout is too aggressive for the pairing round trip (causes an
+    // immediate "Connection Closed"/401), and some WhatsApp versions reject
+    // pairing from Baileys' default browser identifier.
+    defaultQueryTimeoutMs: PAIRING_PHONE_NUMBER ? undefined : 60000,
+    browser: PAIRING_PHONE_NUMBER ? ['Windows', 'Chrome', '114.0.5735.198'] : undefined,
   })
 
   sock.ev.on('creds.update', saveCreds)
