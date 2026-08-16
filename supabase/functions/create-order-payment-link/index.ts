@@ -79,7 +79,7 @@ async function createPaymentLink(
       currency: 'INR',
       description: `The Good Papaya — order ${salesOrderId}`,
       customer: { name: customerName, contact: `+91${phone.replace(/^\+91/, '')}` },
-      notify:          { sms: true, email: false },
+      notify:          { sms: true, whatsapp: true, email: false },
       reminder_enable: false,
       notes: { sales_order_id: salesOrderId, source: 'ops-dashboard' },
     }),
