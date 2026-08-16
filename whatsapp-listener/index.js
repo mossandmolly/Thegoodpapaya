@@ -93,6 +93,7 @@ RULES:
    NEVER strip the society name itself. When in doubt whether a word is a person name or society name, KEEP it.
    REORDER if needed: society always before door e.g. "B303 T4"→"T4 B303", "Sapna T4 B303"→"T4 B303".
    Examples: "Kalika Villa 384"→"Villa 384", "Radhika Meda A705"→"Meda A705", "Kavita Ferns E402"→"Ferns E402", "Usha Espana L401"→"Espana L401", "Harpreet Lakefront E501"→"Lakefront E501", "Rupal APR Villa 269"→"Villa 269"
+   NEVER leave customer_name empty. If the tagged SenderName has no derivable society/door pattern at all (e.g. a business name, generic contact name), fall back to using the tagged SenderName exactly as given, and add a flag noting the customer needs manual identification.
 
 2. IGNORE ONLY: 👍 reacted messages, payment/UPI confirmations, deleted messages, system messages (member added/removed)
 
