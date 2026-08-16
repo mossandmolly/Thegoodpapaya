@@ -410,9 +410,13 @@ async function start() {
     // Both needed for requestPairingCode() specifically — the default query
     // timeout is too aggressive for the pairing round trip (causes an
     // immediate "Connection Closed"/401), and some WhatsApp versions reject
-    // pairing from Baileys' default browser identifier.
-    defaultQueryTimeoutMs: PAIRING_PHONE_NUMBER ? undefined : 60000,
-    browser: PAIRING_PHONE_NUMBER ? ['Windows', 'Chrome', '114.0.5735.198'] : undefined,
+    // pairing from Baileys' default browser identifier. Omitted entirely
+    // (not set to undefined) when not pairing — Baileys' own defaults
+    // assume a real array here, so an explicit `browser: undefined` breaks
+    // internals that read browser[0] unconditionally.
+    ...(PAIRING_PHONE_NUMBER
+      ? { defaultQueryTimeoutMs: undefined, browser: ['Windows', 'Chrome', '114.0.5735.198'] }
+      : {}),
   })
 
   sock.ev.on('creds.update', saveCreds)
