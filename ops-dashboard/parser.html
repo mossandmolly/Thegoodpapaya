@@ -2176,11 +2176,17 @@ async function pushRows(rows,salesOrderIdFor){
         deliver_by:     r.deliver_by||null,
         deliver_after:  r.deliver_after||null,
         is_pickup:      !!r.is_pickup,
+        // Only WhatsApp-listener rows carry r.phone (whatsapp_parsed_orders) —
+        // rows from the image parser or Quick Order Entry just leave this null,
+        // same as before. create-order only writes it on first insert (never
+        // overwrites an existing order's phone).
+        phone:          r.phone||null,
       });
     }else{
       // any row in this customer's batch may carry either bound
       if(r.deliver_by&&!headers.get(soid).deliver_by)headers.get(soid).deliver_by=r.deliver_by;
       if(r.deliver_after&&!headers.get(soid).deliver_after)headers.get(soid).deliver_after=r.deliver_after;
+      if(r.phone&&!headers.get(soid).phone)headers.get(soid).phone=r.phone;
       // The pickup checkbox is per ROW in the parsed-orders table (there's
       // no single per-customer block like Quick Order has), so one checked
       // row is enough to flag the whole order as pickup even if an earlier
@@ -5630,6 +5636,7 @@ async function markFinal(id){
 // cancelled order rather than just hiding it.
 let deliveryOrders={};
 let revealedPhones=new Set();
+let revealPhoneTimers=new Map(); // soid -> auto-hide timeout id
 let dvEditingNotes=null;
 let deliveryCatalogByItem={};
 let deliveryScope='all'; // 'all' | 'mine'
@@ -6022,9 +6029,23 @@ function maskPhone(phone){
   return '•'.repeat(digits.length-2)+digits.slice(-2);
 }
 
+// Revealed numbers auto-hide after 10s — a rider's phone is easy to glance
+// over at (delivery bike, shared vehicle), so a number left revealed
+// indefinitely would sit exposed on screen far longer than the one glance
+// it's actually needed for.
 function toggleRevealPhone(soid){
-  if(revealedPhones.has(soid))revealedPhones.delete(soid);
-  else revealedPhones.add(soid);
+  clearTimeout(revealPhoneTimers.get(soid));
+  revealPhoneTimers.delete(soid);
+  if(revealedPhones.has(soid)){
+    revealedPhones.delete(soid);
+  }else{
+    revealedPhones.add(soid);
+    revealPhoneTimers.set(soid,setTimeout(()=>{
+      revealedPhones.delete(soid);
+      revealPhoneTimers.delete(soid);
+      renderDeliveryList();
+    },10000));
+  }
   renderDeliveryList();
 }
 
