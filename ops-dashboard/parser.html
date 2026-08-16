@@ -389,6 +389,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
          reason to use either of these day to day, so they're sized/placed
          like utility actions rather than a primary nav tab. -->
     <button class="header-btn" onclick="switchTab('parser')" id="tab-parser">📸 Parser</button>
+    <button class="header-btn" onclick="switchTab('live')" id="tab-live">📡 Live</button>
     <button class="header-btn" onclick="switchTab('config')">⚙️ Config</button>
     <a class="signout-link" onclick="hardRefresh()" title="Force-reload the latest deployed version — use this if something looks off after an update">🔄 Refresh</a>
     <a class="signout-link" onclick="signOut()">Sign out</a>
@@ -887,6 +888,25 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
   </div>
 </div>
+
+<!-- LIVE WHATSAPP ORDERS -->
+<div class="panel" id="panel-live">
+  <div class="section-label date-header-row">
+    <span>📡 Live WhatsApp Orders <span id="live-rc"></span></span>
+  </div>
+  <p class="note">Fed by the WhatsApp group listener — a separate running list from the parser above, refreshes automatically. Edit a row and hit 💾 to correct it before pushing.</p>
+  <div class="table-scroll">
+    <table class="community-table" id="live-table"><thead><tr>
+      <th>Time</th><th>Group</th><th>Customer</th><th>Item</th><th>Description</th><th>Qty</th><th>Sales order</th><th></th>
+    </tr></thead><tbody id="live-tbody"></tbody></table>
+  </div>
+  <div class="push-row" style="margin-top:14px">
+    <button class="btn-push" id="live-push">📤 Push to Operations</button>
+    <button class="btn-sec" id="live-copy">📋 Copy TSV</button>
+    <button class="btn-sec" id="live-clear">🗑 Clear</button>
+  </div>
+  <div class="push-status" id="live-status"></div>
+</div>
 </div>
 
 <!-- GENERIC ALERT / CONFIRM / PROMPT MODAL — replaces native browser
@@ -1096,14 +1116,14 @@ function renderRiderBadge(){
 
 function applyRoleRestrictions(){
   if(isBuyerRole){
-    ['tab-parser','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd'].forEach(id=>{
+    ['tab-parser','tab-live','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd'].forEach(id=>{
       const el=document.getElementById(id);
       if(el)el.style.display='none';
     });
     return;
   }
   if(!isDeliveryRole)return;
-  ['tab-parser','tab-today','tab-packer','tab-stock','tab-purchases','tab-quickadd'].forEach(id=>{
+  ['tab-parser','tab-live','tab-today','tab-packer','tab-stock','tab-purchases','tab-quickadd'].forEach(id=>{
     const el=document.getElementById(id);
     if(el)el.style.display='none';
   });
@@ -1152,6 +1172,11 @@ async function initAppAfterLogin(){
     // of the main tabs — it needs its data loaded explicitly on init, since
     // that previously only happened when switchTab('today') was clicked.
     loadTodaysOrders();
+    // Live WhatsApp Orders polls independently of which tab is open, so a
+    // fresh batch from the listener shows up without needing to click into
+    // the Live tab first.
+    loadLiveView();
+    setInterval(loadLiveView,20000);
   }
 
   document.getElementById('app').classList.remove('hidden');
@@ -1210,6 +1235,7 @@ function switchTab(name){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='config')renderConfig();
+  if(name==='live')loadLiveView();
   if(name==='today')loadTodaysOrders();
   if(name==='packer')loadPackerView();
   if(name==='delivery')loadDeliveryView();
@@ -2272,6 +2298,101 @@ pushTomorrowBtn.addEventListener('click',async()=>{
   pushTomorrowBtn.disabled=false;
   pushTomorrowBtn.textContent=ok?'✅ Pushed':'📤→ Tomorrow';
   if(ok)setTimeout(()=>{pushTomorrowBtn.textContent='📤→ Tomorrow';},3000);
+});
+
+// ── Live WhatsApp Orders ─────────────────────────────────────────────────
+// Fed by the whatsapp-listener service — every row here is always editable
+// (same always-editable-row pattern as the Communities/Customer Instructions
+// tables), a 💾 per row persists a correction straight to
+// whatsapp_parsed_orders. "Push to Operations" hands the currently-loaded
+// rows to the same pushRows() the image-upload parser uses above (create-order
+// header + order_items line, held-duplicate + already-dispatched-split
+// detection included), then soft-clears (not deletes) whatever it pushed.
+let liveRows=[];
+
+async function loadLiveView(){
+  // Auto-refresh must never clobber a row someone's mid-edit on.
+  const tbody=document.getElementById('live-tbody');
+  if(document.activeElement&&tbody&&tbody.contains(document.activeElement))return;
+  const{data,error}=await sb.from('whatsapp_parsed_orders').select('*').eq('cleared',false).order('created_at',{ascending:true});
+  if(error){console.error('live orders fetch failed',error);return;}
+  liveRows=data||[];
+  renderLiveTable();
+}
+
+function renderLiveRow(r){
+  return '<tr data-id="'+r.id+'">'+
+    '<td>'+escH(new Date(r.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}))+'</td>'+
+    '<td>'+escH(r.group_name||'')+'</td>'+
+    '<td><input type="text" id="live-cust-'+r.id+'" value="'+escH(r.customer_name)+'"></td>'+
+    '<td><input type="text" id="live-item-'+r.id+'" value="'+escH(r.item_name)+'"></td>'+
+    '<td><input type="text" id="live-desc-'+r.id+'" value="'+escH(r.description||'')+'"></td>'+
+    '<td><input type="text" id="live-qty-'+r.id+'" value="'+escH(r.quantity||'')+'" style="width:56px"></td>'+
+    '<td><input type="text" id="live-so-'+r.id+'" value="'+escH(r.sales_order||'')+'"></td>'+
+    '<td><button class="del-btn" style="color:#2d6b2d" onclick="saveLiveRow('+escH(JSON.stringify(r.id))+')" title="Save">💾</button></td>'+
+  '</tr>';
+}
+
+function renderLiveTable(){
+  const tbody=document.getElementById('live-tbody');
+  if(!tbody)return;
+  const rc=document.getElementById('live-rc');
+  if(rc)rc.textContent=liveRows.length?'— '+liveRows.length+' row'+(liveRows.length!==1?'s':''):'';
+  tbody.innerHTML=liveRows.map(renderLiveRow).join('');
+}
+
+async function saveLiveRow(id){
+  const val=f=>document.getElementById('live-'+f+'-'+id).value.trim();
+  const customer_name=val('cust'),item_name=val('item');
+  if(!customer_name||!item_name){uxAlert('Customer and item cannot be empty');return;}
+  const updates={
+    customer_name,item_name,
+    description: val('desc')||null,
+    quantity:    val('qty')||null,
+    sales_order: val('so')||null,
+  };
+  const{error}=await sb.from('whatsapp_parsed_orders').update(updates).eq('id',id);
+  if(error){uxAlert('Save failed: '+error.message);return;}
+  await loadLiveView();
+}
+
+function setLiveStatus(msg,cls){
+  const el=document.getElementById('live-status');
+  if(!el)return;
+  el.textContent=msg;el.className='push-status'+(cls?' '+cls:'');
+}
+
+document.getElementById('live-copy').addEventListener('click',()=>{
+  const header='order_date\tcustomer_name\titem_name\tdescription\tquantity\tsales_order';
+  const lines=liveRows.map(r=>[r.order_date,r.customer_name,r.item_name,r.description||'',r.quantity||'',r.sales_order||''].join('\t'));
+  const btn=document.getElementById('live-copy');
+  navigator.clipboard.writeText([header,...lines].join('\n')).then(()=>{
+    btn.textContent='✅ Copied!';setTimeout(()=>btn.textContent='📋 Copy TSV',2000);
+  });
+});
+
+document.getElementById('live-push').addEventListener('click',async()=>{
+  const rows=liveRows.filter(r=>r.customer_name&&r.item_name);
+  if(!rows.length){setLiveStatus('Nothing to push — no live rows yet','err');return;}
+  const btn=document.getElementById('live-push');
+  btn.disabled=true;btn.textContent='Pushing…';setLiveStatus('');
+  try{
+    const{opened,held,splitCount}=await pushRows(rows,r=>r.sales_order);
+    await sb.from('whatsapp_parsed_orders').update({cleared:true}).in('id',rows.map(r=>r.id));
+    setLiveStatus('✅ '+opened+' item'+(opened!==1?'s':'')+' pushed'+(held?' ('+held+' held as duplicate)':'')+(splitCount?' · '+splitCount+' order'+(splitCount!==1?'s':'')+' already out for delivery, split into new order'+(splitCount!==1?'s':''):''),'ok');
+    await loadLiveView();
+  }catch(e){
+    setLiveStatus('❌ '+e.message,'err');
+  }
+  btn.disabled=false;btn.textContent='📤 Push to Operations';
+});
+
+document.getElementById('live-clear').addEventListener('click',async()=>{
+  if(!liveRows.length)return;
+  if(!await uxConfirm('Clear '+liveRows.length+' row(s) from the list? They stay in the database, just hidden here.'))return;
+  const{error}=await sb.from('whatsapp_parsed_orders').update({cleared:true}).in('id',liveRows.map(r=>r.id));
+  if(error){setLiveStatus('❌ '+error.message,'err');return;}
+  await loadLiveView();
 });
 
 // ── Today's Orders ──────────────────────────────────────────────────────────
