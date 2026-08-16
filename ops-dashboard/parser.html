@@ -463,6 +463,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <input type="text" class="pk-search" id="to-search" placeholder="🔍 Search society, customer, or fruit...">
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div id="to-delivery-pills" class="filter-pills delivery-status-pills"></div>
+  <div id="to-payment-pills" class="filter-pills delivery-status-pills"></div>
   <div id="to-notdispatched-summary"></div>
   <div id="to-ofd-summary"></div>
   <div id="to-past-trips-summary"></div>
@@ -3044,11 +3045,18 @@ function paymentMechanismHtml(order){
   // to charge, same gate the collapsed card used before this became a
   // function of its own.
   if(order.isPickup||order.orderStatus==='cancelled'||!isFullyInvoiced(order))return '';
+  // No QR/link is completely normal before dispatch (nothing's been
+  // created yet) and once paid (webhook clears both — nothing left to
+  // collect) — neither is a problem worth a badge. It's only a real
+  // failure signal once the order's past OFD and still unpaid with
+  // nothing active: that means QR creation (at dispatch) or the
+  // delivered-not-paid payment-link fallback (mark-delivered) didn't work.
+  const missingIsFailure=order.deliveryStatus!=='not_dispatched'&&!order.paymentCollected;
   const mechanism=order.qrImageUrl
     ?' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();openImgLightbox('+escH(JSON.stringify(order.qrImageUrl))+')">📱 View QR</a>'
     :order.razorpayUrl
       ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link" onclick="event.stopPropagation()">💳 payment link</a>'
-      :' <span class="pay-missing">Payment link not generated</span>';
+      :(missingIsFailure?' <span class="pay-missing">Payment link not generated</span>':'');
   return mechanism+
     ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();regeneratePaymentLinkSingle('+escH(JSON.stringify(order.soid))+')" title="Clear the existing QR/link and generate a new payment link">🔄 Generate</a>';
 }
@@ -4407,6 +4415,12 @@ let overviewDeliveryFilter='all'; // 'all' | 'pending' | 'ofd' | 'partially_deli
 // and needs a human to actually look at it.
 let overviewAdminActionOnly=false;
 
+// Another ANDed-on-top axis, same shape as overviewDeliveryFilter — payment
+// and delivery status are intentionally independent (an order can be paid
+// while still OFD, or delivered while still unpaid), so this needs its own
+// filter rather than being folded into the delivery-status one.
+let overviewPaymentFilter='all'; // 'all' | 'paid' | 'not_paid'
+
 function orderMatchesOverviewFilter(order){
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
   if(overviewAdminActionOnly&&!order.adminActionNeeded)return false;
@@ -4417,6 +4431,8 @@ function orderMatchesOverviewFilter(order){
     if(overviewDeliveryFilter==='ofd'&&ds!=='ofd')return false;
     if(overviewDeliveryFilter==='pending'&&ds!=='not_dispatched')return false;
   }
+  if(overviewPaymentFilter==='paid'&&!order.paymentCollected)return false;
+  if(overviewPaymentFilter==='not_paid'&&order.paymentCollected)return false;
   if(toOverviewFilter==='all')return true;
   if(toOverviewFilter==='cancelled')return order.orderStatus==='cancelled';
   if(order.orderStatus==='cancelled')return false;
@@ -4445,6 +4461,11 @@ function toggleOverviewAdminActionFilter(){
 
 function setOverviewDeliveryFilter(key){
   overviewDeliveryFilter=key;
+  renderOrdersList();
+}
+
+function setOverviewPaymentFilter(key){
+  overviewPaymentFilter=key;
   renderOrdersList();
 }
 
@@ -4487,6 +4508,16 @@ function renderOverviewSummaryPills(tripInfo){
   ];
   document.getElementById('to-delivery-pills').innerHTML=deliveryPills.map(p=>
     '<span class="filter-pill'+(overviewDeliveryFilter===p.key?' active':'')+'" onclick="setOverviewDeliveryFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join('');
+
+  const paid=active.filter(o=>o.paymentCollected).length;
+  const paymentPills=[
+    {key:'all',label:'All',count:active.length},
+    {key:'paid',label:'Paid',count:paid},
+    {key:'not_paid',label:'Not Paid',count:active.length-paid},
+  ];
+  document.getElementById('to-payment-pills').innerHTML=paymentPills.map(p=>
+    '<span class="filter-pill'+(overviewPaymentFilter===p.key?' active':'')+'" onclick="setOverviewPaymentFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('');
 
   renderNotDispatchedClusterSummary(active);
