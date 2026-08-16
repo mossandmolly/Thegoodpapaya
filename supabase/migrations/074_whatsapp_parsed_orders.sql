@@ -28,6 +28,10 @@ create index if not exists whatsapp_parsed_orders_cleared_idx
   on public.whatsapp_parsed_orders (cleared, created_at);
 
 alter table public.whatsapp_parsed_orders enable row level security;
+drop policy if exists "public read" on public.whatsapp_parsed_orders;
+drop policy if exists "anon insert" on public.whatsapp_parsed_orders;
+drop policy if exists "anon update" on public.whatsapp_parsed_orders;
+drop policy if exists "anon delete" on public.whatsapp_parsed_orders;
 create policy "public read"   on public.whatsapp_parsed_orders for select using (true);
 create policy "anon insert"   on public.whatsapp_parsed_orders for insert with check (true);
 create policy "anon update"   on public.whatsapp_parsed_orders for update using (true);
