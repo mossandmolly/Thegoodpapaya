@@ -379,6 +379,7 @@ function alreadySeen(id) {
 
 const groupNames = {} // jid -> subject cache
 const discoveredGroups = new Set()
+let groupsListed = false // print the full participating-groups list once per process
 
 let reconnectAttempts = 0
 let currentSock = null
@@ -462,7 +463,7 @@ async function start() {
     }
   }
 
-  sock.ev.on('connection.update', (u) => {
+  sock.ev.on('connection.update', async (u) => {
     const { connection, lastDisconnect, qr } = u
     if (qr && !PAIRING_PHONE_NUMBER) qrcode.generate(qr, { small: true }) // scan once with the secondary number
     if (connection === 'close') {
@@ -489,6 +490,25 @@ async function start() {
     } else if (connection === 'open') {
       reconnectAttempts = 0
       console.log('connected — listening' + (GROUP_JIDS.size ? '' : ' (discovery mode: printing all group JIDs)'))
+      // Lists every group this number is already a member of — no message
+      // needs to land in a group first, unlike the messages.upsert discovery
+      // path below (which only ever sees groups that actually post while
+      // watching). Once per process so a flappy connection doesn't reprint
+      // this on every reconnect.
+      if (!groupsListed) {
+        groupsListed = true
+        try {
+          const groups = await sock.groupFetchAllParticipating()
+          const list = Object.values(groups)
+          console.log(`[groups] member of ${list.length} group(s) — JID list below:`)
+          for (const g of list) {
+            groupNames[g.id] = g.subject
+            console.log(`[groups] ${g.subject}  =>  ${g.id}`)
+          }
+        } catch (e) {
+          console.error('[groups] failed to fetch group list:', e.message)
+        }
+      }
     }
   })
 
