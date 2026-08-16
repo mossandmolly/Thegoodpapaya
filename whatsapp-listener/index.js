@@ -14,6 +14,7 @@
 import 'dotenv/config'
 import makeWASocket, {
   useMultiFileAuthState,
+  fetchLatestWaWebVersion,
   fetchLatestBaileysVersion,
   DisconnectReason,
 } from '@whiskeysockets/baileys'
@@ -387,7 +388,17 @@ async function start() {
   } catch (e) {
     console.log(`[auth] could not read ${AUTH_DIR}: ${e.message}`)
   }
-  const { version } = await fetchLatestBaileysVersion() // pin to current protocol -> lowers detection risk
+  // fetchLatestBaileysVersion() has a known bug where it can report a stale
+  // version while claiming isLatest:true, which silently breaks pairing —
+  // fetchLatestWaWebVersion() asks WhatsApp directly instead of Baileys'
+  // own version registry, so try that first. Falls back to the registry
+  // version if the direct fetch itself fails (e.g. that endpoint blocked
+  // on this network) rather than leaving the listener unable to start at all.
+  const waVersion = await fetchLatestWaWebVersion().catch(() => null)
+  const version = waVersion && !waVersion.error
+    ? waVersion.version
+    : (await fetchLatestBaileysVersion()).version
+  console.log(`[version] using WA protocol version ${version.join('.')}${waVersion && !waVersion.error ? ' (direct)' : ' (registry fallback)'}`)
 
   const sock = makeWASocket({
     version,
