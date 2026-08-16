@@ -35,6 +35,26 @@ async function sbUpsert(table: string, rows: any[], onConflict: string) {
   if (!res.ok) throw new Error(`Supabase upsert ${table}: ${await res.text()}`);
 }
 
+// A plain UPDATE, never capable of inserting a new row — unlike sbUpsert,
+// which briefly caused a real crash: reconcileOrderPayment/
+// closeOrderPaymentMechanisms/sweepStaleQrCodes all look up an existing
+// order first and only ever mean to patch it, but sbUpsert's
+// merge-duplicates upsert falls back to a genuine INSERT whenever
+// on_conflict doesn't find a match at write time (e.g. the row changed
+// between the read and the write) — which then fails on orders' NOT NULL
+// columns (customer_name etc.) since only a few fields are being patched.
+// A no-op PATCH against a since-vanished sales_order_id is harmless; a
+// failed INSERT of a garbage half-empty row is not.
+async function sbUpdate(table: string, salesOrderId: string, patch: Record<string, unknown>) {
+  const url = `${env('SUPABASE_URL')}/rest/v1/${table}?sales_order_id=eq.${encodeURIComponent(salesOrderId)}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`Supabase update ${table}: ${await res.text()}`);
+}
+
 async function sbSelectOne(table: string, filter: string): Promise<any> {
   const url = `${env('SUPABASE_URL')}/rest/v1/${table}?${filter}&limit=1`;
   const res = await fetch(url, { headers: { ...sbHeaders(), 'Prefer': 'return=representation' } });
@@ -96,9 +116,16 @@ function zohoBase() {
 }
 
 // ── Zoho API ──────────────────────────────────────────────────
+// sales_order_id encodes its business date in IST (see the frontend's own
+// CALENDAR_TODAY) — plain UTC "today" would be wrong for part of the day,
+// since IST is 5.5hrs ahead.
+function todayIST(): string {
+  return new Date(Date.now() + 330 * 60 * 1000).toISOString().substring(0, 10);
+}
+
 async function fetchModifiedInvoices(since: string): Promise<any[]> {
   const token = await getZohoToken();
-  const istDate = new Date(Date.now() + 330 * 60 * 1000).toISOString().substring(0, 10);
+  const istDate = todayIST();
   let page = 1;
   const invoices: any[] = [];
   while (true) {
@@ -285,7 +312,7 @@ async function reconcileOrderPayment(
     }
   }
 
-  await sbUpsert('orders', [{ sales_order_id: salesOrderId, ...updates }], 'sales_order_id');
+  await sbUpdate('orders', salesOrderId, updates);
 }
 
 // Called when the Zoho invoice behind an order disappears (voided) — closes
@@ -300,7 +327,7 @@ async function closeOrderPaymentMechanisms(salesOrderId: string) {
   const updates: Record<string, unknown> = {};
   if (order.qr_code_id)       { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null; updates.qr_image_url = null; updates.qr_created_at = null; }
   if (order.razorpay_link_id) { await cancelPaymentLink(order.razorpay_link_id); updates.razorpay_link_id = null; updates.razorpay_url = null; }
-  await sbUpsert('orders', [{ sales_order_id: salesOrderId, ...updates }], 'sales_order_id');
+  await sbUpdate('orders', salesOrderId, updates);
 }
 
 // ── Proactive QR refresh sweep ─────────────────────────────────
@@ -312,10 +339,17 @@ async function closeOrderPaymentMechanisms(salesOrderId: string) {
 // before the hard 2hr expiry, with margin for this sweep's own ~5min
 // cadence. Purely a time check: no rider location or delivery-sequence
 // awareness needed.
+//
+// Scoped to TODAY's orders only (sales_order_id prefix) — an order still
+// sitting at delivery_status='ofd' from a previous day is a dangling/stuck
+// order (never marked delivered, cancelled, or otherwise closed out), not a
+// live delivery in progress. Without this, the sweep would keep spending
+// real Razorpay QR-creation calls indefinitely refreshing a QR nobody's
+// ever going to scan again.
 async function sweepStaleQrCodes() {
   const cutoff = new Date(Date.now() - 90 * 60 * 1000).toISOString();
   const stale = await sbSelectMany('orders',
-    `qr_code_id=not.is.null&delivery_status=eq.ofd&payment_collected=eq.false&qr_created_at=lt.${encodeURIComponent(cutoff)}&select=sales_order_id,customer_name,invoice_total,qr_code_id`
+    `sales_order_id=like.${encodeURIComponent(todayIST())}-*&qr_code_id=not.is.null&delivery_status=eq.ofd&payment_collected=eq.false&qr_created_at=lt.${encodeURIComponent(cutoff)}&select=sales_order_id,customer_name,invoice_total,qr_code_id`
   );
   if (!stale.length) return;
   console.log(`[sync] ${stale.length} QR(s) older than 90 minutes — refreshing`);
@@ -325,10 +359,9 @@ async function sweepStaleQrCodes() {
       await closeQrCode(order.qr_code_id);
       const qr = await createOrderQr(Math.round(order.invoice_total * 100), order.sales_order_id, order.customer_name);
       if (qr) {
-        await sbUpsert('orders', [{
-          sales_order_id: order.sales_order_id,
+        await sbUpdate('orders', order.sales_order_id, {
           qr_code_id: qr.id, qr_image_url: qr.image_url, qr_created_at: new Date().toISOString(),
-        }], 'sales_order_id');
+        });
         console.log(`[sync] Refreshed QR for ${order.sales_order_id}`);
       }
     } catch (e: any) {
