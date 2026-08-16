@@ -321,6 +321,19 @@ async function callParser(lines, today, groupName) {
 // Writes parsed rows into the `whatsapp_parsed_orders` table that the parser
 // page's "Live" tab reads from. Nothing here touches orders/order_items —
 // that only happens when a human clicks "Push to operations" in the UI.
+async function postToParsedOrders(records) {
+  return fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/whatsapp_parsed_orders`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify(records),
+  })
+}
+
 async function insertParsedRows(rows, today, groupName, rawText) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
   const records = rows.map((r) => ({
@@ -341,17 +354,25 @@ async function insertParsedRows(rows, today, groupName, rawText) {
     // to compare a parsed row against what was actually typed.
     raw_text: rawText || null,
   }))
-  const resp = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/whatsapp_parsed_orders`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Prefer: 'return=minimal',
-    },
-    body: JSON.stringify(records),
-  })
-  if (!resp.ok) throw new Error(`table insert failed: ${await resp.text()}`)
+  let resp = await postToParsedOrders(records)
+  if (!resp.ok) {
+    const errText = await resp.text()
+    // A single POST is one atomic SQL insert — Postgres can't partially
+    // apply it, so an unrecognised column (42703, e.g. raw_text before its
+    // migration has run) would otherwise silently drop the ENTIRE batch,
+    // including the actual order data that matters far more than raw_text.
+    // Retry once without it instead of losing real orders to one missing,
+    // non-essential column.
+    if (errText.includes('42703') || /column .* does not exist/i.test(errText)) {
+      console.error('[table] insert failed on a missing column, retrying without raw_text:', errText)
+      const stripped = records.map(({ raw_text, ...rest }) => rest)
+      resp = await postToParsedOrders(stripped)
+      if (!resp.ok) throw new Error(`table insert failed even after stripping raw_text: ${await resp.text()}`)
+      console.log(`[table] inserted ${stripped.length} row(s) into whatsapp_parsed_orders (raw_text column missing — ran migration 076 yet?)`)
+      return
+    }
+    throw new Error(`table insert failed: ${errText}`)
+  }
   console.log(`[table] inserted ${records.length} row(s) into whatsapp_parsed_orders`)
 }
 
