@@ -350,6 +350,28 @@ async function insertParsedRows(rows, today, groupName) {
   console.log(`[table] inserted ${records.length} row(s) into whatsapp_parsed_orders`)
 }
 
+// Single-row status the ops dashboard's Live tab reads to flag a dead
+// connection — best-effort, never throws, since losing this shouldn't take
+// the listener itself down.
+async function updateListenerStatus(status, detail) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
+  try {
+    const resp = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/whatsapp_listener_status?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify({ id: 1, status, detail: detail || null, updated_at: new Date().toISOString() }),
+    })
+    if (!resp.ok) console.error('[status] update failed:', await resp.text())
+  } catch (e) {
+    console.error('[status] update failed:', e.message)
+  }
+}
+
 function logResult(groupName, sentCount, result) {
   const entry = { at: new Date().toISOString(), groupName, sent: sentCount, result }
   try {
@@ -380,6 +402,16 @@ function alreadySeen(id) {
 const groupNames = {} // jid -> subject cache
 const discoveredGroups = new Set()
 let groupsListed = false // print the full participating-groups list once per process
+let isConnected = false
+
+// Heartbeat while connected — without this, a hang that never fires a
+// connection.update 'close' event (rare, but possible) would leave the
+// dashboard showing a stale "connected" status forever. Refreshing
+// updated_at periodically lets the dashboard flag "no heartbeat in a while"
+// even when it never received a clean disconnect signal.
+setInterval(() => {
+  if (isConnected) updateListenerStatus('connected')
+}, 5 * 60 * 1000)
 
 let reconnectAttempts = 0
 let currentSock = null
@@ -473,6 +505,7 @@ async function start() {
     const { connection, lastDisconnect, qr } = u
     if (qr && !PAIRING_PHONE_NUMBER) qrcode.generate(qr, { small: true }) // scan once with the secondary number
     if (connection === 'close') {
+      isConnected = false
       if (shuttingDown) return // intentional shutdown — don't reconnect
       const code = lastDisconnect?.error?.output?.statusCode
       const reason = lastDisconnect?.error?.message || 'unknown reason'
@@ -480,6 +513,7 @@ async function start() {
       const loggedOut = code === DisconnectReason.loggedOut
       if (loggedOut) {
         console.log('logged out — delete ./auth and re-scan to reconnect')
+        updateListenerStatus('logged_out', `code=${code} reason="${reason}" — needs re-scan/re-pair`)
         return
       }
       // A "conflict" (connectionReplaced) means WhatsApp's server still
@@ -492,9 +526,12 @@ async function start() {
       const delay = conflict ? 15000 : Math.min(30000, 1000 * 2 ** reconnectAttempts)
       reconnectAttempts++
       console.log(`reconnecting in ${delay}ms${conflict ? ' (session conflict — waiting longer for WhatsApp to release the previous connection)' : ''}`)
+      updateListenerStatus('reconnecting', `code=${code} reason="${reason}"`)
       setTimeout(start, delay)
     } else if (connection === 'open') {
       reconnectAttempts = 0
+      isConnected = true
+      updateListenerStatus('connected')
       console.log('connected — listening' + (GROUP_JIDS.size ? '' : ' (discovery mode: printing all group JIDs)'))
       // Lists every group this number is already a member of — no message
       // needs to land in a group first, unlike the messages.upsert discovery

@@ -46,6 +46,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .btn-tomorrow:disabled{opacity:0.5;cursor:not-allowed}
 .push-status{font-size:12px;text-align:center;min-height:18px;margin-bottom:10px;color:#8a7a6a}
 .push-status.ok{color:#3f7a34}.push-status.err{color:#b3261e}
+.listener-status{font-size:12px;font-weight:600;padding:8px 12px;border-radius:8px;margin-bottom:10px}
+.listener-status.ls-ok{background:#eaf5e6;color:#3f7a34}
+.listener-status.ls-warn{background:#fdf3d8;color:#9a6a00}
+.listener-status.ls-err{background:#fbe7e4;color:#b3261e}
 .to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px}
 .society-header{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#ffffff;background:#c2570a;margin:18px 0 8px;padding:9px 12px;border-radius:8px}
 .society-header:first-child{margin-top:0}
@@ -922,6 +926,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="section-label date-header-row">
     <span>📡 Live WhatsApp Orders <span id="live-rc"></span></span>
   </div>
+  <div id="live-listener-status" class="listener-status hidden"></div>
   <p class="note">Fed by the WhatsApp group listener — a separate running list from the parser above, refreshes automatically. Edit a row and hit 💾 to correct it before pushing. Check rows to act on just those — with nothing checked, Push/Clear/Move act on every row shown. Per-row 📅 moves that one row to tomorrow (e.g. an evening order that should land on tomorrow's run), 🗑 clears just that row (stays in the database, only hidden here) without pushing it.</p>
   <div class="table-scroll">
     <table class="community-table" id="live-table"><thead><tr>
@@ -2354,7 +2359,43 @@ let liveRows=[];
 // throw off the "all selected" checkbox state or bulk counts.
 let liveSelected=new Set();
 
+// Heartbeat interval the listener writes on (index.js) — anything older than
+// this while status still says "connected" means it stopped writing without
+// a clean disconnect, so flag it as possibly down rather than trusting a
+// stale "connected".
+const LISTENER_HEARTBEAT_STALE_MS=10*60*1000;
+
+async function loadListenerStatus(){
+  const el=document.getElementById('live-listener-status');
+  if(!el)return;
+  const{data,error}=await sb.from('whatsapp_listener_status').select('*').eq('id',1).maybeSingle();
+  if(error||!data){el.classList.add('hidden');return;}
+  const updated=new Date(data.updated_at);
+  const ageMs=Date.now()-updated.getTime();
+  const ts=updated.toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  let cls,msg;
+  if(data.status==='logged_out'){
+    cls='ls-err';
+    msg='🔴 Listener disconnected since '+ts+' — needs re-scan/re-pair'+(data.detail?' ('+escH(data.detail)+')':'');
+  }else if(data.status==='reconnecting'){
+    cls='ls-warn';
+    msg='🟠 Listener reconnecting… last change '+ts;
+  }else if(data.status==='connected'&&ageMs>LISTENER_HEARTBEAT_STALE_MS){
+    cls='ls-warn';
+    msg='🟡 No heartbeat since '+ts+' — listener may be down';
+  }else if(data.status==='connected'){
+    cls='ls-ok';
+    msg='🟢 Listener connected · last heartbeat '+ts;
+  }else{
+    cls='ls-warn';
+    msg='⚪ Listener status unknown';
+  }
+  el.className='listener-status '+cls;
+  el.textContent=msg;
+}
+
 async function loadLiveView(){
+  loadListenerStatus(); // independent of the row-editing guard below
   // Auto-refresh must never clobber a row someone's mid-edit on.
   const tbody=document.getElementById('live-tbody');
   if(document.activeElement&&tbody&&tbody.contains(document.activeElement))return;
