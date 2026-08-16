@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
           name:    customer_name,
           contact: `+91${phone.replace(/^\+91/, '')}`,
         },
-        notify:          { sms: true, email: false },
+        notify:          { sms: true, whatsapp: true, email: false },
         reminder_enable: false,
         notes: {
           address: address || '',

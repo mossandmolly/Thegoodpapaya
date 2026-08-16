@@ -83,7 +83,7 @@ async function createRazorpayLink(
       currency:        'INR',
       description:     `The Good Papaya — ${description}`,
       customer:        { name: customerName, contact: `+91${phone}` },
-      notify:          { sms: true, email: false },
+      notify:          { sms: true, whatsapp: true, email: false },
       reminder_enable: false,
       notes:           { sales_order_id: salesOrderId, notes: notes || '', source: 'website' },
       callback_url:    'https://thegoodpapaya.com/pages/order-confirmed',
