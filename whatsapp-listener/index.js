@@ -181,14 +181,46 @@ Return ONLY valid compact JSON, no markdown fences:
 {"rows":[{"order_date":"${today}","customer_name":"","phone":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":""}],"flags":[]}`
 }
 
+// A greedy /\{[\s\S]*\}/ regex matches from the first "{" to the LAST "}"
+// anywhere in the text — if the response ever has trailing content after a
+// complete JSON object (extra prose, a stray duplicated block), that
+// swallows it too, producing "valid JSON, then garbage" which JSON.parse
+// rejects with "Unexpected non-whitespace character after JSON". Walking
+// brace depth instead (string-aware, so a brace inside a quoted value
+// doesn't miscount) finds exactly the first balanced object and stops
+// there, ignoring whatever follows it.
+function extractFirstJsonObject(raw) {
+  const start = raw.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < raw.length; i++) {
+    const c = raw[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') inString = true
+    else if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return raw.slice(start, i + 1)
+    }
+  }
+  return null // unbalanced — response was truncated mid-object
+}
+
 function parseJson(raw) {
-  const m = raw.match(/\{[\s\S]*\}/)
-  if (!m) throw new Error('No JSON: ' + raw.slice(0, 150))
+  const jsonStr = extractFirstJsonObject(raw)
+  if (!jsonStr) throw new Error('No JSON: ' + raw.slice(0, 150))
   try {
-    return JSON.parse(m[0])
+    return JSON.parse(jsonStr)
   } catch (e) {
     try {
-      return JSON.parse(m[0].replace(/,(\s*[}\]])/g, '$1').replace(/[\x00-\x1F\x7F]/g, ' '))
+      return JSON.parse(jsonStr.replace(/,(\s*[}\]])/g, '$1').replace(/[\x00-\x1F\x7F]/g, ' '))
     } catch (e2) {
       throw new Error('JSON parse failed: ' + e.message)
     }
