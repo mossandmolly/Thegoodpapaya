@@ -36,6 +36,10 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 const BATCH_WINDOW_MS = parseInt(process.env.BATCH_WINDOW_MS || '45000', 10)
 const AUTH_DIR = './auth'
 const LOG_FILE = './parsed-orders.log.jsonl'
+// Secondary number's full phone number, digits only, country code first
+// (e.g. "919876543210" for an Indian number) — when set, links via a typed
+// pairing code instead of a QR scan. Skips the QR-expiry race entirely.
+const PAIRING_PHONE_NUMBER = (process.env.PAIRING_PHONE_NUMBER || '').replace(/\D/g, '')
 // ====================================
 
 const logger = P({ level: 'silent' })
@@ -396,9 +400,23 @@ async function start() {
 
   sock.ev.on('creds.update', saveCreds)
 
+  // Pairing-code path: request it once, right after the socket is created,
+  // only if this device isn't already linked. Avoids the QR-scan race
+  // entirely — WhatsApp shows this code for you to type in yourself instead
+  // of a camera-scannable, fast-expiring QR image.
+  if (PAIRING_PHONE_NUMBER && !sock.authState.creds.registered) {
+    try {
+      const code = await sock.requestPairingCode(PAIRING_PHONE_NUMBER)
+      console.log(`[pairing] Enter this code on your phone: ${code}`)
+      console.log('[pairing] WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"')
+    } catch (e) {
+      console.error('[pairing] requestPairingCode failed:', e.message)
+    }
+  }
+
   sock.ev.on('connection.update', (u) => {
     const { connection, lastDisconnect, qr } = u
-    if (qr) qrcode.generate(qr, { small: true }) // scan once with the secondary number
+    if (qr && !PAIRING_PHONE_NUMBER) qrcode.generate(qr, { small: true }) // scan once with the secondary number
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
       const reason = lastDisconnect?.error?.message || 'unknown reason'

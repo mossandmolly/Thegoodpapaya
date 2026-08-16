@@ -33,12 +33,22 @@ phone stays offline too long).
 
 ## 3. Find your groups' JIDs (one-time discovery run)
 
-Deploy with `GROUP_JIDS` empty. Open the Railway service's **Logs** tab —
-the listener prints a QR code there as ASCII art.
+Deploy with `GROUP_JIDS` empty. Open the Railway service's **Logs** tab.
 
-Scan it with the secondary number's WhatsApp: **Settings → Linked Devices →
-Link a Device**. Then send any message in each group you want watched — the
-logs will print:
+By default the listener prints a QR code there as ASCII art — scan it with
+the secondary number's WhatsApp: **Settings → Linked Devices → Link a
+Device**. QR codes expire quickly and WhatsApp only allows a handful of
+refreshes before giving up (`408 "QR refs attempts ended"`), so have the
+camera open and ready before it appears.
+
+If QR scanning keeps failing, set `PAIRING_PHONE_NUMBER` instead (digits
+only, country code first, e.g. `919876543210`) and redeploy — the listener
+will print an 8-character code to type into WhatsApp under **Settings →
+Linked Devices → Link a Device → "Link with phone number instead"**,
+skipping the QR race entirely. Remove the variable once linked.
+
+Either way, once linked, then send any message in each group you want
+watched — the logs will print:
 
 ```
 [discover] My Customer Group  =>  120363021234567890@g.us
