@@ -2,9 +2,12 @@
 
 A read-only listener. It never sends messages. It logs in as a **dedicated
 secondary number**, watches one or more WhatsApp groups, batches new
-messages, and sends each batch to the `parse-orders` Supabase function
-(`liveText` mode) — the same canonical item list / aliases / pc-to-kg table
-used by the tested image-screenshot parser.
+messages, and sends each batch to the same `/.netlify/functions/parse`
+proxy that `parser.html`'s image-upload flow calls — using the exact same
+rules prompt (canonical item list, aliases, pc-to-kg table, society list,
+name-stripping, reply/add-on detection). The listener itself has no order
+intelligence: it only batches raw text and forwards it. All parsing
+decisions happen in that one Claude call.
 
 ---
 
@@ -24,8 +27,9 @@ phone stays offline too long).
   this, the WhatsApp session is lost on every redeploy/restart and you'd
   have to re-scan the QR code each time.
 - Set environment variables (Settings → Variables) from `.env.example`:
-  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROUP_JIDS` (leave empty for
-  the first run), `BATCH_WINDOW_MS` (optional, defaults to 45000).
+  `PARSE_FUNCTION_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `GROUP_JIDS` (leave empty for the first run), `BATCH_WINDOW_MS`
+  (optional, defaults to 45000).
 
 ## 3. Find your groups' JIDs (one-time discovery run)
 
@@ -57,21 +61,23 @@ JIDs from step 3, then redeploy. The listener will now:
 
 1. Watch every configured group.
 2. Batch each group's messages for `BATCH_WINDOW_MS` (default 45s) after
-   the first unflushed message.
-3. POST the batch to `parse-orders` (`liveText` mode) using
-   `SUPABASE_SERVICE_ROLE_KEY`.
-4. Print the parsed rows/flags to the logs, append them to
-   `parsed-orders.log.jsonl` as an audit trail, and insert them into the
-   `whatsapp_parsed_orders` Supabase table (migration
-   `024_whatsapp_parsed_orders.sql`).
+   the first unflushed message — the window starts on the first message in
+   an empty batch and does not reset on later ones, so a burst of messages
+   more than ~45s apart lands in two separate parses.
+3. Tag each message with the sender's real WhatsApp display name, and with
+   any quoted/replied-to text (so reply "also add 2kg mango" messages get
+   the same add-on treatment as a screenshot's quoted grey box).
+4. POST the batch to `/.netlify/functions/parse` using the exact rules
+   prompt from `parser.html`.
+5. Write the parsed rows into the `whatsapp_parsed_orders` Supabase table
+   (migration `041_whatsapp_parsed_orders.sql`), append them to
+   `parsed-orders.log.jsonl` as an audit trail, and print them to the logs.
 
-That table feeds a new "Live WhatsApp Orders" section on
-[parser.html](https://goodpapaya-operations.netlify.app/parser.html) — a
-separate, running list from the image-upload table on the same page, polled
-every 20s, with its own Copy TSV / Push to operations / Clear controls.
-"Push to operations" calls the same `add-orders` function the manual entry
-page uses; "Clear" soft-hides rows (sets `cleared = true`, doesn't delete)
-so new rows keep appending after a clear.
+The listener never touches `orders`/`order_items` directly and never calls
+a Supabase edge function — that only happens when a human reviews the
+"Live" tab on `parser.html` and clicks **Push to operations**, which reuses
+the exact same `create-order` + `order_items` flow the image-upload parser
+already uses.
 
 ---
 
