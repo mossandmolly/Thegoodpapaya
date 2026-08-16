@@ -2794,8 +2794,7 @@ function renderOrdersList(){
           (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
           (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus):'')+
           (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'')+
-          (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'')+
-          (!cancelled?adminActionBadgeHtml(order):'');
+          (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'');
 
         // "Packed" here means reached at least the packed stage (packed,
         // final, or invoiced all count — packing is a one-way milestone,
@@ -4410,11 +4409,6 @@ let overviewDeadlineOnly=false;
 // clear at a glance how many orders are still sitting vs. already on the road.
 let overviewDeliveryFilter='all'; // 'all' | 'pending' | 'ofd' | 'partially_delivered' | 'delivered'
 
-// Same ANDed-on-top pattern as the deadline toggle — surfaces orders where
-// an automatic payment-collection step (see migration 071) couldn't run
-// and needs a human to actually look at it.
-let overviewAdminActionOnly=false;
-
 // Another ANDed-on-top axis, same shape as overviewDeliveryFilter — payment
 // and delivery status are intentionally independent (an order can be paid
 // while still OFD, or delivered while still unpaid), so this needs its own
@@ -4423,7 +4417,6 @@ let overviewPaymentFilter='all'; // 'all' | 'paid' | 'not_paid'
 
 function orderMatchesOverviewFilter(order){
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
-  if(overviewAdminActionOnly&&!order.adminActionNeeded)return false;
   if(overviewDeliveryFilter!=='all'){
     const ds=order.deliveryStatus||'not_dispatched';
     if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
@@ -4454,11 +4447,6 @@ function toggleOverviewDeadlineFilter(){
   renderOrdersList();
 }
 
-function toggleOverviewAdminActionFilter(){
-  overviewAdminActionOnly=!overviewAdminActionOnly;
-  renderOrdersList();
-}
-
 function setOverviewDeliveryFilter(key){
   overviewDeliveryFilter=key;
   renderOrdersList();
@@ -4481,7 +4469,6 @@ function renderOverviewSummaryPills(tripInfo){
   const final=active.filter(o=>!isFullyInvoiced(o)&&isReadyToInvoice(o)).length;
   const inprogress=active.length-invoiced-final;
   const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
-  const needsAdminAction=orders.filter(o=>o.adminActionNeeded).length;
   const pills=[
     {key:'all',label:'All',count:total},
     {key:'inprogress',label:'Open/Packed',count:inprogress},
@@ -4492,8 +4479,7 @@ function renderOverviewSummaryPills(tripInfo){
   document.getElementById('to-summary-pills').innerHTML=pills.map(p=>
     '<span class="filter-pill'+(toOverviewFilter===p.key?' active':'')+'" onclick="setOverviewFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
-  '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>'+
-  (needsAdminAction?'<span class="filter-pill'+(overviewAdminActionOnly?' active':'')+'" onclick="toggleOverviewAdminActionFilter()">⚠ Admin action needed ('+needsAdminAction+')</span>':'');
+  '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>';
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
   const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;
