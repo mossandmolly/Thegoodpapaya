@@ -386,7 +386,11 @@ function logResult(groupName, sentCount, result) {
     for (const r of result.rows) {
       console.log(`  - ${r.customer_name} | ${r.item_name} ${r.quantity}kg ${r.description || ''}`.trim())
     }
-    for (const f of result.flags || []) console.log(`  ⚠ ${f}`)
+    // Claude doesn't always return flags as plain strings — sometimes a
+    // {row, reason}-shaped object instead. Template-literal interpolation on
+    // an object silently stringifies to "[object Object]", so stringify
+    // non-strings explicitly to keep these actually readable in the logs.
+    for (const f of result.flags || []) console.log(`  ⚠ ${typeof f === 'string' ? f : JSON.stringify(f)}`)
   }
 }
 
