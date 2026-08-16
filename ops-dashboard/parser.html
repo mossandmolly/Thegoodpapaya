@@ -200,6 +200,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    team needs day-to-day, unlike the entry-date picker on the Parser page. */
 .date-header-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .date-picker-compact{width:auto;text-transform:none;letter-spacing:normal;padding:4px 8px;font-size:11px;border:1px solid #eee0d0;border-radius:6px;background:#fdf8f3;color:#5c4f42;font-family:inherit;margin-bottom:0}
+.date-nav{display:inline-flex;align-items:center;gap:6px}
+.date-nav-btn{background:#fdf8f3;border:1px solid #eee0d0;color:#8a7a6a;border-radius:6px;width:26px;height:26px;flex:none;font-size:14px;line-height:1;cursor:pointer;font-family:inherit;padding:0}
+.date-nav-btn:hover{background:#fdead9}
+.date-nav-btn:disabled{opacity:.4;cursor:not-allowed}
 .dv-location-badge{font-size:11px;font-weight:400;color:#8a7a6a}
 .dv-already-paid-note{background:#e3f3e3;color:#2d6b2d;font-size:12px;font-weight:600;padding:8px 12px;border-radius:6px;margin-bottom:12px}
 .parser-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px}
@@ -411,7 +415,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="header-btn" id="sync-customers">👥 Customers</button>
   </div>
   <div class="section-label">Entry date <span style="font-weight:400;text-transform:none;letter-spacing:normal">— which day new orders below go into</span></div>
-  <input type="date" class="date-picker" id="entry-date-picker" onchange="setEntryDate(this.value)">
+  <div class="date-nav" style="width:100%;margin-bottom:10px">
+    <button type="button" class="date-nav-btn" id="entry-date-prev" onclick="setEntryDate(addDays(entryDate,-1))" title="Previous day">‹</button>
+    <input type="date" class="date-picker" id="entry-date-picker" onchange="setEntryDate(this.value)" style="flex:1;margin-bottom:0">
+    <button type="button" class="date-nav-btn" id="entry-date-next" onclick="setEntryDate(addDays(entryDate,1))" title="Next day">›</button>
+  </div>
   <div class="section-label">📸 Upload &amp; Parse</div>
   <div class="drop-zone" id="dz">
     <input type="file" id="fi" accept="image/*" multiple>
@@ -459,7 +467,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="panel active" id="panel-today">
   <div class="section-label date-header-row">
     <span><span id="to-label">Order overview</span> <span id="to-rc"></span></span>
-    <input type="date" class="date-picker-compact" id="to-date-picker" onchange="setViewDate(this.value)">
+    <div class="date-nav">
+      <button type="button" class="date-nav-btn" id="to-date-prev" onclick="setViewDate(addDays(viewDate,-1))" title="Previous day">‹</button>
+      <input type="date" class="date-picker-compact" id="to-date-picker" onchange="setViewDate(this.value)">
+      <button type="button" class="date-nav-btn" id="to-date-next" onclick="setViewDate(addDays(viewDate,1))" title="Next day">›</button>
+    </div>
   </div>
   <input type="text" class="pk-search" id="to-search" placeholder="🔍 Search society, customer, or fruit...">
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
@@ -485,7 +497,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="panel" id="panel-packer">
   <div class="section-label date-header-row">
     <span><span id="pk-label">To pack</span> <span id="pk-rc"></span></span>
-    <input type="date" class="date-picker-compact" id="pk-date-picker" onchange="setViewDate(this.value)">
+    <div class="date-nav">
+      <button type="button" class="date-nav-btn" id="pk-date-prev" onclick="setViewDate(addDays(viewDate,-1))" title="Previous day">‹</button>
+      <input type="date" class="date-picker-compact" id="pk-date-picker" onchange="setViewDate(this.value)">
+      <button type="button" class="date-nav-btn" id="pk-date-next" onclick="setViewDate(addDays(viewDate,1))" title="Next day">›</button>
+    </div>
   </div>
   <div class="dv-scope-tabs">
     <button class="dv-scope-btn active" id="pk-scope-all" onclick="setPackerScope('all')">All orders</button>
@@ -505,7 +521,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="panel" id="panel-delivery">
   <div class="section-label date-header-row">
     <span><span id="dv-label">Delivery</span> <span id="dv-rc"></span> <span id="dv-location-indicator" class="dv-location-badge"></span></span>
-    <input type="date" class="date-picker-compact" id="dv-date-picker" onchange="setViewDate(this.value)">
+    <div class="date-nav">
+      <button type="button" class="date-nav-btn" id="dv-date-prev" onclick="setViewDate(addDays(viewDate,-1))" title="Previous day">‹</button>
+      <input type="date" class="date-picker-compact" id="dv-date-picker" onchange="setViewDate(this.value)">
+      <button type="button" class="date-nav-btn" id="dv-date-next" onclick="setViewDate(addDays(viewDate,1))" title="Next day">›</button>
+    </div>
   </div>
   <div class="dv-queue-badge hidden" id="dv-queue-badge"></div>
   <div class="dv-scope-tabs">
@@ -528,7 +548,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="panel" id="panel-stock">
   <div class="section-label date-header-row">
     <span><span id="stock-label">Stock</span> <span id="stock-rc"></span></span>
-    <input type="date" class="date-picker-compact" id="stock-date-picker" onchange="setViewDate(this.value)">
+    <div class="date-nav">
+      <button type="button" class="date-nav-btn" id="stock-date-prev" onclick="setViewDate(addDays(viewDate,-1))" title="Previous day">‹</button>
+      <input type="date" class="date-picker-compact" id="stock-date-picker" onchange="setViewDate(this.value)">
+      <button type="button" class="date-nav-btn" id="stock-date-next" onclick="setViewDate(addDays(viewDate,1))" title="Next day">›</button>
+    </div>
   </div>
   <input type="text" class="pk-search" id="stock-search" placeholder="🔍 Search fruit..." oninput="renderStockTable()">
   <div id="stock-summary-pills" class="filter-pills status-pills"></div>
@@ -552,7 +576,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 <div class="panel" id="panel-purchases">
   <div class="section-label date-header-row">
     <span>Purchases <span id="purchases-rc"></span></span>
-    <input type="date" class="date-picker-compact" id="purchases-date-picker" onchange="setViewDate(this.value)">
+    <div class="date-nav">
+      <button type="button" class="date-nav-btn" id="purchases-date-prev" onclick="setViewDate(addDays(viewDate,-1))" title="Previous day">‹</button>
+      <input type="date" class="date-picker-compact" id="purchases-date-picker" onchange="setViewDate(this.value)">
+      <button type="button" class="date-nav-btn" id="purchases-date-next" onclick="setViewDate(addDays(viewDate,1))" title="Next day">›</button>
+    </div>
   </div>
   <input type="text" class="pk-search" id="purchases-search" placeholder="🔍 Search fruit..." oninput="renderPurchasesTable()">
   <div class="stock-table-wrap">
@@ -1723,6 +1751,9 @@ function syncEntryDatePicker(){
   el.min=ENTRY_DATE_MIN;
   el.max=ENTRY_DATE_MAX;
   el.value=entryDate;
+  const prev=document.getElementById('entry-date-prev'),next=document.getElementById('entry-date-next');
+  if(prev)prev.disabled=entryDate<=ENTRY_DATE_MIN;
+  if(next)next.disabled=entryDate>=ENTRY_DATE_MAX;
 }
 
 function setEntryDate(dateStr){
@@ -2805,11 +2836,12 @@ const VIEW_DATE_MIN=addDays(CALENDAR_TODAY,-15);
 const VIEW_DATE_MAX=ENTRY_DATE_MAX;
 
 function syncViewDatePickers(){
-  [document.getElementById('to-date-picker'),document.getElementById('pk-date-picker'),document.getElementById('dv-date-picker'),document.getElementById('stock-date-picker'),document.getElementById('purchases-date-picker')].forEach(el=>{
-    if(!el)return;
-    el.min=VIEW_DATE_MIN;
-    el.max=VIEW_DATE_MAX;
-    el.value=viewDate;
+  ['to','pk','dv','stock','purchases'].forEach(prefix=>{
+    const el=document.getElementById(prefix+'-date-picker');
+    if(el){el.min=VIEW_DATE_MIN;el.max=VIEW_DATE_MAX;el.value=viewDate;}
+    const prev=document.getElementById(prefix+'-date-prev'),next=document.getElementById(prefix+'-date-next');
+    if(prev)prev.disabled=viewDate<=VIEW_DATE_MIN;
+    if(next)next.disabled=viewDate>=VIEW_DATE_MAX;
   });
 }
 
