@@ -77,7 +77,7 @@ function buildSystemPrompt(today, groupName) {
 
 TODAY: ${today}
 
-You are reading LIVE messages from the WhatsApp group "${groupName}", not a screenshot. Each line below is tagged "[SenderName]: message text" — SenderName is the sender's real WhatsApp display name. A line may also be tagged "(replying to: "...")" when it's a reply to an earlier message.
+You are reading LIVE messages from the WhatsApp group "${groupName}", not a screenshot. Each line below is tagged "[SenderName | phone]: message text" — SenderName is the sender's real WhatsApp display name, phone is their WhatsApp number. A line may also be tagged "(replying to: "...")" when it's a reply to an earlier message.
 
 CANONICAL ITEMS: ${FRUITS.join(', ')}
 
@@ -168,6 +168,8 @@ RULES:
     - If the reply is just a confirmation, address, or non-order text → ignore entirely
     - For add-on items, prepend "add-on" to the description e.g. "add-on, ripe" or just "add-on" if no other qualifiers
 
+13. phone = the phone number from the "[SenderName | phone]" tag of whichever message(s) this row came from, copied exactly as given. Every row has a phone — never leave it empty.
+
 CRITICAL:
 - description never blank if any qualifier/note/condition/piece count exists
 - Always include "N pieces" in description when order was by count
@@ -176,7 +178,7 @@ CRITICAL:
 - "orange" = Mandarin orange always, never mango
 
 Return ONLY valid compact JSON, no markdown fences:
-{"rows":[{"order_date":"${today}","customer_name":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":""}],"flags":[]}`
+{"rows":[{"order_date":"${today}","customer_name":"","phone":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":""}],"flags":[]}`
 }
 
 function parseJson(raw) {
@@ -245,8 +247,8 @@ function extractMessage(msg) {
   return { text, quotedText }
 }
 
-function formatMessageLine({ sender, text, quotedText }) {
-  const tag = `[${sender}]`
+function formatMessageLine({ sender, phone, text, quotedText }) {
+  const tag = `[${sender} | ${phone}]`
   const reply = quotedText ? ` (replying to: "${quotedText.slice(0, 120)}")` : ''
   return `${tag}${reply}: ${text}`
 }
@@ -280,8 +282,7 @@ async function flush(jid) {
     const result = await callParser(lines, today, groupName)
     logResult(groupName, b.items.length, result)
     if (result?.rows?.length) {
-      const phoneBySender = new Map(b.items.map((m) => [m.sender, m.phone]))
-      await insertParsedRows(result.rows, today, groupName, phoneBySender)
+      await insertParsedRows(result.rows, today, groupName)
     }
   } catch (e) {
     console.error('[parser] request failed:', e.message)
@@ -320,13 +321,13 @@ async function callParser(lines, today, groupName) {
 // Writes parsed rows into the `whatsapp_parsed_orders` table that the parser
 // page's "Live" tab reads from. Nothing here touches orders/order_items —
 // that only happens when a human clicks "Push to operations" in the UI.
-async function insertParsedRows(rows, today, groupName, phoneBySender) {
+async function insertParsedRows(rows, today, groupName) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
   const records = rows.map((r) => ({
     order_date: r.order_date || today,
     group_name: groupName,
     customer_name: r.customer_name,
-    phone: phoneBySender.get(r.customer_name) || null,
+    phone: r.phone || null,
     item_name: r.item_name,
     description: r.description || null,
     delivery_instructions: r.delivery_instructions || null,
