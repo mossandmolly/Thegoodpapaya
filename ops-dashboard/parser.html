@@ -491,6 +491,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
     <button class="btn-sec" id="to-bulk-download" disabled>⬇️ Download (0)</button>
     <button class="btn-sec cancel-link" id="to-bulk-cancel" disabled>🚫 Cancel Selected (0)</button>
+    <button class="btn-sec" id="to-bulk-approve" disabled>✓ Approve Pending (0)</button>
   </div>
   <div class="push-row" style="margin-bottom:14px">
     <button class="header-btn" id="to-collapse-btn" onclick="toggleCollapseAllOverview()">▾ Collapse All</button>
@@ -2785,7 +2786,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,pending_review');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
@@ -2804,7 +2805,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -2967,6 +2968,8 @@ async function loadTodaysOrders(){
         isPickup:      !!o?.is_pickup,
         paymentCollected:      !!o?.payment_collected,
         paymentCollectedMethod:o?.payment_collected_method||null,
+        whatsappRawText:   o?.whatsapp_raw_text||null,
+        whatsappGroupName: o?.whatsapp_group_name||null,
         items:[],
       };
     }
@@ -3086,7 +3089,8 @@ function renderOrdersList(){
           (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
           (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus):'')+
           (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'')+
-          (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'');
+          (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'')+
+          (!cancelled&&orderHasPendingReview(order)?' <span class="order-status-badge" style="background:#e6c927;color:#3a2e00" title="Created by the WhatsApp listener — needs review">💬 PENDING REVIEW</span>':'');
 
         // "Packed" here means reached at least the packed stage (packed,
         // final, or invoiced all count — packing is a one-way milestone,
@@ -3140,12 +3144,19 @@ function renderOrdersList(){
             return instructions?'<div class="dv-notes">NOTE: '+escH(instructions)+'</div>':'';
           })()+
           (order.adminNotes?'<div class="dv-notes">📝 '+escH(order.adminNotes)+'</div>':'')+
+          // Original WhatsApp message(s) that produced this order (migration
+          // 077) — shown right here so a misparse can be fixed by comparing
+          // against what the customer actually typed, without switching to
+          // the separate Live tab.
+          (order.whatsappRawText?'<div class="dv-notes" style="white-space:pre-wrap;background:#fff8e6;border-left:3px solid #e6c927">💬 <b>WhatsApp'+(order.whatsappGroupName?' — '+escH(order.whatsappGroupName):'')+':</b><br>'+escH(order.whatsappRawText)+'</div>':'')+
           '<div class="or-pills">'+order.items.map(item=>{
             const itemCancelled=item.status==='cancelled';
             return '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+(itemCancelled?' — tap to delete clean':'')+'" onclick="pillClick(\''+item.id+'\')">'+
               (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
               (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
+              (item.pending_review?'<span class="cf-badge" style="background:#fff3b0;color:#8a6d00" title="From WhatsApp — needs review">REVIEW</span> ':'')+
               escH(item.item_name)+' × '+item.requested_quantity+
+              (item.pending_review?'<button class="pill-x" style="color:#2d6b2d" onclick="event.stopPropagation();approvePendingReviewItem(\''+item.id+'\')" title="Approve">✓</button>':'')+
               (itemCancelled?'':'<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>')+
             '</span>';
           }).join('')+'</div>'+
@@ -3164,6 +3175,7 @@ function renderOrdersList(){
               // item comes in fresh/open).
               '<a class="or-link" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
               '<a class="or-link" onclick="openOrderNotesModal(\''+order.soid+'\')">+ notes</a>'+
+              (orderHasPendingReview(order)?'<a class="or-link" style="color:#8a6d00" onclick="approveAllPendingReview(\''+order.soid+'\')">✓ approve all pending</a>':'')+
               '<a class="or-link" onclick="renameOrderCustomerPrompt(\''+order.soid+'\')">✎ rename</a>'+
               (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
               // Move-by-a-day only makes sense relative to today/tomorrow —
@@ -4732,8 +4744,20 @@ let overviewDeliveryFilter='all'; // 'all' | 'pending' | 'ofd' | 'partially_deli
 // filter rather than being folded into the delivery-status one.
 let overviewPaymentFilter='all'; // 'all' | 'paid' | 'not_paid'
 
+// Whether any active (non-cancelled) item on this order was created by the
+// WhatsApp listener's direct-to-orders push (whatsapp-create-order) and
+// hasn't been approved yet — see migration 077. Shared by the filter pill,
+// the card's blurb block, and the bulk-approve button.
+function orderHasPendingReview(order){
+  return activeItems(order).some(i=>i.pending_review);
+}
+
+// Same ANDed-on-top pattern as the deadline toggle.
+let overviewPendingReviewOnly=false;
+
 function orderMatchesOverviewFilter(order){
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
+  if(overviewPendingReviewOnly&&!orderHasPendingReview(order))return false;
   if(overviewDeliveryFilter!=='all'){
     const ds=order.deliveryStatus||'not_dispatched';
     if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
@@ -4774,6 +4798,11 @@ function setOverviewPaymentFilter(key){
   renderOrdersList();
 }
 
+function toggleOverviewPendingReviewFilter(){
+  overviewPendingReviewOnly=!overviewPendingReviewOnly;
+  renderOrdersList();
+}
+
 function renderOverviewSummaryPills(tripInfo){
   const orders=Object.values(currentOrdersById);
   // Pickup and replacement-only orders don't count toward "real" order
@@ -4786,6 +4815,7 @@ function renderOverviewSummaryPills(tripInfo){
   const final=active.filter(o=>!isFullyInvoiced(o)&&isReadyToInvoice(o)).length;
   const inprogress=active.length-invoiced-final;
   const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
+  const pendingReview=orders.filter(orderHasPendingReview).length;
   const pills=[
     {key:'all',label:'All',count:total},
     {key:'inprogress',label:'Open/Packed',count:inprogress},
@@ -4796,7 +4826,8 @@ function renderOverviewSummaryPills(tripInfo){
   document.getElementById('to-summary-pills').innerHTML=pills.map(p=>
     '<span class="filter-pill'+(toOverviewFilter===p.key?' active':'')+'" onclick="setOverviewFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
-  '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>';
+  '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>'+
+  (pendingReview?'<span class="filter-pill'+(overviewPendingReviewOnly?' active':'')+'" style="color:#8a5a00" onclick="toggleOverviewPendingReviewFilter()">💬 Pending review ('+pendingReview+')</span>':'');
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
   const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;
@@ -5184,6 +5215,11 @@ function updateBulkButtons(){
   const cancelBtn=document.getElementById('to-bulk-cancel');
   cancelBtn.textContent='🚫 Cancel Selected ('+cancelIds.length+')';
   cancelBtn.disabled=cancelIds.length===0;
+
+  const pendingReviewItemCount=selected.reduce((sum,x)=>sum+activeItems(x.order).filter(i=>i.pending_review).length,0);
+  const approveBtn=document.getElementById('to-bulk-approve');
+  approveBtn.textContent='✓ Approve Pending ('+pendingReviewItemCount+')';
+  approveBtn.disabled=pendingReviewItemCount===0;
 }
 
 async function generateInvoicesBulk(salesOrderIds){
@@ -5462,6 +5498,10 @@ document.getElementById('to-bulk-cancel').addEventListener('click',()=>{
   cancelOrdersBulk(ids);
 });
 
+document.getElementById('to-bulk-approve').addEventListener('click',()=>{
+  approvePendingReviewBulk([...selectedOrders]);
+});
+
 // ── Rate resolution modal — item name doesn't match catalog exactly ─────────
 const giModal=document.getElementById('gi-modal'),giItemsEl=document.getElementById('gi-items');
 let giTargetOrder=null,giTargetBtn=null;
@@ -5495,6 +5535,45 @@ document.getElementById('gi-continue').addEventListener('click',async()=>{
 async function approveHeldItem(id){
   const{error}=await sb.from('order_items').update({status:'open'}).eq('id',id);
   if(error){uxAlert('Failed to approve: '+error.message);return;}
+  await loadTodaysOrders();
+}
+
+// Clears pending_review on a single item — created by the WhatsApp
+// listener's direct-to-orders push (whatsapp-create-order, migration 077),
+// flagged so ops can verify the AI got it right before treating it like any
+// other order. Approving doesn't change status/quantity, only the flag.
+async function approvePendingReviewItem(id){
+  const{error}=await sb.from('order_items').update({pending_review:false}).eq('id',id);
+  if(error){uxAlert('Failed to approve: '+error.message);return;}
+  await loadTodaysOrders();
+}
+
+// Approves every pending-review item on one order in a single click —
+// the "item wise" CTA covers one item at a time, this covers the whole
+// order at once without needing the top toolbar's cross-order bulk action.
+async function approveAllPendingReview(soid){
+  const order=currentOrdersById[soid];
+  if(!order)return;
+  const ids=activeItems(order).filter(i=>i.pending_review).map(i=>i.id);
+  if(!ids.length)return;
+  const{error}=await sb.from('order_items').update({pending_review:false}).in('id',ids);
+  if(error){uxAlert('Failed to approve: '+error.message);return;}
+  await loadTodaysOrders();
+}
+
+// Top-toolbar bulk action — approves every pending-review item across every
+// selected order in one go, same shape as the existing bulk cancel/generate
+// actions.
+async function approvePendingReviewBulk(salesOrderIds){
+  const ids=[];
+  salesOrderIds.forEach(soid=>{
+    const order=currentOrdersById[soid];
+    if(order)activeItems(order).filter(i=>i.pending_review).forEach(i=>ids.push(i.id));
+  });
+  if(!ids.length){uxAlert('No pending-review items in the selected orders');return;}
+  if(!await uxConfirm('Approve '+ids.length+' pending-review item'+(ids.length!==1?'s':'')+'?'))return;
+  const{error}=await sb.from('order_items').update({pending_review:false}).in('id',ids);
+  if(error){uxAlert('Failed: '+error.message);return;}
   await loadTodaysOrders();
 }
 
