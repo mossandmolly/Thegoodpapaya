@@ -279,6 +279,26 @@ function extractMessage(msg) {
   return { text, quotedText }
 }
 
+// msg.key.participant is normally the sender's real phone-number JID
+// ("91XXXXXXXXXX@s.whatsapp.net") inside a group — but WhatsApp's LID
+// (Linked ID) privacy rollout can make it an opaque, non-phone-number JID
+// ("XXXXXXXXX@lid") instead, for some groups/accounts. A plain
+// .split('@')[0] on that just extracts the meaningless LID, silently
+// saving a garbage "phone" that isn't usable anywhere downstream (Zoho
+// contact matching, Razorpay payment links, etc.). Baileys exposes the
+// real phone-number JID as participantAlt when the primary one is a LID
+// — prefer participant when it's already a real number, fall back to
+// participantAlt, and log clearly if neither resolves so a garbage phone
+// never saves silently again.
+function resolveSenderPhone(msg) {
+  const participant = msg.key.participant || ''
+  if (participant.endsWith('@s.whatsapp.net')) return participant.split('@')[0]
+  const alt = msg.key.participantAlt || ''
+  if (alt.endsWith('@s.whatsapp.net')) return alt.split('@')[0]
+  console.warn(`[phone] could not resolve a real phone number for sender (participant=${participant || 'none'}, participantAlt=${alt || 'none'})`)
+  return participant.split('@')[0] || null
+}
+
 function formatMessageLine({ sender, phone, text, quotedText }) {
   const tag = `[${sender} | ${phone}]`
   const reply = quotedText ? ` (replying to: "${quotedText.slice(0, 120)}")` : ''
@@ -648,7 +668,7 @@ async function start() {
 
       queueMessage(jid, {
         sender: msg.pushName || 'unknown',
-        phone: (msg.key.participant || '').split('@')[0],
+        phone: resolveSenderPhone(msg),
         text: extracted.text,
         quotedText: extracted.quotedText,
         timestamp: new Date(Number(msg.messageTimestamp || 0) * 1000).toISOString(),
