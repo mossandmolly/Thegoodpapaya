@@ -575,6 +575,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Packed/Invoiced</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
   </div>
+  <div id="stock-buy-list"></div>
 </div>
 
 <!-- PURCHASES (buyer role) — review purchase tranches logged under Stock >
@@ -7318,6 +7319,7 @@ async function loadStockView(){
 
   await autoPopulateStockOpening();
   renderStockTable();
+  loadBuyList();
 }
 
 // Seeds today's opening stock from the most recent prior day's closing
@@ -7591,6 +7593,102 @@ async function saveStockClosing(inputEl,itemName){
   if(error){uxAlert('Failed to save: '+error.message);return;}
   stockClosingMap[itemName]=qty;
   renderStockTable();
+  loadBuyList();
+}
+
+// ── Buy list for tomorrow ────────────────────────────────────────────────
+// Shown once at least one tracked fruit has today's closing (physical)
+// stock logged — before that there's nothing to project from. Buy qty per
+// fruit = projected demand (avg daily "sold" — packed/invoiced order
+// quantity — over the last HISTORY_DAYS days) minus what's physically left
+// tonight (closing stock), floored at 0: closing stock carries forward as
+// tomorrow's opening, so it directly offsets how much needs buying.
+const STOCK_BUY_HISTORY_DAYS=6;
+// Average wastage ≥ this % of that day's pool (opening+purchased), across
+// however many of the last HISTORY_DAYS days actually had a closing count
+// logged, flags a fruit as a genuine recurring problem worth the buyer's
+// attention — not just one bad day's noise.
+const STOCK_WASTAGE_ALERT_PCT=15;
+
+async function loadBuyList(){
+  const el=document.getElementById('stock-buy-list');
+  if(!el)return;
+  const trackedItems=[...stockTrackedFruits].filter(name=>stockClosingMap[name]!=null);
+  if(!trackedItems.length){el.innerHTML='';return;}
+
+  const startDate=addDays(viewDate,-STOCK_BUY_HISTORY_DAYS);
+  const[openingRes,purchaseRes,closingRes,itemsRes]=await Promise.all([
+    sb.from('stock_opening').select('item_name,date,opening_qty').gte('date',startDate).lt('date',viewDate),
+    sb.from('stock_purchases').select('item_name,date,qty').gte('date',startDate).lt('date',viewDate),
+    sb.from('stock_closing').select('item_name,date,closing_qty').gte('date',startDate).lt('date',viewDate),
+    fetchAllOrderItems(q=>q.gte('sales_order_id',startDate).lt('sales_order_id',viewDate)),
+  ]);
+  if(openingRes.error||purchaseRes.error||closingRes.error||itemsRes.error){el.innerHTML='';return;}
+
+  const openingByDay={},purchByDay={},closingByDay={},soldByDay={};
+  (openingRes.data||[]).forEach(r=>{(openingByDay[r.date]=openingByDay[r.date]||{})[r.item_name]=r.opening_qty;});
+  (purchaseRes.data||[]).forEach(r=>{const d=purchByDay[r.date]=purchByDay[r.date]||{};d[r.item_name]=(d[r.item_name]||0)+r.qty;});
+  (closingRes.data||[]).forEach(r=>{(closingByDay[r.date]=closingByDay[r.date]||{})[r.item_name]=r.closing_qty;});
+  // "Sold" = packed-or-beyond quantity, same rule stockStatusFor uses for
+  // today's own Packed/Invoiced column — what actually left the shelf,
+  // regardless of whether it's been billed yet.
+  (itemsRes.data||[]).filter(i=>i.status!=='cancelled'&&ITEM_STATUS_RANK[i.status]>=ITEM_STATUS_RANK.packed).forEach(i=>{
+    const day=i.sales_order_id.slice(0,10);
+    const d=soldByDay[day]=soldByDay[day]||{};
+    d[i.item_name]=(d[i.item_name]||0)+(i.final_quantity??i.requested_quantity);
+  });
+
+  const days=[];
+  for(let i=STOCK_BUY_HISTORY_DAYS;i>=1;i--)days.push(addDays(viewDate,-i));
+
+  const catalogByName={};
+  stockCatalog.forEach(c=>{catalogByName[c.item_name]=c;});
+
+  const rows=trackedItems.map(name=>{
+    const salesByDay=days.map(d=>(soldByDay[d]||{})[name]||0);
+    const avgSales=salesByDay.reduce((a,b)=>a+b,0)/STOCK_BUY_HISTORY_DAYS;
+    const wastagePctByDay=[];
+    days.forEach(d=>{
+      const closing=(closingByDay[d]||{})[name];
+      if(closing==null)return; // no physical count that day — not enough info for wastage
+      const pool=((openingByDay[d]||{})[name]||0)+((purchByDay[d]||{})[name]||0);
+      const sold=(soldByDay[d]||{})[name]||0;
+      if(pool>0)wastagePctByDay.push(Math.max(0,pool-sold-closing)/pool*100);
+    });
+    const avgWastagePct=wastagePctByDay.length?wastagePctByDay.reduce((a,b)=>a+b,0)/wastagePctByDay.length:null;
+    const closingTonight=stockClosingMap[name]||0;
+    return{
+      name, unit:(catalogByName[name]&&catalogByName[name].unit)||'',
+      avgSales, closingTonight,
+      buyQty:Math.max(0,avgSales-closingTonight),
+      avgWastagePct, highWastage:avgWastagePct!=null&&avgWastagePct>=STOCK_WASTAGE_ALERT_PCT,
+    };
+  }).filter(r=>r.buyQty>0.01||r.highWastage)
+    .sort((a,b)=>b.buyQty-a.buyQty);
+
+  if(!rows.length){
+    el.innerHTML='<div class="section-title" style="margin-top:20px">📦 Buy list for tomorrow</div>'+
+      '<div class="to-empty">Nothing to buy — closing stock covers projected demand for every fruit with today\'s count logged.</div>';
+    return;
+  }
+
+  el.innerHTML='<div class="section-title" style="margin-top:20px">📦 Buy list for tomorrow — last '+STOCK_BUY_HISTORY_DAYS+' days\' sales vs. tonight\'s closing stock</div>'+
+    '<div class="stock-table-wrap"><table class="community-table"><thead><tr>'+
+      '<th>Fruit</th><th>Avg daily sales ('+STOCK_BUY_HISTORY_DAYS+'d)</th><th>Closing stock tonight</th><th>Buy for tomorrow</th><th>Write-offs</th>'+
+    '</tr></thead><tbody>'+
+    rows.map(r=>
+      '<tr>'+
+        '<td>'+escH(r.name)+'</td>'+
+        '<td>'+r.avgSales.toFixed(2)+' '+escH(r.unit)+'</td>'+
+        '<td>'+r.closingTonight.toFixed(2)+' '+escH(r.unit)+'</td>'+
+        '<td><b>'+r.buyQty.toFixed(2)+' '+escH(r.unit)+'</b></td>'+
+        '<td>'+(r.highWastage
+          ?'<span class="stock-wastage stock-wastage-loss" title="Average write-off over the last '+STOCK_BUY_HISTORY_DAYS+' days">⚠️ Write-offs have been high (avg '+r.avgWastagePct.toFixed(0)+'% of stock) — flag for buyer</span>'
+          :(r.avgWastagePct!=null?r.avgWastagePct.toFixed(0)+'% avg':'—'))+
+        '</td>'+
+      '</tr>'
+    ).join('')+
+    '</tbody></table></div>';
 }
 
 const stockPurchaseModal=document.getElementById('stock-purchase-modal');
