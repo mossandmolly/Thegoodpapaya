@@ -3175,6 +3175,7 @@ function renderOrdersList(){
                 :''
               ))+
               (cancelled?'':'<a class="or-link" style="color:#b3261e" onclick="cancelOrderSingle(\''+order.soid+'\')">🗑 cancel order</a>')+
+              (cancelled?'<a class="or-link" style="color:#2d6b2d" onclick="uncancelOrderSingle(\''+order.soid+'\')">↩️ uncancel order</a>':'')+
             '</span>'+
           '</div>'+
         '</div>';
@@ -3389,7 +3390,7 @@ async function regeneratePaymentLinkSingle(soid){
 // Soft-cancel only, never a hard delete — adding a new item later
 // (create-order) reopens it automatically.
 async function cancelOrderSingle(soid){
-  if(!await uxConfirm('Cancel this entire order?\n\nThis deletes its Zoho invoice (if any) and Razorpay link/QR — any payment already made is kept as customer credit in Zoho, not refunded. This cannot be undone from here.'))return;
+  if(!await uxConfirm('Cancel this entire order?\n\nThis deletes its Zoho invoice (if any) and Razorpay link/QR — any payment already made is kept as customer credit in Zoho, not refunded. "Uncancel order" can restore the order/items to their status before this, but not the deleted Zoho invoice or Razorpay link/QR themselves.'))return;
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/cancel-order',{
       method:'POST',
@@ -3399,6 +3400,30 @@ async function cancelOrderSingle(soid){
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not cancel order');
     selectedOrders.delete(soid);
+    evictCustomerLookupCache(soid);
+    await loadTodaysOrders();
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+  }
+}
+
+// Restores the order and every one of its cancelled items to whatever
+// status each was at right before cancel-order ran (pre_cancel_status/
+// pre_cancel_invoice_status — migration 074) — an item that was 'invoiced'
+// comes back 'invoiced', not reset to 'open'. Doesn't resurrect the
+// deleted Zoho invoice or cancelled Razorpay link/QR themselves (those are
+// real external actions already taken); generate-invoice needs to run
+// again normally for a fresh one.
+async function uncancelOrderSingle(soid){
+  if(!await uxConfirm('Uncancel this order? Items go back to their status before cancellation (e.g. an invoiced item stays invoiced) — but a deleted Zoho invoice or cancelled Razorpay link/QR is not restored; you\'ll need to generate a fresh invoice/link if needed.'))return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/uncancel-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not uncancel order');
     evictCustomerLookupCache(soid);
     await loadTodaysOrders();
   }catch(e){
@@ -5483,13 +5508,31 @@ async function approveHeldItem(id){
 async function deleteItem(id){
   const current=currentItemsById[id];
   // An already-cancelled item (tapped from its pill) has nothing left to
-  // "cancel for packing" — the only meaningful choice left is a clean
-  // hard-delete or leaving it as the cancelled record it already is.
+  // "cancel for packing" — the real choice is restoring it to whatever it
+  // was before (see uncancel-order), or a clean hard-delete if the history
+  // genuinely isn't wanted.
   const alreadyCancelled=current&&current.status==='cancelled';
   const choice=alreadyCancelled
-    ?await uxChoice('This item is already cancelled — delete it completely?','Delete clean',null,'Go back')
+    ?await uxChoice('This item is already cancelled.','Uncancel','Delete clean','Go back')
     :await uxChoice('Remove this item?','Cancel for packing','Delete clean','Go back');
   if(!choice)return;
+
+  if(alreadyCancelled&&choice==='primary'){
+    try{
+      const res=await fetch(SUPABASE_URL+'/functions/v1/uncancel-order',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+        body:JSON.stringify({sales_order_id:current.sales_order_id,item_id:id}),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Could not uncancel item');
+      evictCustomerLookupCache(current.sales_order_id);
+    }catch(e){uxAlert('Failed: '+e.message);return;}
+    if(document.getElementById('panel-packer').classList.contains('active'))await loadPackerView();
+    else await loadTodaysOrders();
+    return;
+  }
+
   // If this order was already invoiced, clears the old Zoho invoice first —
   // an item disappearing (either way) means that invoice no longer matches
   // reality, whatever happens next.
@@ -5499,7 +5542,9 @@ async function deleteItem(id){
     if(error){uxAlert('Failed to delete item: '+error.message);return;}
   }else{
     const description=appendAddendum(current?.description,'Item deleted');
-    const{error}=await sb.from('order_items').update({status:'cancelled',description}).eq('id',id);
+    // Records the item's status right before cancelling it (migration 074)
+    // so "Uncancel" above can restore it exactly, not just reset to 'open'.
+    const{error}=await sb.from('order_items').update({status:'cancelled',description,pre_cancel_status:current?.status}).eq('id',id);
     if(error){uxAlert('Failed to remove item: '+error.message);return;}
   }
   // Same follow-up regardless of cancel vs. hard-delete: if every remaining
@@ -5930,7 +5975,12 @@ async function performDvAction(type,payload){
     // next time instead of leaving the item cancelled but the invoice
     // still stale forever.
     await invalidateOrderInvoiceIfNeeded(payload.soid,{silent:true,force:true});
-    const{error}=await sb.from('order_items').update({status:'cancelled',description:payload.description}).eq('id',payload.itemId);
+    // Read fresh (not from a local cache, which may be stale by the time a
+    // queued action replays) so pre_cancel_status — used to restore this
+    // item exactly if the rejection turns out to be a mistake — reflects
+    // its real status right before this cancels it, not a guess.
+    const{data:beforeItem}=await sb.from('order_items').select('status').eq('id',payload.itemId).maybeSingle();
+    const{error}=await sb.from('order_items').update({status:'cancelled',description:payload.description,pre_cancel_status:beforeItem?.status}).eq('id',payload.itemId);
     if(error)throw new Error(error.message);
     await autoRegenerateInvoiceIfReady(payload.soid);
     // A rejection can land after the order was already marked fully

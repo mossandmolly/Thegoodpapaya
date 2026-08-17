@@ -220,26 +220,41 @@ Deno.serve(async (req) => {
       .from('invoice_line_items').delete().eq('sales_order_id', sales_order_id);
     if (liErr) throw new Error(`Could not clean up invoice_line_items: ${liErr.message}`);
 
-    // 4. Soft-cancel the order — never delete the row itself
+    // 4. Soft-cancel the order — never delete the row itself. Records what
+    // invoice_status was right before this so uncancel-order can restore it
+    // exactly (e.g. an order that was 'done' comes back 'done', not
+    // 'pending') — the Zoho invoice/Razorpay mechanism themselves are real
+    // external state that's actually gone (deleted/cancelled above) and
+    // can't be un-deleted, only the local status label can be restored.
     const { error: orderUpdErr } = await supabase.from('orders').update({
-      status:            'cancelled',
-      zoho_invoice_id:   null,
-      invoice_number:    null,
-      invoice_total:     null,
-      balance_due:       null,
-      invoice_status:    'cancelled',
-      razorpay_link_id:  null,
-      razorpay_url:      null,
-      qr_code_id:        null,
-      qr_image_url:      null,
-      qr_created_at:     null,
+      status:                   'cancelled',
+      zoho_invoice_id:          null,
+      invoice_number:           null,
+      invoice_total:            null,
+      balance_due:              null,
+      invoice_status:           'cancelled',
+      pre_cancel_invoice_status: order.invoice_status,
+      razorpay_link_id:         null,
+      razorpay_url:             null,
+      qr_code_id:               null,
+      qr_image_url:             null,
+      qr_created_at:            null,
     }).eq('sales_order_id', sales_order_id);
     if (orderUpdErr) throw new Error(orderUpdErr.message);
 
-    // 5. Every item on this order becomes 'cancelled', whatever stage it was at
-    const { error: itemsUpdErr } = await supabase
-      .from('order_items').update({ status: 'cancelled' }).eq('sales_order_id', sales_order_id);
-    if (itemsUpdErr) throw new Error(itemsUpdErr.message);
+    // 5. Every item on this order becomes 'cancelled', whatever stage it was
+    // at — pre_cancel_status records that stage first, per item, so
+    // uncancel-order can restore each one exactly (an 'invoiced' item comes
+    // back 'invoiced', not reset to 'open'). Already-cancelled items are
+    // left untouched, keeping whatever pre_cancel_status they already have.
+    const { data: itemsBefore, error: itemsFetchErr } = await supabase
+      .from('order_items').select('id,status').eq('sales_order_id', sales_order_id).neq('status', 'cancelled');
+    if (itemsFetchErr) throw new Error(itemsFetchErr.message);
+    for (const item of itemsBefore ?? []) {
+      const { error: itemUpdErr } = await supabase
+        .from('order_items').update({ status: 'cancelled', pre_cancel_status: item.status }).eq('id', item.id);
+      if (itemUpdErr) throw new Error(itemUpdErr.message);
+    }
 
     results.push('Order and items marked cancelled');
 
