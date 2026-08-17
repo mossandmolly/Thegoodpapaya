@@ -28,6 +28,9 @@ phone stays offline too long).
   have to re-scan the QR code each time.
 - Set environment variables (Settings → Variables) from `.env.example`:
   `PARSE_FUNCTION_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `CRON_SECRET` (same value already set on the Supabase project — enables
+  pushing parsed rows straight into orders, tagged pending_review, on top
+  of the existing whatsapp_parsed_orders/Live tab write),
   `GROUP_JIDS` (leave empty for the first run), `BATCH_WINDOW_MS`
   (optional, defaults to 45000).
 

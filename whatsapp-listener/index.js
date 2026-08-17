@@ -33,6 +33,11 @@ const GROUP_JIDS = new Set(
 const PARSE_FUNCTION_URL = process.env.PARSE_FUNCTION_URL || ''
 const SUPABASE_URL = process.env.SUPABASE_URL || ''
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+// Shared secret for whatsapp-create-order (same one already configured on
+// the Supabase project for auto-invoice-final-orders/generate-invoice's
+// cron paths) — lets the listener push parsed rows straight into real
+// orders, tagged pending_review, without a logged-in user session.
+const CRON_SECRET = process.env.CRON_SECRET || ''
 
 const BATCH_WINDOW_MS = parseInt(process.env.BATCH_WINDOW_MS || '45000', 10)
 const AUTH_DIR = './auth'
@@ -335,6 +340,7 @@ async function flush(jid) {
     logResult(groupName, b.items.length, result)
     if (result?.rows?.length) {
       await insertParsedRows(result.rows, today, groupName, lines)
+      await pushToOrders(result.rows, groupName, lines)
     }
   } catch (e) {
     console.error('[parser] request failed:', e.message)
@@ -426,6 +432,44 @@ async function insertParsedRows(rows, today, groupName, rawText) {
     throw new Error(`table insert failed: ${errText}`)
   }
   console.log(`[table] inserted ${records.length} row(s) into whatsapp_parsed_orders`)
+}
+
+// Pushes the same parsed rows straight into real orders/order_items (via
+// whatsapp-create-order), tagged pending_review — additional to, not a
+// replacement for, the whatsapp_parsed_orders insert above. Best-effort:
+// a failure here still leaves the batch safely recoverable from the Live
+// tab (whatsapp_parsed_orders), so it's logged, not thrown.
+async function pushToOrders(rows, groupName, rawText) {
+  if (!SUPABASE_URL || !CRON_SECRET) {
+    if (!CRON_SECRET) console.log('[orders] CRON_SECRET not set — skipping direct push, Live tab only')
+    return
+  }
+  const payloadRows = rows
+    .filter((r) => r.sales_order && r.customer_name)
+    .map((r) => ({
+      sales_order_id: r.sales_order,
+      customer_name: r.customer_name,
+      phone: r.phone || null,
+      item_name: r.item_name || null,
+      description: r.description || null,
+      delivery_instructions: r.delivery_instructions || null,
+      deliver_by: r.deliver_by || null,
+      deliver_after: r.deliver_after || null,
+      quantity: r.quantity != null ? Number(r.quantity) : 0,
+    }))
+  if (!payloadRows.length) return
+  try {
+    const resp = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/whatsapp-create-order`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-cron-secret': CRON_SECRET },
+      body: JSON.stringify({ rows: payloadRows, raw_text: rawText || null, group_name: groupName }),
+    })
+    const data = await resp.json().catch(() => ({}))
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`)
+    console.log(`[orders] pushed ${data.opened} new item(s), ${data.held} held, ${data.splitCount} split — pending review`)
+  } catch (e) {
+    console.error('[orders] direct push failed (still safe in whatsapp_parsed_orders / Live tab):', e.message)
+  }
 }
 
 // Single-row status the ops dashboard's Live tab reads to flag a dead

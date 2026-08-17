@@ -10,7 +10,7 @@
 // and upserts it into `communities` — grows that reference table from real
 // order data instead of maintaining a static list.
 //
-// Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status?, deliver_by?, deliver_after?, phone? }] }
+// Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status?, deliver_by?, deliver_after?, phone?, whatsapp_raw_text?, whatsapp_group_name? }] }
 // Output: { created: <count submitted> }
 //
 // Existing rows are left untouched (ignore-duplicates on sales_order_id) —
@@ -28,7 +28,7 @@ function env(key: string) {
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-cron-secret',
 };
 
 function sbHeaders() {
@@ -154,7 +154,17 @@ function deriveSociety(customerName: string, lookup: SocietyLookup): string {
 // regardless of who calls it — the anon key alone is enough to invoke it at
 // the platform level. Requiring a real logged-in user session here is what
 // actually restricts this to signed-in ops staff.
+//
+// x-cron-secret is the one exception — whatsapp-create-order calls this
+// (for the header-row step only) on behalf of the WhatsApp listener, which
+// has no logged-in user session to send, same shared-secret pattern
+// generate-invoice/auto-invoice-final-orders already use.
 async function requireAuth(req: Request): Promise<void> {
+  const cronSecret = req.headers.get('x-cron-secret');
+  if (cronSecret) {
+    if (cronSecret !== env('CRON_SECRET')) throw new Error('Not authorized');
+    return;
+  }
   const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jwt) throw new Error('Not authenticated');
   const res = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, {
@@ -187,8 +197,10 @@ Deno.serve(async (req) => {
       deliver_after:  h.deliver_after ?? null,
       is_pickup:      !!h.is_pickup,
       // Only set on first insert — ignore-duplicates below means this never
-      // overwrites a phone an existing order already has on file.
-      phone:          h.phone ?? null,
+      // overwrites a phone/blurb an existing order already has on file.
+      phone:                h.phone ?? null,
+      whatsapp_raw_text:    h.whatsapp_raw_text ?? null,
+      whatsapp_group_name:  h.whatsapp_group_name ?? null,
     }));
 
     const res = await fetch(`${env('SUPABASE_URL')}/rest/v1/orders?on_conflict=sales_order_id`, {
