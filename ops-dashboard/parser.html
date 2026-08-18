@@ -1251,7 +1251,7 @@ function signOut(){
 }
 
 // ── Default config ────────────────────────────────────────────────────────
-let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango"];
+let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango","Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green"];
 
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
@@ -4756,9 +4756,19 @@ function orderHasPendingReview(order){
 // Same ANDed-on-top pattern as the deadline toggle.
 let overviewPendingReviewOnly=false;
 
+// Hardcoded, not catalog-driven — there's no vegetable/fruit category field
+// anywhere in the catalog table today. Keep in sync with FRUITS (parser.html
+// + whatsapp-listener/index.js) whenever a new vegetable gets added there.
+const VEGETABLE_ITEM_NAMES=new Set(["Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green"].map(n=>n.toLowerCase()));
+function orderHasVegetable(order){
+  return activeItems(order).some(i=>VEGETABLE_ITEM_NAMES.has((i.item_name||'').toLowerCase()));
+}
+let overviewVegetableOnly=false;
+
 function orderMatchesOverviewFilter(order){
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
   if(overviewPendingReviewOnly&&!orderHasPendingReview(order))return false;
+  if(overviewVegetableOnly&&!orderHasVegetable(order))return false;
   if(overviewDeliveryFilter!=='all'){
     const ds=order.deliveryStatus||'not_dispatched';
     if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
@@ -4804,6 +4814,11 @@ function toggleOverviewPendingReviewFilter(){
   renderOrdersList();
 }
 
+function toggleOverviewVegetableFilter(){
+  overviewVegetableOnly=!overviewVegetableOnly;
+  renderOrdersList();
+}
+
 function renderOverviewSummaryPills(tripInfo){
   const orders=Object.values(currentOrdersById);
   // Pickup and replacement-only orders don't count toward "real" order
@@ -4817,6 +4832,7 @@ function renderOverviewSummaryPills(tripInfo){
   const inprogress=active.length-invoiced-final;
   const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
   const pendingReview=orders.filter(orderHasPendingReview).length;
+  const withVegetable=orders.filter(orderHasVegetable).length;
   const pills=[
     {key:'all',label:'All',count:total},
     {key:'inprogress',label:'Open/Packed',count:inprogress},
@@ -4828,7 +4844,8 @@ function renderOverviewSummaryPills(tripInfo){
     '<span class="filter-pill'+(toOverviewFilter===p.key?' active':'')+'" onclick="setOverviewFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
   '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>'+
-  (pendingReview?'<span class="filter-pill'+(overviewPendingReviewOnly?' active':'')+'" style="color:#8a5a00" onclick="toggleOverviewPendingReviewFilter()">💬 Pending review ('+pendingReview+')</span>':'');
+  (pendingReview?'<span class="filter-pill'+(overviewPendingReviewOnly?' active':'')+'" style="color:#8a5a00" onclick="toggleOverviewPendingReviewFilter()">💬 Pending review ('+pendingReview+')</span>':'')+
+  (withVegetable?'<span class="filter-pill'+(overviewVegetableOnly?' active':'')+'" style="color:#2d6b2d" onclick="toggleOverviewVegetableFilter()">🥦 Has vegetable ('+withVegetable+')</span>':'');
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
   const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;

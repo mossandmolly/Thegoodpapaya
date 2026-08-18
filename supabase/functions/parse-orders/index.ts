@@ -27,7 +27,9 @@ const ITEM_NAMES = [
   "Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange",
   "Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun",
   "Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango",
-  "Jamun flash","Rockit apple","Peach","Strawberry","Coconut","Custard apple"
+  "Jamun flash","Rockit apple","Peach","Strawberry","Coconut","Custard apple",
+  "Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans",
+  "Lady's finger","Cucumber","Coriander","Chilli green"
 ];
 
 const PC_TO_KG: Record<string,number> = {
