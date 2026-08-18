@@ -28,7 +28,8 @@ const ITEM_NAMES = [
   "Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango",
   "Jamun flash","Rockit apple","Peach","Strawberry","Coconut","Custard apple",
   "Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans",
-  "Lady's finger","Cucumber","Coriander","Chilli green"
+  "Lady's finger","Cucumber","Coriander","Chilli green",
+  "Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli"
 ];
 
 const PC_TO_KG: Record<string,number> = {
