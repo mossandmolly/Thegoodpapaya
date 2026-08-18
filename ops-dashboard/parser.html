@@ -4756,7 +4756,7 @@ let overviewPendingReviewOnly=false;
 // Hardcoded, not catalog-driven — there's no vegetable/fruit category field
 // anywhere in the catalog table today. Keep in sync with FRUITS (parser.html
 // + whatsapp-listener/index.js) whenever a new vegetable gets added there.
-const VEGETABLE_ITEM_NAMES=new Set(["Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli"].map(n=>n.toLowerCase()));
+const VEGETABLE_ITEM_NAMES=new Set(["Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves"].map(n=>n.toLowerCase()));
 function orderHasVegetable(order){
   return activeItems(order).some(i=>VEGETABLE_ITEM_NAMES.has((i.item_name||'').toLowerCase()));
 }
