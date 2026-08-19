@@ -168,10 +168,47 @@ Rules:
 - If customer is unclear, use "Unknown"
 - matched_confidence: high = obvious match, medium = reasonable but uncertain, low = guessing`;
 
+// Best-effort read/write against the shared zoho_token_cache row other
+// Zoho-touching functions use — this function has no other Supabase DB
+// access, so both calls are wrapped and swallow errors rather than ever
+// blocking the actual image/voice parsing this endpoint exists for.
+async function sbHeaders() {
+  return {
+    apikey: env('SUPABASE_SERVICE_ROLE_KEY'),
+    Authorization: `Bearer ${env('SUPABASE_SERVICE_ROLE_KEY')}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function cachedRefreshToken(): Promise<string> {
+  try {
+    const res = await fetch(
+      `${env('SUPABASE_URL')}/rest/v1/zoho_token_cache?id=eq.1&select=refresh_token`,
+      { headers: await sbHeaders() },
+    );
+    const rows = await res.json();
+    return rows?.[0]?.refresh_token || '';
+  } catch { return ''; }
+}
+
+async function persistRotatedRefreshToken(newRefreshToken: string): Promise<void> {
+  if (!newRefreshToken) return;
+  try {
+    await fetch(`${env('SUPABASE_URL')}/rest/v1/zoho_token_cache?id=eq.1`, {
+      method: 'PATCH',
+      headers: { ...(await sbHeaders()), Prefer: 'return=minimal' },
+      body: JSON.stringify({ refresh_token: newRefreshToken }),
+    });
+  } catch { /* best-effort — a failed persist just means the next rotation retries this */ }
+}
+
 async function fetchZohoItems(): Promise<{ name: string; unit: string }[]> {
   const clientId     = env('ZOHO_CLIENT_ID');
   const clientSecret = env('ZOHO_CLIENT_SECRET');
-  const refreshToken = env('ZOHO_REFRESH_TOKEN');
+  // Zoho rotates refresh_token on (at least some) refresh calls and
+  // invalidates the old one — prefer whatever the shared cache has last
+  // persisted over the static env secret, which goes stale after a rotation.
+  const refreshToken = (await cachedRefreshToken()) || env('ZOHO_REFRESH_TOKEN');
   const orgId        = env('ZOHO_ORG_ID');
   if (!clientId || !clientSecret || !refreshToken || !orgId) return [];
   const tokenRes = await fetch('https://accounts.zoho.in/oauth/v2/token', {
@@ -181,6 +218,7 @@ async function fetchZohoItems(): Promise<{ name: string; unit: string }[]> {
   });
   const tokenData = await tokenRes.json();
   if (!tokenData.access_token) return [];
+  await persistRotatedRefreshToken(tokenData.refresh_token);
   const itemsRes = await fetch(
     `https://www.zohoapis.in/books/v3/items?organization_id=${orgId}&status=active&per_page=200`,
     { headers: { Authorization: `Zoho-oauthtoken ${tokenData.access_token}` } }
