@@ -18,7 +18,7 @@ const ITEM_NAMES = [
   "Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon",
   "Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla",
   "Washington apple","Dragon red","Green apple","Plum","Robusta banana",
-  "Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium",
+  "Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pomegranate small",
   "Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan",
   "Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes",
   "Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango",

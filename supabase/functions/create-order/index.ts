@@ -10,7 +10,7 @@
 // and upserts it into `communities` — grows that reference table from real
 // order data instead of maintaining a static list.
 //
-// Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status?, deliver_by?, deliver_after?, phone?, whatsapp_raw_text?, whatsapp_group_name? }] }
+// Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status?, deliver_by?, deliver_after?, phone?, whatsapp_raw_text?, whatsapp_group_name?, society? }] }
 // Output: { created: <count submitted> }
 //
 // Existing rows are left untouched (ignore-duplicates on sales_order_id) —
@@ -201,6 +201,7 @@ Deno.serve(async (req) => {
       phone:                h.phone ?? null,
       whatsapp_raw_text:    h.whatsapp_raw_text ?? null,
       whatsapp_group_name:  h.whatsapp_group_name ?? null,
+      society:              h.society ?? null,
     }));
 
     const res = await fetch(`${env('SUPABASE_URL')}/rest/v1/orders?on_conflict=sales_order_id`, {

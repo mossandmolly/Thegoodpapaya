@@ -153,6 +153,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-scope-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid #eee0d0;background:#ffffff;color:#5c4f42;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
 .dv-scope-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
 .dv-assigned-tag{font-size:12px;font-weight:700;color:#b3261e;margin-left:6px}
+.or-society-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#5a4200;background:#fff1c2}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
 .replacement-only-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
@@ -1251,7 +1252,7 @@ function signOut(){
 }
 
 // ── Default config ────────────────────────────────────────────────────────
-let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango","Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus"];
+let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pomegranate small","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango","Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus"];
 
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
@@ -1950,7 +1951,9 @@ RULES:
 
 10. DEFAULTS — when no variety specified, use these:
     - "orange" → Mandarin orange (add "confirm mandarin variety" to description)
-    - "pomegranate" → Pomegranate large
+    - "pomegranate" with no size mentioned → Pomegranate medium
+    - "pomegranate small" / "small pomegranate" → Pomegranate small
+    - "pomegranate large" / "large pomegranate" or any other size word → Pomegranate large
     - "watermelon" → Watermelon (NOT Watermelon striped — only use striped if customer explicitly says striped)
     - "muskmelon" → Muskmelon (NOT Muskmelon striped — only use striped if explicitly stated)
     - "guava" → Guava white
@@ -2806,7 +2809,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -2971,6 +2974,7 @@ async function loadTodaysOrders(){
         paymentCollectedMethod:o?.payment_collected_method||null,
         whatsappRawText:   o?.whatsapp_raw_text||null,
         whatsappGroupName: o?.whatsapp_group_name||null,
+        society:           o?.society||null,
         items:[],
       };
     }
@@ -3111,6 +3115,7 @@ function renderOrdersList(){
               '<span class="or-cust">'+
                 '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
                 escH(order.customer)+
+                (order.society?' <span class="or-society-tag" title="Society captured by WhatsApp parser — customer_name above may just be a fallback name">🏘 '+escH(order.society)+'</span>':'')+
                 statusBadges+
                 (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
               '</span>'+
@@ -3127,6 +3132,7 @@ function renderOrdersList(){
           '<div class="dv-card-header" onclick="toggleOverviewOrderExpanded(\''+order.soid+'\')"><span class="or-cust">'+
             '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
             escH(order.customer)+
+            (order.society?' <span class="or-society-tag" title="Society captured by WhatsApp parser — customer_name above may just be a fallback name">🏘 '+escH(order.society)+'</span>':'')+
             statusBadges+
             (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
             paymentMechanismHtml(order)+

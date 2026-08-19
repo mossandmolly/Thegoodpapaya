@@ -16,7 +16,7 @@
 // marking every inserted item pending_review=true and writing
 // whatsapp_raw_text/whatsapp_group_name onto the header (migration 077).
 //
-// Input:  { rows: [{ sales_order_id, customer_name, phone?, item_name?, description?, delivery_instructions?, deliver_by?, deliver_after?, quantity, is_pickup? }], raw_text?, group_name? }
+// Input:  { rows: [{ sales_order_id, customer_name, phone?, item_name?, description?, delivery_instructions?, deliver_by?, deliver_after?, quantity, is_pickup?, society? }], raw_text?, group_name? }
 // Output: { opened, held, splitCount, sales_order_ids: string[] }
 //
 // Required env vars:
@@ -58,6 +58,7 @@ type Row = {
   sales_order_id: string; customer_name: string; phone?: string | null;
   item_name?: string | null; description?: string | null; delivery_instructions?: string | null;
   deliver_by?: string | null; deliver_after?: string | null; quantity: number; is_pickup?: boolean;
+  society?: string | null;
 };
 
 Deno.serve(async (req) => {
@@ -110,6 +111,7 @@ Deno.serve(async (req) => {
           phone:               r.phone ?? null,
           whatsapp_raw_text:   raw_text ?? null,
           whatsapp_group_name: group_name ?? null,
+          society:             r.society ?? null,
         });
       } else {
         const h = headers.get(soid);
@@ -117,6 +119,7 @@ Deno.serve(async (req) => {
         if (r.deliver_after && !h.deliver_after) h.deliver_after = r.deliver_after;
         if (r.phone && !h.phone) h.phone = r.phone;
         if (r.is_pickup) h.is_pickup = true;
+        if (r.society && !h.society) h.society = r.society;
       }
     }
 

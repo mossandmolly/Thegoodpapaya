@@ -67,7 +67,7 @@ function todayIST() {
 // start from, same as a fresh browser tab would.
 const SOCIETIES = ["Kew","Rohan","77degree","77 degree","Ferns","Summerfield","Krishvigavakshi","Meda","Sunnyside","Assetz","Dhavala","Espana","UberPhase1","UberPhase2","Uber","Iris","Sobha Iris","Silversun","Ascentia","Ahad","Eternia","Sobha Eternia","Kethana","SJR","SJR Redwood","Silverdale","Oak","Oak Garden","Akme","Saroj","Regalia","Jade","Ivy","SLS","SLS Sunflower","SLS Signature","80 Trees","80trees","Lakefront","Vars","Suncity","Bhuvi","Palmera","Vajram","Vaswani","DSR Parkway","DSRParkway","Sunshine Signature","SunshineSignature","Iksha","Pristine","Villa","Lotus","T4","T3","Tower","Towers"]
 
-const FRUITS = ["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango","Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus"]
+const FRUITS = ["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pomegranate small","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango","Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus"]
 
 const PKG = {"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50}
 
@@ -153,7 +153,9 @@ RULES:
 
 10. DEFAULTS — when no variety specified, use these:
     - "orange" → Mandarin orange (add "confirm mandarin variety" to description)
-    - "pomegranate" → Pomegranate large
+    - "pomegranate" with no size mentioned → Pomegranate medium
+    - "pomegranate small" / "small pomegranate" → Pomegranate small
+    - "pomegranate large" / "large pomegranate" or any other size word → Pomegranate large
     - "watermelon" → Watermelon (NOT Watermelon striped — only use striped if customer explicitly says striped)
     - "muskmelon" → Muskmelon (NOT Muskmelon striped — only use striped if explicitly stated)
     - "guava" → Guava white
@@ -166,6 +168,7 @@ RULES:
     - OR look at other messages in this batch from customers who do have a society name
     - Prepend the inferred society to the door number
     - If you cannot determine society from any context → keep door number only and flag
+    - ALSO fill the separate "society" output field below with your best-guess society name whenever you can determine one from ANY source (group name, other messages in the batch, or the customer's own text) — do this independently of customer_name, even when customer_name itself falls back to the raw WhatsApp profile name because no door number could be found. This is a safety net for ops staff to see which society an order came from at a glance when customer_name alone isn't useful. Leave "society" as an empty string only if truly nothing points to one.
 
 12. REPLY/ADD-ON ORDERS — a message tagged "(replying to: "...")" is a reply to an earlier message:
     - Output ONLY the NEW items in that message, not the items in the quoted text shown in the tag
@@ -184,7 +187,7 @@ CRITICAL:
 - "orange" = Mandarin orange always, never mango
 
 Return ONLY valid compact JSON, no markdown fences:
-{"rows":[{"order_date":"${today}","customer_name":"","phone":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":""}],"flags":[]}`
+{"rows":[{"order_date":"${today}","customer_name":"","phone":"","item_name":"","description":"","delivery_instructions":"","deliver_by":"","deliver_after":"","quantity":0,"sales_order":"","society":""}],"flags":[]}`
 }
 
 // A greedy /\{[\s\S]*\}/ regex matches from the first "{" to the LAST "}"
@@ -457,6 +460,7 @@ async function pushToOrders(rows, groupName, rawText) {
       deliver_by: r.deliver_by || null,
       deliver_after: r.deliver_after || null,
       quantity: r.quantity != null ? Number(r.quantity) : 0,
+      society: r.society || null,
     }))
   if (!payloadRows.length) return
   try {
