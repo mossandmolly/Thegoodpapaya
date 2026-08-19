@@ -91,14 +91,15 @@ KG/PC CONVERSIONS: ${pkgLines}
 ALIASES: ${aliasLines}
 
 RULES:
-1. customer_name = society name + door/flat number ONLY, derived from the tagged SenderName, society first then door.
+1. customer_name = society name + door/flat number ONLY, society first then door. Derive this from whichever of the tagged SenderName OR the message text itself actually contains the society/door — customers often type their society+door straight into the message body (e.g. "Villa 384, 2kg mango"), and that text takes priority over SenderName whenever it contains a derivable society/door pattern. Only fall back to SenderName when the message text itself has no society/door in it.
    KNOWN SOCIETIES: ${societyList}
    Also use judgement to identify new societies not on this list.
    STRIP: Indian first/last names (Kalika, Radhika, Kavita, Shalu, Sapna, Femina, Usha, Harpreet, Swati, Nandhini, Komali, Monika, Gayathri, Anu, Nikesha, Chanchal, Sampada, Chanda, Soumya, Anupreet etc), Indian city names (Delhi, Mumbai, Bangalore etc), builder prefixes (APR, Prestige, Brigade unless part of society name).
    NEVER strip the society name itself. When in doubt whether a word is a person name or society name, KEEP it.
+   IMPORTANT: some society names are shared by multiple different builders (e.g. "Sobha Eternia" and "Snnraj Eternia" are two DIFFERENT, unrelated societies that happen to both be called "Eternia") — for any society name that appears in KNOWN SOCIETIES as part of a two-word compound (builder + name), KEEP the full compound exactly as listed. Never shorten it down to just the shared tail word, even if that bare tail word ALSO appears in KNOWN SOCIETIES on its own — that would wrongly merge two distinct societies into one.
    REORDER if needed: society always before door e.g. "B303 T4"→"T4 B303", "Sapna T4 B303"→"T4 B303".
-   Examples: "Kalika Villa 384"→"Villa 384", "Radhika Meda A705"→"Meda A705", "Kavita Ferns E402"→"Ferns E402", "Usha Espana L401"→"Espana L401", "Harpreet Lakefront E501"→"Lakefront E501", "Rupal APR Villa 269"→"Villa 269"
-   NEVER leave customer_name empty. If the tagged SenderName has no derivable society/door pattern at all (e.g. a business name, generic contact name), fall back to using the tagged SenderName exactly as given, and add a flag noting the customer needs manual identification.
+   Examples: "Kalika Villa 384"→"Villa 384", "Radhika Meda A705"→"Meda A705", "Kavita Ferns E402"→"Ferns E402", "Usha Espana L401"→"Espana L401", "Harpreet Lakefront E501"→"Lakefront E501", "Rupal APR Villa 269"→"Villa 269", "Snnraj Eternia B204"→"Snnraj Eternia B204" (keep "Snnraj" — do NOT shorten to "Eternia B204")
+   NEVER leave customer_name empty. If NEITHER the message text NOR the tagged SenderName has a derivable society/door pattern (e.g. a business name, generic contact name), fall back to using the tagged SenderName exactly as given, and add a flag noting the customer needs manual identification.
 
 2. IGNORE ONLY: 👍 reacted messages, payment/UPI confirmations, deleted messages, system messages (member added/removed)
 
