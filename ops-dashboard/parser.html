@@ -564,6 +564,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <input type="text" class="pk-search" id="stock-search" placeholder="🔍 Search fruit..." oninput="renderStockTable()">
   <div id="stock-summary-pills" class="filter-pills status-pills"></div>
+  <div id="stock-type-pills" class="filter-pills status-pills"></div>
   <div class="add-row" style="margin-top:0">
     <div class="ac-wrap" style="flex:2">
       <input type="text" id="stock-add-fruit-input" placeholder="Type a fruit name to track…" autocomplete="off">
@@ -7343,6 +7344,7 @@ let stockPackedMap={};         // item_name -> qty already packed/final/invoiced
 let stockPendingMap={};        // item_name -> qty still open/held (an order exists, but nothing pulled yet)
 let stockPackingStarted=false; // true once any item has reached 'packed' or beyond for the viewed date
 let stockStatusFilter='all';   // 'all' | 'need' | 'trending' | 'ok'
+let stockTypeFilter='all';     // 'all' | 'veggie' | 'fruit' — VEGETABLE_ITEM_NAMES already exists (Order Overview's vegetable-order filter)
 let stockPurchaseTargetItem=null;
 
 const STOCK_COLSPAN=9;
@@ -7510,6 +7512,23 @@ function setStockStatusFilter(key){
   renderStockTable();
 }
 
+function renderStockTypePills(activeCatalog){
+  const isVeg=c=>VEGETABLE_ITEM_NAMES.has(c.item_name.toLowerCase());
+  const pills=[
+    {key:'all',label:'All',count:activeCatalog.length},
+    {key:'fruit',label:'🍎 Fruits',count:activeCatalog.filter(c=>!isVeg(c)).length},
+    {key:'veggie',label:'🥦 Vegetables',count:activeCatalog.filter(isVeg).length},
+  ];
+  document.getElementById('stock-type-pills').innerHTML=pills.map(p=>
+    '<span class="filter-pill'+(stockTypeFilter===p.key?' active':'')+'" onclick="setStockTypeFilter('+escH(JSON.stringify(p.key))+')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join('');
+}
+
+function setStockTypeFilter(key){
+  stockTypeFilter=key;
+  renderStockTable();
+}
+
 // Fruits picked (typed + selected from the autocomplete) but not yet
 // committed — shown as removable pills, cleared on commit or on a date
 // change. Nothing's written to the DB until "+ Add" is actually clicked.
@@ -7594,6 +7613,7 @@ async function commitStockFruitPicks(){
   // instead of silently hidden behind whatever status/search filter
   // happened to be active.
   stockStatusFilter='all';
+  stockTypeFilter='all';
   document.getElementById('stock-search').value='';
   renderStockTable();
 }
@@ -7609,19 +7629,25 @@ async function stopTrackingStockFruit(name){
 function renderStockTable(){
   const activeCatalog=stockCatalog.filter(c=>isStockFruitActive(c.item_name));
   renderStockSummaryPills(activeCatalog);
+  renderStockTypePills(activeCatalog);
   const search=document.getElementById('stock-search').value.trim().toLowerCase();
   const tbody=document.getElementById('stock-tbody');
 
   const rows=activeCatalog.filter(c=>{
     if(search&&!c.item_name.toLowerCase().includes(search))return false;
     if(stockStatusFilter!=='all'&&stockStatusFor(c.item_name).status!==stockStatusFilter)return false;
+    if(stockTypeFilter!=='all'){
+      const isVeg=VEGETABLE_ITEM_NAMES.has(c.item_name.toLowerCase());
+      if(stockTypeFilter==='veggie'&&!isVeg)return false;
+      if(stockTypeFilter==='fruit'&&isVeg)return false;
+    }
     return true;
   }).sort((a,b)=>a.item_name.localeCompare(b.item_name));
 
   document.getElementById('stock-rc').textContent=rows.length?'— '+rows.length+' fruit'+(rows.length!==1?'s':''):'';
 
   if(!rows.length){
-    const emptyMsg=(search||stockStatusFilter!=='all')
+    const emptyMsg=(search||stockStatusFilter!=='all'||stockTypeFilter!=='all')
       ?'No fruits match'
       :'Nothing tracked yet today — add a fruit above to get started, or it\'ll appear automatically once an order or stock entry comes in for it.';
     tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">'+emptyMsg+'</td></tr>';
