@@ -31,7 +31,7 @@ const ITEM_NAMES = [
   "Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans",
   "Lady's finger","Cucumber","Coriander","Chilli green",
   "Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli",
-  "Banana leaves"
+  "Banana leaves","Spinach","Amaranthus"
 ];
 
 const PC_TO_KG: Record<string,number> = {
