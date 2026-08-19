@@ -78,16 +78,33 @@ async function sbDeleteWhere(table: string, filter: string) {
 }
 
 // ── Zoho OAuth ────────────────────────────────────────────────
+// Shared zoho_token_cache row every other Zoho-touching function uses (see
+// cancel-order for the full rationale) — this used to be a private
+// in-memory-only cache, which meant every cold start (this function runs on
+// a per-minute cron, so cold starts are frequent) refreshed independently
+// of, and far more often than, every other Zoho-touching function.
 let cachedToken = '';
 let tokenExpiry = 0;
 
 async function getZohoToken(): Promise<string> {
   if (cachedToken && Date.now() < tokenExpiry - 60_000) return cachedToken;
+
+  const row = await sbSelectOne('zoho_token_cache', 'id=eq.1&select=access_token,expires_at,refresh_token');
+  if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000) {
+    cachedToken = row.access_token;
+    tokenExpiry = new Date(row.expires_at).getTime();
+    return cachedToken;
+  }
+
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      refresh_token: env('ZOHO_REFRESH_TOKEN'),
+      // Zoho rotates refresh_token on (at least some) refresh calls and
+      // invalidates the old one — prefer whatever the shared cache has
+      // last persisted over the static env secret, which goes stale after
+      // a rotation triggered by any function, not just this one.
+      refresh_token: row?.refresh_token || env('ZOHO_REFRESH_TOKEN'),
       client_id:     env('ZOHO_CLIENT_ID'),
       client_secret: env('ZOHO_CLIENT_SECRET'),
       grant_type:    'refresh_token',
@@ -99,6 +116,12 @@ async function getZohoToken(): Promise<string> {
   if (!data.access_token) throw new Error(`Zoho token failed: ${raw}`);
   cachedToken = data.access_token;
   tokenExpiry = Date.now() + data.expires_in * 1000;
+  try {
+    await sbUpsert('zoho_token_cache', [{
+      id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString(),
+      ...(data.refresh_token ? { refresh_token: data.refresh_token } : {}),
+    }], 'id');
+  } catch (e) { console.error('zoho_token_cache upsert failed:', e); }
   return cachedToken;
 }
 

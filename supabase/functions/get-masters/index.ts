@@ -128,7 +128,7 @@ async function getZohoToken(): Promise<{ access_token: string; orgId: string } |
 
   if (cachedToken && Date.now() < tokenExpiry - 60_000) return { access_token: cachedToken, orgId };
 
-  const cachedRows = await sbSelect('zoho_token_cache', 'access_token,expires_at', '&id=eq.1');
+  const cachedRows = await sbSelect('zoho_token_cache', 'access_token,expires_at,refresh_token', '&id=eq.1');
   const cached = cachedRows[0];
   if (cached && new Date(cached.expires_at).getTime() > Date.now() + 60_000) {
     cachedToken = cached.access_token;
@@ -136,7 +136,11 @@ async function getZohoToken(): Promise<{ access_token: string; orgId: string } |
     return { access_token: cachedToken, orgId };
   }
 
-  const cid = env('ZOHO_CLIENT_ID'), cs = env('ZOHO_CLIENT_SECRET'), rt = env('ZOHO_REFRESH_TOKEN');
+  const cid = env('ZOHO_CLIENT_ID'), cs = env('ZOHO_CLIENT_SECRET');
+  // Zoho rotates refresh_token on (at least some) refresh calls and
+  // invalidates the old one — prefer whatever the shared cache has last
+  // persisted over the static env secret, which goes stale after a rotation.
+  const rt = cached?.refresh_token || env('ZOHO_REFRESH_TOKEN');
   if (!cid || !cs || !rt) return null;
 
   const tokenRes = await fetch('https://accounts.zoho.in/oauth/v2/token', {
@@ -144,12 +148,15 @@ async function getZohoToken(): Promise<{ access_token: string; orgId: string } |
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'refresh_token', client_id: cid, client_secret: cs, refresh_token: rt }).toString(),
   });
-  const { access_token, expires_in } = await tokenRes.json();
+  const { access_token, expires_in, refresh_token: newRefreshToken } = await tokenRes.json();
   if (!access_token) return null;
 
   cachedToken = access_token;
   tokenExpiry = Date.now() + (expires_in ?? 3600) * 1000;
-  await sbUpsert('zoho_token_cache', [{ id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString() }], 'id');
+  await sbUpsert('zoho_token_cache', [{
+    id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString(),
+    ...(newRefreshToken ? { refresh_token: newRefreshToken } : {}),
+  }], 'id');
 
   return { access_token: cachedToken, orgId };
 }

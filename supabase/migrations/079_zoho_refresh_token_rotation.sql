@@ -1,0 +1,11 @@
+-- Zoho rotates the refresh_token on (at least some) refresh calls and
+-- invalidates the old one. Every Zoho-touching function has always read
+-- refresh_token from the static ZOHO_REFRESH_TOKEN secret only, and none of
+-- them ever captured the new refresh_token Zoho returns — so the first
+-- rotation anywhere silently makes that static secret stale, and every
+-- function's next refresh fails with "not authorized" until someone
+-- manually re-generates it in the Zoho admin console.
+--
+-- Nullable so nothing breaks before it's ever populated — every function
+-- falls back to the env var secret when this is null.
+alter table public.zoho_token_cache add column if not exists refresh_token text;

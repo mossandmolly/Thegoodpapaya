@@ -56,7 +56,7 @@ async function getZohoToken(supabase: ReturnType<typeof createClient>): Promise<
   if (cachedToken && Date.now() < tokenExpiry - 60_000) return cachedToken;
 
   const { data: row } = await supabase
-    .from('zoho_token_cache').select('access_token,expires_at').eq('id', 1).maybeSingle();
+    .from('zoho_token_cache').select('access_token,expires_at,refresh_token').eq('id', 1).maybeSingle();
   if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000) {
     cachedToken = row.access_token;
     tokenExpiry = new Date(row.expires_at).getTime();
@@ -70,15 +70,19 @@ async function getZohoToken(supabase: ReturnType<typeof createClient>): Promise<
       grant_type:    'refresh_token',
       client_id:     env('ZOHO_CLIENT_ID'),
       client_secret: env('ZOHO_CLIENT_SECRET'),
-      refresh_token: env('ZOHO_REFRESH_TOKEN'),
+      refresh_token: row?.refresh_token || env('ZOHO_REFRESH_TOKEN'),
     }),
   });
   const data = await res.json();
   if (!data.access_token) throw new Error(`Zoho OAuth failed: ${JSON.stringify(data)}`);
   cachedToken = data.access_token;
   tokenExpiry = Date.now() + (data.expires_in ?? 3600) * 1000;
+  // Zoho rotates refresh_token on (at least some) refresh calls and
+  // invalidates the old one — persist whatever it returns so every
+  // function keeps reading a live one instead of the static env secret.
   const { error: cacheErr } = await supabase.from('zoho_token_cache').upsert({
     id: 1, access_token: cachedToken, expires_at: new Date(tokenExpiry).toISOString(),
+    ...(data.refresh_token ? { refresh_token: data.refresh_token } : {}),
   });
   if (cacheErr) console.error('zoho_token_cache upsert failed:', cacheErr.message);
   return cachedToken;
