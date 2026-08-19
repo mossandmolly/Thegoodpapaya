@@ -3176,12 +3176,17 @@ function renderOrdersList(){
               (orderHasPendingReview(order)?'<a class="or-link" style="color:#8a6d00" onclick="approveAllPendingReview(\''+order.soid+'\')">✓ approve all pending</a>':'')+
               '<a class="or-link" onclick="renameOrderCustomerPrompt(\''+order.soid+'\')">✎ rename</a>'+
               (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
-              // Move-by-a-day only makes sense relative to today/tomorrow —
-              // viewing an older date via the date picker just omits this,
-              // rather than guessing what "move" should mean N days back.
+              // Move-by-a-day only makes sense relative to today/tomorrow/
+              // yesterday — viewing anything further back via the date
+              // picker just omits this, rather than guessing what "move"
+              // should mean N days back. Yesterday's case moves 2 days
+              // forward (yesterday→tomorrow) — openMoveDateModal's
+              // direction is a plain day-offset, not just ±1, so this
+              // reuses it directly instead of a new wrapper function.
               (cancelled?'':(
                 viewDate===addDays(CALENDAR_TODAY,1)?'<a class="or-link" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
                 :viewDate===CALENDAR_TODAY?'<a class="or-link" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'
+                :viewDate===addDays(CALENDAR_TODAY,-1)?'<a class="or-link" onclick="openMoveDateModal(\''+order.soid+'\',2)">→ tomorrow</a>'
                 :''
               ))+
               (cancelled?'':'<a class="or-link" style="color:#b3261e" onclick="cancelOrderSingle(\''+order.soid+'\')">🗑 cancel order</a>')+
