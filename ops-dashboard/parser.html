@@ -493,6 +493,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="btn-sec" id="to-bulk-download" disabled>⬇️ Download (0)</button>
     <button class="btn-sec cancel-link" id="to-bulk-cancel" disabled>🚫 Cancel Selected (0)</button>
     <button class="btn-sec" id="to-bulk-approve" disabled>✓ Approve Pending (0)</button>
+    <button class="btn-sec" id="to-bulk-tomorrow" disabled>📅→ Move to Tomorrow (0)</button>
   </div>
   <div class="push-row" style="margin-bottom:14px">
     <button class="header-btn" id="to-collapse-btn" onclick="toggleCollapseAllOverview()">▾ Collapse All</button>
@@ -4454,46 +4455,55 @@ function moveToTodayPrompt(salesOrderId){openMoveDateModal(salesOrderId,-1);}
 
 document.getElementById('mt-cancel').addEventListener('click',()=>{mtModal.classList.add('hidden');});
 
+// Shared core for moving an order's items to a target day, expressed as a
+// plain day-offset (not just ±1 — e.g. yesterday→tomorrow is direction=2).
+// Used by both the single-order modal below and the bulk "Move to Tomorrow"
+// toolbar action. Throws on failure; callers decide how to report it (one
+// alert vs. a bulk success/fail summary across many orders).
+async function moveOrderItemsToDate(salesOrderId,itemIds,direction){
+  const order=currentOrdersById[salesOrderId];
+  const newSalesOrderId=addDays(salesOrderId.slice(0,10),direction)+salesOrderId.slice(10);
+  const movingForward=direction>0;
+
+  await invalidateOrderInvoiceIfNeeded(salesOrderId);
+
+  const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+    body:JSON.stringify({headers:[{
+      sales_order_id: newSalesOrderId,
+      customer_name:  order.customer,
+      source:         'manual',
+      payment_method: 'cod',
+      invoice_status: 'pending',
+    }]}),
+  });
+  const createOrderData=await createOrderRes.json();
+  if(!createOrderRes.ok)throw new Error(createOrderData.error||'Could not create the order header for the target day');
+
+  // carried_forward marks these as punted from an earlier day so the next
+  // day's Today's Orders can flag them CF — a priority since the customer
+  // wasn't served on time. Only set when pushing forward — pulling an item
+  // back to today is a deliberate pull-up, not a missed-service punt.
+  // This reuses the same row under a new sales_order_id rather than
+  // inserting a fresh one, so every other per-day field needs resetting
+  // by hand — otherwise a rider's "collected into bag" tick (or a
+  // packer's final qty/packed-by) from the old day would silently carry
+  // over onto the new day's copy despite nothing actually having
+  // happened for it yet.
+  const update={sales_order_id:newSalesOrderId,status:'open',collected:false,final_quantity:null,packed_by:null,packed_at:null};
+  if(movingForward)update.carried_forward=true;
+  const{error}=await sb.from('order_items').update(update).in('id',itemIds);
+  if(error)throw new Error(error.message);
+  return newSalesOrderId;
+}
+
 document.getElementById('mt-move').addEventListener('click',async()=>{
   const ids=[...mtItems.querySelectorAll('input:checked')].map(cb=>cb.value);
   if(!ids.length){uxAlert('Select at least one item');return;}
   if(!await uxConfirm((mtDirection>0?'Move':'Add')+' '+ids.length+' item'+(ids.length!==1?'s':'')+' to '+(mtDirection>0?"tomorrow's":"today's")+' orders?'))return;
-
-  const order=currentOrdersById[mtTargetOrder];
-  const newSalesOrderId=addDays(mtTargetOrder.slice(0,10),mtDirection)+mtTargetOrder.slice(10);
-  const movingForward=mtDirection>0;
-
-  await invalidateOrderInvoiceIfNeeded(mtTargetOrder);
-
   try{
-    const createOrderRes=await fetch(SUPABASE_URL+'/functions/v1/create-order',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({headers:[{
-        sales_order_id: newSalesOrderId,
-        customer_name:  order.customer,
-        source:         'manual',
-        payment_method: 'cod',
-        invoice_status: 'pending',
-      }]}),
-    });
-    const createOrderData=await createOrderRes.json();
-    if(!createOrderRes.ok)throw new Error(createOrderData.error||'Could not create the order header for the target day');
-
-    // carried_forward marks these as punted from an earlier day so the next
-    // day's Today's Orders can flag them CF — a priority since the customer
-    // wasn't served on time. Only set when pushing forward — pulling an item
-    // back to today is a deliberate pull-up, not a missed-service punt.
-    // This reuses the same row under a new sales_order_id rather than
-    // inserting a fresh one, so every other per-day field needs resetting
-    // by hand — otherwise a rider's "collected into bag" tick (or a
-    // packer's final qty/packed-by) from the old day would silently carry
-    // over onto the new day's copy despite nothing actually having
-    // happened for it yet.
-    const update={sales_order_id:newSalesOrderId,status:'open',collected:false,final_quantity:null,packed_by:null,packed_at:null};
-    if(movingForward)update.carried_forward=true;
-    const{error}=await sb.from('order_items').update(update).in('id',ids);
-    if(error)throw new Error(error.message);
+    await moveOrderItemsToDate(mtTargetOrder,ids,mtDirection);
   }catch(e){
     uxAlert('Failed to move order: '+e.message);
     return;
@@ -4501,6 +4511,45 @@ document.getElementById('mt-move').addEventListener('click',async()=>{
     mtModal.classList.add('hidden');
   }
   await loadTodaysOrders();
+});
+
+// ── Bulk move to tomorrow — same day-offset logic the per-order "→
+// tomorrow" link uses (today→1, yesterday→2), applied to every selected
+// order's active items in one pass. Only meaningful (and only enabled) in
+// those same two view-date contexts — see updateBulkButtons.
+async function moveOrdersToTomorrowBulk(salesOrderIds,direction){
+  if(!salesOrderIds.length){uxAlert('Nothing selected to move');return;}
+  if(!await uxConfirm('Move '+salesOrderIds.length+' order'+(salesOrderIds.length!==1?'s':'')+' to tomorrow (all active items)?'))return;
+
+  const btn=document.getElementById('to-bulk-tomorrow');
+  btn.disabled=true;
+  const succeeded=[],failed=[];
+  for(const soid of salesOrderIds){
+    btn.innerHTML='<span class="spinner"></span>Moving '+(succeeded.length+failed.length+1)+'/'+salesOrderIds.length+'…';
+    const order=currentOrdersById[soid];
+    const ids=order?activeItems(order).map(i=>i.id):[];
+    if(!ids.length)continue;
+    try{
+      await moveOrderItemsToDate(soid,ids,direction);
+      succeeded.push(soid);
+      selectedOrders.delete(soid);
+    }catch(e){
+      failed.push(soid+': '+e.message);
+    }
+  }
+  let msg='Moved '+succeeded.length+' order'+(succeeded.length!==1?'s':'')+' to tomorrow.';
+  if(failed.length)msg+='\n\nFailed:\n'+failed.join('\n');
+  uxAlert(msg);
+  updateBulkButtons();
+  await loadTodaysOrders();
+}
+
+document.getElementById('to-bulk-tomorrow').addEventListener('click',()=>{
+  const tomorrowDate=addDays(CALENDAR_TODAY,1),yesterdayDate=addDays(CALENDAR_TODAY,-1);
+  const direction=viewDate===CALENDAR_TODAY?1:viewDate===yesterdayDate?2:null;
+  if(direction===null)return;
+  const ids=[...selectedOrders].filter(soid=>currentOrdersById[soid]&&currentOrdersById[soid].orderStatus!=='cancelled');
+  moveOrdersToTomorrowBulk(ids,direction);
 });
 
 // ── Catalog sync + Generate Invoice ──────────────────────────────────────────
@@ -5246,6 +5295,16 @@ function updateBulkButtons(){
   const approveBtn=document.getElementById('to-bulk-approve');
   approveBtn.textContent='✓ Approve Pending ('+pendingReviewItemCount+')';
   approveBtn.disabled=pendingReviewItemCount===0;
+
+  // Same restriction as the per-order "→ tomorrow" link — only meaningful
+  // relative to today (direction=1) or yesterday (direction=2, since that
+  // one has to skip over today to land on tomorrow).
+  const tomorrowMoveTargetDate=addDays(CALENDAR_TODAY,-1);
+  const tomorrowMoveDirection=viewDate===CALENDAR_TODAY?1:viewDate===tomorrowMoveTargetDate?2:null;
+  const tomorrowIds=tomorrowMoveDirection!==null?selected.filter(x=>x.order.orderStatus!=='cancelled').map(x=>x.soid):[];
+  const tomorrowBtn=document.getElementById('to-bulk-tomorrow');
+  tomorrowBtn.textContent='📅→ Move to Tomorrow ('+tomorrowIds.length+')';
+  tomorrowBtn.disabled=tomorrowIds.length===0;
 }
 
 async function generateInvoicesBulk(salesOrderIds){
