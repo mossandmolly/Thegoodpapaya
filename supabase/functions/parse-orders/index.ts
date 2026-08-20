@@ -27,7 +27,7 @@ const ITEM_NAMES = [
   "Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun",
   "Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango",
   "Jamun flash","Rockit apple","Peach","Strawberry","Coconut","Custard apple",
-  "Cauliflower","Cabbage","Capsicum green","Carrot","Tomato","Ginger","Beans",
+  "Cauliflower","Cabbage","Capsicum green","Capsicum yellow","Capsicum red","Carrot","Tomato","Ginger","Beans",
   "Lady's finger","Cucumber","Coriander","Chilli green",
   "Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli",
   "Banana leaves","Spinach","Amaranthus"
