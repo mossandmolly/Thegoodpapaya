@@ -324,6 +324,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .catalog-img-card img,.catalog-img-card .img-ph{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:6px;background:#f5efe4;display:block}
 .catalog-img-card .img-name{font-size:11px;font-weight:600;margin-top:6px;color:#2b2320;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .catalog-img-card .img-cat{font-size:9px;color:#8a7a6a;text-transform:uppercase;letter-spacing:0.4px}
+.img-unmatched-card{display:flex;align-items:center;gap:10px;border:1px solid #eee0d0;border-radius:8px;padding:8px;margin-bottom:8px;background:#fffdf9}
+.img-unmatched-card img{width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0}
+.img-unmatched-card .fname{font-size:11px;color:#8a7a6a;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.img-unmatched-card select{flex:1;min-width:0}
 .filter-group-label{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:6px;margin-top:2px}
 .filter-pill{display:inline-flex;align-items:center;border-radius:14px;padding:5px 12px;font-size:11px;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a;cursor:pointer;white-space:nowrap}
 .filter-pill.active{background:#e8720c;border-color:#e8720c;color:#ffffff;font-weight:600}
@@ -972,6 +976,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <input type="file" id="img-drop-input" accept="image/*" multiple>
   </div>
   <div class="push-status" id="img-upload-status"></div>
+  <div id="img-unmatched-list"></div>
   <input type="text" class="pk-search" id="img-search" placeholder="🔍 Search item…" oninput="renderCatalogImagesGrid()" style="margin-top:14px">
   <div id="img-type-pills" class="filter-pills status-pills"></div>
   <div id="img-grid" class="catalog-img-grid"></div>
@@ -8198,43 +8203,108 @@ function matchFileToItem(filename){
   return hit||null;
 }
 
+// Shared by both the auto-matched path and the manual-assign path below —
+// uploads one file to the item's storage path and links it on `catalog`.
+async function uploadOneCatalogImage(file,item){
+  const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
+  const path=(item.category||'fruit')+'/'+slugifyItemName(item.item_name)+'.'+ext;
+  const{error:upErr}=await sb.storage.from('catalog-images')
+    .upload(path,file,{upsert:true,contentType:file.type||'image/jpeg'});
+  if(upErr)throw new Error(upErr.message);
+  const{data:pub}=sb.storage.from('catalog-images').getPublicUrl(path);
+  // Cache-bust — same path can be re-uploaded with a new photo, and the
+  // browser/CDN would otherwise keep serving the old cached image at that
+  // exact URL.
+  const bustedUrl=pub.publicUrl+'?v='+Date.now();
+  const{error:updErr}=await sb.from('catalog').update({image_url:bustedUrl}).eq('item_name',item.item_name);
+  if(updErr)throw new Error(updErr.message);
+  item.image_url=bustedUrl;
+}
+
+// Files whose name didn't auto-match a catalog item — held here (with a
+// local preview URL, not yet uploaded) so they can be assigned by hand
+// instead of just being dropped on the floor with a "didn't match" note.
+let pendingUnmatchedImages=[];
+
 async function uploadCatalogImageFiles(files){
   const status=document.getElementById('img-upload-status');
   const matched=[],unmatched=[];
   for(const file of files){
     const item=matchFileToItem(file.name);
-    if(item)matched.push({file,item});else unmatched.push(file.name);
+    if(item)matched.push({file,item});else unmatched.push(file);
   }
-  if(!matched.length){
-    status.textContent='❌ No filenames matched a catalog item. Rename files to match the item name (e.g. "tomato.jpg") and try again.';
-    return;
-  }
+
   let done=0,failed=[];
   for(const{file,item}of matched){
     status.textContent='Uploading '+(done+failed.length+1)+'/'+matched.length+'… ('+item.item_name+')';
     try{
-      const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
-      const path=(item.category||'fruit')+'/'+slugifyItemName(item.item_name)+'.'+ext;
-      const{error:upErr}=await sb.storage.from('catalog-images')
-        .upload(path,file,{upsert:true,contentType:file.type||'image/jpeg'});
-      if(upErr)throw new Error(upErr.message);
-      const{data:pub}=sb.storage.from('catalog-images').getPublicUrl(path);
-      // Cache-bust — same path can be re-uploaded with a new photo, and the
-      // browser/CDN would otherwise keep serving the old cached image at
-      // that exact URL.
-      const bustedUrl=pub.publicUrl+'?v='+Date.now();
-      const{error:updErr}=await sb.from('catalog').update({image_url:bustedUrl}).eq('item_name',item.item_name);
-      if(updErr)throw new Error(updErr.message);
-      item.image_url=bustedUrl;
+      await uploadOneCatalogImage(file,item);
       done++;
     }catch(e){
       failed.push(item.item_name+': '+e.message);
     }
   }
-  status.textContent='✅ Uploaded '+done+' photo'+(done!==1?'s':'')+
+  status.textContent=(done?'✅ Uploaded '+done+' photo'+(done!==1?'s':''):'')+
     (failed.length?' · '+failed.length+' failed':'')+
-    (unmatched.length?' · '+unmatched.length+' file'+(unmatched.length!==1?'s':'')+' didn\'t match any item: '+unmatched.join(', '):'');
+    (unmatched.length?' · '+unmatched.length+' file'+(unmatched.length!==1?'s':'')+" didn't match a filename — assign below":'');
+
+  unmatched.forEach(file=>pendingUnmatchedImages.push({file,previewUrl:URL.createObjectURL(file)}));
+  renderUnmatchedImages();
   renderCatalogImagesGrid();
+}
+
+function catalogItemOptionsHtml(){
+  const groups=['fruit','vegetable'];
+  return groups.map(g=>
+    '<optgroup label="'+(g==='fruit'?'Fruits':'Vegetables')+'">'+
+      catalogImagesList.filter(c=>(c.category||'fruit')===g)
+        .map(c=>'<option value="'+escH(c.item_name)+'">'+escH(c.item_name)+'</option>').join('')+
+    '</optgroup>'
+  ).join('');
+}
+
+function renderUnmatchedImages(){
+  const box=document.getElementById('img-unmatched-list');
+  box.innerHTML=pendingUnmatchedImages.map((p,i)=>
+    '<div class="img-unmatched-card">'+
+      '<img src="'+p.previewUrl+'">'+
+      '<div style="flex:1;min-width:0">'+
+        '<div class="fname">'+escH(p.file.name)+'</div>'+
+        '<select id="unmatch-select-'+i+'"><option value="">— choose item —</option>'+catalogItemOptionsHtml()+'</select>'+
+      '</div>'+
+      '<button class="pk-tick" onclick="assignUnmatchedImage('+i+')" title="Upload and link to the selected item">✓</button>'+
+      '<button class="del-btn" onclick="discardUnmatchedImage('+i+')" title="Discard this file">🗑</button>'+
+    '</div>'
+  ).join('');
+}
+
+async function assignUnmatchedImage(i){
+  const pending=pendingUnmatchedImages[i];
+  if(!pending)return;
+  const select=document.getElementById('unmatch-select-'+i);
+  const itemName=select.value;
+  if(!itemName){uxAlert('Choose a catalog item first');return;}
+  const item=catalogImagesList.find(c=>c.item_name===itemName);
+  if(!item)return;
+  select.disabled=true;
+  try{
+    await uploadOneCatalogImage(pending.file,item);
+    URL.revokeObjectURL(pending.previewUrl);
+    pendingUnmatchedImages.splice(i,1);
+    renderUnmatchedImages();
+    renderCatalogImagesGrid();
+  }catch(e){
+    uxAlert('Upload failed: '+e.message);
+    select.disabled=false;
+  }
+}
+
+function discardUnmatchedImage(i){
+  const pending=pendingUnmatchedImages[i];
+  if(!pending)return;
+  URL.revokeObjectURL(pending.previewUrl);
+  pendingUnmatchedImages.splice(i,1);
+  renderUnmatchedImages();
 }
 
 (function initImgDropZone(){
