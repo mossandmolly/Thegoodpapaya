@@ -444,8 +444,9 @@ async function insertParsedRows(rows, today, groupName, rawText) {
 // a failure here still leaves the batch safely recoverable from the Live
 // tab (whatsapp_parsed_orders), so it's logged, not thrown.
 async function pushToOrders(rows, groupName, rawText) {
-  if (!SUPABASE_URL || !CRON_SECRET) {
+  if (!SUPABASE_URL || !CRON_SECRET || !SUPABASE_SERVICE_ROLE_KEY) {
     if (!CRON_SECRET) console.log('[orders] CRON_SECRET not set — skipping direct push, Live tab only')
+    else if (!SUPABASE_SERVICE_ROLE_KEY) console.log('[orders] SUPABASE_SERVICE_ROLE_KEY not set — skipping direct push, Live tab only')
     return
   }
   const payloadRows = rows
@@ -466,7 +467,16 @@ async function pushToOrders(rows, groupName, rawText) {
   try {
     const resp = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/whatsapp-create-order`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-cron-secret': CRON_SECRET },
+      headers: {
+        'Content-Type': 'application/json',
+        // Two separate checks: this Authorization header satisfies Supabase's
+        // platform gateway (which 401s before the function's own code even
+        // runs if it's missing) — x-cron-secret is the function's own
+        // internal check, same pattern auto-invoice-final-orders' cron job
+        // uses (see migration 065). Sending only one of the two isn't enough.
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'x-cron-secret': CRON_SECRET,
+      },
       body: JSON.stringify({ rows: payloadRows, raw_text: rawText || null, group_name: groupName }),
     })
     const data = await resp.json().catch(() => ({}))
