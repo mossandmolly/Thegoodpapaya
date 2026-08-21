@@ -3376,6 +3376,16 @@ function paymentMechanismHtml(order){
     ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();regeneratePaymentLinkSingle('+escH(JSON.stringify(order.soid))+')" title="Clear the existing QR/link and generate a new payment link">🔄 Generate</a>';
 }
 
+// Razorpay's own contact-field constraint — a stray non-phone value (e.g.
+// a raw WhatsApp LID digit string once saved by mistake as orders.phone,
+// before the listener stopped doing that) sails past a plain !phone check
+// since it IS truthy, then fails opaquely at Razorpay with "contact: the
+// length must be between 8 and 14" instead of prompting for a real one.
+function isValidPhoneForPayment(phone){
+  const digits=(phone||'').replace(/\D/g,'');
+  return digits.length>=8&&digits.length<=14;
+}
+
 async function regeneratePaymentLinkSingle(soid){
   const order=currentOrdersById[soid];
   if(!order)return;
@@ -3386,7 +3396,7 @@ async function regeneratePaymentLinkSingle(soid){
   if(!await uxConfirm(warning))return;
 
   let phone=order.phone;
-  if(!phone){
+  if(!isValidPhoneForPayment(phone)){
     const entered=await uxPrompt('Phone number (10 digits):');
     if(!entered||!entered.trim())return;
     phone=entered.trim();
@@ -5357,7 +5367,7 @@ async function generatePaymentLinksBulk(salesOrderIds){
       btn.innerHTML='<span class="spinner"></span>Generating '+(succeeded.length+skipped.length+failed.length+1)+'/'+salesOrderIds.length+'…';
       const order=currentOrdersById[soid];
       let phone=order?.phone;
-      if(!phone){
+      if(!isValidPhoneForPayment(phone)){
         const entered=await uxPrompt('Phone number for '+soid+' (10 digits) — leave blank to skip:');
         if(!entered||!entered.trim()){skipped.push(soid);continue;}
         phone=entered.trim();
