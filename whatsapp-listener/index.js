@@ -299,11 +299,18 @@ function extractMessage(msg) {
 // — prefer participant when it's already a real number, fall back to
 // participantAlt, and log clearly if neither resolves so a garbage phone
 // never saves silently again.
-function resolveSenderPhone(msg) {
+function resolveSenderPhone(msg, groupJid) {
   const participant = msg.key.participant || ''
   if (participant.endsWith('@s.whatsapp.net')) return participant.split('@')[0]
   const alt = msg.key.participantAlt || ''
   if (alt.endsWith('@s.whatsapp.net')) return alt.split('@')[0]
+  // Fall back to the group's own membership list (see lidPhoneMaps above) —
+  // participantAlt is unreliable per-message, but groupMetadata's
+  // participants carry a real lid<->phone mapping for every member.
+  if (participant.endsWith('@lid')) {
+    const fromGroup = lidPhoneMaps[groupJid]?.get(participant.split('@')[0])
+    if (fromGroup) return fromGroup
+  }
   console.warn(`[phone] could not resolve a real phone number for sender (participant=${participant || 'none'}, participantAlt=${alt || 'none'})`)
   return participant.split('@')[0] || null
 }
@@ -541,6 +548,14 @@ function alreadySeen(id) {
 }
 
 const groupNames = {} // jid -> subject cache
+// jid -> Map(lid -> phone, digits only) — built from groupMetadata's
+// participant list (each participant carries both .lid and .jid per
+// Baileys' Contact type), independent of whether any individual message's
+// key.participantAlt happens to be populated. That field is unreliable —
+// a mature, long-running session still sees plenty of messages with
+// participantAlt entirely absent — but the group's own membership list
+// reliably carries the LID<->phone mapping for every member.
+const lidPhoneMaps = {}
 const discoveredGroups = new Set()
 let groupsListed = false // print the full participating-groups list once per process
 let isConnected = false
@@ -706,7 +721,15 @@ async function start() {
 
       if (!groupNames[jid]) {
         try {
-          groupNames[jid] = (await sock.groupMetadata(jid)).subject
+          const meta = await sock.groupMetadata(jid)
+          groupNames[jid] = meta.subject
+          const map = new Map()
+          for (const p of meta.participants || []) {
+            const lid = (p.lid || (p.id?.endsWith('@lid') ? p.id : '')).split('@')[0]
+            const phone = (p.jid || (p.id?.endsWith('@s.whatsapp.net') ? p.id : '')).split('@')[0]
+            if (lid && phone) map.set(lid, phone)
+          }
+          lidPhoneMaps[jid] = map
         } catch {
           groupNames[jid] = jid
         }
@@ -727,7 +750,7 @@ async function start() {
 
       queueMessage(jid, {
         sender: msg.pushName || 'unknown',
-        phone: resolveSenderPhone(msg),
+        phone: resolveSenderPhone(msg, jid),
         text: extracted.text,
         quotedText: extracted.quotedText,
         timestamp: new Date(Number(msg.messageTimestamp || 0) * 1000).toISOString(),
