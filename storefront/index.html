@@ -59,7 +59,11 @@ async function load() {
     .select('item_name,unit_price,unit,category,image_url')
     .eq('active', true)
     .order('item_name');
-  if (error) { document.getElementById('grid').innerHTML = '<div class="empty-state">Could not load the menu — please refresh.</div>'; return; }
+  if (error) {
+    console.error('catalog load error:', error);
+    document.getElementById('grid').innerHTML = '<div class="empty-state">Could not load the menu: '+escH(error.message)+'</div>';
+    return;
+  }
   catalog = data || [];
   render();
 }
