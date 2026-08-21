@@ -312,7 +312,12 @@ function resolveSenderPhone(msg, groupJid) {
     if (fromGroup) return fromGroup
   }
   console.warn(`[phone] could not resolve a real phone number for sender (participant=${participant || 'none'}, participantAlt=${alt || 'none'})`)
-  return participant.split('@')[0] || null
+  // Never fall back to the raw LID digit string — it's not a phone number
+  // (typically 15 digits, over Razorpay's 14-char max for a contact field)
+  // and saving it as one only surfaces as a confusing failure much later,
+  // e.g. "contact: the length must be between 8 and 14" when someone tries
+  // to generate a payment link for this order.
+  return null
 }
 
 function formatMessageLine({ sender, phone, text, quotedText }) {
