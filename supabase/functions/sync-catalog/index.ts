@@ -116,6 +116,7 @@ Deno.serve(async (req) => {
     const items  = await fetchAllItems(token, orgId);
 
     let synced = 0;
+    const syncedZohoIds = new Set<string>();
     for (const item of items) {
       // Zoho's own exact casing, verbatim — no re-casing. Zoho item
       // matching/pricing is case-sensitive, so if the catalog (and, via
@@ -158,11 +159,33 @@ Deno.serve(async (req) => {
         : await supabase.from('catalog').insert(row);
 
       if (error) throw new Error(`Catalog upsert failed for "${itemName}": ${error.message}`);
+      syncedZohoIds.add(zohoItemId);
       synced++;
     }
 
+    // fetchAllItems only ever pulls Zoho's currently-active items, and the
+    // loop above only ever sets active:true — nothing previously reconciled
+    // the other direction, so an item marked inactive (or deleted) in Zoho
+    // stayed active:true in catalog forever, since sync simply stopped
+    // mentioning it rather than ever turning it off. Any catalog row that's
+    // linked to Zoho (has a zoho_item_id) but wasn't in this sync's result
+    // must have gone inactive there since the last sync — deactivate it here
+    // too, so catalog.active actually tracks Zoho status instead of only
+    // ever drifting toward "everything stays active".
+    const { data: staleRows, error: staleErr } = await supabase
+      .from('catalog').select('id,zoho_item_id')
+      .eq('active', true).not('zoho_item_id', 'is', null);
+    if (staleErr) throw new Error(`Stale-item lookup failed: ${staleErr.message}`);
+    const toDeactivate = (staleRows ?? [])
+      .filter(r => !syncedZohoIds.has(r.zoho_item_id as string))
+      .map(r => r.id);
+    if (toDeactivate.length) {
+      const { error: deactErr } = await supabase.from('catalog').update({ active: false }).in('id', toDeactivate);
+      if (deactErr) throw new Error(`Deactivation failed: ${deactErr.message}`);
+    }
+
     return new Response(
-      JSON.stringify({ synced, org_id: orgId }),
+      JSON.stringify({ synced, deactivated: toDeactivate.length, org_id: orgId }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     );
   } catch (err: any) {
