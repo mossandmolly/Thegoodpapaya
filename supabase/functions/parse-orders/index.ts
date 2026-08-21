@@ -31,7 +31,7 @@ const ITEM_NAMES = [
   "Cauliflower","Cabbage","Capsicum green","Capsicum yellow","Capsicum red","Carrot","Tomato","Ginger","Beans",
   "Lady's finger","Cucumber","Coriander","Chilli green",
   "Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli",
-  "Banana leaves","Spinach","Amaranthus"
+  "Banana leaves","Spinach","Amaranthus","Fenugreek","Mangalore cucumber","Drumstick","Chilli bhaji","Coccinia"
 ];
 
 const PC_TO_KG: Record<string,number> = {
@@ -71,6 +71,7 @@ cherry sweet/cherry → Cherry Indian
 jamun big/jamun small → Jamun (qualifier to description)
 grapes → Green grapes, litchi → Lychee, sweet lime → Mosambi, rocket apple → Rockit apple
 watermelon medium/small/large → Watermelon (qualifier to description)
+methi → Fenugreek, yellow cucumber → Mangalore cucumber, chilli bhajji/big chilli → Chilli bhaji, kundru → Coccinia
 
 RULES:
 1. customer_name = bold/colored sender name at top of each bubble including flat/door number
