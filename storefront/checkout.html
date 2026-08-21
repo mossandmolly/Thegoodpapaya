@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Checkout — The Good Papaya</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="gp-header">
+  <a href="index.html" class="brand">← 🥭 The Good Papaya</a>
+</header>
+
+<main>
+  <div id="err" class="err-box"></div>
+  <div id="cart-list"></div>
+
+  <div class="summary-row"><span>Items (<span id="item-count">0</span>)</span><span id="subtotal">₹0</span></div>
+  <div class="summary-row total"><span>Total</span><span id="total">₹0</span></div>
+
+  <div style="height:20px"></div>
+
+  <div class="form-field">
+    <label>Society / Community</label>
+    <input type="text" id="society" placeholder="e.g. Prestige Ferns" autocomplete="off">
+  </div>
+  <div class="form-field">
+    <label>Door / Flat number</label>
+    <input type="text" id="door" placeholder="e.g. A1203" autocomplete="off">
+  </div>
+  <div class="form-field">
+    <label>Phone number</label>
+    <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
+  </div>
+  <div class="form-field">
+    <label>Notes (optional)</label>
+    <textarea id="notes" rows="2" placeholder="Delivery instructions, ripeness preference, etc."></textarea>
+  </div>
+
+  <div class="form-field">
+    <label>Payment</label>
+    <div class="pay-toggle">
+      <div class="pay-opt active" data-method="cod" onclick="setMethod('cod')">
+        <div class="t">💵 Pay on Delivery</div>
+        <div class="s">Cash or UPI at the door</div>
+      </div>
+      <div class="pay-opt" data-method="online" onclick="setMethod('online')">
+        <div class="t">💳 Pay Now</div>
+        <div class="s">Secure online payment</div>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn-primary" id="place-btn" onclick="placeOrder()">Place Order</button>
+  <div style="height:80px"></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+let method = 'cod';
+let catalogPrices = {};
+
+function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function showErr(msg){const e=document.getElementById('err');e.textContent=msg;e.classList.add('show');}
+function hideErr(){document.getElementById('err').classList.remove('show');}
+
+function setMethod(m) {
+  method = m;
+  document.querySelectorAll('.pay-opt').forEach(o => o.classList.toggle('active', o.dataset.method === m));
+}
+
+async function loadPrices() {
+  const cart = getCart();
+  if (!cart.length) return;
+  const { data } = await sb.from('catalog').select('item_name,unit_price,unit').in('item_name', cart.map(i => i.item_name));
+  (data || []).forEach(r => catalogPrices[r.item_name] = r);
+  renderCart();
+}
+
+function renderCart() {
+  const cart = getCart();
+  const list = document.getElementById('cart-list');
+  if (!cart.length) {
+    list.innerHTML = '<div class="empty-state">Your basket is empty. <a href="index.html" style="color:#2d6b2d;font-weight:700">Browse items →</a></div>';
+    document.getElementById('place-btn').disabled = true;
+    document.getElementById('item-count').textContent = '0';
+    document.getElementById('subtotal').textContent = '₹0';
+    document.getElementById('total').textContent = '₹0';
+    return;
+  }
+  let subtotal = 0;
+  list.innerHTML = cart.map(i => {
+    const p = catalogPrices[i.item_name];
+    const price = p ? p.unit_price : null;
+    const lineTotal = price != null ? price * i.quantity : null;
+    if (lineTotal != null) subtotal += lineTotal;
+    return '<div class="cart-row">' +
+      '<div class="info">' +
+        '<div class="name">'+escH(i.item_name)+'</div>' +
+        '<div class="price">'+i.quantity+' '+(p ? escH(p.unit||'kg') : '')+(lineTotal!=null?' · ₹'+lineTotal.toFixed(0):'')+'</div>' +
+      '</div>' +
+      '<a class="remove" onclick="removeItem('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
+    '</div>';
+  }).join('');
+  document.getElementById('item-count').textContent = cart.length;
+  document.getElementById('subtotal').textContent = '₹'+subtotal.toFixed(0);
+  document.getElementById('total').textContent = '₹'+subtotal.toFixed(0);
+  document.getElementById('place-btn').disabled = false;
+}
+
+function removeItem(item_name) {
+  setCartQty(item_name, 0);
+  renderCart();
+}
+
+async function placeOrder() {
+  hideErr();
+  const cart = getCart();
+  const society = document.getElementById('society').value.trim();
+  const door = document.getElementById('door').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  const notes = document.getElementById('notes').value.trim();
+
+  if (!cart.length) { showErr('Your basket is empty.'); return; }
+  if (!society) { showErr('Please enter your society/community name.'); return; }
+  if (!door) { showErr('Please enter your door/flat number.'); return; }
+  if (!/^\d{10}$/.test(phone)) { showErr('Please enter a valid 10-digit phone number.'); return; }
+
+  const btn = document.getElementById('place-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Placing order…';
+
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/place-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity })),
+        society, door_number: door, phone, notes,
+        payment_method: method,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not place order');
+
+    clearCart();
+    if (data.payment_url) {
+      window.location.href = data.payment_url;
+    } else {
+      window.location.href = 'order-confirmed.html?id=' + encodeURIComponent(data.sales_order_id);
+    }
+  } catch (e) {
+    showErr(e.message);
+    btn.disabled = false;
+    btn.textContent = 'Place Order';
+  }
+}
+
+renderCart();
+loadPrices();
+</script>
+</body>
+</html>

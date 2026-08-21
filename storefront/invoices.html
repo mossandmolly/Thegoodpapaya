@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>My Invoices — The Good Papaya</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="gp-header">
+  <a href="index.html" class="brand">🥭 The Good Papaya</a>
+</header>
+
+<main>
+  <div class="form-field">
+    <label>Your phone number</label>
+    <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
+  </div>
+  <button class="btn-primary" id="lookup-btn" onclick="lookup()">View My Invoices</button>
+  <div style="height:20px"></div>
+  <div id="results"></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// Group invoice_line_items rows (one per item) into one card per invoice —
+// get_invoices_by_phone (migration 032) returns line-item granularity.
+function groupByInvoice(rows) {
+  const byInvoice = {};
+  rows.forEach(r => {
+    const key = r.invoice_number || r.zoho_invoice_id || r.sales_order_id;
+    if (!byInvoice[key]) byInvoice[key] = { ...r, items: [] };
+    byInvoice[key].items.push({ item_name: r.item_name, qty: r.final_quantity ?? r.requested_quantity, price: r.item_price });
+  });
+  return Object.values(byInvoice).sort((a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || ''));
+}
+
+function statusClass(s) {
+  if (s === 'paid') return 'paid';
+  if (s === 'overdue') return 'overdue';
+  return 'pending';
+}
+
+async function lookup() {
+  const phoneInput = document.getElementById('phone').value.trim();
+  if (!/^\d{10}$/.test(phoneInput)) {
+    document.getElementById('results').innerHTML = '<div class="err-box show">Please enter a valid 10-digit phone number.</div>';
+    return;
+  }
+  const btn = document.getElementById('lookup-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Looking up…';
+  const results = document.getElementById('results');
+  results.innerHTML = '';
+
+  try {
+    // get_invoices_by_phone matches phone_number exactly as stored — try
+    // both the bare 10-digit form and the +91-prefixed form other parts of
+    // the app sometimes store it as.
+    let { data, error } = await sb.rpc('get_invoices_by_phone', { p_phone: phoneInput });
+    if (!error && (!data || !data.length)) {
+      ({ data, error } = await sb.rpc('get_invoices_by_phone', { p_phone: '+91' + phoneInput }));
+    }
+    if (error) throw new Error(error.message);
+
+    if (!data || !data.length) {
+      results.innerHTML = '<div class="empty-state">No invoices found for this number yet.</div>';
+      return;
+    }
+
+    const invoices = groupByInvoice(data);
+    results.innerHTML = invoices.map(inv => {
+      const itemsLine = inv.items.map(i => escH(i.item_name) + ' ×' + i.qty).join(', ');
+      return '<div class="invoice-card">' +
+        '<div class="row1">' +
+          '<span class="inv-num">'+escH(inv.invoice_number || inv.sales_order_id || 'Invoice')+'</span>' +
+          '<span class="status '+statusClass(inv.payment_status)+'">'+escH(inv.payment_status || 'pending')+'</span>' +
+        '</div>' +
+        '<div class="meta">'+escH(inv.invoice_date || '')+' · '+itemsLine+'</div>' +
+        '<div class="meta">Total ₹'+(inv.invoice_total ?? 0)+(inv.balance ? ' · Balance due ₹'+inv.balance : '')+'</div>' +
+        '<div class="actions">' +
+          (inv.payment_link && inv.payment_status !== 'paid' ? '<a class="pay" href="'+escH(inv.payment_link)+'" target="_blank" rel="noopener">Pay Now</a>' : '') +
+          (inv.pdf_url ? '<a class="pdf" href="'+escH(inv.pdf_url)+'" target="_blank" rel="noopener">View Invoice</a>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    results.innerHTML = '<div class="err-box show">Could not load invoices: '+escH(e.message)+'</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'View My Invoices';
+  }
+}
+
+document.getElementById('phone').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#fffdf9;color:#2b2320;line-height:1.4;padding-bottom:70px}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+
+header.gp-header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid #eee0d0;padding:12px 16px;display:flex;align-items:center;justify-content:space-between}
+header.gp-header .brand{font-size:17px;font-weight:800;color:#2d6b2d}
+header.gp-header .brand span{color:#8a7a6a;font-weight:500;font-size:12px;display:block}
+header.gp-header nav{display:flex;align-items:center;gap:14px}
+header.gp-header nav a{font-size:13px;color:#8a7a6a;font-weight:600}
+.cart-link{position:relative;font-size:22px}
+#cart-badge{position:absolute;top:-6px;right:-10px;background:#2d6b2d;color:#fff;font-size:10px;font-weight:700;border-radius:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 4px}
+#cart-badge.hidden{display:none}
+
+main{max-width:640px;margin:0 auto;padding:16px}
+
+.search-bar{width:100%;padding:12px 14px;border:1px solid #eee0d0;border-radius:10px;font-size:15px;margin-bottom:14px;background:#fff}
+.search-bar:focus{outline:none;border-color:#2d6b2d}
+
+.cat-tabs{display:flex;gap:8px;margin-bottom:16px}
+.cat-tab{flex:1;padding:10px;border-radius:10px;border:1px solid #eee0d0;background:#fff;text-align:center;font-weight:700;font-size:13px;cursor:pointer;color:#8a7a6a}
+.cat-tab.active{background:#2d6b2d;color:#fff;border-color:#2d6b2d}
+
+.item-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(min-width:480px){.item-grid{grid-template-columns:repeat(3,1fr)}}
+.item-card{background:#fff;border:1px solid #eee0d0;border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.item-card img,.item-card .ph{width:100%;aspect-ratio:1/1;object-fit:cover;background:#f5efe4;font-size:44px;display:flex;align-items:center;justify-content:center}
+.item-card .body{padding:10px;display:flex;flex-direction:column;gap:6px;flex:1}
+.item-card .name{font-size:13px;font-weight:700}
+.item-card .price{font-size:12px;color:#8a7a6a}
+.item-card .add-row{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:6px}
+.qty-btn{width:28px;height:28px;border-radius:50%;border:1px solid #eee0d0;background:#fff;font-size:16px;font-weight:700;cursor:pointer;color:#2d6b2d}
+.qty-val{font-size:13px;font-weight:700;min-width:20px;text-align:center}
+.add-btn{background:#2d6b2d;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;width:100%}
+.add-btn:disabled{background:#c9c0b3;cursor:default}
+
+.empty-state{text-align:center;padding:40px 20px;color:#8a7a6a;font-size:14px}
+
+.cart-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #f0e8dc}
+.cart-row img,.cart-row .ph{width:52px;height:52px;border-radius:8px;object-fit:cover;background:#f5efe4;font-size:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.cart-row .info{flex:1}
+.cart-row .name{font-weight:700;font-size:14px}
+.cart-row .price{font-size:12px;color:#8a7a6a}
+.cart-row .remove{color:#b3261e;font-size:12px;font-weight:600}
+
+.summary-row{display:flex;justify-content:space-between;padding:8px 0;font-size:14px}
+.summary-row.total{font-weight:800;font-size:17px;border-top:1px solid #eee0d0;margin-top:8px;padding-top:12px}
+
+.form-field{margin-bottom:14px}
+.form-field label{display:block;font-size:12px;font-weight:700;color:#8a7a6a;margin-bottom:5px;text-transform:uppercase;letter-spacing:.3px}
+.form-field input,.form-field select,.form-field textarea{width:100%;padding:12px 14px;border:1px solid #eee0d0;border-radius:10px;font-size:15px;font-family:inherit;background:#fff}
+.form-field input:focus,.form-field select:focus,.form-field textarea:focus{outline:none;border-color:#2d6b2d}
+
+.pay-toggle{display:flex;gap:8px;margin-bottom:16px}
+.pay-opt{flex:1;padding:14px;border:2px solid #eee0d0;border-radius:12px;text-align:center;cursor:pointer}
+.pay-opt.active{border-color:#2d6b2d;background:#f3faf0}
+.pay-opt .t{font-weight:700;font-size:14px}
+.pay-opt .s{font-size:11px;color:#8a7a6a;margin-top:2px}
+
+.btn-primary{display:block;width:100%;background:#2d6b2d;color:#fff;border:none;border-radius:12px;padding:15px;font-size:16px;font-weight:800;cursor:pointer;text-align:center}
+.btn-primary:disabled{background:#c9c0b3;cursor:default}
+.btn-secondary{display:block;width:100%;background:#fff;color:#2d6b2d;border:2px solid #2d6b2d;border-radius:12px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;text-align:center}
+
+.err-box{background:#fdeaea;color:#b3261e;border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:14px;display:none}
+.err-box.show{display:block}
+
+.sticky-bottom{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #eee0d0;padding:12px 16px;max-width:640px;margin:0 auto}
+
+.invoice-card{background:#fff;border:1px solid #eee0d0;border-radius:12px;padding:14px;margin-bottom:12px}
+.invoice-card .row1{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.invoice-card .inv-num{font-weight:700;font-size:14px}
+.invoice-card .status{font-size:10px;font-weight:700;padding:3px 9px;border-radius:10px;text-transform:uppercase}
+.status.paid{background:#e3f5e3;color:#2d6b2d}
+.status.pending,.status.overdue{background:#fdeaea;color:#b3261e}
+.invoice-card .meta{font-size:12px;color:#8a7a6a;margin-bottom:10px}
+.invoice-card .actions{display:flex;gap:8px}
+.invoice-card .actions a{flex:1;text-align:center;padding:9px;border-radius:8px;font-size:12px;font-weight:700}
+.invoice-card .actions .pay{background:#2d6b2d;color:#fff}
+.invoice-card .actions .pdf{border:1px solid #eee0d0;color:#2b2320}
+
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}

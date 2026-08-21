@@ -316,6 +316,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .gi-row select{margin-bottom:0}
 .pk-search{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
 .filter-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.upload-zone{border:2px dashed #d8c8b0;border-radius:10px;padding:22px;text-align:center;cursor:pointer;position:relative;color:#8a7a6a;font-size:13px;background:#fffdf9;margin-bottom:10px}
+.upload-zone.drag{border-color:#2d6b2d;background:#f3faf0;color:#2d6b2d}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.catalog-img-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin-top:10px}
+.catalog-img-card{border:1px solid #eee0d0;border-radius:8px;padding:8px;text-align:center;background:#fff}
+.catalog-img-card img,.catalog-img-card .img-ph{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:6px;background:#f5efe4;display:block}
+.catalog-img-card .img-name{font-size:11px;font-weight:600;margin-top:6px;color:#2b2320;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.catalog-img-card .img-cat{font-size:9px;color:#8a7a6a;text-transform:uppercase;letter-spacing:0.4px}
 .filter-group-label{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#8a7a6a;margin-bottom:6px;margin-top:2px}
 .filter-pill{display:inline-flex;align-items:center;border-radius:14px;padding:5px 12px;font-size:11px;border:1px solid #eee0d0;background:#ffffff;color:#8a7a6a;cursor:pointer;white-space:nowrap}
 .filter-pill.active{background:#e8720c;border-color:#e8720c;color:#ffffff;font-weight:600}
@@ -401,6 +409,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="header-btn" onclick="switchTab('parser')" id="tab-parser">📸 Parser</button>
     <button class="header-btn" onclick="switchTab('live')" id="tab-live">📡 Live</button>
     <button class="header-btn" onclick="switchTab('config')">⚙️ Config</button>
+    <button class="header-btn" onclick="switchTab('images')" id="tab-images">🖼 Images</button>
     <a class="signout-link" onclick="hardRefresh()" title="Force-reload the latest deployed version — use this if something looks off after an update">🔄 Refresh</a>
     <a class="signout-link" onclick="signOut()">Sign out</a>
   </div>
@@ -947,6 +956,26 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <div class="push-status" id="live-status"></div>
 </div>
+
+<!-- CATALOG IMAGES (storefront product thumbnails) -->
+<div class="panel" id="panel-images">
+  <div class="section-label date-header-row">
+    <span>🖼 Catalog Images <span id="img-rc"></span></span>
+  </div>
+  <p class="note">Thumbnails shown on the storefront (thegoodpapaya.com). "Generate placeholders" fills in a simple colored icon for any item that doesn't have a real photo yet — drag real photos onto the drop zone below any time to replace them (matched to items by filename, e.g. "tomato.jpg" → Tomato).</p>
+  <div class="push-row" style="margin-bottom:10px">
+    <button class="btn-push" id="img-gen-placeholders">🪄 Generate placeholders for items missing one</button>
+  </div>
+  <div class="push-status" id="img-gen-status"></div>
+  <div class="upload-zone" id="img-drop-zone">
+    <div>📤 Drag photos here, or click to choose files — filenames are matched to catalog items automatically</div>
+    <input type="file" id="img-drop-input" accept="image/*" multiple>
+  </div>
+  <div class="push-status" id="img-upload-status"></div>
+  <input type="text" class="pk-search" id="img-search" placeholder="🔍 Search item…" oninput="renderCatalogImagesGrid()" style="margin-top:14px">
+  <div id="img-type-pills" class="filter-pills status-pills"></div>
+  <div id="img-grid" class="catalog-img-grid"></div>
+</div>
 </div>
 
 <!-- GENERIC ALERT / CONFIRM / PROMPT MODAL — replaces native browser
@@ -1284,6 +1313,7 @@ function switchTab(name){
   if(name==='delivery')loadDeliveryView();
   if(name==='stock')loadStockView();
   if(name==='purchases')loadPurchasesView();
+  if(name==='images')loadCatalogImagesView();
   if(name==='delivery')startLocationPing();else stopLocationPing();
 }
 
@@ -8016,6 +8046,213 @@ async function deleteExpense(id){
   if(idx>-1)expensesRows.splice(idx,1);
   renderExpensesTable();
 }
+
+// ── CATALOG IMAGES (storefront product thumbnails) ──────────────────────
+let catalogImagesList=[];
+let imgTypeFilter='all'; // 'all' | 'fruit' | 'vegetable'
+
+async function loadCatalogImagesView(){
+  const grid=document.getElementById('img-grid');
+  grid.innerHTML='<div class="to-empty">Loading…</div>';
+  const{data,error}=await sb.from('catalog')
+    .select('item_name,category,image_url,active').eq('active',true)
+    .order('category').order('item_name');
+  if(error){grid.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  catalogImagesList=data||[];
+  renderImgTypePills();
+  renderCatalogImagesGrid();
+}
+
+function renderImgTypePills(){
+  const pills=[
+    {key:'all',label:'All',count:catalogImagesList.length},
+    {key:'fruit',label:'🍎 Fruits',count:catalogImagesList.filter(c=>c.category==='fruit').length},
+    {key:'vegetable',label:'🥦 Vegetables',count:catalogImagesList.filter(c=>c.category==='vegetable').length},
+  ];
+  document.getElementById('img-type-pills').innerHTML=pills.map(p=>
+    '<span class="filter-pill'+(imgTypeFilter===p.key?' active':'')+'" onclick="setImgTypeFilter('+escH(JSON.stringify(p.key))+')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join('');
+}
+
+function setImgTypeFilter(key){
+  imgTypeFilter=key;
+  renderCatalogImagesGrid();
+}
+
+// Small keyword→emoji map for common items so placeholders read at a
+// glance instead of all looking identical — falls back to a generic
+// per-category icon for anything not matched (mango varieties, apple
+// varieties etc. all still get a sensible icon this way).
+const IMG_PLACEHOLDER_EMOJI=[
+  [/mango/i,'🥭'],[/apple/i,'🍎'],[/grape/i,'🍇'],[/banana/i,'🍌'],[/orange|mandarin|mosambi|kinnow/i,'🍊'],
+  [/watermelon/i,'🍉'],[/muskmelon|melon/i,'🍈'],[/pineapple/i,'🍍'],[/peach/i,'🍑'],[/cherry/i,'🍒'],
+  [/kiwi/i,'🥝'],[/coconut/i,'🥥'],[/lychee|longan|rambutan|mangosteen/i,'🫐'],[/pomegranate/i,'🔴'],
+  [/strawberry/i,'🍓'],[/avocado/i,'🥑'],[/guava|sapota|jamun|custard apple|jackfruit|dragon|passion/i,'🍈'],
+  [/tomato/i,'🍅'],[/carrot/i,'🥕'],[/potato/i,'🥔'],[/onion/i,'🧅'],[/capsicum|chilli/i,'🌶️'],
+  [/corn/i,'🌽'],[/cucumber/i,'🥒'],[/broccoli|cabbage|cauliflower/i,'🥦'],[/eggplant|brinjal/i,'🍆'],
+  [/leaf|leaves|spinach|amaranthus|methi|fenugreek|coriander/i,'🌿'],
+];
+function iconForItem(itemName,category){
+  const hit=IMG_PLACEHOLDER_EMOJI.find(([re])=>re.test(itemName));
+  if(hit)return hit[1];
+  return category==='vegetable'?'🥦':'🍎';
+}
+
+const IMG_PLACEHOLDER_PALETTE={
+  fruit:     ['#ffe3d1','#ffd6d6','#fff0c2','#ffe0ec'],
+  vegetable: ['#dcf0d4','#d4ecec','#e6f0c2','#d6e8d0'],
+};
+function colorForItem(itemName,category){
+  const palette=IMG_PLACEHOLDER_PALETTE[category]||IMG_PLACEHOLDER_PALETTE.fruit;
+  let h=0;for(let i=0;i<itemName.length;i++)h=(h*31+itemName.charCodeAt(i))>>>0;
+  return palette[h%palette.length];
+}
+
+function generatePlaceholderSvg(itemName,category){
+  const bg=colorForItem(itemName,category);
+  const icon=iconForItem(itemName,category);
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">'+
+    '<rect width="400" height="400" rx="32" fill="'+bg+'"/>'+
+    '<text x="200" y="210" font-size="150" text-anchor="middle" dominant-baseline="middle">'+icon+'</text>'+
+    '<text x="200" y="340" font-size="30" font-family="sans-serif" font-weight="700" fill="#2b2320" text-anchor="middle">'+escH(itemName)+'</text>'+
+    '</svg>';
+  return svg;
+}
+
+function slugifyItemName(name){
+  return (name||'').toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+}
+
+async function generatePlaceholders(){
+  const missing=catalogImagesList.filter(c=>!c.image_url);
+  if(!missing.length){uxAlert('Every tracked item already has an image.');return;}
+  if(!await uxConfirm('Generate placeholder icons for '+missing.length+' item'+(missing.length!==1?'s':'')+' that don\'t have an image yet?'))return;
+
+  const btn=document.getElementById('img-gen-placeholders');
+  const status=document.getElementById('img-gen-status');
+  btn.disabled=true;
+  let done=0,failed=[];
+  for(const item of missing){
+    status.textContent='Generating '+(done+failed.length+1)+'/'+missing.length+'… ('+item.item_name+')';
+    try{
+      const svg=generatePlaceholderSvg(item.item_name,item.category||'fruit');
+      const path=(item.category||'fruit')+'/'+slugifyItemName(item.item_name)+'.svg';
+      const{error:upErr}=await sb.storage.from('catalog-images')
+        .upload(path,new Blob([svg],{type:'image/svg+xml'}),{upsert:true,contentType:'image/svg+xml'});
+      if(upErr)throw new Error(upErr.message);
+      const{data:pub}=sb.storage.from('catalog-images').getPublicUrl(path);
+      const{error:updErr}=await sb.from('catalog').update({image_url:pub.publicUrl}).eq('item_name',item.item_name);
+      if(updErr)throw new Error(updErr.message);
+      item.image_url=pub.publicUrl;
+      done++;
+    }catch(e){
+      failed.push(item.item_name+': '+e.message);
+    }
+  }
+  status.textContent='✅ Generated '+done+' placeholder'+(done!==1?'s':'')+(failed.length?' · '+failed.length+' failed':'');
+  if(failed.length)console.error('Placeholder generation failures:',failed);
+  btn.disabled=false;
+  renderImgTypePills();
+  renderCatalogImagesGrid();
+}
+document.getElementById('img-gen-placeholders').addEventListener('click',generatePlaceholders);
+
+function renderCatalogImagesGrid(){
+  const search=document.getElementById('img-search').value.trim().toLowerCase();
+  const rows=catalogImagesList.filter(c=>{
+    if(imgTypeFilter!=='all'&&c.category!==imgTypeFilter)return false;
+    if(search&&!c.item_name.toLowerCase().includes(search))return false;
+    return true;
+  });
+  document.getElementById('img-rc').textContent=rows.length?'— '+rows.length+' item'+(rows.length!==1?'s':''):'';
+  document.getElementById('img-grid').innerHTML=rows.map(c=>
+    '<div class="catalog-img-card">'+
+      (c.image_url
+        ?'<img src="'+escH(c.image_url)+'" loading="lazy">'
+        :'<div class="img-ph" style="display:flex;align-items:center;justify-content:center;font-size:36px">'+iconForItem(c.item_name,c.category||'fruit')+'</div>')+
+      '<div class="img-name">'+escH(c.item_name)+'</div>'+
+      '<div class="img-cat">'+escH(c.category||'')+'</div>'+
+      (c.image_url?'<a class="or-link" style="color:#b3261e" onclick="removeCatalogImage('+escH(JSON.stringify(c.item_name))+')">remove</a>':'')+
+    '</div>'
+  ).join('');
+}
+
+async function removeCatalogImage(itemName){
+  if(!await uxConfirm('Remove the image for "'+itemName+'"? It\'ll fall back to a generic icon on the storefront until a new one is added.'))return;
+  const{error}=await sb.from('catalog').update({image_url:null}).eq('item_name',itemName);
+  if(error){uxAlert('Failed: '+error.message);return;}
+  const row=catalogImagesList.find(c=>c.item_name===itemName);
+  if(row)row.image_url=null;
+  renderCatalogImagesGrid();
+}
+
+// Bulk photo upload — filename (minus extension) fuzzy-matched against
+// catalog item_name (both normalized the same way as slugifyItemName), so
+// "tomato.jpg" or "Tomato-fresh.jpg" both match "Tomato".
+function matchFileToItem(filename){
+  const base=filename.replace(/\.[^.]+$/,'');
+  const norm=slugifyItemName(base);
+  let hit=catalogImagesList.find(c=>slugifyItemName(c.item_name)===norm);
+  if(hit)return hit;
+  hit=catalogImagesList.find(c=>norm.includes(slugifyItemName(c.item_name))||slugifyItemName(c.item_name).includes(norm));
+  return hit||null;
+}
+
+async function uploadCatalogImageFiles(files){
+  const status=document.getElementById('img-upload-status');
+  const matched=[],unmatched=[];
+  for(const file of files){
+    const item=matchFileToItem(file.name);
+    if(item)matched.push({file,item});else unmatched.push(file.name);
+  }
+  if(!matched.length){
+    status.textContent='❌ No filenames matched a catalog item. Rename files to match the item name (e.g. "tomato.jpg") and try again.';
+    return;
+  }
+  let done=0,failed=[];
+  for(const{file,item}of matched){
+    status.textContent='Uploading '+(done+failed.length+1)+'/'+matched.length+'… ('+item.item_name+')';
+    try{
+      const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
+      const path=(item.category||'fruit')+'/'+slugifyItemName(item.item_name)+'.'+ext;
+      const{error:upErr}=await sb.storage.from('catalog-images')
+        .upload(path,file,{upsert:true,contentType:file.type||'image/jpeg'});
+      if(upErr)throw new Error(upErr.message);
+      const{data:pub}=sb.storage.from('catalog-images').getPublicUrl(path);
+      // Cache-bust — same path can be re-uploaded with a new photo, and the
+      // browser/CDN would otherwise keep serving the old cached image at
+      // that exact URL.
+      const bustedUrl=pub.publicUrl+'?v='+Date.now();
+      const{error:updErr}=await sb.from('catalog').update({image_url:bustedUrl}).eq('item_name',item.item_name);
+      if(updErr)throw new Error(updErr.message);
+      item.image_url=bustedUrl;
+      done++;
+    }catch(e){
+      failed.push(item.item_name+': '+e.message);
+    }
+  }
+  status.textContent='✅ Uploaded '+done+' photo'+(done!==1?'s':'')+
+    (failed.length?' · '+failed.length+' failed':'')+
+    (unmatched.length?' · '+unmatched.length+' file'+(unmatched.length!==1?'s':'')+' didn\'t match any item: '+unmatched.join(', '):'');
+  renderCatalogImagesGrid();
+}
+
+(function initImgDropZone(){
+  const zone=document.getElementById('img-drop-zone');
+  const input=document.getElementById('img-drop-input');
+  if(!zone||!input)return;
+  input.addEventListener('change',()=>{
+    if(input.files.length)uploadCatalogImageFiles([...input.files]);
+    input.value='';
+  });
+  zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('drag');});
+  zone.addEventListener('dragleave',()=>zone.classList.remove('drag'));
+  zone.addEventListener('drop',e=>{
+    e.preventDefault();zone.classList.remove('drag');
+    const files=[...(e.dataTransfer?.files||[])].filter(f=>f.type.startsWith('image/'));
+    if(files.length)uploadCatalogImageFiles(files);
+  });
+})();
 
 </script>
 </body>
