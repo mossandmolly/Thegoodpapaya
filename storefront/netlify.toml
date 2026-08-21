@@ -1,0 +1,5 @@
+# Standalone config for the storefront's own Netlify site (goodpapaya-shop)
+# — separate from the root netlify.toml, which is ops-dashboard's. Talks
+# straight to Supabase from the browser, so no Netlify Functions needed here.
+[build]
+  publish = "."
