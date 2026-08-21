@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Order Confirmed — The Good Papaya</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="gp-header">
+  <a href="index.html" class="brand">🥭 The Good Papaya</a>
+</header>
+
+<main>
+  <div style="text-align:center;padding:50px 20px">
+    <div style="font-size:60px;margin-bottom:16px">✅</div>
+    <div style="font-size:20px;font-weight:800;margin-bottom:8px">Order placed!</div>
+    <div id="order-id" style="color:#8a7a6a;font-size:14px;margin-bottom:24px"></div>
+    <div style="color:#8a7a6a;font-size:14px;margin-bottom:30px">We'll have it packed and out for delivery soon. You can check your invoice and payment status any time on the My Invoices page.</div>
+    <a href="index.html" class="btn-primary" style="display:inline-block;text-decoration:none">Continue Shopping</a>
+  </div>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+const id = params.get('id') || params.get('sales_order_id');
+if (id) document.getElementById('order-id').textContent = 'Order ' + id;
+</script>
+</body>
+</html>
