@@ -48,6 +48,16 @@ function iconFor(name, category) {
 }
 function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
+// UI-only mode selection before anything's been added to cart — once an
+// item's in the cart its own `mode` field (see config.js) is the source of
+// truth instead.
+let pendingMode = {};
+function setMode(item_name, mode) {
+  pendingMode[item_name] = mode;
+  setCartQty(item_name, 0); // reset qty on mode switch — avoids an ambiguous half-converted quantity
+  render();
+}
+
 function setCat(c) {
   cat = c;
   document.querySelectorAll('.cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === c));
@@ -56,7 +66,7 @@ function setCat(c) {
 
 async function load() {
   const { data, error } = await sb.from('catalog')
-    .select('item_name,unit_price,unit,category,image_url')
+    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,subsection')
     .eq('active', true)
     .order('item_name');
   if (error) {
@@ -68,6 +78,10 @@ async function load() {
   render();
 }
 
+// Subsection display order — anything not listed here (a new/uncategorized
+// subsection) just sorts alphabetically after these.
+const SUBSECTION_ORDER = ['Daily Vegetables','Leafy Greens','Gourds & Other Vegetables','Seasonal Fruits','Everyday Fruits','Exotic & Berries'];
+
 function render() {
   const search = document.getElementById('search').value.trim().toLowerCase();
   const rows = catalog.filter(c => {
@@ -78,42 +92,79 @@ function render() {
   const grid = document.getElementById('grid');
   if (!rows.length) { grid.innerHTML = '<div class="empty-state">No items found.</div>'; return; }
 
-  const cartMap = {};
-  getCart().forEach(i => cartMap[i.item_name] = i.quantity);
+  const cartMap = {}, cartModeMap = {};
+  getCart().forEach(i => { cartMap[i.item_name] = i.quantity; cartModeMap[i.item_name] = i.mode || 'kg'; });
 
-  grid.innerHTML = rows.map(c => {
+  const groups = {};
+  rows.forEach(c => {
+    const key = c.subsection || 'Other';
+    (groups[key] = groups[key] || []).push(c);
+  });
+  const groupNames = Object.keys(groups).sort((a, b) => {
+    const ia = SUBSECTION_ORDER.indexOf(a), ib = SUBSECTION_ORDER.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+
+  grid.innerHTML = groupNames.map(name =>
+    '<div class="section-heading">'+escH(name)+'</div>'+
+    '<div class="item-grid">'+groups[name].map(c => cardHtml(c, cartMap, cartModeMap)).join('')+'</div>'
+  ).join('');
+
+  const editInput = document.getElementById('qty-edit-input');
+  if (editInput) { editInput.focus(); editInput.select(); }
+}
+
+function cardHtml(c, cartMap, cartModeMap) {
     const qty = cartMap[c.item_name] || 0;
     const weight = isWeightUnit(c.unit);
-    const step = weight ? 0.5 : 1;
+    const pieceEligible = !!c.sold_by_piece;
+    const mode = cartModeMap[c.item_name] || pendingMode[c.item_name] || 'kg';
+    const step = mode === 'piece' ? 1 : (weight ? 0.5 : 1);
     const editing = editingItem === c.item_name;
+
     let qtyHtml;
     if (editing) {
       qtyHtml = '<input type="number" class="qty-edit" id="qty-edit-input" inputmode="decimal" step="0.05" min="0" value="'+qty+'" '+
         'onblur="commitQtyEdit('+escH(JSON.stringify(c.item_name))+',this.value)" '+
         'onkeydown="if(event.key===\'Enter\')this.blur()">';
+    } else if (mode === 'piece') {
+      const approx = c.piece_approx_kg ? ' (~'+(qty * c.piece_approx_kg).toFixed(2)+'kg)' : '';
+      qtyHtml = '<span class="qty-val">'+qty+' pc'+approx+'</span>';
     } else {
       qtyHtml = weight
         ? '<span class="qty-val" onclick="startQtyEdit('+escH(JSON.stringify(c.item_name))+')">'+qty+' '+escH(c.unit||'kg')+'</span>'
         : '<span class="qty-val">'+qty+'</span>';
     }
+
+    const modeToggle = pieceEligible
+      ? '<div class="mode-toggle">'+
+          '<span class="'+(mode==='kg'?'active':'')+'" onclick="setMode('+escH(JSON.stringify(c.item_name))+',\'kg\')">By kg</span>'+
+          '<span class="'+(mode==='piece'?'active':'')+'" onclick="setMode('+escH(JSON.stringify(c.item_name))+',\'piece\')">By piece</span>'+
+        '</div>'
+      : '';
+
+    const priceLine = mode === 'piece'
+      ? '<div class="price piece-note">🧾 Priced at packing'+(c.piece_approx_kg?' · ~'+c.piece_approx_kg+'kg/pc':'')+'</div>'
+      : '<div class="price">₹'+c.unit_price+' / '+escH(c.unit||'kg')+'</div>';
+
     return '<div class="item-card">' +
       (c.image_url ? '<img src="'+escH(c.image_url)+'" loading="lazy">' : '<div class="ph">'+iconFor(c.item_name, c.category)+'</div>') +
       '<div class="body">' +
         '<div class="name">'+escH(c.item_name)+'</div>' +
-        '<div class="price">₹'+c.unit_price+' / '+escH(c.unit||'kg')+'</div>' +
+        priceLine +
+        modeToggle +
         '<div class="add-row">' +
           (qty > 0
-            ? '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+',-'+step+')">−</button>'+
+            ? '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+',-'+step+',\''+mode+'\')">−</button>'+
               qtyHtml+
-              '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+')">+</button>'
-            : '<button class="add-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+')">+ Add</button>') +
+              '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+',\''+mode+'\')">+</button>'
+            : '<button class="add-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+',\''+mode+'\')">+ Add</button>') +
         '</div>' +
       '</div>' +
     '</div>';
-  }).join('');
-
-  const editInput = document.getElementById('qty-edit-input');
-  if (editInput) { editInput.focus(); editInput.select(); }
 }
 
 // kg is by far the common weight unit here — anything else (piece, pc,
@@ -123,12 +174,12 @@ function isWeightUnit(unit) {
   return ['kg','g','gm','gram','grams'].includes((unit || 'kg').toLowerCase().trim());
 }
 
-function changeQty(item_name, delta) {
+function changeQty(item_name, delta, mode) {
   const cart = getCart();
   const existing = cart.find(i => i.item_name === item_name);
   const current = existing ? existing.quantity : 0;
   const next = Math.max(0, +(current + delta).toFixed(2));
-  setCartQty(item_name, next);
+  setCartQty(item_name, next, mode);
   render();
 }
 

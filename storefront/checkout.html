@@ -74,7 +74,7 @@ function setMethod(m) {
 async function loadPrices() {
   const cart = getCart();
   if (!cart.length) return;
-  const { data } = await sb.from('catalog').select('item_name,unit_price,unit').in('item_name', cart.map(i => i.item_name));
+  const { data } = await sb.from('catalog').select('item_name,unit_price,unit,piece_approx_kg').in('item_name', cart.map(i => i.item_name));
   (data || []).forEach(r => catalogPrices[r.item_name] = r);
   renderCart();
 }
@@ -91,8 +91,19 @@ function renderCart() {
     return;
   }
   let subtotal = 0;
+  const hasPieceItem = cart.some(i => i.mode === 'piece');
   list.innerHTML = cart.map(i => {
     const p = catalogPrices[i.item_name];
+    if (i.mode === 'piece') {
+      const approx = p && p.piece_approx_kg ? ' (~'+(i.quantity * p.piece_approx_kg).toFixed(2)+'kg)' : '';
+      return '<div class="cart-row">' +
+        '<div class="info">' +
+          '<div class="name">'+escH(i.item_name)+'</div>' +
+          '<div class="price">'+i.quantity+' pc'+approx+' · 🧾 priced at packing</div>' +
+        '</div>' +
+        '<a class="remove" onclick="removeItem('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
+      '</div>';
+    }
     const price = p ? p.unit_price : null;
     const lineTotal = price != null ? price * i.quantity : null;
     if (lineTotal != null) subtotal += lineTotal;
@@ -105,9 +116,21 @@ function renderCart() {
     '</div>';
   }).join('');
   document.getElementById('item-count').textContent = cart.length;
-  document.getElementById('subtotal').textContent = '₹'+subtotal.toFixed(0);
-  document.getElementById('total').textContent = '₹'+subtotal.toFixed(0);
+  document.getElementById('subtotal').textContent = '₹'+subtotal.toFixed(0)+(hasPieceItem?' + packing items':'');
+  document.getElementById('total').textContent = '₹'+subtotal.toFixed(0)+(hasPieceItem?' + packing items':'');
   document.getElementById('place-btn').disabled = false;
+
+  // Piece-mode items have no confirmed price yet, so there's nothing to
+  // charge upfront — prepay is COD-only whenever any are in the basket.
+  const onlineOpt = document.querySelector('.pay-opt[data-method="online"]');
+  if (onlineOpt) {
+    onlineOpt.classList.toggle('disabled', hasPieceItem);
+    onlineOpt.onclick = hasPieceItem ? null : function(){ setMethod('online'); };
+    onlineOpt.querySelector('.s').textContent = hasPieceItem
+      ? 'Unavailable — basket has items priced at packing'
+      : 'Secure online payment';
+  }
+  if (hasPieceItem && method === 'online') setMethod('cod');
 }
 
 function removeItem(item_name) {
@@ -137,7 +160,7 @@ async function placeOrder() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity })),
+        cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity, mode: i.mode || 'kg' })),
         society, door_number: door, phone, notes,
         payment_method: method,
       }),

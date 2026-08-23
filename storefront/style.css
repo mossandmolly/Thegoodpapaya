@@ -21,13 +21,19 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .cat-tab{flex:1;padding:10px;border-radius:10px;border:1px solid #eee0d0;background:#fff;text-align:center;font-weight:700;font-size:13px;cursor:pointer;color:#8a7a6a}
 .cat-tab.active{background:#2d6b2d;color:#fff;border-color:#2d6b2d}
 
-.item-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.section-heading{font-size:14px;font-weight:800;color:#2d6b2d;margin:18px 0 10px}
+.section-heading:first-child{margin-top:4px}
+.item-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:8px}
 @media(min-width:480px){.item-grid{grid-template-columns:repeat(3,1fr)}}
 .item-card{background:#fff;border:1px solid #eee0d0;border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
 .item-card img,.item-card .ph{width:100%;aspect-ratio:1/1;object-fit:cover;background:#f5efe4;font-size:44px;display:flex;align-items:center;justify-content:center}
 .item-card .body{padding:10px;display:flex;flex-direction:column;gap:6px;flex:1}
 .item-card .name{font-size:13px;font-weight:700}
 .item-card .price{font-size:12px;color:#8a7a6a}
+.item-card .price.piece-note{color:#b5762a}
+.mode-toggle{display:flex;gap:4px;font-size:10px;margin-top:-2px}
+.mode-toggle span{flex:1;text-align:center;padding:3px 4px;border-radius:5px;border:1px solid #eee0d0;color:#8a7a6a;cursor:pointer;font-weight:700}
+.mode-toggle span.active{background:#2d6b2d;color:#fff;border-color:#2d6b2d}
 .item-card .add-row{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:6px}
 .qty-btn{width:28px;height:28px;border-radius:50%;border:1px solid #eee0d0;background:#fff;font-size:16px;font-weight:700;cursor:pointer;color:#2d6b2d}
 .qty-val{font-size:13px;font-weight:700;min-width:20px;text-align:center;cursor:pointer;text-decoration:underline dotted}
@@ -55,6 +61,7 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .pay-toggle{display:flex;gap:8px;margin-bottom:16px}
 .pay-opt{flex:1;padding:14px;border:2px solid #eee0d0;border-radius:12px;text-align:center;cursor:pointer}
 .pay-opt.active{border-color:#2d6b2d;background:#f3faf0}
+.pay-opt.disabled{opacity:.5;cursor:default;pointer-events:none}
 .pay-opt .t{font-weight:700;font-size:14px}
 .pay-opt .s{font-size:11px;color:#8a7a6a;margin-top:2px}
 

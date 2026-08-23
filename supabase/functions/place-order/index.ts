@@ -43,7 +43,12 @@ type CartItem = {
   quantity:  string | number;
   unit?:     string;
   notes?:    string;
+  mode?:     string; // 'kg' (default) or 'piece' — see isPieceMode()
 };
+
+function isPieceMode(item: CartItem): boolean {
+  return item.mode === 'piece';
+}
 
 function getQty(item: CartItem): number {
   const q = parseFloat(String(item.quantity));
@@ -110,7 +115,15 @@ Deno.serve(async (req) => {
     const normalPhone = String(phone).replace(/^\+91/, '').replace(/\D/g, '');
     if (!/^\d{10}$/.test(normalPhone)) throw new Error('Invalid phone number — enter a 10-digit number');
 
-    const method       = payment_method === 'online' ? 'online' : 'cod';
+    const method = payment_method === 'online' ? 'online' : 'cod';
+    // Piece-mode items have no confirmed price until staff weigh/count them
+    // at packing — nothing to charge upfront, so prepay isn't available
+    // for a basket that contains any. The checkout page already disables
+    // this client-side; enforced again here since the browser isn't
+    // trusted for anything that affects a real payment amount.
+    if (method === 'online' && (cart as CartItem[]).some(isPieceMode)) {
+      throw new Error('This basket has items priced at packing — choose Pay on Delivery instead.');
+    }
     const customerName = `${String(society).trim()} ${String(door_number).trim()}`;
     const today         = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10); // IST
 
@@ -145,7 +158,13 @@ Deno.serve(async (req) => {
     const unavailable = itemNames.filter(n => !activeSet.has(n));
     if (unavailable.length) throw new Error(`No longer available: ${unavailable.join(', ')}`);
 
+    // Piece-mode items are excluded from the total entirely — there's no
+    // confirmed price for them yet (see isPieceMode above), and method
+    // is already guaranteed 'cod' whenever any are present, so this only
+    // ever feeds the Razorpay amount for a cart of purely weight-priced
+    // items anyway.
     const orderTotal = (cart as CartItem[])
+      .filter(i => !isPieceMode(i))
       .reduce((s, i) => s + (priceMap[i.item_name] ?? 0) * getQty(i), 0);
 
     // Header — via create-order (server-to-server, CRON_SECRET never
@@ -179,10 +198,17 @@ Deno.serve(async (req) => {
       const key = `${item.item_name}|${qty}`;
       const status = existingKeys.has(key) ? 'held' : 'open';
       existingKeys.add(key);
+      // "N pieces" flag matches the same convention the WhatsApp parser
+      // already uses for piece-count orders (see whatsapp-listener's
+      // system prompt) — staff read it the same way either path it came in.
+      const notesPart = item.notes?.trim() || '';
+      const description = isPieceMode(item)
+        ? [`${qty} pieces`, notesPart].filter(Boolean).join(' · ')
+        : (notesPart || null);
       return {
         sales_order_id,
         item_name:   item.item_name,
-        description: item.notes?.trim() || null,
+        description,
         requested_quantity: qty,
         status,
       };
