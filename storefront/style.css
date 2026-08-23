@@ -30,7 +30,8 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .item-card .price{font-size:12px;color:#8a7a6a}
 .item-card .add-row{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:6px}
 .qty-btn{width:28px;height:28px;border-radius:50%;border:1px solid #eee0d0;background:#fff;font-size:16px;font-weight:700;cursor:pointer;color:#2d6b2d}
-.qty-val{font-size:13px;font-weight:700;min-width:20px;text-align:center}
+.qty-val{font-size:13px;font-weight:700;min-width:20px;text-align:center;cursor:pointer;text-decoration:underline dotted}
+.qty-edit{width:64px;padding:4px 6px;font-size:13px;font-weight:700;text-align:center;border:1px solid #2d6b2d;border-radius:6px}
 .add-btn{background:#2d6b2d;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;width:100%}
 .add-btn:disabled{background:#c9c0b3;cursor:default}
 
