@@ -3161,6 +3161,16 @@ function renderOrdersList(){
   // relative order.
   if(viewGrouping==='trip'){
     Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>overviewOrderPendingRank(a)-overviewOrderPendingRank(b)));
+  }else{
+    // Flat (society) view — earliest-placed order first within each society,
+    // so a group reads top-to-bottom in the order customers actually ordered.
+    // Orders without a createdAt yet (shouldn't happen post-migration-092)
+    // sort last rather than colliding at the same instant.
+    Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>{
+      const at=a.createdAt?new Date(a.createdAt).getTime():Infinity;
+      const bt=b.createdAt?new Date(b.createdAt).getTime():Infinity;
+      return at-bt;
+    }));
   }
 
   const socNames=viewGrouping==='trip'
