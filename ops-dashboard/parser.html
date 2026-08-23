@@ -938,6 +938,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       </tr></thead><tbody id="ci-tbody"></tbody></table>
     </div>
   </div>
+
+  <div class="config-section">
+    <h3>🧺 Storefront Catalog Settings <span style="font-size:11px;color:#8a7a6a;font-weight:400">(saved — drives website subsections + piece pricing)</span></h3>
+    <p class="note">Subsection groups an item within the storefront's Fruits/Vegetables tabs (e.g. "Daily Vegetables", "Seasonal Fruits") — pick an existing one from the list or type a new one. "Sold by piece" lets a customer add that item by piece count instead of weight on the website; when it's on, "Approx kg/piece" is shown to the customer as a rough weight guide only — it is never used for pricing, that's still decided by staff at packing time. All fields save to the database as soon as you change them.</p>
+    <input type="text" class="search-bar" id="catalog-settings-search" placeholder="🔍 Filter items…" style="margin-bottom:10px" oninput="renderCatalogSettingsTable()">
+    <div class="table-scroll">
+      <table class="community-table"><thead><tr>
+        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx kg/piece</th>
+      </tr></thead><tbody id="catalog-settings-tbody"></tbody></table>
+    </div>
+    <datalist id="subsection-options"></datalist>
+  </div>
 </div>
 
 <!-- LIVE WHATSAPP ORDERS -->
@@ -1352,6 +1364,65 @@ async function renderConfig(){
   await loadClustersConfig();
   loadCommunitiesConfig();
   loadCustomerInstructionsCache();
+  loadCatalogSettingsConfig();
+}
+
+// ── Storefront catalog settings (subsection, piece-mode, kg/pc) ─────────
+// DB-backed (catalog table) — unlike the session-only Piece→KG Conversions
+// list above (which only feeds the WhatsApp/parser prompt), these columns
+// are read live by storefront/index.html on every page load.
+let catalogSettingsCache=[];
+
+async function loadCatalogSettingsConfig(){
+  const{data,error}=await sb.from('catalog')
+    .select('item_name,category,subsection,sold_by_piece,piece_approx_kg')
+    .order('category',{ascending:true}).order('item_name',{ascending:true});
+  if(error){console.error(error);return;}
+  catalogSettingsCache=data||[];
+  const subsections=[...new Set(catalogSettingsCache.map(c=>c.subsection).filter(Boolean))].sort();
+  document.getElementById('subsection-options').innerHTML=
+    subsections.map(s=>'<option value="'+escH(s)+'">').join('');
+  renderCatalogSettingsTable();
+}
+
+function renderCatalogSettingsTable(){
+  const tbody=document.getElementById('catalog-settings-tbody');
+  if(!tbody)return;
+  const search=(document.getElementById('catalog-settings-search')?.value||'').trim().toLowerCase();
+  const rows=catalogSettingsCache.filter(c=>!search||c.item_name.toLowerCase().includes(search));
+  tbody.innerHTML=rows.map(c=>{
+    const key=escH(c.item_name);
+    const soldByPiece=!!c.sold_by_piece;
+    return '<tr>'+
+      '<td>'+escH(c.item_name)+'</td>'+
+      '<td>'+escH(c.category||'')+'</td>'+
+      '<td><input type="text" list="subsection-options" value="'+escH(c.subsection||'')+'" '+
+        'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'subsection\',this.value.trim()||null,this)"></td>'+
+      '<td style="text-align:center"><input type="checkbox" '+(soldByPiece?'checked':'')+' '+
+        'onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'sold_by_piece\',this.checked,this);'+
+        'this.closest(\'tr\').querySelector(\'.pkg-input\').disabled=!this.checked;"></td>'+
+      '<td><input type="number" class="pkg-input" step="0.01" min="0" style="max-width:100px" '+
+        'value="'+(c.piece_approx_kg??'')+'" '+(soldByPiece?'':'disabled')+' '+
+        'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'piece_approx_kg\',this.value===\'\'?null:parseFloat(this.value),this)"></td>'+
+    '</tr>';
+  }).join('');
+}
+
+async function saveCatalogSetting(itemName,field,value,inputEl){
+  const{error}=await sb.from('catalog').update({[field]:value}).eq('item_name',itemName);
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  const row=catalogSettingsCache.find(c=>c.item_name===itemName);
+  if(row)row[field]=value;
+  if(field==='subsection'){
+    const subsections=[...new Set(catalogSettingsCache.map(c=>c.subsection).filter(Boolean))].sort();
+    document.getElementById('subsection-options').innerHTML=
+      subsections.map(s=>'<option value="'+escH(s)+'">').join('');
+  }
+  if(inputEl){
+    const prevBorder=inputEl.style.border;
+    inputEl.style.border='1px solid #2d6b2d';
+    setTimeout(()=>{inputEl.style.border=prevBorder;},700);
+  }
 }
 
 // ── Communities (lat/lng + trip grouping) ────────────────────────────────
