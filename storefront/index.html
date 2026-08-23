@@ -83,7 +83,19 @@ function render() {
 
   grid.innerHTML = rows.map(c => {
     const qty = cartMap[c.item_name] || 0;
-    const step = c.unit === 'piece' || c.unit === 'pc' ? 1 : 0.5;
+    const weight = isWeightUnit(c.unit);
+    const step = weight ? 0.5 : 1;
+    const editing = editingItem === c.item_name;
+    let qtyHtml;
+    if (editing) {
+      qtyHtml = '<input type="number" class="qty-edit" id="qty-edit-input" inputmode="decimal" step="0.05" min="0" value="'+qty+'" '+
+        'onblur="commitQtyEdit('+escH(JSON.stringify(c.item_name))+',this.value)" '+
+        'onkeydown="if(event.key===\'Enter\')this.blur()">';
+    } else {
+      qtyHtml = weight
+        ? '<span class="qty-val" onclick="startQtyEdit('+escH(JSON.stringify(c.item_name))+')">'+qty+' '+escH(c.unit||'kg')+'</span>'
+        : '<span class="qty-val">'+qty+'</span>';
+    }
     return '<div class="item-card">' +
       (c.image_url ? '<img src="'+escH(c.image_url)+'" loading="lazy">' : '<div class="ph">'+iconFor(c.item_name, c.category)+'</div>') +
       '<div class="body">' +
@@ -91,21 +103,46 @@ function render() {
         '<div class="price">₹'+c.unit_price+' / '+escH(c.unit||'kg')+'</div>' +
         '<div class="add-row">' +
           (qty > 0
-            ? '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+',-'+step+','+step+')">−</button>'+
-              '<span class="qty-val">'+qty+'</span>'+
-              '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+','+step+')">+</button>'
-            : '<button class="add-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+','+step+')">+ Add</button>') +
+            ? '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+',-'+step+')">−</button>'+
+              qtyHtml+
+              '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+')">+</button>'
+            : '<button class="add-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+')">+ Add</button>') +
         '</div>' +
       '</div>' +
     '</div>';
   }).join('');
+
+  const editInput = document.getElementById('qty-edit-input');
+  if (editInput) { editInput.focus(); editInput.select(); }
 }
 
-function changeQty(item_name, delta, step) {
+// kg is by far the common weight unit here — anything else (piece, pc,
+// pcs, box, dozen, bunch, nos, ...) defaults to whole-number stepping
+// rather than trying to whitelist every non-weight unit name.
+function isWeightUnit(unit) {
+  return ['kg','g','gm','gram','grams'].includes((unit || 'kg').toLowerCase().trim());
+}
+
+function changeQty(item_name, delta) {
   const cart = getCart();
   const existing = cart.find(i => i.item_name === item_name);
   const current = existing ? existing.quantity : 0;
   const next = Math.max(0, +(current + delta).toFixed(2));
+  setCartQty(item_name, next);
+  render();
+}
+
+// Weight quantities: the +/- stepper is fine for small nudges, but typing
+// an exact amount (e.g. 1.5kg) shouldn't take several taps — tap the
+// quantity itself to edit it directly.
+let editingItem = null;
+function startQtyEdit(item_name) {
+  editingItem = item_name;
+  render();
+}
+function commitQtyEdit(item_name, value) {
+  editingItem = null;
+  const next = Math.max(0, +parseFloat(value || '0').toFixed(2)) || 0;
   setCartQty(item_name, next);
   render();
 }
