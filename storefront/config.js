@@ -37,13 +37,15 @@ function addToCart(item_name, quantity, unit) {
   saveCart(cart);
 }
 
-function setCartQty(item_name, quantity) {
+// mode: 'kg' (default) or 'piece' — piece-mode items are priced/weighed
+// by staff at packing time, never at checkout (see place-order).
+function setCartQty(item_name, quantity, mode) {
   let cart = getCart();
   if (quantity <= 0) cart = cart.filter(i => i.item_name !== item_name);
   else {
     const existing = cart.find(i => i.item_name === item_name);
-    if (existing) existing.quantity = quantity;
-    else cart.push({ item_name, quantity });
+    if (existing) { existing.quantity = quantity; if (mode) existing.mode = mode; }
+    else cart.push({ item_name, quantity, mode: mode || 'kg' });
   }
   saveCart(cart);
 }
