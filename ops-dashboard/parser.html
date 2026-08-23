@@ -154,6 +154,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-scope-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
 .dv-assigned-tag{font-size:12px;font-weight:700;color:#b3261e;margin-left:6px}
 .or-society-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#5a4200;background:#fff1c2}
+.or-time-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#3a4a5c;background:#e8f0f7}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
 .replacement-only-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
@@ -2914,7 +2915,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -2940,6 +2941,14 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
 const CUSTOMER_LOOKUP_CHUNK=200;
 const customerLookupCache={};
 
+// This is when the order row was inserted into the DB (parsed/pushed) —
+// not necessarily the exact moment the customer sent the WhatsApp message,
+// which isn't captured anywhere today.
+function formatOrderTime(iso){
+  if(!iso)return null;
+  return new Date(iso).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+}
+
 function evictCustomerLookupCache(ids){
   (Array.isArray(ids)?ids:[ids]).forEach(id=>{delete customerLookupCache[id];});
 }
@@ -2954,7 +2963,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -3080,6 +3089,7 @@ async function loadTodaysOrders(){
         whatsappRawText:   o?.whatsapp_raw_text||null,
         whatsappGroupName: o?.whatsapp_group_name||null,
         society:           o?.society||null,
+        createdAt:         o?.created_at||null,
         items:[],
       };
     }
@@ -3221,6 +3231,7 @@ function renderOrdersList(){
                 '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
                 escH(order.customer)+
                 (order.society?' <span class="or-society-tag" title="Society captured by WhatsApp parser — customer_name above may just be a fallback name">🏘 '+escH(order.society)+'</span>':'')+
+                (formatOrderTime(order.createdAt)?' <span class="or-time-tag" title="When this order was created in the system — not necessarily the exact WhatsApp message time">🕐 '+escH(formatOrderTime(order.createdAt))+'</span>':'')+
                 statusBadges+
                 (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
               '</span>'+
@@ -3238,6 +3249,7 @@ function renderOrdersList(){
             '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
             escH(order.customer)+
             (order.society?' <span class="or-society-tag" title="Society captured by WhatsApp parser — customer_name above may just be a fallback name">🏘 '+escH(order.society)+'</span>':'')+
+            (formatOrderTime(order.createdAt)?' <span class="or-time-tag" title="When this order was created in the system — not necessarily the exact WhatsApp message time">🕐 '+escH(formatOrderTime(order.createdAt))+'</span>':'')+
             statusBadges+
             (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
             paymentMechanismHtml(order)+
