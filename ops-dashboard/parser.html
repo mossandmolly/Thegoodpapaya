@@ -7599,7 +7599,7 @@ let vpEnd=CALENDAR_TODAY;
 function setVegPerfRange(days){
   vpEnd=CALENDAR_TODAY;
   vpStart=addDays(CALENDAR_TODAY,-(days-1));
-  document.querySelectorAll('.vp-range-btn').forEach(b=>b.classList.toggle('active',b.dataset.days===String(days)));
+  document.querySelectorAll('.vp-range-btn[data-days]').forEach(b=>b.classList.toggle('active',b.dataset.days===String(days)));
   loadVegPerfView();
 }
 
