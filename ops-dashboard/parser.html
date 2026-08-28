@@ -996,7 +996,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="config-section">
     <h3>🧺 Storefront Catalog Settings <span style="font-size:11px;color:#8a7a6a;font-weight:400">(saved — drives website subsections + piece pricing)</span></h3>
     <p class="note">Subsection groups an item within the storefront's Fruits/Vegetables tabs (e.g. "Daily Vegetables", "Seasonal Fruits") — pick an existing one from the list or type a new one. "Sold by piece" lets a customer add that item by piece count instead of weight on the website; when it's on, "Approx kg/piece" is shown to the customer as a rough weight guide only — it is never used for pricing, that's still decided by staff at packing time. All fields save to the database as soon as you change them.</p>
-    <input type="text" class="search-bar" id="catalog-settings-search" placeholder="🔍 Filter items…" style="margin-bottom:10px" oninput="renderCatalogSettingsTable()">
+    <div class="add-row" style="margin-bottom:10px">
+      <input type="text" class="search-bar" id="catalog-settings-search" placeholder="🔍 Filter items…" style="margin-bottom:0" oninput="renderCatalogSettingsTable()">
+      <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px;color:#8a7a6a">
+        <input type="checkbox" id="catalog-settings-gaps-only" onchange="renderCatalogSettingsTable()"> Missing category only
+      </label>
+      <span id="catalog-settings-gap-count" style="white-space:nowrap;font-size:12px;color:#b3261e;font-weight:700"></span>
+    </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
         <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx kg/piece</th>
@@ -1456,13 +1462,25 @@ function renderCatalogSettingsTable(){
   const tbody=document.getElementById('catalog-settings-tbody');
   if(!tbody)return;
   const search=(document.getElementById('catalog-settings-search')?.value||'').trim().toLowerCase();
-  const rows=catalogSettingsCache.filter(c=>!search||c.item_name.toLowerCase().includes(search));
+  const gapsOnly=document.getElementById('catalog-settings-gaps-only')?.checked;
+  const rows=catalogSettingsCache.filter(c=>
+    (!search||c.item_name.toLowerCase().includes(search)) &&
+    (!gapsOnly||!c.category)
+  );
+  const gapCount=catalogSettingsCache.filter(c=>!c.category).length;
+  const countEl=document.getElementById('catalog-settings-gap-count');
+  if(countEl)countEl.textContent=gapCount?gapCount+' item(s) missing a category':'';
   tbody.innerHTML=rows.map(c=>{
     const key=escH(c.item_name);
     const soldByPiece=!!c.sold_by_piece;
-    return '<tr>'+
+    const missing=!c.category;
+    return '<tr'+(missing?' style="background:#fdeaea"':'')+'>'+
       '<td>'+escH(c.item_name)+'</td>'+
-      '<td>'+escH(c.category||'')+'</td>'+
+      '<td><select onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'category\',this.value||null,this)">'+
+        '<option value=""'+(!c.category?' selected':'')+'>— unset —</option>'+
+        '<option value="fruit"'+(c.category==='fruit'?' selected':'')+'>Fruit</option>'+
+        '<option value="vegetable"'+(c.category==='vegetable'?' selected':'')+'>Vegetable</option>'+
+      '</select></td>'+
       '<td><input type="text" list="subsection-options" value="'+escH(c.subsection||'')+'" '+
         'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'subsection\',this.value.trim()||null,this)"></td>'+
       '<td style="text-align:center"><input type="checkbox" '+(soldByPiece?'checked':'')+' '+
@@ -1485,6 +1503,11 @@ async function saveCatalogSetting(itemName,field,value,inputEl){
     document.getElementById('subsection-options').innerHTML=
       subsections.map(s=>'<option value="'+escH(s)+'">').join('');
   }
+  // Category drives the row's missing-highlight and the gap counter — the
+  // dropdown's own visual state (which option shows selected) is also only
+  // ever right immediately after a fresh render, so re-render the whole
+  // table rather than trying to patch just this one cell in place.
+  if(field==='category')renderCatalogSettingsTable();
   if(inputEl){
     const prevBorder=inputEl.style.border;
     inputEl.style.border='1px solid #2d6b2d';
