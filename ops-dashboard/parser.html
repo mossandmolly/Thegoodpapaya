@@ -1213,6 +1213,9 @@ async function authToken(){
 // keeps the normal workflow confined to the one relevant tab.
 let isDeliveryRole=false;
 let isBuyerRole=false;
+// Veg Performance tab — visible only to this one email, not a general role.
+const VEGPERF_ALLOWED_EMAIL='somya@thegoodpapaya.com';
+let isVegPerfAllowed=false;
 
 // Neither the delivery login nor the shared packer/admin login distinguish
 // individual people — there's no per-person auth for either role, so
@@ -1255,6 +1258,13 @@ function renderRiderBadge(){
 }
 
 function applyRoleRestrictions(){
+  // Veg Performance is restricted to one email regardless of role — checked
+  // first, before any of the role-based early returns below, so it's
+  // hidden for buyer/delivery logins too, not just the default staff view.
+  if(!isVegPerfAllowed){
+    const el=document.getElementById('tab-vegperf');
+    if(el)el.style.display='none';
+  }
   if(isBuyerRole){
     ['tab-parser','tab-live','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd'].forEach(id=>{
       const el=document.getElementById(id);
@@ -1278,6 +1288,7 @@ async function initAppAfterLogin(){
   const{data:{session}}=await sb.auth.getSession();
   isDeliveryRole=session?.user?.user_metadata?.role==='delivery';
   isBuyerRole=session?.user?.user_metadata?.role==='buyer';
+  isVegPerfAllowed=(session?.user?.email||'').toLowerCase()===VEGPERF_ALLOWED_EMAIL;
   applyRoleRestrictions();
   await ensureRiderName();
   syncViewDatePickers();
@@ -1368,6 +1379,7 @@ function switchTab(name){
   // (e.g. a stray onclick) can't escape into a tab this session shouldn't see.
   if(isBuyerRole)name='purchases';
   else if(isDeliveryRole)name='delivery';
+  else if(name==='vegperf'&&!isVegPerfAllowed)name='today';
   // Matched by id, not position — Parser/Config are header-btn links now,
   // not part of the main .tabs row, so the old fixed-index array no longer
   // lines up with what's actually in there.
