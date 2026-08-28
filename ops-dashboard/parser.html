@@ -155,6 +155,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-assigned-tag{font-size:12px;font-weight:700;color:#b3261e;margin-left:6px}
 .or-society-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#5a4200;background:#fff1c2}
 .or-time-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#3a4a5c;background:#e8f0f7}
+
+.vp-range-picker{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.vp-range-btn{padding:6px 12px;border-radius:8px;border:1px solid #eee0d0;background:#fff;font-size:12px;font-weight:700;cursor:pointer;color:#8a7a6a}
+.vp-range-btn.active{background:#2d6b2d;color:#fff;border-color:#2d6b2d}
+.vp-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:14px 0}
+.vp-kpi-card{background:#fff;border:1px solid #eee0d0;border-radius:12px;padding:14px}
+.vp-kpi-card .n{font-size:22px;font-weight:800;color:#2d6b2d}
+.vp-kpi-card .l{font-size:11px;color:#8a7a6a;font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-top:2px}
+.vp-kpi-card .s{font-size:12px;color:#8a7a6a;margin-top:4px}
+.vp-trend-chart{display:flex;align-items:flex-end;gap:6px;height:120px;padding:10px 4px 0}
+.vp-trend-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+.vp-trend-bar{width:100%;max-width:36px;background:#2d6b2d;border-radius:4px 4px 0 0;min-height:2px}
+.vp-trend-pct{font-size:10px;font-weight:700;color:#2d6b2d;margin-bottom:2px}
+.vp-trend-date{font-size:9px;color:#8a7a6a;margin-top:4px;writing-mode:vertical-rl;text-orientation:mixed;white-space:nowrap}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
 .replacement-only-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
@@ -424,6 +438,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab" onclick="switchTab('packer')" id="tab-packer">📦 Packer</button>
   <button class="tab" onclick="switchTab('delivery')" id="tab-delivery">🚚 Delivery</button>
   <button class="tab" onclick="switchTab('stock')" id="tab-stock">📊 Stock</button>
+  <button class="tab" onclick="switchTab('vegperf')" id="tab-vegperf">🥦 Veg Performance</button>
   <button class="tab" onclick="switchTab('purchases')" id="tab-purchases" style="margin-left:auto">🧺 Purchases</button>
   <button class="tab" onclick="openQuickAdd()" id="tab-quickadd">⚡ Quick Add</button>
 </div>
@@ -593,6 +608,44 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </tr></thead><tbody id="stock-tbody"></tbody></table>
   </div>
   <div id="stock-buy-list"></div>
+</div>
+
+<!-- VEG PERFORMANCE — live read-only analytics over orders/order_items/
+     catalog for a date range: vegetable-only vs mixed-vs-fruit-only order
+     mix, daily trend, top vegetables, rider breakdown. No writes at all. -->
+<div class="panel" id="panel-vegperf">
+  <div class="section-label date-header-row">
+    <span>🥦 Vegetable Performance</span>
+    <div class="vp-range-picker">
+      <button type="button" class="vp-range-btn active" data-days="7" onclick="setVegPerfRange(7)">Last 7 days</button>
+      <button type="button" class="vp-range-btn" data-days="30" onclick="setVegPerfRange(30)">Last 30 days</button>
+      <input type="date" class="date-picker-compact" id="vp-start-date" onchange="setVegPerfCustomRange()">
+      <span style="color:#8a7a6a;font-size:12px">to</span>
+      <input type="date" class="date-picker-compact" id="vp-end-date" onchange="setVegPerfCustomRange()">
+    </div>
+  </div>
+  <p class="note">Vegetable-only / Fruit + Vegetable / Fruit-only is derived from each order's line items against <code>catalog.category</code> (Config tab → Storefront Catalog Settings owns that mapping — fix any item there if the split looks off). Revenue figures use each order's real <code>invoice_total</code> where invoiced; "Top vegetables" quantities/revenue are estimated from <code>catalog.unit_price</code> since Zoho doesn't expose a per-item breakdown here — treat those as directional, not exact.</p>
+  <div id="vp-kpis" class="vp-kpi-grid"></div>
+  <div class="config-section">
+    <h3>📈 Daily trend <span style="font-size:11px;color:#8a7a6a;font-weight:400">— % of that day's orders containing at least one vegetable</span></h3>
+    <div id="vp-trend" class="vp-trend-chart"></div>
+  </div>
+  <div class="config-section">
+    <h3>🥕 Top vegetables <span style="font-size:11px;color:#8a7a6a;font-weight:400">(by order count, this range)</span></h3>
+    <div class="table-scroll">
+      <table class="community-table"><thead><tr>
+        <th>Item</th><th>Orders</th><th>Total qty</th><th>Est. revenue</th>
+      </tr></thead><tbody id="vp-items-tbody"></tbody></table>
+    </div>
+  </div>
+  <div class="config-section">
+    <h3>🛵 Rider breakdown <span style="font-size:11px;color:#8a7a6a;font-weight:400">(orders containing a vegetable)</span></h3>
+    <div class="table-scroll">
+      <table class="community-table"><thead><tr>
+        <th>Rider</th><th>Veg orders</th><th>% of rider's own orders</th><th>% of all veg orders</th>
+      </tr></thead><tbody id="vp-riders-tbody"></tbody></table>
+    </div>
+  </div>
 </div>
 
 <!-- PURCHASES (buyer role) — review purchase tranches logged under Stock >
@@ -1332,6 +1385,7 @@ function switchTab(name){
   if(name==='stock')loadStockView();
   if(name==='purchases')loadPurchasesView();
   if(name==='images')loadCatalogImagesView();
+  if(name==='vegperf')loadVegPerfView();
   if(name==='delivery')startLocationPing();else stopLocationPing();
 }
 
@@ -7484,6 +7538,188 @@ let stockPackingStarted=false; // true once any item has reached 'packed' or bey
 let stockStatusFilter='all';   // 'all' | 'need' | 'trending' | 'ok'
 let stockTypeFilter='all';     // 'all' | 'veggie' | 'fruit' — VEGETABLE_ITEM_NAMES already exists (Order Overview's vegetable-order filter)
 let stockPurchaseTargetItem=null;
+
+// ── Veg Performance ──────────────────────────────────────────────────────
+// Read-only analytics over orders/order_items/catalog for a date range —
+// no writes anywhere in this section. sales_order_id encodes its date as a
+// YYYY-MM-DD prefix (orders has no separate order_date column), so a plain
+// string range on sales_order_id itself is what every other range query in
+// this app uses too.
+let vpStart=addDays(CALENDAR_TODAY,-6); // last 7 days, inclusive of today
+let vpEnd=CALENDAR_TODAY;
+
+function setVegPerfRange(days){
+  vpEnd=CALENDAR_TODAY;
+  vpStart=addDays(CALENDAR_TODAY,-(days-1));
+  document.querySelectorAll('.vp-range-btn').forEach(b=>b.classList.toggle('active',b.dataset.days===String(days)));
+  loadVegPerfView();
+}
+
+function setVegPerfCustomRange(){
+  const s=document.getElementById('vp-start-date').value,e=document.getElementById('vp-end-date').value;
+  if(!s||!e||s>e)return;
+  vpStart=s;vpEnd=e;
+  document.querySelectorAll('.vp-range-btn').forEach(b=>b.classList.remove('active'));
+  loadVegPerfView();
+}
+
+async function fetchAllCustomerLookupByRange(start,endExclusive){
+  const rows=[];
+  let from=0;
+  while(true){
+    const{data,error}=await sb.from('order_customer_lookup')
+      .select('sales_order_id,status,invoice_total,assigned_rider')
+      .gte('sales_order_id',start).lt('sales_order_id',endExclusive)
+      .order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
+    if(error)return{data:null,error};
+    rows.push(...(data||[]));
+    if(!data||data.length<ORDER_ITEMS_PAGE_SIZE)break;
+    from+=ORDER_ITEMS_PAGE_SIZE;
+  }
+  return{data:rows,error:null};
+}
+
+function vpClassify(hasFruit,hasVeg){
+  if(hasVeg&&!hasFruit)return'veg';
+  if(hasVeg&&hasFruit)return'mixed';
+  if(hasFruit&&!hasVeg)return'fruit';
+  return'other';
+}
+
+async function loadVegPerfView(){
+  document.getElementById('vp-start-date').value=vpStart;
+  document.getElementById('vp-end-date').value=vpEnd;
+  const kpiEl=document.getElementById('vp-kpis');
+  kpiEl.innerHTML='<div class="to-empty">Loading…</div>';
+  document.getElementById('vp-trend').innerHTML='';
+  document.getElementById('vp-items-tbody').innerHTML='';
+  document.getElementById('vp-riders-tbody').innerHTML='';
+
+  const endExclusive=addDays(vpEnd,1);
+  const[ordersRes,itemsRes,catalogRes]=await Promise.all([
+    fetchAllCustomerLookupByRange(vpStart,endExclusive),
+    fetchAllOrderItems(q=>q.gte('sales_order_id',vpStart).lt('sales_order_id',endExclusive)),
+    sb.from('catalog').select('item_name,category,unit_price'),
+  ]);
+  if(ordersRes.error){kpiEl.innerHTML='<div class="to-empty">'+escH(ordersRes.error.message)+'</div>';return;}
+  if(itemsRes.error){kpiEl.innerHTML='<div class="to-empty">'+escH(itemsRes.error.message)+'</div>';return;}
+  if(catalogRes.error){kpiEl.innerHTML='<div class="to-empty">'+escH(catalogRes.error.message)+'</div>';return;}
+
+  const catMap={};
+  (catalogRes.data||[]).forEach(c=>{catMap[(c.item_name||'').trim().toLowerCase()]=c;});
+
+  const itemsBySoid={};
+  (itemsRes.data||[]).forEach(i=>{
+    if(i.status==='cancelled')return;
+    (itemsBySoid[i.sales_order_id]=itemsBySoid[i.sales_order_id]||[]).push(i);
+  });
+
+  const orders=(ordersRes.data||[]).filter(o=>o.status!=='cancelled');
+  if(!orders.length){
+    kpiEl.innerHTML='<div class="to-empty">No orders in this range</div>';
+    return;
+  }
+
+  const byDay={}; // date -> {total, veg}
+  const itemStats={}; // veg item_name -> {orders:Set, qty, revenue}
+  const riderVeg={}, riderTotal={};
+  let vegOnly=0,mixed=0,fruitOnly=0,other=0;
+  let vegRevenueEst=0,totalRevenue=0;
+
+  orders.forEach(o=>{
+    const items=itemsBySoid[o.sales_order_id]||[];
+    let hasFruit=false,hasVeg=false,vegLineEst=0,totalLineEst=0;
+    items.forEach(it=>{
+      const c=catMap[(it.item_name||'').trim().toLowerCase()];
+      const qty=parseFloat(it.requested_quantity)||0;
+      const price=c?parseFloat(c.unit_price)||0:0;
+      const lineEst=qty*price;
+      totalLineEst+=lineEst;
+      if(c?.category==='vegetable'){
+        hasVeg=true;vegLineEst+=lineEst;
+        const key=it.item_name;
+        if(!itemStats[key])itemStats[key]={orders:new Set(),qty:0,revenue:0};
+        itemStats[key].orders.add(o.sales_order_id);
+        itemStats[key].qty+=qty;
+      }else if(c?.category==='fruit'){
+        hasFruit=true;
+      }
+    });
+    const bucket=vpClassify(hasFruit,hasVeg);
+    if(bucket==='veg')vegOnly++;else if(bucket==='mixed')mixed++;else if(bucket==='fruit')fruitOnly++;else other++;
+
+    const day=o.sales_order_id.slice(0,10);
+    if(!byDay[day])byDay[day]={total:0,veg:0};
+    byDay[day].total++;
+    if(bucket==='veg'||bucket==='mixed')byDay[day].veg++;
+
+    const invTotal=parseFloat(o.invoice_total)||0;
+    totalRevenue+=invTotal;
+    if(invTotal>0&&totalLineEst>0){
+      const orderVegRevenue=invTotal*(vegLineEst/totalLineEst);
+      vegRevenueEst+=orderVegRevenue;
+      items.forEach(it=>{
+        const c=catMap[(it.item_name||'').trim().toLowerCase()];
+        if(c?.category==='vegetable'){
+          const qty=parseFloat(it.requested_quantity)||0;
+          const price=parseFloat(c.unit_price)||0;
+          const lineEst=qty*price;
+          const share=totalLineEst>0?lineEst/totalLineEst:0;
+          itemStats[it.item_name].revenue+=invTotal*share;
+        }
+      });
+    }
+
+    const rider=o.assigned_rider||'Unassigned';
+    riderTotal[rider]=(riderTotal[rider]||0)+1;
+    if(bucket==='veg'||bucket==='mixed')riderVeg[rider]=(riderVeg[rider]||0)+1;
+  });
+
+  const total=orders.length;
+  const vegInclusive=vegOnly+mixed;
+  const pct=(n)=>total?Math.round(1000*n/total)/10:0;
+
+  kpiEl.innerHTML=
+    '<div class="vp-kpi-card"><div class="n">'+total+'</div><div class="l">Total orders</div></div>'+
+    '<div class="vp-kpi-card"><div class="n">'+vegOnly+'</div><div class="l">Vegetable only</div><div class="s">'+pct(vegOnly)+'% of orders</div></div>'+
+    '<div class="vp-kpi-card"><div class="n">'+mixed+'</div><div class="l">Fruit + Vegetable</div><div class="s">'+pct(mixed)+'% of orders</div></div>'+
+    '<div class="vp-kpi-card"><div class="n">'+fruitOnly+'</div><div class="l">Fruit only</div><div class="s">'+pct(fruitOnly)+'% of orders</div></div>'+
+    (other?'<div class="vp-kpi-card"><div class="n">'+other+'</div><div class="l">Other / unmatched</div><div class="s">item name not in catalog</div></div>':'')+
+    '<div class="vp-kpi-card"><div class="n">₹'+Math.round(vegRevenueEst).toLocaleString('en-IN')+'</div><div class="l">Est. vegetable revenue</div><div class="s">'+(totalRevenue?Math.round(1000*vegRevenueEst/totalRevenue)/10:0)+'% of ₹'+Math.round(totalRevenue).toLocaleString('en-IN')+'</div></div>';
+
+  // Trend — one bar per day, oldest to newest, % of that day's orders
+  // containing at least one vegetable.
+  const days=Object.keys(byDay).sort();
+  document.getElementById('vp-trend').innerHTML=days.map(d=>{
+    const{total:dt,veg:dv}=byDay[d];
+    const p=dt?Math.round(100*dv/dt):0;
+    const label=d.slice(5).replace('-','/'); // MM/DD
+    return '<div class="vp-trend-col" title="'+d+': '+dv+'/'+dt+' orders had a vegetable">'+
+      '<div class="vp-trend-pct">'+p+'%</div>'+
+      '<div class="vp-trend-bar" style="height:'+Math.max(2,p)+'%"></div>'+
+      '<div class="vp-trend-date">'+label+'</div>'+
+    '</div>';
+  }).join('');
+
+  // Top vegetables
+  const itemRows=Object.entries(itemStats).sort((a,b)=>b[1].orders.size-a[1].orders.size).slice(0,15);
+  document.getElementById('vp-items-tbody').innerHTML=itemRows.length
+    ? itemRows.map(([name,s])=>
+        '<tr><td>'+escH(name)+'</td><td>'+s.orders.size+'</td><td>'+(Math.round(s.qty*100)/100)+'</td><td>₹'+Math.round(s.revenue).toLocaleString('en-IN')+'</td></tr>'
+      ).join('')
+    : '<tr><td colspan="4" class="to-empty">No vegetable items in this range</td></tr>';
+
+  // Rider breakdown
+  const riderRows=Object.entries(riderVeg).sort((a,b)=>b[1]-a[1]);
+  document.getElementById('vp-riders-tbody').innerHTML=riderRows.length
+    ? riderRows.map(([rider,vc])=>{
+        const rt=riderTotal[rider]||0;
+        const ownPct=rt?Math.round(1000*vc/rt)/10:0;
+        const allPct=vegInclusive?Math.round(1000*vc/vegInclusive)/10:0;
+        return '<tr><td>'+escH(rider)+'</td><td>'+vc+'</td><td>'+ownPct+'%</td><td>'+allPct+'%</td></tr>';
+      }).join('')
+    : '<tr><td colspan="4" class="to-empty">No vegetable orders in this range</td></tr>';
+}
 
 const STOCK_COLSPAN=9;
 
