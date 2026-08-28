@@ -82,7 +82,7 @@ let catalogItems = [];
 async function loadCatalog() {
   const { data, error } = await sb
     .from('catalog')
-    .select('id, item_name, unit_price, unit, active, zoho_item_id, synced_at')
+    .select('id, item_name, unit_price, unit, active, category, zoho_item_id, synced_at')
     .order('item_name');
 
   const list = document.getElementById('catalog-list');
@@ -101,7 +101,7 @@ async function loadCatalog() {
   list.innerHTML = '';
   const tbl = document.createElement('table');
   tbl.className = 'diff-table';
-  tbl.innerHTML = '<thead><tr><th>Item name</th><th>Price</th><th>Unit</th><th>Zoho linked</th><th>Last synced</th><th></th></tr></thead>';
+  tbl.innerHTML = '<thead><tr><th>Item name</th><th>Category</th><th>Price</th><th>Unit</th><th>Zoho linked</th><th>Last synced</th><th></th></tr></thead>';
   const tbody = document.createElement('tbody');
   data.forEach(item => {
     const tr = document.createElement('tr');
@@ -112,8 +112,13 @@ async function loadCatalog() {
     const zohoCell = item.zoho_item_id
       ? '<span style="color:var(--green);font-size:.75rem">✓ ' + escapeHtml(item.zoho_item_id) + '</span>'
       : '<span style="color:var(--text-muted);font-size:.75rem">—</span>';
+    const isVeg = item.category === 'vegetable';
     tr.innerHTML =
       '<td style="font-weight:500">' + escapeHtml(item.item_name) + '</td>' +
+      '<td><button class="btn btn-sm ' + (isVeg ? 'btn-success' : 'btn-secondary') + '" ' +
+        'title="Click to switch to ' + (isVeg ? 'fruit' : 'vegetable') + '" ' +
+        'onclick="toggleCatalogCategory(\'' + item.id + '\', \'' + item.category + '\')">' +
+        (isVeg ? '🥦 Vegetable' : '🍊 Fruit') + '</button></td>' +
       '<td>₹' + parseFloat(item.unit_price).toFixed(0) + '</td>' +
       '<td style="color:var(--text-muted)">' + escapeHtml(item.unit) + '</td>' +
       '<td>' + zohoCell + '</td>' +
@@ -174,6 +179,14 @@ async function syncCustomers() {
   } finally {
     if (btn) { btn.textContent = '↻ Sync customers'; btn.disabled = false; }
   }
+}
+
+async function toggleCatalogCategory(id, currentCategory) {
+  const next = currentCategory === 'vegetable' ? 'fruit' : 'vegetable';
+  const { error } = await sb.from('catalog').update({ category: next }).eq('id', id);
+  if (error) { showToast('Update failed', 'error'); return; }
+  showToast('Marked as ' + next);
+  await loadCatalog();
 }
 
 async function deleteCatalogItem(id, name) {
