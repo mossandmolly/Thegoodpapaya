@@ -639,13 +639,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div id="vp-trend" class="vp-trend-chart"></div>
   </div>
   <div class="config-section">
-    <h3>🥕 Top vegetables <span style="font-size:11px;color:#8a7a6a;font-weight:400">(approx value, this range — click a column to sort)</span></h3>
+    <h3>🥕 Top vegetables <span id="vp-items-mode-label" style="font-size:11px;color:#8a7a6a;font-weight:400">(approx value, this range — click a column to sort)</span></h3>
+    <div class="add-row" style="margin-bottom:10px">
+      <button type="button" class="header-btn" id="vp-zoho-pull-btn" onclick="pullRealZohoVegSales()">🔄 Get real Zoho sales for this range</button>
+      <span id="vp-zoho-pull-status" class="note" style="margin:0"></span>
+    </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
         <th class="vp-sortable" onclick="sortVpItems('name')">Item<span id="vp-sort-name" class="vp-sort-ind"></span></th>
         <th class="vp-sortable" onclick="sortVpItems('orders')">Orders<span id="vp-sort-orders" class="vp-sort-ind"></span></th>
         <th class="vp-sortable" onclick="sortVpItems('qty')">Total qty<span id="vp-sort-qty" class="vp-sort-ind"></span></th>
-        <th class="vp-sortable" onclick="sortVpItems('revenue')">Approx value<span id="vp-sort-revenue" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpItems('revenue')">Value<span id="vp-sort-revenue" class="vp-sort-ind"></span></th>
       </tr></thead><tbody id="vp-items-tbody"></tbody></table>
     </div>
   </div>
@@ -7803,6 +7807,67 @@ function renderVpItemsTable(){
     : '<tr><td colspan="4" class="to-empty">No vegetable items in this range</td></tr>';
 }
 
+// On-demand real Zoho pull for Top Vegetables — deliberately NOT wired into
+// the automatic tab-load/range-change path (that stays the fast, free
+// order_items approximation above). Firing ~1 Zoho call per invoice in
+// range on every load would risk exactly the runaway-call pattern that
+// exhausted the Inventory quota this session, just against Books instead —
+// this only ever runs when someone explicitly clicks the button.
+let vpZohoOffset=0, vpZohoRangeKey='', vpZohoAcc={};
+
+function resetVpZohoPullState(){
+  vpZohoOffset=0;vpZohoRangeKey='';vpZohoAcc={};
+  const btn=document.getElementById('vp-zoho-pull-btn'),status=document.getElementById('vp-zoho-pull-status'),label=document.getElementById('vp-items-mode-label');
+  if(btn)btn.textContent='🔄 Get real Zoho sales for this range';
+  if(status)status.textContent='';
+  if(label)label.textContent='(approx value, this range — click a column to sort)';
+}
+
+async function pullRealZohoVegSales(){
+  const btn=document.getElementById('vp-zoho-pull-btn');
+  const status=document.getElementById('vp-zoho-pull-status');
+  const label=document.getElementById('vp-items-mode-label');
+  const rangeKey=vpStart+'..'+vpEnd;
+  if(rangeKey!==vpZohoRangeKey){vpZohoRangeKey=rangeKey;vpZohoOffset=0;vpZohoAcc={};}
+
+  btn.disabled=true;
+  btn.textContent=vpZohoOffset>0?'Continuing…':'Pulling from Zoho…';
+  status.textContent='';
+  try{
+    const{data:{session}}=await sb.auth.getSession();
+    const res=await fetch(SUPABASE_URL+'/functions/v1/zoho-vegetable-sales-report',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},
+      body:JSON.stringify({start_date:vpStart,end_date:vpEnd,offset:vpZohoOffset,limit:150}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Zoho pull failed');
+
+    (data.vegetables||[]).forEach(v=>{
+      if(!vpZohoAcc[v.item_name])vpZohoAcc[v.item_name]={orders:0,qty:0,revenue:0};
+      vpZohoAcc[v.item_name].orders+=v.invoices;
+      vpZohoAcc[v.item_name].qty+=v.qty;
+      vpZohoAcc[v.item_name].revenue+=v.value;
+    });
+    vpItemRows=Object.entries(vpZohoAcc).map(([name,s])=>({name,orders:s.orders,qty:Math.round(s.qty*100)/100,revenue:Math.round(s.revenue)}));
+    renderVpItemsTable();
+
+    const processedSoFar=vpZohoOffset+data.invoices_processed_this_batch;
+    vpZohoOffset=data.next_offset;
+    const incomplete=vpZohoOffset!=null;
+    label.innerHTML='(<b style="color:#2d6b2d">real Zoho data</b> as of '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+' — '+processedSoFar+'/'+data.invoices_in_range+' invoices'+(incomplete?', partial':'')+')';
+    status.textContent=incomplete
+      ?'⚠️ '+processedSoFar+'/'+data.invoices_in_range+' invoices so far ('+data.zoho_calls_made+' Zoho calls this click) — click the button again to continue.'
+      :'✅ Complete — '+processedSoFar+' invoices, '+data.zoho_calls_made+' Zoho calls this click. Changing the date range or reopening this tab reverts to the fast approx view.';
+    btn.textContent=incomplete?'🔄 Continue pulling (more invoices remain)':'🔄 Get real Zoho sales for this range';
+  }catch(e){
+    status.textContent='❌ '+e.message;
+    btn.textContent='🔄 Get real Zoho sales for this range';
+  }finally{
+    btn.disabled=false;
+  }
+}
+
 // Fixed 7-day/30-day "orders with any vegetable" tiles — always these two
 // trailing windows ending today, independent of the range picker above
 // (same reasoning as the customer-trend section's own fixed periods: a
@@ -8013,6 +8078,10 @@ async function loadVegPerfView(){
 
   // Top vegetables — full list kept in vpItemRows so column-header clicks
   // can re-sort without re-fetching; renderVpItemsTable does the actual draw.
+  // Any in-progress real-Zoho-pull state is cleared here too, so a range
+  // change or tab reopen always starts back at the fast approx view rather
+  // than silently resuming a stale pull for a different date range.
+  resetVpZohoPullState();
   vpItemRows=Object.entries(itemStats).map(([name,s])=>({name,orders:s.orders.size,qty:s.qty,revenue:s.revenue}));
   renderVpItemsTable();
 
