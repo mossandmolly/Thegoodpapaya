@@ -627,7 +627,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <input type="date" class="date-picker-compact" id="vp-end-date" onchange="setVegPerfCustomRange()">
     </div>
   </div>
-  <p class="note">Vegetable-only / Fruit + Vegetable / Fruit-only / Other is derived from each ORDER's <b>billable</b> line items against <code>catalog.category</code> (Config tab → Storefront Catalog Settings owns that mapping — fix any item there if the split looks off) — covers every non-cancelled, non-replacement-only order placed in the range, invoiced or not, but a free/replacement item within an otherwise-real order never counts toward its fruit/vegetable classification, and an order where every item is free/replacement is excluded entirely rather than landing in "Other". "Top vegetables" and vegetable revenue below are different: real Zoho sales data from <code>invoice_line_items</code> (populated by the sync-invoices cron reading actual invoice line items — item price × final quantity, exactly as billed), so they only cover orders that have actually been invoiced within the range, matched by invoice date.</p>
+  <p class="note">Everything on this tab is derived straight from <code>order_items</code> + <code>catalog</code> — no dependency on Zoho invoicing or the <code>invoice_line_items</code> sync, so it stays live even if that sync is stalled. Vegetable-only / Fruit + Vegetable / Fruit-only / Other is each order's <b>billable</b> line items against <code>catalog.category</code> (Config tab → Storefront Catalog Settings owns that mapping) — covers every non-cancelled, non-replacement-only order placed in the range. A free/replacement/sample item never counts toward classification or value, and an order where every item is free/replacement/sample is excluded entirely rather than landing in "Other". "Top vegetables" and vegetable value are <b>approximate</b>: quantity ordered × today's current <code>catalog.unit_price</code> — not what Zoho actually billed (which can differ by the day's real price or final packed weight), so treat these as directional, not exact.</p>
   <div id="vp-kpis" class="vp-kpi-grid"></div>
   <div id="vp-unmatched" class="note" style="display:none"></div>
   <div class="config-section">
@@ -635,13 +635,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div id="vp-trend" class="vp-trend-chart"></div>
   </div>
   <div class="config-section">
-    <h3>🥕 Top vegetables <span style="font-size:11px;color:#8a7a6a;font-weight:400">(real invoiced sales, this range — click a column to sort)</span></h3>
+    <h3>🥕 Top vegetables <span style="font-size:11px;color:#8a7a6a;font-weight:400">(approx value, this range — click a column to sort)</span></h3>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
         <th class="vp-sortable" onclick="sortVpItems('name')">Item<span id="vp-sort-name" class="vp-sort-ind"></span></th>
         <th class="vp-sortable" onclick="sortVpItems('orders')">Orders<span id="vp-sort-orders" class="vp-sort-ind"></span></th>
         <th class="vp-sortable" onclick="sortVpItems('qty')">Total qty<span id="vp-sort-qty" class="vp-sort-ind"></span></th>
-        <th class="vp-sortable" onclick="sortVpItems('revenue')">Revenue<span id="vp-sort-revenue" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpItems('revenue')">Approx value<span id="vp-sort-revenue" class="vp-sort-ind"></span></th>
       </tr></thead><tbody id="vp-items-tbody"></tbody></table>
     </div>
   </div>
@@ -7631,27 +7631,6 @@ async function fetchAllCustomerLookupByRange(start,endExclusive){
   return{data:rows,error:null};
 }
 
-// Real per-line Zoho sales data, populated by the sync-invoices cron —
-// item_price is Zoho's own rate for that line, final_quantity is what was
-// actually billed. invoice_date is a plain date column (unlike orders,
-// which only has the date baked into sales_order_id), so this ranges on
-// that directly. Only covers orders that have actually been invoiced.
-async function fetchAllInvoiceLineItemsByDateRange(start,end){
-  const rows=[];
-  let from=0;
-  while(true){
-    const{data,error}=await sb.from('invoice_line_items')
-      .select('item_name,final_quantity,requested_quantity,item_price,invoice_total,invoice_date,zoho_invoice_id,sales_order_id')
-      .gte('invoice_date',start).lte('invoice_date',end)
-      .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
-    if(error)return{data:null,error};
-    rows.push(...(data||[]));
-    if(!data||data.length<ORDER_ITEMS_PAGE_SIZE)break;
-    from+=ORDER_ITEMS_PAGE_SIZE;
-  }
-  return{data:rows,error:null};
-}
-
 // ── Vegetable customer trend — period-over-period, own fetch/state ──────
 let vpCustPeriodDays=30;
 
@@ -7811,7 +7790,7 @@ function renderVpItemsTable(){
     ? sorted.map(s=>
         '<tr><td>'+escH(s.name)+'</td><td>'+s.orders+'</td><td>'+(Math.round(s.qty*100)/100)+'</td><td>₹'+Math.round(s.revenue).toLocaleString('en-IN')+'</td></tr>'
       ).join('')
-    : '<tr><td colspan="4" class="to-empty">No invoiced vegetable sales in this range</td></tr>';
+    : '<tr><td colspan="4" class="to-empty">No vegetable items in this range</td></tr>';
 }
 
 async function loadVegPerfView(){
@@ -7825,16 +7804,14 @@ async function loadVegPerfView(){
   document.getElementById('vp-unmatched').style.display='none';
 
   const endExclusive=addDays(vpEnd,1);
-  const[ordersRes,itemsRes,catalogRes,invLineRes]=await Promise.all([
+  const[ordersRes,itemsRes,catalogRes]=await Promise.all([
     fetchAllCustomerLookupByRange(vpStart,endExclusive),
     fetchAllOrderItems(q=>q.gte('sales_order_id',vpStart).lt('sales_order_id',endExclusive)),
     sb.from('catalog').select('item_name,category,unit_price'),
-    fetchAllInvoiceLineItemsByDateRange(vpStart,vpEnd),
   ]);
   if(ordersRes.error){kpiEl.innerHTML='<div class="to-empty">'+escH(ordersRes.error.message)+'</div>';return;}
   if(itemsRes.error){kpiEl.innerHTML='<div class="to-empty">'+escH(itemsRes.error.message)+'</div>';return;}
   if(catalogRes.error){kpiEl.innerHTML='<div class="to-empty">'+escH(catalogRes.error.message)+'</div>';return;}
-  if(invLineRes.error){kpiEl.innerHTML='<div class="to-empty">'+escH(invLineRes.error.message)+'</div>';return;}
 
   const catMap={};
   (catalogRes.data||[]).forEach(c=>{catMap[(c.item_name||'').trim().toLowerCase()]=c;});
@@ -7860,6 +7837,15 @@ async function loadVegPerfView(){
   // count (n tracked separately so the average isn't diluted by
   // not-yet-invoiced orders sitting at 0/null).
   const aov={veg:{sum:0,n:0},mixed:{sum:0,n:0},fruit:{sum:0,n:0}};
+  // Approximate value, not real Zoho billing — order_items × today's
+  // catalog.unit_price, so this dashboard has no dependency on
+  // invoice_line_items (which sync-invoices populates from Zoho, and can
+  // lag/stall independently of order-taking). Requested_quantity is what
+  // was ordered, not necessarily what was actually packed/billed, and
+  // catalog price can drift from whatever Zoho actually charged on the
+  // day — both are why this is labeled "approx" everywhere it's shown.
+  const itemStats={};
+  let vegRevenueEst=0,allRevenueEst=0;
 
   orders.forEach(o=>{
     const allItems=itemsBySoid[o.sales_order_id]||[];
@@ -7870,15 +7856,29 @@ async function loadVegPerfView(){
     // in "Other" — they're not a real sale at all, not just an
     // unclassifiable one.
     if(allItems.length&&isReplacementOnlyOrder({items:allItems}))return;
-    // Billable items only — a free replacement mango inside an otherwise
-    // real, paid order shouldn't make that order count as "has fruit".
+    // Billable items only — a free replacement/sample mango inside an
+    // otherwise real, paid order shouldn't make that order count as "has
+    // fruit", or contribute anything to the approx value below.
     const items=allItems.filter(it=>!isFreeItem(it));
     let hasFruit=false,hasVeg=false;
     items.forEach(it=>{
       const c=catMap[(it.item_name||'').trim().toLowerCase()];
-      if(!c)unmatchedNames.add(it.item_name);
-      if(c?.category==='vegetable')hasVeg=true;
-      else if(c?.category==='fruit')hasFruit=true;
+      if(!c){unmatchedNames.add(it.item_name);return;}
+      if(c.category==='vegetable')hasVeg=true;
+      else if(c.category==='fruit')hasFruit=true;
+      else return;
+      const qty=parseFloat(it.requested_quantity)||0;
+      const price=parseFloat(c.unit_price)||0;
+      const lineEst=qty*price;
+      allRevenueEst+=lineEst;
+      if(c.category==='vegetable'){
+        vegRevenueEst+=lineEst;
+        const key=it.item_name;
+        if(!itemStats[key])itemStats[key]={orders:new Set(),qty:0,revenue:0};
+        itemStats[key].orders.add(o.sales_order_id);
+        itemStats[key].qty+=qty;
+        itemStats[key].revenue+=lineEst;
+      }
     });
     const bucket=vpClassify(hasFruit,hasVeg);
     countedOrders++;
@@ -7906,29 +7906,6 @@ async function loadVegPerfView(){
     unmatchedEl.style.display='none';
   }
 
-  // Real Zoho sales data — item_price × final_quantity per line, exactly
-  // as billed. zoho_invoice_id dedupes invoice_total (repeated on every
-  // line of the same invoice) so the "% of invoiced revenue" denominator
-  // isn't inflated by multi-item invoices.
-  const itemStats={};
-  const invoiceTotals=new Map();
-  let vegRevenue=0;
-  (invLineRes.data||[]).forEach(li=>{
-    const c=catMap[(li.item_name||'').trim().toLowerCase()];
-    if(!invoiceTotals.has(li.zoho_invoice_id))invoiceTotals.set(li.zoho_invoice_id,parseFloat(li.invoice_total)||0);
-    if(c?.category!=='vegetable')return;
-    const qty=parseFloat(li.final_quantity??li.requested_quantity)||0;
-    const price=parseFloat(li.item_price)||0;
-    const revenue=qty*price;
-    vegRevenue+=revenue;
-    const key=li.item_name;
-    if(!itemStats[key])itemStats[key]={orders:new Set(),qty:0,revenue:0};
-    itemStats[key].orders.add(li.sales_order_id||li.zoho_invoice_id);
-    itemStats[key].qty+=qty;
-    itemStats[key].revenue+=revenue;
-  });
-  const totalInvoicedRevenue=[...invoiceTotals.values()].reduce((a,b)=>a+b,0);
-
   const total=countedOrders;
   const vegInclusive=vegOnly+mixed;
   const pct=(n)=>total?Math.round(1000*n/total)/10:0;
@@ -7940,7 +7917,7 @@ async function loadVegPerfView(){
     '<div class="vp-kpi-card"><div class="n">'+mixed+'</div><div class="l">Fruit + Vegetable</div><div class="s">'+pct(mixed)+'% of orders</div></div>'+
     '<div class="vp-kpi-card"><div class="n">'+fruitOnly+'</div><div class="l">Fruit only</div><div class="s">'+pct(fruitOnly)+'% of orders</div></div>'+
     (other?'<div class="vp-kpi-card"><div class="n">'+other+'</div><div class="l">Other / unmatched</div><div class="s">no catalog match — see below</div></div>':'')+
-    '<div class="vp-kpi-card"><div class="n">₹'+Math.round(vegRevenue).toLocaleString('en-IN')+'</div><div class="l">Vegetable revenue</div><div class="s">'+(totalInvoicedRevenue?Math.round(1000*vegRevenue/totalInvoicedRevenue)/10:0)+'% of ₹'+Math.round(totalInvoicedRevenue).toLocaleString('en-IN')+' invoiced</div></div>'+
+    '<div class="vp-kpi-card"><div class="n">₹'+Math.round(vegRevenueEst).toLocaleString('en-IN')+'</div><div class="l">Vegetable value (approx)</div><div class="s">'+(allRevenueEst?Math.round(1000*vegRevenueEst/allRevenueEst)/10:0)+'% of ₹'+Math.round(allRevenueEst).toLocaleString('en-IN')+' approx total — today\'s catalog price × qty ordered</div></div>'+
     vpAovCardHtml('Vegetable only AOV',aov.veg)+
     vpAovCardHtml('Fruit + Vegetable AOV',aov.mixed)+
     vpAovCardHtml('Fruit only AOV',aov.fruit);
