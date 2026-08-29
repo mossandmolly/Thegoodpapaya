@@ -627,7 +627,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <input type="date" class="date-picker-compact" id="vp-end-date" onchange="setVegPerfCustomRange()">
     </div>
   </div>
-  <p class="note">Vegetable-only / Fruit + Vegetable / Fruit-only / Other is derived from each ORDER's line items against <code>catalog.category</code> (Config tab → Storefront Catalog Settings owns that mapping — fix any item there if the split looks off) — this covers every order placed in the range, invoiced or not. "Top vegetables" and vegetable revenue below are different: real Zoho sales data from <code>invoice_line_items</code> (populated by the sync-invoices cron reading actual invoice line items — item price × final quantity, exactly as billed), so they only cover orders that have actually been invoiced within the range, matched by invoice date.</p>
+  <p class="note">Vegetable-only / Fruit + Vegetable / Fruit-only / Other is derived from each ORDER's <b>billable</b> line items against <code>catalog.category</code> (Config tab → Storefront Catalog Settings owns that mapping — fix any item there if the split looks off) — covers every non-cancelled, non-replacement-only order placed in the range, invoiced or not, but a free/replacement item within an otherwise-real order never counts toward its fruit/vegetable classification, and an order where every item is free/replacement is excluded entirely rather than landing in "Other". "Top vegetables" and vegetable revenue below are different: real Zoho sales data from <code>invoice_line_items</code> (populated by the sync-invoices cron reading actual invoice line items — item price × final quantity, exactly as billed), so they only cover orders that have actually been invoiced within the range, matched by invoice date.</p>
   <div id="vp-kpis" class="vp-kpi-grid"></div>
   <div id="vp-unmatched" class="note" style="display:none"></div>
   <div class="config-section">
@@ -3002,7 +3002,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,pending_review');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,pending_review,no_bill');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
@@ -7720,7 +7720,10 @@ async function loadVegCustomerTrend(){
 
     if(period==='current'){
       const items=itemsBySoid[o.sales_order_id]||[];
-      const hasVeg=items.some(it=>catMap[(it.item_name||'').trim().toLowerCase()]?.category==='vegetable');
+      // Billable items only — a free replacement vegetable shouldn't put a
+      // customer in the "bought a vegetable" cohort, same rule the main
+      // classification above applies.
+      const hasVeg=items.some(it=>!isFreeItem(it)&&catMap[(it.item_name||'').trim().toLowerCase()]?.category==='vegetable');
       if(hasVeg)perCust[key].vegInCurrent=true;
     }
   });
@@ -7848,13 +7851,24 @@ async function loadVegPerfView(){
   const riderVeg={}, riderTotal={};
   const unmatchedNames=new Set();
   let vegOnly=0,mixed=0,fruitOnly=0,other=0;
+  let countedOrders=0; // orders.length minus replacement-only ones excluded below
   // AOV per bucket — only orders that actually have a real invoice_total
   // count (n tracked separately so the average isn't diluted by
   // not-yet-invoiced orders sitting at 0/null).
   const aov={veg:{sum:0,n:0},mixed:{sum:0,n:0},fruit:{sum:0,n:0}};
 
   orders.forEach(o=>{
-    const items=itemsBySoid[o.sales_order_id]||[];
+    const allItems=itemsBySoid[o.sales_order_id]||[];
+    // Replacement-only orders (every item free/no_bill — reuses the same
+    // isFreeItem/isReplacementOnlyOrder helpers Order Overview's own
+    // "real order volume" count already excludes) never billed anything,
+    // so they're excluded from this dashboard entirely rather than landing
+    // in "Other" — they're not a real sale at all, not just an
+    // unclassifiable one.
+    if(allItems.length&&isReplacementOnlyOrder({items:allItems}))return;
+    // Billable items only — a free replacement mango inside an otherwise
+    // real, paid order shouldn't make that order count as "has fruit".
+    const items=allItems.filter(it=>!isFreeItem(it));
     let hasFruit=false,hasVeg=false;
     items.forEach(it=>{
       const c=catMap[(it.item_name||'').trim().toLowerCase()];
@@ -7863,6 +7877,7 @@ async function loadVegPerfView(){
       else if(c?.category==='fruit')hasFruit=true;
     });
     const bucket=vpClassify(hasFruit,hasVeg);
+    countedOrders++;
     if(bucket==='veg')vegOnly++;else if(bucket==='mixed')mixed++;else if(bucket==='fruit')fruitOnly++;else other++;
     if(aov[bucket]){
       const invTotal=parseFloat(o.invoice_total)||0;
@@ -7910,7 +7925,7 @@ async function loadVegPerfView(){
   });
   const totalInvoicedRevenue=[...invoiceTotals.values()].reduce((a,b)=>a+b,0);
 
-  const total=orders.length;
+  const total=countedOrders;
   const vegInclusive=vegOnly+mixed;
   const pct=(n)=>total?Math.round(1000*n/total)/10:0;
 
