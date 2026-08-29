@@ -48,6 +48,11 @@ const LOG_FILE = './parsed-orders.log.jsonl'
 const PAIRING_PHONE_NUMBER = (process.env.PAIRING_PHONE_NUMBER || '').replace(/\D/g, '')
 // ====================================
 
+function wipeAuthDir() {
+  try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }) }
+  catch (e) { console.error('[auth] failed to wipe auth dir:', e.message) }
+}
+
 const logger = P({ level: 'silent' })
 
 // Log crashes instead of letting them die silently — a crash here means
@@ -673,9 +678,31 @@ async function start() {
       console.log(`connection closed — code=${code} reason="${reason}"`)
       const loggedOut = code === DisconnectReason.loggedOut
       if (loggedOut) {
-        console.log('logged out — delete ./auth and re-scan to reconnect')
-        updateListenerStatus('logged_out', `code=${code} reason="${reason}" — needs re-scan/re-pair`)
+        // Previously just logged this and gave up, requiring a manual
+        // redeploy to try again. Self-heal instead: wipe the (broken) auth
+        // state and reconnect on a short delay — that hits the
+        // !creds.registered guard below and issues a genuinely fresh
+        // pairing code/QR, same as a manual redeploy would have, without
+        // needing a human to trigger it.
+        console.log('logged out — wiping ./auth and retrying with a fresh code')
+        wipeAuthDir()
+        updateListenerStatus('logged_out', `code=${code} reason="${reason}" — retrying with a fresh pairing code/QR`)
+        setTimeout(start, 3000)
         return
+      }
+      // A close while pairing was still in progress (code requested but
+      // never confirmed on the phone) leaves a half-written creds.json
+      // behind — reconnecting with THAT instead of a clean slate is what
+      // was causing the fast follow-up 401 "logged out" loop (WhatsApp
+      // flatly rejects a resume attempt for a device that was never
+      // actually confirmed). Wipe it before reconnecting so this retry
+      // requests a proper new pairing code with a full window, instead of
+      // racing to fail again in under a second. Never wipes a REAL
+      // established session (registered === true) — only ever fires
+      // mid-pairing, before the phone has confirmed anything.
+      if (!sock.authState.creds.registered) {
+        console.log('closed mid-pairing (code never confirmed) — wiping partial ./auth before retrying')
+        wipeAuthDir()
       }
       // A "conflict" (connectionReplaced) means WhatsApp's server still
       // thinks a previous connection using this session is active — almost
