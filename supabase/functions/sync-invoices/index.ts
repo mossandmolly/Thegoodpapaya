@@ -534,15 +534,54 @@ async function reconcileTodayDeletions() {
 }
 
 // ── 5-minute sync job ─────────────────────────────────────────
+// fetchModifiedInvoices always returns EVERY invoice dated today (Zoho
+// Inventory's list endpoint has no real "changed since X" filter — see its
+// own comment), so without this check every 3-minute cycle was calling
+// fetchInvoiceDetail + fetchContactPhones (2 Zoho API calls) for every
+// single one of today's invoices, all over again, all day — the exact
+// thing that was exhausting the Inventory API's daily rate limit within a
+// couple hours. Zoho's list response already includes balance/status per
+// invoice at no extra cost; skip the expensive per-invoice detail+contact
+// calls (and the resulting invoice_line_items rewrite) entirely for any
+// invoice whose balance and status already match what's on file — nothing
+// about it could have changed in a way this sync cares about. Always
+// processes an invoice Supabase hasn't seen yet at all (first time either
+// today or ever), so nothing new is ever silently skipped.
+async function fetchAlreadySyncedState(today: string): Promise<Map<string, { balance: number; status: string }>> {
+  const rows = await sbSelectMany('invoice_line_items',
+    `invoice_date=eq.${today}&select=zoho_invoice_id,balance,payment_status`
+  );
+  const map = new Map<string, { balance: number; status: string }>();
+  for (const r of rows) if (!map.has(r.zoho_invoice_id)) map.set(r.zoho_invoice_id, { balance: parseFloat(r.balance) || 0, status: r.payment_status });
+  return map;
+}
+
+function invoiceUnchanged(summary: any, existing: { balance: number; status: string } | undefined): boolean {
+  if (!existing) return false; // never synced (today) — always process
+  // Missing fields on the list summary (shouldn't happen, but Zoho's exact
+  // list-response shape isn't something this sandbox can verify live) —
+  // fail open to "process it" rather than risk silently skipping a real
+  // change we can't actually see.
+  if (summary.balance === undefined || summary.status === undefined) return false;
+  const summaryBalance = Math.round((parseFloat(summary.balance) || 0) * 100);
+  const existingBalance = Math.round(existing.balance * 100);
+  const summaryStatus =
+    summary.status === 'paid' ? 'paid' :
+    summary.status === 'partially_paid' ? 'partially_paid' : 'pending';
+  return summaryBalance === existingBalance && summaryStatus === existing.status;
+}
+
 async function syncInvoices() {
   const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
   const since = new Date().toISOString().substring(0, 10); // YYYY-MM-DD (only format Zoho Inventory accepts)
 
   console.log(`[sync] Fetching invoices modified since ${since}`);
   const summaries = await fetchModifiedInvoices(since);
-  console.log(`[sync] ${summaries.length} invoice(s) to process`);
+  const alreadySynced = await fetchAlreadySyncedState(since);
+  const toProcess = summaries.filter(s => !invoiceUnchanged(s, alreadySynced.get(s.invoice_id)));
+  console.log(`[sync] ${summaries.length} invoice(s) today, ${toProcess.length} actually changed since last sync`);
 
-  for (const summary of summaries) {
+  for (const summary of toProcess) {
     try { await processInvoice(summary); }
     catch (e: any) { console.error(`[sync] Error on ${summary.invoice_id}:`, e.message); }
   }
