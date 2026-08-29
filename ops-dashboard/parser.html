@@ -7916,6 +7916,7 @@ async function loadVegPerfView(){
 
   kpiEl.innerHTML=
     '<div class="vp-kpi-card"><div class="n">'+total+'</div><div class="l">Total orders</div></div>'+
+    '<div class="vp-kpi-card"><div class="n">'+vegInclusive+'</div><div class="l">Orders with any vegetable</div><div class="s">'+pct(vegInclusive)+'% of orders — veg-only + mixed</div></div>'+
     '<div class="vp-kpi-card"><div class="n">'+vegOnly+'</div><div class="l">Vegetable only</div><div class="s">'+pct(vegOnly)+'% of orders</div></div>'+
     '<div class="vp-kpi-card"><div class="n">'+mixed+'</div><div class="l">Fruit + Vegetable</div><div class="s">'+pct(mixed)+'% of orders</div></div>'+
     '<div class="vp-kpi-card"><div class="n">'+fruitOnly+'</div><div class="l">Fruit only</div><div class="s">'+pct(fruitOnly)+'% of orders</div></div>'+
