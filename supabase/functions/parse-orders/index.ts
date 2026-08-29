@@ -32,7 +32,7 @@ const ITEM_NAMES = [
   "Lady's finger","Cucumber","Coriander","Chilli green",
   "Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli",
   "Banana leaves","Spinach","Amaranthus","Fenugreek","Mangalore cucumber","Drumstick","Chilli bhajji","Coccinia","Mint",
-  "Lettuce","Beetroot","Zucchini green","Zucchini yellow","Red cabbage","Mushroom"
+  "Lettuce","Beetroot","Zucchini green","Zucchini yellow","Red cabbage","Mushroom","Garlic"
 ];
 
 const PC_TO_KG: Record<string,number> = {
