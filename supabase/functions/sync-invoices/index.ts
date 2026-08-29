@@ -322,26 +322,32 @@ async function reconcileOrderPayment(
     if (order.qr_code_id)        { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null;      updates.qr_image_url = null; updates.qr_created_at = null; }
     if (order.razorpay_link_id)  { await cancelPaymentLink(order.razorpay_link_id); updates.razorpay_link_id = null; updates.razorpay_url = null; }
 
-    // Regenerating only ever makes sense for a live, still-OFD order from
-    // TODAY — closing a stale-amount QR/link above is always correct
-    // regardless of date, but creating a fresh one for an order from a
-    // previous business day (or one that's already delivered/not yet
-    // dispatched) would just be spending real Razorpay API calls on an
-    // order nobody's actively delivering right now. sweepStaleQrCodes has
-    // this same today+ofd gate for the same reason.
-    const canRegenerate = order.delivery_status === 'ofd' && salesOrderId.startsWith(todayIST());
-
-    if (invoiceBalance > 0 && canRegenerate) {
-      // Regenerate whichever mechanism was already active — don't invent a
-      // new one for an order nobody's dispatched/linked yet.
-      if (order.qr_code_id) {
-        const qr = await createOrderQr(Math.round(invoiceBalance * 100), salesOrderId, customerName);
-        if (qr) { updates.qr_code_id = qr.id; updates.qr_image_url = qr.image_url; updates.qr_created_at = new Date().toISOString(); }
-      } else if (order.razorpay_link_id && phone) {
-        const link = await createOrderPaymentLink(Math.round(invoiceBalance * 100), customerName, phone, salesOrderId);
-        if (link) { updates.razorpay_link_id = link.id; updates.razorpay_url = link.short_url; }
-      }
-    }
+    // TEMPORARILY DISABLED — Razorpay QR/link regeneration turned off while
+    // debugging sync-invoices/invoice_line_items. The close-above still
+    // runs (clears a stale-amount QR/link), this just stops a new one from
+    // being created in its place. Re-enable by uncommenting below once the
+    // sync issue is resolved.
+    //
+    // // Regenerating only ever makes sense for a live, still-OFD order from
+    // // TODAY — closing a stale-amount QR/link above is always correct
+    // // regardless of date, but creating a fresh one for an order from a
+    // // previous business day (or one that's already delivered/not yet
+    // // dispatched) would just be spending real Razorpay API calls on an
+    // // order nobody's actively delivering right now. sweepStaleQrCodes has
+    // // this same today+ofd gate for the same reason.
+    // const canRegenerate = order.delivery_status === 'ofd' && salesOrderId.startsWith(todayIST());
+    //
+    // if (invoiceBalance > 0 && canRegenerate) {
+    //   // Regenerate whichever mechanism was already active — don't invent a
+    //   // new one for an order nobody's dispatched/linked yet.
+    //   if (order.qr_code_id) {
+    //     const qr = await createOrderQr(Math.round(invoiceBalance * 100), salesOrderId, customerName);
+    //     if (qr) { updates.qr_code_id = qr.id; updates.qr_image_url = qr.image_url; updates.qr_created_at = new Date().toISOString(); }
+    //   } else if (order.razorpay_link_id && phone) {
+    //     const link = await createOrderPaymentLink(Math.round(invoiceBalance * 100), customerName, phone, salesOrderId);
+    //     if (link) { updates.razorpay_link_id = link.id; updates.razorpay_url = link.short_url; }
+    //   }
+    // }
   }
 
   await sbUpdate('orders', salesOrderId, updates);
