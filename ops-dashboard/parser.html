@@ -628,6 +628,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
   </div>
   <p class="note">Everything on this tab is derived straight from <code>order_items</code> + <code>catalog</code> — no dependency on Zoho invoicing or the <code>invoice_line_items</code> sync, so it stays live even if that sync is stalled. Vegetable-only / Fruit + Vegetable / Fruit-only / Other is each order's <b>billable</b> line items against <code>catalog.category</code> (Config tab → Storefront Catalog Settings owns that mapping) — covers every non-cancelled, non-replacement-only order placed in the range. A free/replacement/sample item never counts toward classification or value, and an order where every item is free/replacement/sample is excluded entirely rather than landing in "Other". "Top vegetables" and vegetable value are <b>approximate</b>: quantity ordered × today's current <code>catalog.unit_price</code> — not what Zoho actually billed (which can differ by the day's real price or final packed weight), so treat these as directional, not exact.</p>
+  <div class="config-section">
+    <h3>📌 Orders with any vegetable <span style="font-size:11px;color:#8a7a6a;font-weight:400">— always these two fixed windows, independent of the range picker above</span></h3>
+    <div id="vp-fixed-kpis" class="vp-kpi-grid"></div>
+  </div>
   <div id="vp-kpis" class="vp-kpi-grid"></div>
   <div id="vp-unmatched" class="note" style="display:none"></div>
   <div class="config-section">
@@ -1417,7 +1421,7 @@ function switchTab(name){
   if(name==='stock')loadStockView();
   if(name==='purchases')loadPurchasesView();
   if(name==='images')loadCatalogImagesView();
-  if(name==='vegperf'){loadVegPerfView();loadVegCustomerTrend();}
+  if(name==='vegperf'){loadVegPerfView();loadVegCustomerTrend();loadVegFixedWindowTiles();}
   if(name==='delivery')startLocationPing();else stopLocationPing();
 }
 
@@ -7787,6 +7791,59 @@ function renderVpItemsTable(){
         '<tr><td>'+escH(s.name)+'</td><td>'+s.orders+'</td><td>'+(Math.round(s.qty*100)/100)+'</td><td>₹'+Math.round(s.revenue).toLocaleString('en-IN')+'</td></tr>'
       ).join('')
     : '<tr><td colspan="4" class="to-empty">No vegetable items in this range</td></tr>';
+}
+
+// Fixed 7-day/30-day "orders with any vegetable" tiles — always these two
+// trailing windows ending today, independent of the range picker above
+// (same reasoning as the customer-trend section's own fixed periods: a
+// stable at-a-glance number you don't have to re-click the picker to
+// compare). One fetch covers both, since 7 days is a subset of 30.
+async function loadVegFixedWindowTiles(){
+  const el=document.getElementById('vp-fixed-kpis');
+  if(!el)return;
+  el.innerHTML='<div class="to-empty">Loading…</div>';
+
+  const win7Start=addDays(CALENDAR_TODAY,-6);
+  const win30Start=addDays(CALENDAR_TODAY,-29);
+  const endExclusive=addDays(CALENDAR_TODAY,1);
+
+  const[ordersRes,itemsRes,catalogRes]=await Promise.all([
+    fetchAllCustomerLookupByRange(win30Start,endExclusive),
+    fetchAllOrderItems(q=>q.gte('sales_order_id',win30Start).lt('sales_order_id',endExclusive)),
+    sb.from('catalog').select('item_name,category'),
+  ]);
+  if(ordersRes.error||itemsRes.error||catalogRes.error){
+    el.innerHTML='<div class="to-empty">'+escH((ordersRes.error||itemsRes.error||catalogRes.error).message)+'</div>';
+    return;
+  }
+
+  const catMap={};
+  (catalogRes.data||[]).forEach(c=>{catMap[(c.item_name||'').trim().toLowerCase()]=c;});
+  const itemsBySoid={};
+  (itemsRes.data||[]).forEach(i=>{
+    if(i.status==='cancelled')return;
+    (itemsBySoid[i.sales_order_id]=itemsBySoid[i.sales_order_id]||[]).push(i);
+  });
+
+  const win={7:{total:0,veg:0},30:{total:0,veg:0}};
+  (ordersRes.data||[]).forEach(o=>{
+    if(o.status==='cancelled')return;
+    const allItems=itemsBySoid[o.sales_order_id]||[];
+    if(allItems.length&&isReplacementOnlyOrder({items:allItems}))return;
+    const items=allItems.filter(it=>!isFreeItem(it));
+    const hasVeg=items.some(it=>catMap[(it.item_name||'').trim().toLowerCase()]?.category==='vegetable');
+
+    const day=o.sales_order_id.slice(0,10);
+    if(day>=win30Start){win[30].total++;if(hasVeg)win[30].veg++;}
+    if(day>=win7Start){win[7].total++;if(hasVeg)win[7].veg++;}
+  });
+
+  const card=(days)=>{
+    const{total,veg}=win[days];
+    const pct=total?Math.round(1000*veg/total)/10:0;
+    return '<div class="vp-kpi-card"><div class="n">'+veg+' / '+total+'</div><div class="l">Last '+days+' days</div><div class="s">'+pct+'% of orders had a vegetable</div></div>';
+  };
+  el.innerHTML=card(7)+card(30);
 }
 
 async function loadVegPerfView(){
