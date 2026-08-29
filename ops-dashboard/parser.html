@@ -7686,7 +7686,13 @@ async function loadVegCustomerTrend(){
   (catalogRes.data||[]).forEach(c=>{catMap[(c.item_name||'').trim().toLowerCase()]=c;});
   const itemsBySoid={};
   (itemsRes.data||[]).forEach(i=>{
-    if(i.status==='cancelled')return;
+    // 'held' = the parser's own exact-duplicate detector (same order +
+    // item name + quantity already exists) — kept in the DB so packers
+    // can see it, but never fulfilled twice. Counting it here would
+    // double the real quantity/value for anything customers tend to
+    // mention more than once across a message batch (coriander, mint,
+    // any small "oh and also" herb), same as cancelled never counts.
+    if(i.status==='cancelled'||i.status==='held')return;
     (itemsBySoid[i.sales_order_id]=itemsBySoid[i.sales_order_id]||[]).push(i);
   });
 
@@ -7825,7 +7831,13 @@ async function loadVegFixedWindowTiles(){
   (catalogRes.data||[]).forEach(c=>{catMap[(c.item_name||'').trim().toLowerCase()]=c;});
   const itemsBySoid={};
   (itemsRes.data||[]).forEach(i=>{
-    if(i.status==='cancelled')return;
+    // 'held' = the parser's own exact-duplicate detector (same order +
+    // item name + quantity already exists) — kept in the DB so packers
+    // can see it, but never fulfilled twice. Counting it here would
+    // double the real quantity/value for anything customers tend to
+    // mention more than once across a message batch (coriander, mint,
+    // any small "oh and also" herb), same as cancelled never counts.
+    if(i.status==='cancelled'||i.status==='held')return;
     (itemsBySoid[i.sales_order_id]=itemsBySoid[i.sales_order_id]||[]).push(i);
   });
 
@@ -7875,7 +7887,13 @@ async function loadVegPerfView(){
 
   const itemsBySoid={};
   (itemsRes.data||[]).forEach(i=>{
-    if(i.status==='cancelled')return;
+    // 'held' = the parser's own exact-duplicate detector (same order +
+    // item name + quantity already exists) — kept in the DB so packers
+    // can see it, but never fulfilled twice. Counting it here would
+    // double the real quantity/value for anything customers tend to
+    // mention more than once across a message batch (coriander, mint,
+    // any small "oh and also" herb), same as cancelled never counts.
+    if(i.status==='cancelled'||i.status==='held')return;
     (itemsBySoid[i.sales_order_id]=itemsBySoid[i.sales_order_id]||[]).push(i);
   });
 
