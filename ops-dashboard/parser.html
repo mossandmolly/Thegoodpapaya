@@ -666,6 +666,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
     <div id="vp-cust-summary" class="note" style="background:#f3faf0;border-left:3px solid #2d6b2d"></div>
     <div id="vp-cust-kpis" class="vp-kpi-grid"></div>
+    <div class="table-scroll" style="margin-top:14px">
+      <table class="community-table"><thead><tr>
+        <th class="vp-sortable" onclick="sortVpCustRows('name')">Customer<span id="vp-cust-sort-name" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpCustRows('status')">Status<span id="vp-cust-sort-status" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpCustRows('curOrders')">Orders (current)<span id="vp-cust-sort-curOrders" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpCustRows('priorOrders')">Orders (prior)<span id="vp-cust-sort-priorOrders" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpCustRows('curSpend')">Spend (current)<span id="vp-cust-sort-curSpend" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpCustRows('priorSpend')">Spend (prior)<span id="vp-cust-sort-priorSpend" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpCustRows('vegCurrent')">Vegetable? (current)<span id="vp-cust-sort-vegCurrent" class="vp-sort-ind"></span></th>
+        <th class="vp-sortable" onclick="sortVpCustRows('vegPrior')">Vegetable? (prior)<span id="vp-cust-sort-vegPrior" class="vp-sort-ind"></span></th>
+      </tr></thead><tbody id="vp-cust-tbody"></tbody></table>
+    </div>
   </div>
 </div>
 
@@ -7697,8 +7709,11 @@ async function loadVegCustomerTrend(){
   });
 
   // Per customer, per period: order count + real (invoiced) spend, plus
-  // whether they had a vegetable order in the current period at all.
-  const perCust={}; // key -> {current:{orders,spend}, prior:{orders,spend}, vegInCurrent}
+  // whether they had a vegetable order in each period (current AND prior —
+  // the cohort itself is defined by current-period veg purchase, but the
+  // per-customer table below shows both so you can see who's dropped
+  // vegetables or picked them up between periods).
+  const perCust={}; // key -> {name,current:{orders,spend},prior:{orders,spend},vegInCurrent,vegInPrior}
   (ordersRes.data||[]).forEach(o=>{
     if(o.status==='cancelled')return;
     const day=o.sales_order_id.slice(0,10);
@@ -7706,24 +7721,37 @@ async function loadVegCustomerTrend(){
     if(!period)return;
     const key=canonicalCustomerKey(o.customer_name);
     if(!key)return;
-    if(!perCust[key])perCust[key]={current:{orders:0,spend:0},prior:{orders:0,spend:0},vegInCurrent:false};
+    if(!perCust[key])perCust[key]={name:formatCustomerName(o.customer_name),current:{orders:0,spend:0},prior:{orders:0,spend:0},vegInCurrent:false,vegInPrior:false};
     perCust[key][period].orders++;
     const inv=parseFloat(o.invoice_total)||0;
     if(inv>0)perCust[key][period].spend+=inv;
 
-    if(period==='current'){
-      const items=itemsBySoid[o.sales_order_id]||[];
-      // Billable items only — a free replacement vegetable shouldn't put a
-      // customer in the "bought a vegetable" cohort, same rule the main
-      // classification above applies.
-      const hasVeg=items.some(it=>!isFreeItem(it)&&catMap[(it.item_name||'').trim().toLowerCase()]?.category==='vegetable');
-      if(hasVeg)perCust[key].vegInCurrent=true;
+    // Billable items only — a free replacement vegetable shouldn't count as
+    // "bought a vegetable" in either period, same rule the main
+    // classification above applies.
+    const items=itemsBySoid[o.sales_order_id]||[];
+    const hasVeg=items.some(it=>!isFreeItem(it)&&catMap[(it.item_name||'').trim().toLowerCase()]?.category==='vegetable');
+    if(hasVeg){
+      if(period==='current')perCust[key].vegInCurrent=true;
+      else perCust[key].vegInPrior=true;
     }
   });
 
   const cohortKeys=Object.keys(perCust).filter(k=>perCust[k].vegInCurrent);
   const returningKeys=cohortKeys.filter(k=>perCust[k].prior.orders>0);
+  const returningSet=new Set(returningKeys);
   const newCount=cohortKeys.length-returningKeys.length;
+
+  vpCustRows=cohortKeys.map(k=>{
+    const c=perCust[k];
+    return{
+      name:c.name, status:returningSet.has(k)?'Returning':'New',
+      curOrders:c.current.orders, priorOrders:c.prior.orders,
+      curSpend:c.current.spend, priorSpend:c.prior.spend,
+      vegCurrent:c.vegInCurrent, vegPrior:c.vegInPrior,
+    };
+  });
+  renderVpCustTable();
 
   if(!cohortKeys.length){
     summaryEl.textContent='No customers ordered a vegetable in the last '+days+' days.';
@@ -7761,6 +7789,41 @@ async function loadVegCustomerTrend(){
     '<div class="vp-kpi-card"><div class="n">'+returningKeys.length+'</div><div class="l">Returning</div><div class="s">'+newCount+' new this period</div></div>'+
     '<div class="vp-kpi-card"><div class="n">'+fmt1(avgOrdersPrior)+' → '+fmt1(avgOrdersCur)+'</div><div class="l">Orders / customer</div><div class="s">'+(ordersChangePct!=null?sign(ordersChangePct):'—')+'</div></div>'+
     '<div class="vp-kpi-card"><div class="n">'+fmtRs(avgSpendPrior)+' → '+fmtRs(avgSpendCur)+'</div><div class="l">Spend / customer</div><div class="s">'+(spendChangePct!=null?sign(spendChangePct):'—')+'</div></div>';
+}
+
+// Per-customer breakdown table for the customer-trend section — every
+// customer in the current period's vegetable cohort (Returning AND New),
+// with their raw orders/spend/vegetable-presence for both periods
+// side by side. Sortable by column, same pattern as the Top Vegetables
+// table — re-sorts client-side, no re-fetch.
+let vpCustRows=[]; // [{name,status,curOrders,priorOrders,curSpend,priorSpend,vegCurrent,vegPrior}]
+let vpCustSortKey='curSpend';
+let vpCustSortDir='desc';
+
+function sortVpCustRows(key){
+  if(vpCustSortKey===key){vpCustSortDir=vpCustSortDir==='desc'?'asc':'desc';}
+  else{vpCustSortKey=key;vpCustSortDir=(key==='name'||key==='status')?'asc':'desc';}
+  renderVpCustTable();
+}
+
+function renderVpCustTable(){
+  ['name','status','curOrders','priorOrders','curSpend','priorSpend','vegCurrent','vegPrior'].forEach(k=>{
+    const el=document.getElementById('vp-cust-sort-'+k);
+    if(el)el.textContent=k===vpCustSortKey?(vpCustSortDir==='desc'?'▾':'▴'):'';
+  });
+  const dir=vpCustSortDir==='desc'?-1:1;
+  const sorted=[...vpCustRows].sort((a,b)=>{
+    if(vpCustSortKey==='name'||vpCustSortKey==='status')return dir*String(a[vpCustSortKey]).localeCompare(String(b[vpCustSortKey]));
+    if(vpCustSortKey==='vegCurrent'||vpCustSortKey==='vegPrior')return dir*((a[vpCustSortKey]?1:0)-(b[vpCustSortKey]?1:0));
+    return dir*(a[vpCustSortKey]-b[vpCustSortKey]);
+  });
+  document.getElementById('vp-cust-tbody').innerHTML=sorted.length
+    ? sorted.map(r=>
+        '<tr><td>'+escH(r.name)+'</td><td>'+r.status+'</td><td>'+r.curOrders+'</td><td>'+r.priorOrders+'</td>'+
+        '<td>₹'+Math.round(r.curSpend).toLocaleString('en-IN')+'</td><td>₹'+Math.round(r.priorSpend).toLocaleString('en-IN')+'</td>'+
+        '<td>'+(r.vegCurrent?'Yes':'No')+'</td><td>'+(r.vegPrior?'Yes':'No')+'</td></tr>'
+      ).join('')
+    : '<tr><td colspan="8" class="to-empty">No customers in this cohort</td></tr>';
 }
 
 function vpAovCardHtml(label,stat){
