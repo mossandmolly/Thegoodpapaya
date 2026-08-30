@@ -163,6 +163,31 @@ Deno.serve(async (req) => {
   const amountRupees = amountPaise / 100;
   const supabase     = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
+  // Idempotency claim — Razorpay retries webhook delivery on any non-2xx
+  // response or timeout, and this handler used to have no guard against
+  // that: a redelivered event would add amountRupees to amount_paid a
+  // second time AND call Zoho's recordZohoPayment again for a payment
+  // already recorded there. razorpay_payment_events (migration 097) is
+  // keyed on Razorpay's own payment id — claiming it here, before touching
+  // orders or Zoho at all, means a genuine redelivery hits the unique
+  // constraint and is skipped as a no-op instead of being reprocessed. If
+  // Razorpay ever omits the payment id (shouldn't happen for either event
+  // type this function handles), fail open and process normally rather
+  // than silently drop a real payment.
+  const razorpayPaymentId = paymentEntity?.id as string | undefined;
+  if (razorpayPaymentId) {
+    const { error: claimErr } = await supabase
+      .from('razorpay_payment_events')
+      .insert({ razorpay_payment_id: razorpayPaymentId, sales_order_id: salesOrderId, amount: amountRupees, event: payload.event });
+    if (claimErr) {
+      if (claimErr.code === '23505') { // unique_violation — already processed this exact payment
+        console.warn(`Razorpay webhook: duplicate delivery of payment ${razorpayPaymentId} — skipped`);
+        return new Response(JSON.stringify({ ok: true, msg: 'duplicate delivery, already processed' }), { status: 200 });
+      }
+      console.error('razorpay_payment_events claim failed:', claimErr.message);
+    }
+  }
+
   // Load current amounts
   const { data: order, error: orderErr } = await supabase
     .from('orders')
