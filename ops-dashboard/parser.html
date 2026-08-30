@@ -627,21 +627,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <input type="date" class="date-picker-compact" id="vp-end-date" onchange="setVegPerfCustomRange()">
     </div>
   </div>
-  <p class="note">Default view is derived straight from <code>order_items</code> + <code>catalog</code> — fast, free, no dependency on Zoho invoicing, stays live even if the Zoho sync is stalled. Vegetable-only / Fruit + Vegetable / Fruit-only / Other is each order's <b>billable</b> line items against <code>catalog.category</code> (Config tab → Storefront Catalog Settings owns that mapping) — covers every non-cancelled, non-replacement-only order placed in the range; a free/replacement/sample item never counts toward classification or value. Top Vegetables/vegetable value in this default view are <b>approximate</b>: quantity ordered × today's catalog price, not what Zoho actually billed — items that get bundled in without their own Zoho invoice line (a coriander thrown in with an order, say) inflate this view's quantities and are the main reason to prefer the real Zoho pull below whenever you need trustworthy per-item numbers. Every "Pull real Zoho data" button here is on-demand only (not automatic) — firing on every load would risk exactly the runaway-call pattern that already exhausted Zoho's Inventory quota once this session, just against Books instead. Rider breakdown always stays Supabase-sourced either way, Zoho has no concept of riders.</p>
-  <div class="add-row" style="margin-bottom:10px">
-    <button type="button" class="header-btn" id="vp-zoho-pull-btn" onclick="pullRealZohoDashboard()">🔄 Pull real Zoho data for this range</button>
-    <span id="vp-zoho-pull-status" class="note" style="margin:0"></span>
-  </div>
+  <p class="note">Derived straight from <code>order_items</code> + <code>catalog</code> — fast, free, no dependency on Zoho invoicing, stays live even if the Zoho sync is stalled. Vegetable-only / Fruit + Vegetable / Fruit-only / Other is each order's <b>billable</b> line items against <code>catalog.category</code> (Config tab → Storefront Catalog Settings owns that mapping) — covers every non-cancelled, non-replacement-only order placed in the range; a free/replacement/sample item never counts toward classification or value. Top Vegetables/vegetable value are <b>approximate</b>: final (or requested, if not yet packed) quantity × today's catalog price, not what Zoho actually billed — an item bundled into an order without its own separate invoice line (coriander thrown in for free, say) can inflate these quantities. Rider breakdown is always Supabase-sourced, Zoho has no concept of riders.</p>
   <div class="config-section">
     <h3>📌 Orders with any vegetable <span style="font-size:11px;color:#8a7a6a;font-weight:400">— always these two fixed windows, independent of the range picker above</span></h3>
-    <div class="add-row" style="margin-bottom:10px">
-      <button type="button" class="header-btn" id="vp-fixed-zoho-btn" onclick="pullRealZohoFixedWindow()">🔄 Pull real Zoho data (last 30 days)</button>
-      <span id="vp-fixed-zoho-status" class="note" style="margin:0"></span>
-    </div>
-    <div id="vp-fixed-kpis-mode" style="font-size:12px;color:#8a7a6a;margin-bottom:6px"></div>
     <div id="vp-fixed-kpis" class="vp-kpi-grid"></div>
   </div>
-  <div id="vp-kpis-mode" style="font-size:12px;color:#8a7a6a;margin-top:10px"></div>
   <div id="vp-kpis" class="vp-kpi-grid"></div>
   <div id="vp-unmatched" class="note" style="display:none"></div>
   <div class="config-section">
@@ -674,11 +664,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <button type="button" class="vp-range-btn" data-period-days="7" onclick="setVegCustomerPeriod(7)">7-day periods</button>
       <button type="button" class="vp-range-btn active" data-period-days="30" onclick="setVegCustomerPeriod(30)">30-day periods</button>
     </div>
-    <div class="add-row" style="margin-bottom:10px">
-      <button type="button" class="header-btn" id="vp-cust-zoho-btn" onclick="pullRealZohoCustomerTrend()">🔄 Pull real Zoho data for these periods</button>
-      <span id="vp-cust-zoho-status" class="note" style="margin:0"></span>
-    </div>
-    <div id="vp-cust-mode" style="font-size:12px;color:#8a7a6a"></div>
     <div id="vp-cust-summary" class="note" style="background:#f3faf0;border-left:3px solid #2d6b2d"></div>
     <div id="vp-cust-kpis" class="vp-kpi-grid"></div>
   </div>
@@ -7677,7 +7662,6 @@ async function fetchAllCustomerLookupWithName(start,endExclusive){
 }
 
 async function loadVegCustomerTrend(){
-  resetVpCustZohoPullState();
   const summaryEl=document.getElementById('vp-cust-summary');
   const kpiEl=document.getElementById('vp-cust-kpis');
   summaryEl.textContent='Loading…';
@@ -7779,118 +7763,6 @@ async function loadVegCustomerTrend(){
     '<div class="vp-kpi-card"><div class="n">'+fmtRs(avgSpendPrior)+' → '+fmtRs(avgSpendCur)+'</div><div class="l">Spend / customer</div><div class="s">'+(spendChangePct!=null?sign(spendChangePct):'—')+'</div></div>';
 }
 
-// Real-Zoho pull for the customer trend section — its own accumulator,
-// scoped to priorStart..currentEnd for whichever period toggle (7/30 days)
-// is active. Groups Zoho's own invoice customer_name (via the same
-// canonicalCustomerKey the rest of the app uses) instead of orders'
-// customer_name — same cohort/returning/spend math, just built from actual
-// billed invoices instead of order_items.
-let vpCustZohoOffset=0,vpCustZohoRangeKey='',vpCustZohoAcc=null;
-
-function resetVpCustZohoPullState(){
-  vpCustZohoOffset=0;vpCustZohoRangeKey='';vpCustZohoAcc=null;
-  const btn=document.getElementById('vp-cust-zoho-btn'),status=document.getElementById('vp-cust-zoho-status'),mode=document.getElementById('vp-cust-mode');
-  if(btn)btn.textContent='🔄 Pull real Zoho data for these periods';
-  if(status)status.textContent='';
-  if(mode)mode.textContent='';
-}
-
-async function pullRealZohoCustomerTrend(){
-  const btn=document.getElementById('vp-cust-zoho-btn');
-  const status=document.getElementById('vp-cust-zoho-status');
-  const mode=document.getElementById('vp-cust-mode');
-  const summaryEl=document.getElementById('vp-cust-summary');
-  const kpiEl=document.getElementById('vp-cust-kpis');
-
-  const days=vpCustPeriodDays;
-  const currentStart=addDays(CALENDAR_TODAY,-(days-1)),currentEnd=CALENDAR_TODAY;
-  const priorStart=addDays(CALENDAR_TODAY,-(2*days-1)),priorEnd=addDays(CALENDAR_TODAY,-days);
-  const rangeKey=priorStart+'..'+currentEnd;
-  if(rangeKey!==vpCustZohoRangeKey||!vpCustZohoAcc){vpCustZohoRangeKey=rangeKey;vpCustZohoOffset=0;vpCustZohoAcc={invoices:[],processed:0};}
-
-  btn.disabled=true;
-  btn.textContent=vpCustZohoOffset>0?'Continuing…':'Pulling from Zoho…';
-  status.textContent='';
-  try{
-    const{data:{session}}=await sb.auth.getSession();
-    const res=await fetch(SUPABASE_URL+'/functions/v1/zoho-vegetable-sales-report',{
-      method:'POST',
-      headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},
-      body:JSON.stringify({start_date:priorStart,end_date:currentEnd,offset:vpCustZohoOffset,limit:150}),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Zoho pull failed');
-
-    const acc=vpCustZohoAcc;
-    acc.invoices.push(...(data.invoices||[]));
-    acc.processed+=data.invoices_processed_this_batch;
-
-    const perCust={};
-    acc.invoices.forEach(inv=>{
-      const day=inv.date;
-      const period=(day>=currentStart&&day<=currentEnd)?'current':(day>=priorStart&&day<=priorEnd)?'prior':null;
-      if(!period)return;
-      const key=canonicalCustomerKey(inv.customer_name);
-      if(!key)return;
-      if(!perCust[key])perCust[key]={current:{orders:0,spend:0},prior:{orders:0,spend:0},vegInCurrent:false};
-      perCust[key][period].orders++;
-      perCust[key][period].spend+=inv.total||0;
-      if(period==='current'&&(inv.bucket==='veg'||inv.bucket==='mixed'))perCust[key].vegInCurrent=true;
-    });
-
-    const cohortKeys=Object.keys(perCust).filter(k=>perCust[k].vegInCurrent);
-    const returningKeys=cohortKeys.filter(k=>perCust[k].prior.orders>0);
-    const newCount=cohortKeys.length-returningKeys.length;
-
-    const fmt1=(x)=>Math.round(x*10)/10;
-    const fmtRs=(x)=>'₹'+Math.round(x).toLocaleString('en-IN');
-    const sign=(x)=>x==null?'':(x>=0?'+':'')+x+'%';
-
-    if(!cohortKeys.length){
-      summaryEl.textContent='No customers had a real Zoho-billed vegetable order in the last '+days+' days'+(vpCustZohoOffset!=null||data.next_offset!=null?' (partial pull so far)':'')+'.';
-      kpiEl.innerHTML='';
-    }else{
-      let curOrders=0,priorOrders=0,curSpend=0,priorSpend=0;
-      returningKeys.forEach(k=>{
-        curOrders+=perCust[k].current.orders;priorOrders+=perCust[k].prior.orders;
-        curSpend+=perCust[k].current.spend;priorSpend+=perCust[k].prior.spend;
-      });
-      const n=returningKeys.length;
-      const avgOrdersCur=n?curOrders/n:0,avgOrdersPrior=n?priorOrders/n:0;
-      const avgSpendCur=n?curSpend/n:0,avgSpendPrior=n?priorSpend/n:0;
-      const ordersChangePct=avgOrdersPrior?Math.round(1000*(avgOrdersCur-avgOrdersPrior)/avgOrdersPrior)/10:null;
-      const spendChangePct=avgSpendPrior?Math.round(1000*(avgSpendCur-avgSpendPrior)/avgSpendPrior)/10:null;
-
-      summaryEl.innerHTML=n
-        ? escH(returningKeys.length+' of '+cohortKeys.length+' customers who bought a vegetable (real Zoho invoices) in the last '+days+' days were also active in the prior '+days+' days.')+
-          ' Their order frequency went from <b>'+fmt1(avgOrdersPrior)+'</b> to <b>'+fmt1(avgOrdersCur)+'</b> orders/customer'+(ordersChangePct!=null?' ('+sign(ordersChangePct)+')':'')+
-          ', and average spend went from <b>'+fmtRs(avgSpendPrior)+'</b> to <b>'+fmtRs(avgSpendCur)+'</b>/customer'+(spendChangePct!=null?' ('+sign(spendChangePct)+')':'')+
-          ' — both over the same '+days+'-day windows, no scaling.'+
-          (newCount?' ('+newCount+' more bought vegetables for the first time this period, with no prior baseline to compare.)':'')
-        : escH('All '+cohortKeys.length+' vegetable-buying customer(s) this period are new — no prior-period baseline to compare frequency/spend against yet.');
-
-      kpiEl.innerHTML=
-        '<div class="vp-kpi-card"><div class="n">'+cohortKeys.length+'</div><div class="l">Vegetable customers</div><div class="s">last '+days+' days</div></div>'+
-        '<div class="vp-kpi-card"><div class="n">'+returningKeys.length+'</div><div class="l">Returning</div><div class="s">'+newCount+' new this period</div></div>'+
-        '<div class="vp-kpi-card"><div class="n">'+fmt1(avgOrdersPrior)+' → '+fmt1(avgOrdersCur)+'</div><div class="l">Orders / customer</div><div class="s">'+(ordersChangePct!=null?sign(ordersChangePct):'—')+'</div></div>'+
-        '<div class="vp-kpi-card"><div class="n">'+fmtRs(avgSpendPrior)+' → '+fmtRs(avgSpendCur)+'</div><div class="l">Spend / customer</div><div class="s">'+(spendChangePct!=null?sign(spendChangePct):'—')+'</div></div>';
-    }
-
-    vpCustZohoOffset=data.next_offset;
-    const incomplete=vpCustZohoOffset!=null;
-    mode.innerHTML='<b style="color:#2d6b2d">🔴 Real Zoho data</b> as of '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+' — '+acc.processed+'/'+data.invoices_in_range+' invoices'+(incomplete?' (partial)':'')+'.';
-    status.textContent=incomplete
-      ?'⚠️ '+acc.processed+'/'+data.invoices_in_range+' invoices so far ('+data.zoho_calls_made+' Zoho calls this click) — click again to continue.'
-      :'✅ Complete — '+acc.processed+' invoices, '+data.zoho_calls_made+' Zoho calls this click.';
-    btn.textContent=incomplete?'🔄 Continue pulling (more invoices remain)':'🔄 Pull real Zoho data for these periods';
-  }catch(e){
-    status.textContent='❌ '+e.message;
-    btn.textContent='🔄 Pull real Zoho data for these periods';
-  }finally{
-    btn.disabled=false;
-  }
-}
-
 function vpAovCardHtml(label,stat){
   const aovVal=stat.n?Math.round(stat.sum/stat.n):0;
   return '<div class="vp-kpi-card"><div class="n">₹'+aovVal.toLocaleString('en-IN')+'</div><div class="l">'+escH(label)+'</div><div class="s">'+(stat.n?'avg of '+stat.n+' invoiced order'+(stat.n!==1?'s':''):'no invoiced orders yet')+'</div></div>';
@@ -7931,211 +7803,10 @@ function renderVpItemsTable(){
     : '<tr><td colspan="4" class="to-empty">No vegetable items in this range</td></tr>';
 }
 
-// On-demand real Zoho pull, drives the main range-picker section of the tab
-// (KPIs, AOV, daily trend, Top Vegetables, rider breakdown) — deliberately
-// NOT wired into the automatic tab-load/range-change path (that stays the
-// fast, free order_items approximation as a preview). Firing ~1 Zoho call
-// per invoice in range on every load would risk exactly the runaway-call
-// pattern that exhausted the Inventory quota this session, just against
-// Books instead — this only ever runs when someone explicitly clicks the
-// button. The fixed 7/30-day tile (pullRealZohoFixedWindow, below) and the
-// customer-trend section (pullRealZohoCustomerTrend, above) have their own
-// separate on-demand pulls, each scoped to their own fixed date window
-// rather than this section's range picker.
-let vpZohoOffset=0, vpZohoRangeKey='', vpZohoAcc=null;
-
-function freshVpZohoAcc(){
-  return{
-    vegOnly:0,mixed:0,fruitOnly:0,other:0,
-    aov:{veg:{sum:0,n:0},mixed:{sum:0,n:0},fruit:{sum:0,n:0}},
-    byDay:{},vegRevenue:0,allRevenue:0,
-    vegetables:{},invoices:[],unmatched:new Set(),processed:0,
-  };
-}
-
-function resetVpZohoPullState(){
-  vpZohoOffset=0;vpZohoRangeKey='';vpZohoAcc=null;
-  const btn=document.getElementById('vp-zoho-pull-btn'),status=document.getElementById('vp-zoho-pull-status'),mode=document.getElementById('vp-kpis-mode');
-  if(btn)btn.textContent='🔄 Pull real Zoho data for this range';
-  if(status)status.textContent='';
-  if(mode)mode.textContent='';
-}
-
-async function pullRealZohoDashboard(){
-  const btn=document.getElementById('vp-zoho-pull-btn');
-  const status=document.getElementById('vp-zoho-pull-status');
-  const mode=document.getElementById('vp-kpis-mode');
-  const rangeKey=vpStart+'..'+vpEnd;
-  if(rangeKey!==vpZohoRangeKey||!vpZohoAcc){vpZohoRangeKey=rangeKey;vpZohoOffset=0;vpZohoAcc=freshVpZohoAcc();}
-
-  btn.disabled=true;
-  btn.textContent=vpZohoOffset>0?'Continuing…':'Pulling from Zoho…';
-  status.textContent='';
-  try{
-    const{data:{session}}=await sb.auth.getSession();
-    const res=await fetch(SUPABASE_URL+'/functions/v1/zoho-vegetable-sales-report',{
-      method:'POST',
-      headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},
-      body:JSON.stringify({start_date:vpStart,end_date:vpEnd,offset:vpZohoOffset,limit:150}),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Zoho pull failed');
-
-    const acc=vpZohoAcc,s=data.summary;
-    acc.vegOnly+=s.vegOnly;acc.mixed+=s.mixed;acc.fruitOnly+=s.fruitOnly;acc.other+=s.other;
-    ['veg','mixed','fruit'].forEach(k=>{acc.aov[k].sum+=s.aov[k].sum;acc.aov[k].n+=s.aov[k].n;});
-    Object.entries(s.byDay).forEach(([d,v])=>{if(!acc.byDay[d])acc.byDay[d]={total:0,veg:0};acc.byDay[d].total+=v.total;acc.byDay[d].veg+=v.veg;});
-    acc.vegRevenue+=s.vegRevenue;acc.allRevenue+=s.allRevenue;
-    (data.vegetables||[]).forEach(v=>{
-      if(!acc.vegetables[v.item_name])acc.vegetables[v.item_name]={orders:0,qty:0,revenue:0};
-      acc.vegetables[v.item_name].orders+=v.orders;acc.vegetables[v.item_name].qty+=v.qty;acc.vegetables[v.item_name].revenue+=v.value;
-    });
-    acc.invoices.push(...(data.invoices||[]));
-    (data.unmatched||[]).forEach(n=>acc.unmatched.add(n));
-    acc.processed+=data.invoices_processed_this_batch;
-
-    // Rider breakdown — Zoho has no rider concept at all, so join the
-    // accumulated invoices' reference_number (== sales_order_id) back to
-    // orders.assigned_rider via the same cached lookup Order Overview uses.
-    const refIds=[...new Set(acc.invoices.map(i=>i.reference_number).filter(Boolean))];
-    const{map:riderMap}=refIds.length?await fetchCustomerMap(refIds):{map:{}};
-    const riderVeg={},riderTotal={};
-    acc.invoices.forEach(inv=>{
-      const rider=(inv.reference_number&&riderMap[inv.reference_number]?.assigned_rider)||'Unassigned';
-      riderTotal[rider]=(riderTotal[rider]||0)+1;
-      if(inv.bucket==='veg'||inv.bucket==='mixed')riderVeg[rider]=(riderVeg[rider]||0)+1;
-    });
-
-    const total=acc.vegOnly+acc.mixed+acc.fruitOnly+acc.other;
-    const vegInclusive=acc.vegOnly+acc.mixed;
-    const pct=(n)=>total?Math.round(1000*n/total)/10:0;
-
-    document.getElementById('vp-kpis').innerHTML=
-      '<div class="vp-kpi-card"><div class="n">'+total+'</div><div class="l">Total orders</div></div>'+
-      '<div class="vp-kpi-card"><div class="n">'+vegInclusive+'</div><div class="l">Orders with any vegetable</div><div class="s">'+pct(vegInclusive)+'% of orders — veg-only + mixed</div></div>'+
-      '<div class="vp-kpi-card"><div class="n">'+acc.vegOnly+'</div><div class="l">Vegetable only</div><div class="s">'+pct(acc.vegOnly)+'% of orders</div></div>'+
-      '<div class="vp-kpi-card"><div class="n">'+acc.mixed+'</div><div class="l">Fruit + Vegetable</div><div class="s">'+pct(acc.mixed)+'% of orders</div></div>'+
-      '<div class="vp-kpi-card"><div class="n">'+acc.fruitOnly+'</div><div class="l">Fruit only</div><div class="s">'+pct(acc.fruitOnly)+'% of orders</div></div>'+
-      (acc.other?'<div class="vp-kpi-card"><div class="n">'+acc.other+'</div><div class="l">Other / unmatched</div><div class="s">no catalog match — see below</div></div>':'')+
-      '<div class="vp-kpi-card"><div class="n">₹'+Math.round(acc.vegRevenue).toLocaleString('en-IN')+'</div><div class="l">Vegetable revenue</div><div class="s">'+(acc.allRevenue?Math.round(1000*acc.vegRevenue/acc.allRevenue)/10:0)+'% of ₹'+Math.round(acc.allRevenue).toLocaleString('en-IN')+' billed</div></div>'+
-      vpAovCardHtml('Vegetable only AOV',acc.aov.veg)+
-      vpAovCardHtml('Fruit + Vegetable AOV',acc.aov.mixed)+
-      vpAovCardHtml('Fruit only AOV',acc.aov.fruit);
-
-    const unmatchedEl=document.getElementById('vp-unmatched');
-    if(acc.unmatched.size){
-      unmatchedEl.style.display='block';
-      unmatchedEl.innerHTML='⚠️ '+acc.unmatched.size+' item name(s) on real Zoho invoices have no match in <code>catalog</code>: <b>'+[...acc.unmatched].map(escH).join(', ')+'</b>';
-    }else unmatchedEl.style.display='none';
-
-    const days=Object.keys(acc.byDay).sort();
-    document.getElementById('vp-trend').innerHTML=days.map(d=>{
-      const{total:dt,veg:dv}=acc.byDay[d];
-      const p=dt?Math.round(100*dv/dt):0;
-      const label=d.slice(5).replace('-','/');
-      return '<div class="vp-trend-col" title="'+d+': '+dv+'/'+dt+' orders had a vegetable"><div class="vp-trend-pct">'+p+'%</div><div class="vp-trend-bar" style="height:'+Math.max(2,p)+'%"></div><div class="vp-trend-date">'+label+'</div></div>';
-    }).join('');
-
-    vpItemRows=Object.entries(acc.vegetables).map(([name,v])=>({name,orders:v.orders,qty:Math.round(v.qty*100)/100,revenue:Math.round(v.revenue)}));
-    renderVpItemsTable();
-
-    const riderRows=Object.entries(riderVeg).sort((a,b)=>b[1]-a[1]);
-    document.getElementById('vp-riders-tbody').innerHTML=riderRows.length
-      ? riderRows.map(([rider,vc])=>{
-          const rt=riderTotal[rider]||0;
-          const ownPct=rt?Math.round(1000*vc/rt)/10:0;
-          const allPct=vegInclusive?Math.round(1000*vc/vegInclusive)/10:0;
-          return '<tr><td>'+escH(rider)+'</td><td>'+vc+'</td><td>'+ownPct+'%</td><td>'+allPct+'%</td></tr>';
-        }).join('')
-      : '<tr><td colspan="4" class="to-empty">No vegetable orders in this range</td></tr>';
-
-    vpZohoOffset=data.next_offset;
-    const incomplete=vpZohoOffset!=null;
-    mode.innerHTML='<b style="color:#2d6b2d">🔴 Real Zoho data</b> as of '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+' — '+acc.processed+'/'+data.invoices_in_range+' invoices'+(incomplete?' (partial)':'')+'. Rider breakdown from Supabase orders.assigned_rider (Zoho has no rider concept).';
-    status.textContent=incomplete
-      ?'⚠️ '+acc.processed+'/'+data.invoices_in_range+' invoices so far ('+data.zoho_calls_made+' Zoho calls this click) — click the button again to continue.'
-      :'✅ Complete — '+acc.processed+' invoices, '+data.zoho_calls_made+' Zoho calls this click. Changing the date range or reopening this tab reverts to the fast approx view.';
-    btn.textContent=incomplete?'🔄 Continue pulling (more invoices remain)':'🔄 Pull real Zoho data for this range';
-  }catch(e){
-    status.textContent='❌ '+e.message;
-    btn.textContent='🔄 Pull real Zoho data for this range';
-  }finally{
-    btn.disabled=false;
-  }
-}
-
-// Real-Zoho pull for the fixed 7/30-day tile — its own accumulator, always
-// scoped to today-29..today regardless of the main range picker (30 days
-// covers both windows in one pull; 7-day is derived as a sub-slice of the
-// same byDay data, no separate call).
-let vpFixedZohoOffset=0,vpFixedZohoAcc=null;
-
-function resetVpFixedZohoPullState(){
-  vpFixedZohoOffset=0;vpFixedZohoAcc=null;
-  const btn=document.getElementById('vp-fixed-zoho-btn'),status=document.getElementById('vp-fixed-zoho-status'),mode=document.getElementById('vp-fixed-kpis-mode');
-  if(btn)btn.textContent='🔄 Pull real Zoho data (last 30 days)';
-  if(status)status.textContent='';
-  if(mode)mode.textContent='';
-}
-
-async function pullRealZohoFixedWindow(){
-  const btn=document.getElementById('vp-fixed-zoho-btn');
-  const status=document.getElementById('vp-fixed-zoho-status');
-  const mode=document.getElementById('vp-fixed-kpis-mode');
-  const start=addDays(CALENDAR_TODAY,-29),end=CALENDAR_TODAY;
-  if(!vpFixedZohoAcc){vpFixedZohoOffset=0;vpFixedZohoAcc={byDay:{},processed:0};}
-
-  btn.disabled=true;
-  btn.textContent=vpFixedZohoOffset>0?'Continuing…':'Pulling from Zoho…';
-  status.textContent='';
-  try{
-    const{data:{session}}=await sb.auth.getSession();
-    const res=await fetch(SUPABASE_URL+'/functions/v1/zoho-vegetable-sales-report',{
-      method:'POST',
-      headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},
-      body:JSON.stringify({start_date:start,end_date:end,offset:vpFixedZohoOffset,limit:150}),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Zoho pull failed');
-
-    const acc=vpFixedZohoAcc;
-    Object.entries(data.summary.byDay).forEach(([d,v])=>{if(!acc.byDay[d])acc.byDay[d]={total:0,veg:0};acc.byDay[d].total+=v.total;acc.byDay[d].veg+=v.veg;});
-    acc.processed+=data.invoices_processed_this_batch;
-
-    const win7Start=addDays(CALENDAR_TODAY,-6);
-    const win={7:{total:0,veg:0},30:{total:0,veg:0}};
-    Object.entries(acc.byDay).forEach(([d,v])=>{
-      win[30].total+=v.total;win[30].veg+=v.veg;
-      if(d>=win7Start){win[7].total+=v.total;win[7].veg+=v.veg;}
-    });
-    const card=(days)=>{
-      const{total,veg}=win[days];
-      const pct=total?Math.round(1000*veg/total)/10:0;
-      return '<div class="vp-kpi-card"><div class="n">'+veg+' / '+total+'</div><div class="l">Last '+days+' days</div><div class="s">'+pct+'% of orders had a vegetable</div></div>';
-    };
-    document.getElementById('vp-fixed-kpis').innerHTML=card(7)+card(30);
-
-    vpFixedZohoOffset=data.next_offset;
-    const incomplete=vpFixedZohoOffset!=null;
-    mode.innerHTML='<b style="color:#2d6b2d">🔴 Real Zoho data</b> as of '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+' — '+acc.processed+'/'+data.invoices_in_range+' invoices'+(incomplete?' (partial)':'')+'.';
-    status.textContent=incomplete
-      ?'⚠️ '+acc.processed+'/'+data.invoices_in_range+' invoices so far ('+data.zoho_calls_made+' Zoho calls this click) — click again to continue.'
-      :'✅ Complete — '+acc.processed+' invoices, '+data.zoho_calls_made+' Zoho calls this click.';
-    btn.textContent=incomplete?'🔄 Continue pulling (more invoices remain)':'🔄 Pull real Zoho data (last 30 days)';
-  }catch(e){
-    status.textContent='❌ '+e.message;
-    btn.textContent='🔄 Pull real Zoho data (last 30 days)';
-  }finally{
-    btn.disabled=false;
-  }
-}
-
-// Fixed 7-day/30-day "orders with any vegetable" tiles — approx fallback,
-// always these two trailing windows ending today, independent of the range
-// picker above. One fetch covers both, since 7 days is a subset of 30. Use
-// the button above for actual billed/Zoho-sourced numbers instead.
+// Fixed 7-day/30-day "orders with any vegetable" tiles — always these two
+// trailing windows ending today, independent of the range picker above.
+// One fetch covers both, since 7 days is a subset of 30.
 async function loadVegFixedWindowTiles(){
-  resetVpFixedZohoPullState();
   const el=document.getElementById('vp-fixed-kpis');
   if(!el)return;
   el.innerHTML='<div class="to-empty">Loading…</div>';
@@ -8346,10 +8017,6 @@ async function loadVegPerfView(){
 
   // Top vegetables — full list kept in vpItemRows so column-header clicks
   // can re-sort without re-fetching; renderVpItemsTable does the actual draw.
-  // Any in-progress real-Zoho-pull state is cleared here too, so a range
-  // change or tab reopen always starts back at the fast approx view rather
-  // than silently resuming a stale pull for a different date range.
-  resetVpZohoPullState();
   vpItemRows=Object.entries(itemStats).map(([name,s])=>({name,orders:s.orders.size,qty:s.qty,revenue:s.revenue}));
   renderVpItemsTable();
 
