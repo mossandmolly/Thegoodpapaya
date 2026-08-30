@@ -666,7 +666,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
     <div id="vp-cust-summary" class="note" style="background:#f3faf0;border-left:3px solid #2d6b2d"></div>
     <div id="vp-cust-kpis" class="vp-kpi-grid"></div>
-    <div class="table-scroll" style="margin-top:14px">
+    <div class="add-row" style="margin-top:14px;margin-bottom:0">
+      <button type="button" class="header-btn" onclick="exportVpCustCsv()">⬇ Export as CSV</button>
+    </div>
+    <div class="table-scroll" style="margin-top:10px">
       <table class="community-table"><thead><tr>
         <th class="vp-sortable" onclick="sortVpCustRows('name')">Customer<span id="vp-cust-sort-name" class="vp-sort-ind"></span></th>
         <th class="vp-sortable" onclick="sortVpCustRows('status')">Status<span id="vp-cust-sort-status" class="vp-sort-ind"></span></th>
@@ -7806,17 +7809,23 @@ function sortVpCustRows(key){
   renderVpCustTable();
 }
 
+// Shared by the on-screen render and the CSV export, so the export always
+// matches whatever sort order is currently showing on screen.
+function sortedVpCustRows(){
+  const dir=vpCustSortDir==='desc'?-1:1;
+  return [...vpCustRows].sort((a,b)=>{
+    if(vpCustSortKey==='name'||vpCustSortKey==='status')return dir*String(a[vpCustSortKey]).localeCompare(String(b[vpCustSortKey]));
+    if(vpCustSortKey==='vegCurrent'||vpCustSortKey==='vegPrior')return dir*((a[vpCustSortKey]?1:0)-(b[vpCustSortKey]?1:0));
+    return dir*(a[vpCustSortKey]-b[vpCustSortKey]);
+  });
+}
+
 function renderVpCustTable(){
   ['name','status','curOrders','priorOrders','curSpend','priorSpend','vegCurrent','vegPrior'].forEach(k=>{
     const el=document.getElementById('vp-cust-sort-'+k);
     if(el)el.textContent=k===vpCustSortKey?(vpCustSortDir==='desc'?'▾':'▴'):'';
   });
-  const dir=vpCustSortDir==='desc'?-1:1;
-  const sorted=[...vpCustRows].sort((a,b)=>{
-    if(vpCustSortKey==='name'||vpCustSortKey==='status')return dir*String(a[vpCustSortKey]).localeCompare(String(b[vpCustSortKey]));
-    if(vpCustSortKey==='vegCurrent'||vpCustSortKey==='vegPrior')return dir*((a[vpCustSortKey]?1:0)-(b[vpCustSortKey]?1:0));
-    return dir*(a[vpCustSortKey]-b[vpCustSortKey]);
-  });
+  const sorted=sortedVpCustRows();
   document.getElementById('vp-cust-tbody').innerHTML=sorted.length
     ? sorted.map(r=>
         '<tr><td>'+escH(r.name)+'</td><td>'+r.status+'</td><td>'+r.curOrders+'</td><td>'+r.priorOrders+'</td>'+
@@ -7824,6 +7833,27 @@ function renderVpCustTable(){
         '<td>'+(r.vegCurrent?'Yes':'No')+'</td><td>'+(r.vegPrior?'Yes':'No')+'</td></tr>'
       ).join('')
     : '<tr><td colspan="8" class="to-empty">No customers in this cohort</td></tr>';
+}
+
+function csvEscape(v){
+  const s=String(v??'');
+  return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+}
+
+function exportVpCustCsv(){
+  const header=['Customer','Status','Orders (current)','Orders (prior)','Spend (current)','Spend (prior)','Vegetable? (current)','Vegetable? (prior)'];
+  const rows=sortedVpCustRows().map(r=>[
+    r.name,r.status,r.curOrders,r.priorOrders,Math.round(r.curSpend),Math.round(r.priorSpend),
+    r.vegCurrent?'Yes':'No',r.vegPrior?'Yes':'No',
+  ]);
+  const csv=[header,...rows].map(row=>row.map(csvEscape).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='vegetable-customer-trend-'+vpCustPeriodDays+'d-'+CALENDAR_TODAY+'.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function vpAovCardHtml(label,stat){
