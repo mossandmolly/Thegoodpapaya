@@ -442,6 +442,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab" onclick="switchTab('delivery')" id="tab-delivery">🚚 Delivery</button>
   <button class="tab" onclick="switchTab('stock')" id="tab-stock">📊 Stock</button>
   <button class="tab" onclick="switchTab('vegperf')" id="tab-vegperf">🥦 Veg Performance</button>
+  <button class="tab" onclick="switchTab('pnl')" id="tab-pnl">📈 P&amp;L</button>
   <button class="tab" onclick="switchTab('purchases')" id="tab-purchases" style="margin-left:auto">🧺 Purchases</button>
   <button class="tab" onclick="openQuickAdd()" id="tab-quickadd">⚡ Quick Add</button>
 </div>
@@ -682,6 +683,16 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       </tr></thead><tbody id="vp-cust-tbody"></tbody></table>
     </div>
   </div>
+</div>
+
+<!-- P&L — visible only to VEGPERF_ALLOWED_EMAIL (same single-email gate as
+     Veg Performance, not a role). Standalone file (pnl.html, own HTML/CSS/JS,
+     own Supabase queries) loaded in an iframe rather than merged into this
+     file directly — it's its own ~900-line single-page app with generic,
+     unprefixed element IDs (#kpis, #purchList, etc.); merging it here would
+     risk real collisions with this file's own IDs/globals. -->
+<div class="panel" id="panel-pnl">
+  <iframe id="pnl-iframe" src="" style="width:100%;height:calc(100vh - 140px);border:none;display:block"></iframe>
 </div>
 
 <!-- PURCHASES (buyer role) — review purchase tranches logged under Stock >
@@ -1304,8 +1315,10 @@ function applyRoleRestrictions(){
   // first, before any of the role-based early returns below, so it's
   // hidden for buyer/delivery logins too, not just the default staff view.
   if(!isVegPerfAllowed){
-    const el=document.getElementById('tab-vegperf');
-    if(el)el.style.display='none';
+    ['tab-vegperf','tab-pnl'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el)el.style.display='none';
+    });
   }
   if(isBuyerRole){
     ['tab-parser','tab-live','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd'].forEach(id=>{
@@ -1425,6 +1438,7 @@ function switchTab(name){
   if(isBuyerRole)name='purchases';
   else if(isDeliveryRole)name='delivery';
   else if(name==='vegperf'&&!isVegPerfAllowed)name='today';
+  else if(name==='pnl'&&!isVegPerfAllowed)name='today';
   // Matched by id, not position — Parser/Config are header-btn links now,
   // not part of the main .tabs row, so the old fixed-index array no longer
   // lines up with what's actually in there.
@@ -1440,6 +1454,13 @@ function switchTab(name){
   if(name==='purchases')loadPurchasesView();
   if(name==='images')loadCatalogImagesView();
   if(name==='vegperf'){loadVegPerfView();loadVegCustomerTrend();loadVegFixedWindowTiles();}
+  // Lazy src — only ever loads pnl.html (its own Supabase queries, own
+  // page weight) the first time someone who's actually allowed opens this
+  // tab, not on every session regardless of whether they ever click it.
+  if(name==='pnl'){
+    const f=document.getElementById('pnl-iframe');
+    if(f&&!f.src)f.src='pnl.html';
+  }
   if(name==='delivery')startLocationPing();else stopLocationPing();
 }
 
