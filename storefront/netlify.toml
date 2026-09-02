@@ -10,13 +10,16 @@
   from = "/"
   to = "/invoices.html"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/index.html"
   to = "/invoices.html"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/checkout.html"
   to = "/invoices.html"
   status = 200
+  force = true
