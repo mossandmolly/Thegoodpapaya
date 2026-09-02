@@ -373,10 +373,12 @@ async function closeOrderPaymentMechanisms(salesOrderId: string) {
 // otherwise updates our own stored qr_image_url — the Delivery panel could
 // keep showing a QR Razorpay's already silently killed. Rather than wait
 // for that and just clear it, refresh (close + recreate, resetting the
-// clock) any QR that's reached 90 minutes old and is still needed — safely
-// before the hard 2hr expiry, with margin for this sweep's own ~5min
-// cadence. Purely a time check: no rider location or delivery-sequence
-// awareness needed.
+// clock) any QR that has less than 60 minutes left before that ~2hr
+// expiry — i.e. reached 60 minutes old — and is still needed. Since this
+// sync now runs hourly (not every few minutes), that 60-min margin is what
+// guarantees a QR gets caught and refreshed by the very next run, before
+// it can ever actually expire on a customer mid-delivery. Purely a time
+// check: no rider location or delivery-sequence awareness needed.
 //
 // Scoped to TODAY's orders only (sales_order_id prefix) — an order still
 // sitting at delivery_status='ofd' from a previous day is a dangling/stuck
@@ -385,12 +387,12 @@ async function closeOrderPaymentMechanisms(salesOrderId: string) {
 // real Razorpay QR-creation calls indefinitely refreshing a QR nobody's
 // ever going to scan again.
 async function sweepStaleQrCodes() {
-  const cutoff = new Date(Date.now() - 90 * 60 * 1000).toISOString();
+  const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const stale = await sbSelectMany('orders',
     `sales_order_id=like.${encodeURIComponent(todayIST())}-*&qr_code_id=not.is.null&delivery_status=eq.ofd&payment_collected=eq.false&qr_created_at=lt.${encodeURIComponent(cutoff)}&select=sales_order_id,customer_name,invoice_total,qr_code_id`
   );
   if (!stale.length) return;
-  console.log(`[sync] ${stale.length} QR(s) older than 90 minutes — refreshing`);
+  console.log(`[sync] ${stale.length} QR(s) within 60 min of expiry — refreshing`);
 
   for (const order of stale) {
     try {
