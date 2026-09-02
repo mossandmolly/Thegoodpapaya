@@ -88,6 +88,19 @@ async function sbDeleteWhere(table: string, filter: string) {
   if (!res.ok) throw new Error(`Supabase delete ${table}: ${await res.text()}`);
 }
 
+// Generic PATCH-by-filter — unlike sbUpdate (hardcoded to orders,
+// filtered by sales_order_id), used where the filter column varies
+// (invoice_line_items, filtered by zoho_invoice_id, in syncStalePaymentLinks).
+async function sbPatchWhere(table: string, filter: string, patch: Record<string, unknown>) {
+  const url = `${env('SUPABASE_URL')}/rest/v1/${table}?${filter}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`Supabase patch ${table}: ${await res.text()}`);
+}
+
 // ── Zoho OAuth ────────────────────────────────────────────────
 // Shared zoho_token_cache row every other Zoho-touching function uses (see
 // cancel-order for the full rationale) — this used to be a private
@@ -586,12 +599,17 @@ async function reconcileTodayDeletions(zohoIds: Set<string>) {
 // about it could have changed in a way this sync cares about. Always
 // processes an invoice Supabase hasn't seen yet at all (first time either
 // today or ever), so nothing new is ever silently skipped.
-async function fetchAlreadySyncedState(today: string): Promise<Map<string, { balance: number; status: string }>> {
+type SyncedState = { balance: number; status: string; salesOrderId: string | null; paymentLinkId: string | null };
+
+async function fetchAlreadySyncedState(today: string): Promise<Map<string, SyncedState>> {
   const rows = await sbSelectMany('invoice_line_items',
-    `invoice_date=eq.${today}&select=zoho_invoice_id,balance,payment_status`
+    `invoice_date=eq.${today}&select=zoho_invoice_id,balance,payment_status,sales_order_id,payment_link_id`
   );
-  const map = new Map<string, { balance: number; status: string }>();
-  for (const r of rows) if (!map.has(r.zoho_invoice_id)) map.set(r.zoho_invoice_id, { balance: parseFloat(r.balance) || 0, status: r.payment_status });
+  const map = new Map<string, SyncedState>();
+  for (const r of rows) if (!map.has(r.zoho_invoice_id)) map.set(r.zoho_invoice_id, {
+    balance: parseFloat(r.balance) || 0, status: r.payment_status,
+    salesOrderId: r.sales_order_id || null, paymentLinkId: r.payment_link_id || null,
+  });
   // Diagnostic: if this comes back 0 on a day that clearly has synced
   // invoices, the skip check below is about to do nothing all run — either
   // the sbSelectMany call above just logged its own error, or `today`
@@ -600,9 +618,38 @@ async function fetchAlreadySyncedState(today: string): Promise<Map<string, { bal
   return map;
 }
 
+// A payment link changing (created/regenerated/cancelled from Order
+// Overview or mark-delivered's auto-link) never touches the Zoho invoice
+// itself — no balance/status change — so invoiceUnchanged below has no way
+// to see it, and an invoice sitting "unchanged" would otherwise never get
+// its payment_link/_id refreshed until something else about it changes.
+// Runs only against invoices this cycle already decided to skip (Zoho
+// calls unaffected) — purely Supabase reads/writes, one order lookup per
+// skipped invoice that actually has a sales_order_id on file.
+async function syncStalePaymentLinks(skipped: any[], alreadySynced: Map<string, SyncedState>) {
+  for (const summary of skipped) {
+    const existing = alreadySynced.get(summary.invoice_id);
+    if (!existing?.salesOrderId) continue;
+    const order = await sbSelectOne('orders',
+      `sales_order_id=eq.${encodeURIComponent(existing.salesOrderId)}&select=razorpay_link_id,razorpay_url`
+    );
+    if (!order) continue;
+    const currentLinkId = order.razorpay_link_id || null;
+    if (currentLinkId === existing.paymentLinkId) continue; // nothing changed
+    try {
+      await sbPatchWhere('invoice_line_items', `zoho_invoice_id=eq.${encodeURIComponent(summary.invoice_id)}`, {
+        payment_link: order.razorpay_url || null, payment_link_id: currentLinkId,
+      });
+      console.log(`[sync] Payment link refreshed for invoice ${summary.invoice_id} (order ${existing.salesOrderId})`);
+    } catch (e: any) {
+      console.error(`[sync] Payment link refresh failed for ${summary.invoice_id}:`, e.message);
+    }
+  }
+}
+
 let loggedMissingSummaryFields = false;
 
-function invoiceUnchanged(summary: any, existing: { balance: number; status: string } | undefined): boolean {
+function invoiceUnchanged(summary: any, existing: SyncedState | undefined): boolean {
   if (!existing) return false; // never synced (today) — always process
   // Missing fields on the list summary (shouldn't happen, but Zoho's exact
   // list-response shape isn't something this sandbox can verify live) —
@@ -634,12 +681,18 @@ async function syncInvoices() {
   const summaries = await fetchModifiedInvoices(today);
   const alreadySynced = await fetchAlreadySyncedState(today);
   const toProcess = summaries.filter(s => !invoiceUnchanged(s, alreadySynced.get(s.invoice_id)));
+  const skipped   = summaries.filter(s => invoiceUnchanged(s, alreadySynced.get(s.invoice_id)));
   console.log(`[sync] ${summaries.length} invoice(s) today, ${toProcess.length} actually changed since last sync`);
 
   for (const summary of toProcess) {
     try { await processInvoice(summary); }
     catch (e: any) { console.error(`[sync] Error on ${summary.invoice_id}:`, e.message); }
   }
+
+  // Zoho-side unchanged doesn't mean payment-link-unchanged — see
+  // syncStalePaymentLinks' own comment. Supabase-only, no Zoho calls.
+  try { await syncStalePaymentLinks(skipped, alreadySynced); }
+  catch (e: any) { console.error(`[sync] Stale payment link sync error:`, e.message); }
 
   // Also check for deletions in today's invoices — reuses the list we just
   // fetched above instead of asking Zoho for the same day all over again.
