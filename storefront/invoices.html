@@ -74,18 +74,28 @@ async function lookup() {
 
     const invoices = groupByInvoice(data);
     results.innerHTML = invoices.map(inv => {
-      const itemsLine = inv.items.map(i => escH(i.item_name) + ' ×' + i.qty).join(', ');
+      const rows = inv.items.map(i => {
+        const qty = +i.qty || 0, rate = +i.price || 0, value = qty * rate;
+        return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+'</td><td>₹'+rate.toFixed(2)+'</td><td>₹'+value.toFixed(2)+'</td></tr>';
+      }).join('');
+      const balance = +inv.balance || 0;
       return '<div class="invoice-card">' +
         '<div class="row1">' +
           '<span class="inv-num">'+escH(inv.invoice_number || inv.sales_order_id || 'Invoice')+'</span>' +
           '<span class="status '+statusClass(inv.payment_status)+'">'+escH(inv.payment_status || 'pending')+'</span>' +
         '</div>' +
-        '<div class="meta">'+escH(inv.invoice_date || '')+' · '+itemsLine+'</div>' +
-        '<div class="meta">Total ₹'+(inv.invoice_total ?? 0)+(inv.balance ? ' · Balance due ₹'+inv.balance : '')+'</div>' +
-        '<div class="actions">' +
-          (inv.payment_link && inv.payment_status !== 'paid' ? '<a class="pay" href="'+escH(inv.payment_link)+'" target="_blank" rel="noopener">Pay Now</a>' : '') +
-          (inv.pdf_url ? '<a class="pdf" href="'+escH(inv.pdf_url)+'" target="_blank" rel="noopener">View Invoice</a>' : '') +
-        '</div>' +
+        '<div class="meta">'+escH(inv.invoice_date || '')+'</div>' +
+        '<table class="inv-items">' +
+          '<thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Value</th></tr></thead>' +
+          '<tbody>'+rows+'</tbody>' +
+          '<tfoot>' +
+            '<tr class="total-row"><td colspan="3">Total</td><td>₹'+(+inv.invoice_total || 0).toFixed(2)+'</td></tr>' +
+            (balance > 0 ? '<tr class="balance-row"><td colspan="3">Balance due</td><td>₹'+balance.toFixed(2)+'</td></tr>' : '') +
+          '</tfoot>' +
+        '</table>' +
+        (inv.payment_link && inv.payment_status !== 'paid'
+          ? '<div class="actions"><a class="pay" href="'+escH(inv.payment_link)+'" target="_blank" rel="noopener">Pay Now</a></div>'
+          : '') +
       '</div>';
     }).join('');
   } catch (e) {

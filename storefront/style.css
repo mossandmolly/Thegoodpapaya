@@ -81,10 +81,16 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .status.paid{background:#e3f5e3;color:#2d6b2d}
 .status.pending,.status.overdue{background:#fdeaea;color:#b3261e}
 .invoice-card .meta{font-size:12px;color:#8a7a6a;margin-bottom:10px}
+.inv-items{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:12px}
+.inv-items th{text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#8a7a6a;padding:0 4px 6px;border-bottom:1px solid #eee0d0}
+.inv-items th:not(:first-child),.inv-items td:not(:first-child){text-align:right}
+.inv-items td{padding:5px 4px;border-bottom:1px solid #f5efe4}
+.inv-items tfoot td{padding:7px 4px 0;border-bottom:none;font-weight:700}
+.inv-items .total-row td{color:#2b2320}
+.inv-items .balance-row td{color:#b3261e}
 .invoice-card .actions{display:flex;gap:8px}
 .invoice-card .actions a{flex:1;text-align:center;padding:9px;border-radius:8px;font-size:12px;font-weight:700}
 .invoice-card .actions .pay{background:#2d6b2d;color:#fff}
-.invoice-card .actions .pdf{border:1px solid #eee0d0;color:#2b2320}
 
 .spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
