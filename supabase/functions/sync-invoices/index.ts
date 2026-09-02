@@ -58,7 +58,15 @@ async function sbUpdate(table: string, salesOrderId: string, patch: Record<strin
 async function sbSelectOne(table: string, filter: string): Promise<any> {
   const url = `${env('SUPABASE_URL')}/rest/v1/${table}?${filter}&limit=1`;
   const res = await fetch(url, { headers: { ...sbHeaders(), 'Prefer': 'return=representation' } });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    // Used to fail silently here (return null on any error, same as an
+    // empty/not-found result) — that made a real outage indistinguishable
+    // from "no row", which is exactly how fetchAlreadySyncedState's read
+    // failing could go unnoticed and quietly disable the whole
+    // already-synced skip check (see its own comment).
+    console.error(`[sync] Supabase select ${table} failed (${res.status}): ${await res.text()}`);
+    return null;
+  }
   const data = await res.json();
   return Array.isArray(data) ? (data[0] ?? null) : null;
 }
@@ -66,7 +74,10 @@ async function sbSelectOne(table: string, filter: string): Promise<any> {
 async function sbSelectMany(table: string, filter: string): Promise<any[]> {
   const url = `${env('SUPABASE_URL')}/rest/v1/${table}?${filter}`;
   const res = await fetch(url, { headers: { ...sbHeaders(), 'Prefer': 'return=representation' } });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    console.error(`[sync] Supabase select ${table} failed (${res.status}): ${await res.text()}`);
+    return [];
+  }
   const data = await res.json();
   return Array.isArray(data) ? data : [];
 }
@@ -517,10 +528,13 @@ async function processInvoice(summary: any) {
 }
 
 // ── Today's deletion detection ────────────────────────────────
-// Compares today's Zoho invoice IDs with what's in Supabase for today
-async function reconcileTodayDeletions() {
-  const today = new Date().toISOString().substring(0, 10);
-  const zohoIds = await fetchZohoInvoiceIds(today, today);
+// Compares today's Zoho invoice IDs with what's in Supabase for today.
+// Takes zohoIds as a param instead of re-fetching — syncInvoices() already
+// pulled today's full invoice list a moment ago via fetchModifiedInvoices;
+// re-listing the same day again here was a second full Zoho call every
+// single run for no reason.
+async function reconcileTodayDeletions(zohoIds: Set<string>) {
+  const today = todayIST();
 
   const sbRows = await sbSelectMany('invoice_line_items',
     `invoice_date=eq.${today}&select=zoho_invoice_id,invoice_number`
@@ -555,16 +569,32 @@ async function fetchAlreadySyncedState(today: string): Promise<Map<string, { bal
   );
   const map = new Map<string, { balance: number; status: string }>();
   for (const r of rows) if (!map.has(r.zoho_invoice_id)) map.set(r.zoho_invoice_id, { balance: parseFloat(r.balance) || 0, status: r.payment_status });
+  // Diagnostic: if this comes back 0 on a day that clearly has synced
+  // invoices, the skip check below is about to do nothing all run — either
+  // the sbSelectMany call above just logged its own error, or `today`
+  // doesn't match what's actually stored in invoice_date.
+  console.log(`[sync] Already-synced state: ${map.size} invoice(s) on file for ${today}`);
   return map;
 }
+
+let loggedMissingSummaryFields = false;
 
 function invoiceUnchanged(summary: any, existing: { balance: number; status: string } | undefined): boolean {
   if (!existing) return false; // never synced (today) — always process
   // Missing fields on the list summary (shouldn't happen, but Zoho's exact
   // list-response shape isn't something this sandbox can verify live) —
   // fail open to "process it" rather than risk silently skipping a real
-  // change we can't actually see.
-  if (summary.balance === undefined || summary.status === undefined) return false;
+  // change we can't actually see. Logged once per run (not once per
+  // invoice) so a systematic shape mismatch — which would silently disable
+  // this skip check for every invoice, every run — actually shows up in
+  // the logs instead of just looking like "lots of things changed".
+  if (summary.balance === undefined || summary.status === undefined) {
+    if (!loggedMissingSummaryFields) {
+      loggedMissingSummaryFields = true;
+      console.error(`[sync] Zoho list summary missing balance/status — got keys: ${Object.keys(summary).join(',')}`);
+    }
+    return false;
+  }
   const summaryBalance = Math.round((parseFloat(summary.balance) || 0) * 100);
   const existingBalance = Math.round(existing.balance * 100);
   const summaryStatus =
@@ -574,12 +604,12 @@ function invoiceUnchanged(summary: any, existing: { balance: number; status: str
 }
 
 async function syncInvoices() {
-  const lookback = parseInt(env('SYNC_LOOKBACK_MINUTES', '10'));
-  const since = new Date().toISOString().substring(0, 10); // YYYY-MM-DD (only format Zoho Inventory accepts)
+  loggedMissingSummaryFields = false;
+  const today = todayIST();
 
-  console.log(`[sync] Fetching invoices modified since ${since}`);
-  const summaries = await fetchModifiedInvoices(since);
-  const alreadySynced = await fetchAlreadySyncedState(since);
+  console.log(`[sync] Fetching today's (${today}) invoices from Zoho`);
+  const summaries = await fetchModifiedInvoices(today);
+  const alreadySynced = await fetchAlreadySyncedState(today);
   const toProcess = summaries.filter(s => !invoiceUnchanged(s, alreadySynced.get(s.invoice_id)));
   console.log(`[sync] ${summaries.length} invoice(s) today, ${toProcess.length} actually changed since last sync`);
 
@@ -588,8 +618,9 @@ async function syncInvoices() {
     catch (e: any) { console.error(`[sync] Error on ${summary.invoice_id}:`, e.message); }
   }
 
-  // Also check for deletions in today's invoices
-  try { await reconcileTodayDeletions(); }
+  // Also check for deletions in today's invoices — reuses the list we just
+  // fetched above instead of asking Zoho for the same day all over again.
+  try { await reconcileTodayDeletions(new Set(summaries.map((s: any) => s.invoice_id))); }
   catch (e: any) { console.error(`[sync] Today reconcile error:`, e.message); }
 
   // Independent of anything above — a QR needing a refresh isn't tied to
