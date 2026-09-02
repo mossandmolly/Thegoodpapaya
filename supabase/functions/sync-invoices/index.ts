@@ -656,14 +656,10 @@ Deno.serve(async (req) => {
   }
 });
 
-// ── pg_cron schedules (run ONCE in SQL Editor) ────────────────
-// 5-minute sync:
-// select cron.schedule('sync-invoices-every-5-min', '*/5 * * * *', $$
-//   select net.http_post(
-//     url := 'https://fykqprogzqcfzrgwlrem.supabase.co/functions/v1/sync-invoices',
-//     headers := '{"Authorization": "Bearer YOUR_ANON_KEY"}'::jsonb
-//   );
-// $$);
+// ── pg_cron schedules ──────────────────────────────────────────
+// See supabase/migrations/100_sync_invoices_hourly_cron.sql — hourly, not
+// every 3-5 min (that cadence hit Zoho's rate limit). Do not re-schedule a
+// tighter interval here without updating that migration to match.
 //
 // Daily noon reconciliation:
 // select cron.schedule('reconcile-invoices-daily-noon', '0 6 * * *', $$
