@@ -623,10 +623,10 @@ async function syncInvoices() {
   try { await reconcileTodayDeletions(new Set(summaries.map((s: any) => s.invoice_id))); }
   catch (e: any) { console.error(`[sync] Today reconcile error:`, e.message); }
 
-  // Independent of anything above — a QR needing a refresh isn't tied to
-  // whether its invoice happened to change today.
-  try { await sweepStaleQrCodes(); }
-  catch (e: any) { console.error(`[sync] QR sweep error:`, e.message); }
+  // QR refresh sweep moved to its own mode=qr-sweep cron (see Deno.serve
+  // below) — it's Razorpay-only, no Zoho calls, so it runs on its own tight
+  // interval instead of being stretched out to whatever this sync's Zoho
+  // API budget allows.
 
   console.log('[sync] Done.');
 }
@@ -679,6 +679,12 @@ Deno.serve(async (req) => {
     const mode = new URL(req.url).searchParams.get('mode') ?? 'sync';
     if (mode === 'reconcile') {
       await reconcileOldInvoices();
+    } else if (mode === 'qr-sweep') {
+      // Razorpay-only (no Zoho calls at all) — runs on its own tight cron,
+      // independent of the Zoho sync interval, so QR refresh timing never
+      // has to trade off against Zoho API consumption. See
+      // supabase/migrations for the schedule.
+      await sweepStaleQrCodes();
     } else {
       await syncInvoices();
     }
