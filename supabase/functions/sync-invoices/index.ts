@@ -302,14 +302,20 @@ async function createOrderPaymentLink(amountPaise: number, customerName: string,
 // left a stale, still-payable link/QR behind). Runs every 5 minutes
 // alongside the invoice_line_items sync above, keyed by the same Zoho
 // invoice's reference_number (== sales_order_id).
+// Returns the order's payment link as it stands after reconciliation
+// (null if none active, or not an ops-dashboard order at all) — the
+// invoice_line_items rows below (what the customer-facing invoices site
+// actually reads) mirror whatever's true on `orders` right now, so the
+// "Pay Now" button there reflects a link created any way: auto-generated
+// here, by generate-invoice, or manually from Order Overview.
 async function reconcileOrderPayment(
   salesOrderId: string, customerName: string, phone: string | null,
   invoiceBalance: number, amountPaid: number,
-) {
+): Promise<{ url: string | null; id: string | null }> {
   const order = await sbSelectOne('orders',
-    `sales_order_id=eq.${encodeURIComponent(salesOrderId)}&select=razorpay_link_id,qr_code_id,balance_due,payment_collected,delivery_status`
+    `sales_order_id=eq.${encodeURIComponent(salesOrderId)}&select=razorpay_link_id,razorpay_url,qr_code_id,balance_due,payment_collected,delivery_status`
   );
-  if (!order) return; // not an ops-dashboard order (e.g. shop/website order) — nothing to reconcile
+  if (!order) return { url: null, id: null }; // not an ops-dashboard order (e.g. shop/website order) — nothing to reconcile
 
   const balanceUnchanged = order.balance_due != null &&
     Math.round(parseFloat(order.balance_due) * 100) === Math.round(invoiceBalance * 100);
@@ -362,6 +368,14 @@ async function reconcileOrderPayment(
   }
 
   await sbUpdate('orders', salesOrderId, updates);
+
+  // 'razorpay_url' in updates (even set to null, e.g. just-cancelled above)
+  // means this cycle changed it — that's the authoritative post-update
+  // value; otherwise nothing changed this cycle, so whatever was already
+  // on the order stands.
+  const finalUrl = 'razorpay_url' in updates ? (updates.razorpay_url as string | null) : (order.razorpay_url ?? null);
+  const finalId  = 'razorpay_link_id' in updates ? (updates.razorpay_link_id as string | null) : (order.razorpay_link_id ?? null);
+  return { url: finalUrl, id: finalId };
 }
 
 // Called when the Zoho invoice behind an order disappears (voided) — closes
@@ -482,20 +496,27 @@ async function processInvoice(summary: any) {
     detail.status === 'partially_paid' ? 'partially_paid' : 'pending';
 
   // Best-effort, independent of the invoice_line_items sync below — a
-  // failure here shouldn't stop that from completing.
+  // failure here shouldn't stop that from completing. paymentLink stays
+  // {url:null,id:null} for a non-ops-dashboard order (no reference_number
+  // at all, e.g. a shop/website order) or if reconciliation itself throws —
+  // invoice_line_items below just won't carry a link in that case, same as
+  // today.
+  let paymentLink: { url: string | null; id: string | null } = { url: null, id: null };
   if (detail.reference_number) {
     try {
-      await reconcileOrderPayment(detail.reference_number, customerName, phone, invoiceBalance, amountPaid);
+      paymentLink = await reconcileOrderPayment(detail.reference_number, customerName, phone, invoiceBalance, amountPaid);
     } catch (e: any) {
       console.error(`[sync] Order reconcile failed for ${detail.reference_number}:`, e.message);
     }
   }
 
   // ── Upsert line items ─────────────────────────────────────────
-  // Pure data mirror of what's actually on the Zoho invoice — no payment
-  // link/QR logic here at all. orders (via reconcileOrderPayment above) is
-  // the only table that ever holds a live payment link or QR; this table
-  // exists purely to reflect Zoho's own invoice line items.
+  // Mirror of what's actually on the Zoho invoice, plus whatever payment
+  // link is currently live on the order (from reconcileOrderPayment just
+  // above) — payment_link/payment_link_id are what the customer-facing
+  // invoices website's "Pay Now" button actually reads (get_invoices_by_
+  // phone, migration 032), so this is the only place that column gets
+  // written; it used to just sit unpopulated forever.
   const rows = (detail.line_items ?? []).map((li: any) => {
     const finalQty     = parseFloat(li.quantity);
     const requestedQty = li.custom_fields?.find((cf: any) => cf.api_name === 'cf_requested_quantity')?.value ?? finalQty;
@@ -513,6 +534,8 @@ async function processInvoice(summary: any) {
       balance:            invoiceBalance,
       amount_paid:        amountPaid,
       payment_status:     paymentStatus,
+      payment_link:       paymentLink.url,
+      payment_link_id:    paymentLink.id,
       sales_order_id:     detail.reference_number || null,
       pdf_url:            `https://inventory.zoho.in/app#/invoices/${zohoInvoiceId}`,
     };
