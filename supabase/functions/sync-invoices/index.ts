@@ -170,13 +170,12 @@ function todayIST(): string {
   return new Date(Date.now() + 330 * 60 * 1000).toISOString().substring(0, 10);
 }
 
-async function fetchModifiedInvoices(since: string): Promise<any[]> {
+async function fetchModifiedInvoices(dateStart: string, dateEnd: string): Promise<any[]> {
   const token = await getZohoToken();
-  const istDate = todayIST();
   let page = 1;
   const invoices: any[] = [];
   while (true) {
-    const url = withOrg(`${zohoBase()}/invoices?date_start=${istDate}&date_end=${istDate}&page=${page}&per_page=200`);
+    const url = withOrg(`${zohoBase()}/invoices?date_start=${dateStart}&date_end=${dateEnd}&page=${page}&per_page=200`);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const raw  = await res.text();
     console.log('[debug] invoices response:', raw.substring(0, 300));
@@ -678,7 +677,7 @@ async function syncInvoices() {
   const today = todayIST();
 
   console.log(`[sync] Fetching today's (${today}) invoices from Zoho`);
-  const summaries = await fetchModifiedInvoices(today);
+  const summaries = await fetchModifiedInvoices(today, today);
   const alreadySynced = await fetchAlreadySyncedState(today);
   const toProcess = summaries.filter(s => !invoiceUnchanged(s, alreadySynced.get(s.invoice_id)));
   const skipped   = summaries.filter(s => invoiceUnchanged(s, alreadySynced.get(s.invoice_id)));
@@ -709,8 +708,8 @@ async function syncInvoices() {
 
 // ── Daily reconciliation (D-1 and earlier, runs at noon) ──────
 async function reconcileOldInvoices() {
-  const today     = new Date().toISOString().substring(0, 10);
-  const since7   = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+  const today     = todayIST();
+  const since7    = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
   // yesterday (D-1)
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
 
@@ -735,11 +734,28 @@ async function reconcileOldInvoices() {
     }
   }
 
-  // 4. Process all modified invoices for D-1 and earlier
-  const since24h = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString().substring(0, 19);
-  const modified = await fetchModifiedInvoices(since24h);
-  const oldModified = modified.filter(s => (s.date ?? s.invoice_date ?? '') < today);
-  console.log(`[reconcile] ${oldModified.length} modified older invoice(s) to reprocess`);
+  // 4. Process changed invoices for D-1 through D-7.
+  // fetchModifiedInvoices used to ignore whatever range was passed to it
+  // and always fetch only today's invoices internally — meaning this step
+  // silently never found anything to process at all (filtering "today"
+  // results down to "date < today" is always empty). Fixed to actually
+  // query the D-7..D-1 range. That fix alone would mean EVERY invoice in
+  // the last 7 days gets a full detail+contact refetch every single day
+  // this runs, unconditionally — the same kind of unbounded fan-out that
+  // caused the original rate-limit incident, just on a weekly-volume scale
+  // instead of daily. So this now applies the same already-synced skip
+  // check syncInvoices uses, scoped to this date range, rather than
+  // reprocessing everything every time.
+  const oldSummaries = await fetchModifiedInvoices(since7, yesterday);
+  const oldAlreadySynced = await sbSelectMany('invoice_line_items',
+    `invoice_date=gte.${since7}&invoice_date=lt.${today}&select=zoho_invoice_id,balance,payment_status`
+  ).then(rows => {
+    const map = new Map<string, { balance: number; status: string }>();
+    for (const r of rows) if (!map.has(r.zoho_invoice_id)) map.set(r.zoho_invoice_id, { balance: parseFloat(r.balance) || 0, status: r.payment_status });
+    return map;
+  });
+  const oldModified = oldSummaries.filter(s => !invoiceUnchanged(s, oldAlreadySynced.get(s.invoice_id) as SyncedState | undefined));
+  console.log(`[reconcile] ${oldSummaries.length} invoice(s) dated ${since7} to ${yesterday}, ${oldModified.length} actually changed`);
 
   for (const summary of oldModified) {
     try { await processInvoice(summary); }
