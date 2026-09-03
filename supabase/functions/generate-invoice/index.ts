@@ -625,6 +625,55 @@ Deno.serve(async (req) => {
       // swallow — payment link/QR refresh is a nice-to-have, not load-bearing for invoicing
     }
 
+    // ── Write invoice_line_items directly, right now ─────────────────────
+    // This used to be the customer-facing invoices website's ONLY path to
+    // ever see a new invoice — sync-invoices was the sole writer, so a new
+    // invoice stayed invisible there until its next run (throttled to
+    // hours at a time this session, more than once, for Zoho rate-limit
+    // reasons unrelated to this website at all). Writing it here too means
+    // a customer can see an invoice the moment it's generated, regardless
+    // of sync-invoices' cadence or health — sync-invoices still runs and
+    // still owns ongoing reconciliation (payments, edits made directly in
+    // Zoho, deletions), it's just no longer the only way in.
+    //
+    // Re-reads the order fresh rather than tracking razorpay_link_id/_url
+    // through every branch above (QR path, link path, neither, a swallowed
+    // failure mid-branch) — one more cheap Supabase read, but guaranteed to
+    // reflect whatever's actually true on the order right now.
+    try {
+      const { data: freshOrder } = await supabase
+        .from('orders').select('razorpay_link_id, razorpay_url')
+        .eq('sales_order_id', sales_order_id).maybeSingle();
+      const paymentStatus = balanceDue <= 0 ? 'paid' : (amountPaid > 0 ? 'partially_paid' : 'pending');
+      const iliRows = lineItems.map(li => ({
+        customer_name:      order.customer_name,
+        phone_number:       order.phone || null,
+        invoice_date:       invoiceDate,
+        invoice_number,
+        zoho_invoice_id:    invoice_id,
+        item_name:          li.name,
+        requested_quantity: li.requested_qty,
+        final_quantity:     li.qty,
+        item_price:         li.rate,
+        invoice_total,
+        balance:            balanceDue,
+        amount_paid:        amountPaid,
+        payment_status:     paymentStatus,
+        payment_link:       freshOrder?.razorpay_url ?? null,
+        payment_link_id:    freshOrder?.razorpay_link_id ?? null,
+        sales_order_id,
+        pdf_url:            `https://inventory.zoho.in/app#/invoices/${invoice_id}`,
+      }));
+      await supabase.from('invoice_line_items').delete().eq('zoho_invoice_id', invoice_id);
+      const { error: iliError } = await supabase.from('invoice_line_items').insert(iliRows);
+      if (iliError) console.error(`invoice_line_items write failed for ${invoice_id}:`, iliError.message);
+    } catch (e: any) {
+      // Best-effort — the Zoho invoice and orders update above already
+      // succeeded; sync-invoices will still pick this up on its own next
+      // run either way, just not instantly.
+      console.error(`invoice_line_items write failed for ${invoice_id}:`, e.message);
+    }
+
     return new Response(
       JSON.stringify({ invoice_id, invoice_number, sales_order_id, free_items: freeItems, payment_link: paymentLink }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
