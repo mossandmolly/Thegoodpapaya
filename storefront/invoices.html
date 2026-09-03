@@ -47,6 +47,14 @@ function statusClass(s) {
 
 let hasLookedUp = false; // guards the auto-refresh below — never fires before a real lookup has happened
 
+// Remembered per-browser only (their own phone number, nothing sensitive
+// beyond what they'd type in anyway) — so returning to this page later
+// doesn't mean re-typing it every time. Wrapped in try/catch: some
+// browsers/private-mode contexts throw on localStorage access instead of
+// just no-op-ing, and that must never break the lookup itself.
+function savedPhone() { try { return localStorage.getItem('gp_phone') || ''; } catch { return ''; } }
+function savePhone(p) { try { localStorage.setItem('gp_phone', p); } catch {} }
+
 async function lookup() {
   const phoneInput = document.getElementById('phone').value.trim();
   if (!/^\d{10}$/.test(phoneInput)) {
@@ -54,6 +62,7 @@ async function lookup() {
     return;
   }
   hasLookedUp = true;
+  savePhone(phoneInput);
   const btn = document.getElementById('lookup-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Looking up…';
@@ -110,6 +119,16 @@ async function lookup() {
 }
 
 document.getElementById('phone').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+
+// Pre-fill and auto-run on load if we already have a number for this
+// browser — so a returning customer sees their invoices immediately
+// instead of having to type their number in again every visit.
+(function () {
+  const p = savedPhone();
+  if (!/^\d{10}$/.test(p)) return;
+  document.getElementById('phone').value = p;
+  lookup();
+})();
 
 // Pay Now opens Razorpay in a new tab — coming back here after paying
 // shouldn't require manually clicking "View My Invoices" again to see the
