@@ -45,12 +45,15 @@ function statusClass(s) {
   return 'pending';
 }
 
+let hasLookedUp = false; // guards the auto-refresh below — never fires before a real lookup has happened
+
 async function lookup() {
   const phoneInput = document.getElementById('phone').value.trim();
   if (!/^\d{10}$/.test(phoneInput)) {
     document.getElementById('results').innerHTML = '<div class="err-box show">Please enter a valid 10-digit phone number.</div>';
     return;
   }
+  hasLookedUp = true;
   const btn = document.getElementById('lookup-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Looking up…';
@@ -107,6 +110,19 @@ async function lookup() {
 }
 
 document.getElementById('phone').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+
+// Pay Now opens Razorpay in a new tab — coming back here after paying
+// shouldn't require manually clicking "View My Invoices" again to see the
+// paid stamp. Re-runs the same lookup silently whenever this tab becomes
+// visible again, as long as one has already succeeded once and nothing's
+// already in flight.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!hasLookedUp) return;
+  const btn = document.getElementById('lookup-btn');
+  if (btn.disabled) return;
+  lookup();
+});
 </script>
 </body>
 </html>
