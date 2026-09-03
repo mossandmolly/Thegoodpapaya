@@ -232,6 +232,26 @@ Deno.serve(async (req) => {
 
   if (error) console.error('Orders update failed:', error.message);
 
+  // Mirrors the orders update above onto invoice_line_items — what the
+  // customer-facing invoices website actually reads. Without this, a
+  // payment made just now only shows there once sync-invoices next runs
+  // (every few hours), so a customer paying and coming straight back to
+  // the site would still see "pending" for hours despite having just paid.
+  // Best-effort: the orders update above (what ops-dashboard reads) is
+  // already the source of truth and has already succeeded regardless.
+  if (order.zoho_invoice_id) {
+    const lineItemUpdates: Record<string, unknown> = {
+      amount_paid: newAmountPaid, balance: balanceDue,
+      payment_status: balanceDue <= 0 ? 'paid' : 'partially_paid',
+    };
+    if (balanceDue <= 0) { lineItemUpdates.payment_link = null; lineItemUpdates.payment_link_id = null; }
+    const { error: iliError } = await supabase
+      .from('invoice_line_items')
+      .update(lineItemUpdates)
+      .eq('zoho_invoice_id', order.zoho_invoice_id);
+    if (iliError) console.error('invoice_line_items update failed:', iliError.message);
+  }
+
   // Best-effort — the orders-table update above is already the source of
   // truth the ops-dashboard reads from; a Zoho hiccup here shouldn't turn
   // an otherwise-successful webhook into a retry storm from Razorpay.
