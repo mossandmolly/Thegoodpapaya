@@ -1457,7 +1457,11 @@ function switchTab(name){
   // tab, not on every session regardless of whether they ever click it.
   if(name==='pnl'){
     const f=document.getElementById('pnl-iframe');
-    if(f&&!f.src)f.src='pnl.html';
+    // Was checking !f.src to see if it's ever been loaded — but src=""
+    // reads back as the resolved URL "about:blank" (truthy), not an empty
+    // string, so that check was always false and this never actually ran,
+    // ever, on any click. A dedicated flag doesn't have that ambiguity.
+    if(f&&!f.dataset.loaded){f.dataset.loaded='1';f.src='pnl.html';}
   }
   if(name==='delivery')startLocationPing();else stopLocationPing();
 }
