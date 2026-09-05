@@ -380,6 +380,38 @@ const AUGUST_INVENTORY = {"_updated": "2026-08-29", "amaranthus": 0.0, "amla": 0
 // ── STATE ──
 var AUG = {purchases:[], sales:{}, expenses:[], inventory:{}};
 var curGroup='All', chartInst=null;
+// All SKUs table sort state — persists across group-tab switches. Default
+// alphabetical by SKU (ascending); numeric columns default to descending
+// on first click (seeing the biggest number first is the useful default
+// for ₹/qty columns), same as most spreadsheet-style tools.
+var sortCol='sku', sortDir=1;
+var SKU_COLS=[
+  {key:'sku',      label:'SKU',              numeric:false, defaultDir:1},
+  {key:'cfQty',    label:'Aug CF',           numeric:true,  defaultDir:-1},
+  {key:'sepBought',label:'Sep Bought',       numeric:true,  defaultDir:-1},
+  {key:'total',    label:'Total',            numeric:true,  defaultDir:-1},
+  {key:'sold',     label:'Sold',             numeric:true,  defaultDir:-1},
+  {key:'sellPct',  label:'Sell%',            numeric:true,  defaultDir:-1},
+  {key:'booksRem', label:'Books Rem',        numeric:true,  defaultDir:-1},
+  {key:'physical', label:'Physical',         numeric:true,  defaultDir:-1},
+  {key:'writeoff', label:'Write-off',        numeric:true,  defaultDir:-1},
+  {key:'sales',    label:'Sales ₹',          numeric:true,  defaultDir:-1},
+  {key:'spend',    label:'Spend ₹',          numeric:true,  defaultDir:-1},
+  {key:'mpctCF',   label:'Margin% (w/CF)',   numeric:true,  defaultDir:-1},
+  {key:'at50CF',   label:'@50% (w/CF)',      numeric:true,  defaultDir:-1},
+  {key:'at80CF',   label:'@80% (w/CF)',      numeric:true,  defaultDir:-1},
+  {key:'mpctExCF', label:'Margin% (ex CF)',  numeric:true,  defaultDir:-1},
+  {key:'at50ExCF', label:'@50% (ex CF)',     numeric:true,  defaultDir:-1},
+  {key:'at80ExCF', label:'@80% (ex CF)',     numeric:true,  defaultDir:-1},
+];
+function sortSkuTable(key){
+  var col=SKU_COLS.find(function(c){return c.key===key;});
+  if(!col)return;
+  sortDir=(sortCol===key)?-sortDir:col.defaultDir;
+  sortCol=key;
+  renderThead();
+  renderTbody(getFiltered(buildSkuData()),buildLatestPrices());
+}
 
 // ── SUPABASE ──
 function sbGet(table,query){
@@ -522,39 +554,64 @@ function renderKPIs(all,allDays){
 }
 
 function renderThead(){
-  document.getElementById('skuThead').innerHTML=['SKU','Aug CF','Sep Bought','Total','Sold','Sell%','Books Rem','Physical','Write-off','Sales ₹','Spend ₹','Margin% (w/CF)','@50% (w/CF)','@80% (w/CF)','Margin% (ex CF)','@50% (ex CF)','@80% (ex CF)'].map(function(h){return '<th>'+h+'</th>';}).join('');
+  document.getElementById('skuThead').innerHTML=SKU_COLS.map(function(c){
+    var arrow=sortCol===c.key?(sortDir>0?' ▲':' ▼'):'';
+    return '<th style="cursor:pointer;user-select:none" onclick="sortSkuTable(\''+c.key+'\')" title="Click to sort">'+c.label+arrow+'</th>';
+  }).join('');
+}
+
+// Single source of truth for every column's value, computed once per row —
+// both the table body and sortSkuTable read from this, so "sort by any
+// column" never risks drifting out of sync with what's actually displayed.
+function computeRowMetrics(r,priceMap){
+  var br=rem(r),pr=physRem(r),dr=pr!==null?pr:br,wo=pr!==null?+(br-pr).toFixed(3):0;
+  var sp=sellPct(r),lp=priceMap[r.s.toLowerCase().trim()]||(r.sold>0?r.sales/r.sold:null);
+  var cfVal=(r.cfQty||0)>0?(AUGUST_CARRY_FORWARD[r.s.toLowerCase().trim()]?AUGUST_CARRY_FORWARD[r.s.toLowerCase().trim()].value:0):0;
+  var margin_noCF=r.sales-(r.purch-cfVal);
+  var mpctExCF=r.sales>0?+(margin_noCF/r.sales*100).toFixed(1):null;
+  function pot(margin,rt){if(dr<=0||!lp)return null;var a=dr*rt*lp,ts=r.sales+a;return ts>0?+((margin+a)/ts*100).toFixed(1):null;}
+  return {
+    row:r, sku:r.s, cfQty:r.cfQty||0, sepBought:r.bought-(r.cfQty||0), total:r.bought, sold:r.sold,
+    sellPct:sp, booksRem:br, physical:dr, writeoff:wo, sales:r.sales, spend:r.purch,
+    mpctCF:(r.sales>0?+r.mpct:null), at50CF:pot(r.margin,0.5), at80CF:pot(r.margin,0.8),
+    mpctExCF:mpctExCF, at50ExCF:pot(margin_noCF,0.5), at80ExCF:pot(margin_noCF,0.8),
+    _pr:pr, _wo:wo, _sp:sp,
+  };
 }
 
 function renderTbody(d,priceMap){
   document.getElementById('tTitle').textContent=(curGroup==='All'?'All SKUs':(GK[curGroup]||curGroup)+' SKUs')+' — September';
-  var sorted=d.slice().sort(function(a,b){return (b.cfQty||0)-(a.cfQty||0)||(rem(b)-rem(a));});
-  function pc(p){return !p||p==='—'?'var(--muted)':parseFloat(p)<0?'var(--red)':parseFloat(p)<15?'var(--yellow)':'var(--accent)';}
-  document.getElementById('skuTbody').innerHTML=sorted.map(function(r){
-    var br=rem(r),pr=physRem(r),dr=pr!==null?pr:br,wo=pr!==null?+(br-pr).toFixed(3):0;
-    var sp=sellPct(r),lp=priceMap[r.s.toLowerCase().trim()]||(r.sold>0?r.sales/r.sold:null);
-    var barCol=sp===null?'#333':sp>=80?'#b8f050':sp>=60?'#f59e0b':'#ff4545';
-    var cfVal=(r.cfQty||0)>0?(AUGUST_CARRY_FORWARD[r.s.toLowerCase().trim()]?AUGUST_CARRY_FORWARD[r.s.toLowerCase().trim()].value:0):0;
-    var margin_noCF=r.sales-(r.purch-cfVal);
-    var mpct_noCF=r.sales>0?(margin_noCF/r.sales*100).toFixed(1):'—';
-    function pot(margin,rt){if(dr<=0||!lp)return '—';var a=dr*rt*lp,ts=r.sales+a;return ts>0?((margin+a)/ts*100).toFixed(1):'—';}
+  var col=SKU_COLS.find(function(c){return c.key===sortCol;})||SKU_COLS[0];
+  var metrics=d.map(function(r){return computeRowMetrics(r,priceMap);});
+  metrics.sort(function(a,b){
+    var av=a[sortCol],bv=b[sortCol];
+    if(!col.numeric)return sortDir*(String(av).toLowerCase()<String(bv).toLowerCase()?-1:String(av).toLowerCase()>String(bv).toLowerCase()?1:0);
+    var an=(av===null||av===undefined||isNaN(av)),bn=(bv===null||bv===undefined||isNaN(bv));
+    if(an&&bn)return 0; if(an)return 1; if(bn)return -1;
+    return sortDir*(av-bv);
+  });
+  function pc(p){return p===null?'var(--muted)':p<0?'var(--red)':p<15?'var(--yellow)':'var(--accent)';}
+  function pct(p){return p===null?'—':fmt(p,1)+'%';}
+  document.getElementById('skuTbody').innerHTML=metrics.map(function(m){
+    var r=m.row,barCol=m._sp===null?'#333':m._sp>=80?'#b8f050':m._sp>=60?'#f59e0b':'#ff4545';
     return '<tr>'
-      +'<td>'+r.s+(r.cfQty>0?'<span style="font-size:8px;color:var(--yellow);margin-left:4px">CF</span>':'')+'</td>'
-      +'<td style="color:var(--yellow)">'+(r.cfQty>0?fmt(r.cfQty,2):'—')+'</td>'
-      +'<td>'+fmt(r.bought-(r.cfQty||0),2)+'</td>'
-      +'<td style="font-weight:700">'+fmt(r.bought,2)+'</td>'
-      +'<td>'+fmt(r.sold,2)+'</td>'
-      +'<td style="color:'+barCol+'">'+(sp!==null?sp+'%':'—')+'</td>'
-      +'<td style="color:'+(br<0?'var(--red)':'var(--muted2)')+'">'+fmt(br,2)+'</td>'
-      +'<td style="color:'+(pr!==null?'var(--accent)':'var(--muted2)')+'"><b>'+fmt(dr,2)+'</b></td>'
-      +'<td style="color:'+(wo>0?'var(--red)':'var(--muted)')+'">'+( wo>0?'−'+fmt(wo,2):'—')+'</td>'
-      +'<td style="color:var(--accent)">₹'+fmt(r.sales)+'</td>'
-      +'<td style="color:var(--orange)">₹'+fmt(r.purch)+'</td>'
-      +'<td><span style="color:'+(parseFloat(r.mpct)<0?'var(--red)':parseFloat(r.mpct)>=25?'var(--blue)':'var(--yellow)')+';font-weight:700">'+r.mpct+'%</span></td>'
-      +'<td style="color:'+pc(pot(r.margin,0.5))+'">'+pot(r.margin,0.5)+(pot(r.margin,0.5)!=='—'?'%':'')+'</td>'
-      +'<td style="color:'+pc(pot(r.margin,0.8))+'">'+pot(r.margin,0.8)+(pot(r.margin,0.8)!=='—'?'%':'')+'</td>'
-      +'<td><span style="color:'+(parseFloat(mpct_noCF)<0?'var(--red)':parseFloat(mpct_noCF)>=25?'var(--accent)':'var(--yellow)')+';font-weight:700">'+mpct_noCF+(mpct_noCF!=='—'?'%':'')+'</span></td>'
-      +'<td style="color:'+pc(pot(margin_noCF,0.5))+'">'+pot(margin_noCF,0.5)+(pot(margin_noCF,0.5)!=='—'?'%':'')+'</td>'
-      +'<td style="color:'+pc(pot(margin_noCF,0.8))+'">'+pot(margin_noCF,0.8)+(pot(margin_noCF,0.8)!=='—'?'%':'')+'</td>'
+      +'<td>'+m.sku+(m.cfQty>0?'<span style="font-size:8px;color:var(--yellow);margin-left:4px">CF</span>':'')+'</td>'
+      +'<td style="color:var(--yellow)">'+(m.cfQty>0?fmt(m.cfQty,2):'—')+'</td>'
+      +'<td>'+fmt(m.sepBought,2)+'</td>'
+      +'<td style="font-weight:700">'+fmt(m.total,2)+'</td>'
+      +'<td>'+fmt(m.sold,2)+'</td>'
+      +'<td style="color:'+barCol+'">'+(m._sp!==null?m._sp+'%':'—')+'</td>'
+      +'<td style="color:'+(m.booksRem<0?'var(--red)':'var(--muted2)')+'">'+fmt(m.booksRem,2)+'</td>'
+      +'<td style="color:'+(m._pr!==null?'var(--accent)':'var(--muted2)')+'"><b>'+fmt(m.physical,2)+'</b></td>'
+      +'<td style="color:'+(m.writeoff>0?'var(--red)':'var(--muted)')+'">'+(m.writeoff>0?'−'+fmt(m.writeoff,2):'—')+'</td>'
+      +'<td style="color:var(--accent)">₹'+fmt(m.sales)+'</td>'
+      +'<td style="color:var(--orange)">₹'+fmt(m.spend)+'</td>'
+      +'<td><span style="color:'+(m.mpctCF<0?'var(--red)':m.mpctCF>=25?'var(--blue)':'var(--yellow)')+';font-weight:700">'+(m.mpctCF===null?'—':fmt(m.mpctCF,1)+'%')+'</span></td>'
+      +'<td style="color:'+pc(m.at50CF)+'">'+pct(m.at50CF)+'</td>'
+      +'<td style="color:'+pc(m.at80CF)+'">'+pct(m.at80CF)+'</td>'
+      +'<td><span style="color:'+(m.mpctExCF<0?'var(--red)':m.mpctExCF>=25?'var(--accent)':'var(--yellow)')+';font-weight:700">'+(m.mpctExCF===null?'—':fmt(m.mpctExCF,1)+'%')+'</span></td>'
+      +'<td style="color:'+pc(m.at50ExCF)+'">'+pct(m.at50ExCF)+'</td>'
+      +'<td style="color:'+pc(m.at80ExCF)+'">'+pct(m.at80ExCF)+'</td>'
       +'</tr>';
   }).join('');
 }
