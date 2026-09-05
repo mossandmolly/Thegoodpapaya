@@ -445,8 +445,8 @@ function buildSkuData(){
     if(!sm[key])sm[key]={s:canon(name),g:assignGroup(name),sold:0,bought:0,sales:0,purch:0,cfQty:0,cfVal:0};
     return sm[key];
   }
-  Object.keys(JULY_CARRY_FORWARD).forEach(function(key){
-    var v=JULY_CARRY_FORWARD[key];
+  Object.keys(AUGUST_CARRY_FORWARD).forEach(function(key){
+    var v=AUGUST_CARRY_FORWARD[key];
     if(v.qty>0){var r=get(key);r.bought+=v.qty;r.purch+=v.value;r.cfQty=v.qty;r.cfVal=v.value;}
   });
   AUG.purchases.forEach(function(p){var r=get(p.sku);r.bought+=p.qty;r.purch+=p.cost;});
@@ -468,7 +468,7 @@ function calcInventoryValue(){
   var sorted=AUG.purchases.slice().sort(function(a,b){return b.date.localeCompare(a.date);});
   var latestPrice={};
   sorted.forEach(function(p){var k=canon(p.sku).toLowerCase().trim();if(!latestPrice[k]&&p.qty>0)latestPrice[k]=p.cost/p.qty;});
-  Object.keys(JULY_CARRY_FORWARD).forEach(function(k){if(!latestPrice[k]&&JULY_CARRY_FORWARD[k].avg_cost>0)latestPrice[k]=JULY_CARRY_FORWARD[k].avg_cost;});
+  Object.keys(AUGUST_CARRY_FORWARD).forEach(function(k){if(!latestPrice[k]&&AUGUST_CARRY_FORWARD[k].avg_cost>0)latestPrice[k]=AUGUST_CARRY_FORWARD[k].avg_cost;});
   var total=0,skuCount=0;
   Object.keys(AUG.inventory).forEach(function(k){if(k==='_updated')return;var qty=AUG.inventory[k];if(qty<=0)return;total+=qty*(latestPrice[k]||0);skuCount++;});
   return{val:Math.round(total),skus:skuCount,date:AUG.inventory._updated};
@@ -499,7 +499,7 @@ function renderKPIs(all,allDays){
   var cats={};AUG.expenses.forEach(function(e){cats[e.category]=(cats[e.category]||0)+e.amount;});
   var tT=cats['Transport']||0;
   var catBreakdown=Object.entries(cats).map(function(e){return e[0]+' ₹'+fmt(e[1]);}).join(' · ')+(tG>0?' · Razorpay ₹'+fmt(tG):'');
-  var tCFVal=Object.values(JULY_CARRY_FORWARD).reduce(function(s,v){return s+v.value;},0);
+  var tCFVal=Object.values(AUGUST_CARRY_FORWARD).reduce(function(s,v){return s+v.value;},0);
   var tP_noCF=tP-tCFVal,tM_noCF=tS-tP_noCF,tN_noCF=tM_noCF-tAllExp;
   var mP_noCF=tS>0?(tM_noCF/tS*100).toFixed(1):0,nP_noCF=tS>0?(tN_noCF/tS*100).toFixed(1):0;
   var inv=calcInventoryValue();
@@ -533,7 +533,7 @@ function renderTbody(d,priceMap){
     var br=rem(r),pr=physRem(r),dr=pr!==null?pr:br,wo=pr!==null?+(br-pr).toFixed(3):0;
     var sp=sellPct(r),lp=priceMap[r.s.toLowerCase().trim()]||(r.sold>0?r.sales/r.sold:null);
     var barCol=sp===null?'#333':sp>=80?'#b8f050':sp>=60?'#f59e0b':'#ff4545';
-    var cfVal=(r.cfQty||0)>0?(JULY_CARRY_FORWARD[r.s.toLowerCase().trim()]?JULY_CARRY_FORWARD[r.s.toLowerCase().trim()].value:0):0;
+    var cfVal=(r.cfQty||0)>0?(AUGUST_CARRY_FORWARD[r.s.toLowerCase().trim()]?AUGUST_CARRY_FORWARD[r.s.toLowerCase().trim()].value:0):0;
     var margin_noCF=r.sales-(r.purch-cfVal);
     var mpct_noCF=r.sales>0?(margin_noCF/r.sales*100).toFixed(1):'—';
     function pot(margin,rt){if(dr<=0||!lp)return '—';var a=dr*rt*lp,ts=r.sales+a;return ts>0?((margin+a)/ts*100).toFixed(1):'—';}
@@ -585,7 +585,7 @@ function renderSellTomorrow(all,priceMap){
   function ul(sp){return sp===null||sp<50?'🔴 urgent':sp<70?'🟡 push':'🟢 move';}
   var chips=cands.map(function(c){
     var r=c.r,sp=c.sp,dr=c.dr,lp=c.lp;
-    var cfVal=(r.cfQty||0)>0?(JULY_CARRY_FORWARD[r.s.toLowerCase().trim()]?JULY_CARRY_FORWARD[r.s.toLowerCase().trim()].value:0):0;
+    var cfVal=(r.cfQty||0)>0?(AUGUST_CARRY_FORWARD[r.s.toLowerCase().trim()]?AUGUST_CARRY_FORWARD[r.s.toLowerCase().trim()].value:0):0;
     var margin_noCF=r.sales-(r.purch-cfVal);
     function pot(margin,rt){if(dr<=0||!lp)return null;var a=dr*rt*lp,ts=r.sales+a;return ts>0?((margin+a)/ts*100).toFixed(1):null;}
     function pc(p){return !p?'var(--muted)':parseFloat(p)<0?'var(--red)':parseFloat(p)<15?'var(--yellow)':'var(--accent)';}
@@ -758,7 +758,7 @@ document.getElementById('addExpBtn').addEventListener('click',function(){
 
 // ── STOCK COUNT ──
 function renderCFSummary(){
-  var cf=JULY_CARRY_FORWARD;
+  var cf=AUGUST_CARRY_FORWARD;
   var totalVal=Object.values(cf).reduce(function(s,v){return s+v.value;},0);
   var items=Object.entries(cf).filter(function(e){return e[1].qty>0;}).sort(function(a,b){return b[1].value-a[1].value;});
   var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
@@ -779,7 +779,7 @@ function renderInvPage(){
   document.getElementById('invGrid').innerHTML=ALL_SKUS.map(function(name){
     var key=name.toLowerCase().trim(),r=skuData[key];
     var booksRem=r?rem(r):0,physVal=AUG.inventory[key],avgCost=r&&r.bought>0?r.purch/r.bought:0;
-    var cfQty=JULY_CARRY_FORWARD[key]?JULY_CARRY_FORWARD[key].qty:0;
+    var cfQty=AUGUST_CARRY_FORWARD[key]?AUGUST_CARRY_FORWARD[key].qty:0;
     var cfNote=cfQty>0?'<div style="font-size:9px;color:var(--yellow);font-family:DM Mono,monospace">CF: '+fmt(cfQty,2)+' from July</div>':'';
     var diffHtml='';
     if(physVal!==undefined){var wo=+(booksRem-physVal).toFixed(3),wov=wo>0?+(wo*avgCost).toFixed(0):0;diffHtml='<div style="font-size:10px;font-family:DM Mono,monospace;color:'+(wo>0?'var(--red)':wo<0?'var(--yellow)':'var(--accent)')+';margin-top:3px">'+(wo>0?'↓ write-off '+fmt(wo,2)+(wov>0?' · ₹'+fmt(wov):''):wo<0?'↑ surplus '+fmt(Math.abs(wo),2):'✓ matches')+'</div>';}
