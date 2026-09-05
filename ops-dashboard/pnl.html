@@ -238,7 +238,10 @@ input:focus,select:focus{border-color:var(--accent);}
       <div class="dash-layout">
         <div class="card">
           <div class="section-title" id="tTitle">All SKUs — September cumulative</div>
+          <div style="font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:6px">🍎 Fruits</div>
           <div class="table-wrap"><table><thead><tr id="skuThead"></tr></thead><tbody id="skuTbody"></tbody></table></div>
+          <div style="font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-family:'DM Mono',monospace;margin:16px 0 6px">🥦 Vegetables</div>
+          <div class="table-wrap"><table><thead><tr id="skuTheadVeg"></tr></thead><tbody id="skuTbodyVeg"></tbody></table></div>
         </div>
         <div class="right-col">
           <div class="card"><div class="section-title">Remaining stock</div><canvas id="stockChart"></canvas></div>
@@ -404,6 +407,14 @@ var SKU_COLS=[
   {key:'at50ExCF', label:'@50% (ex CF)',     numeric:true,  defaultDir:-1},
   {key:'at80ExCF', label:'@80% (ex CF)',     numeric:true,  defaultDir:-1},
 ];
+// Same base list as parser.html's VEGETABLE_ITEM_NAMES (Order Overview's
+// own veg/fruit split), plus the items tracked in stock_tracked_fruits
+// since — anything not in this set is treated as a fruit for the split
+// below. Matched against the row's already-canonicalized (SKU_ALIAS'd)
+// lowercased name.
+const VEG_ITEM_NAMES=new Set(["cauliflower","cabbage","capsicum green","capsicum yellow","capsicum red","carrot","tomato","ginger","beans","lady's finger","cucumber","coriander","chilli green","potato","onion","ridge gourd","bitter gourd","bottle gourd","brinjal bottle","broccoli","banana leaves","spinach","amaranthus","fenugreek","mangalore cucumber","drumstick","chilli bhajji","coccinia","mint","lettuce","beetroot","zucchini green","zucchini yellow","red cabbage","mushroom","garlic","brinjal long","sweet potato","radish","pumpkin","baby corn","snake gourd","spring onion"]);
+function isVegRow(r){return VEG_ITEM_NAMES.has(r.s.toLowerCase().trim());}
+
 function sortSkuTable(key){
   var col=SKU_COLS.find(function(c){return c.key===key;});
   if(!col)return;
@@ -558,10 +569,15 @@ function renderKPIs(all,allDays){
 }
 
 function renderThead(){
-  document.getElementById('skuThead').innerHTML=SKU_COLS.map(function(c){
+  var html=SKU_COLS.map(function(c){
     var arrow=sortCol===c.key?(sortDir>0?' ▲':' ▼'):'';
     return '<th style="cursor:pointer;user-select:none" onclick="sortSkuTable(\''+c.key+'\')" title="Click to sort">'+c.label+arrow+'</th>';
   }).join('');
+  // Fruits and vegetables are two separate table elements (see the split
+  // in renderTbody) but share one sort preference — clicking a header in
+  // either one re-sorts both by the same column.
+  document.getElementById('skuThead').innerHTML=html;
+  document.getElementById('skuTheadVeg').innerHTML=html;
 }
 
 // Single source of truth for every column's value, computed once per row —
@@ -589,10 +605,8 @@ function computeRowMetrics(r,priceMap){
   };
 }
 
-function renderTbody(d,priceMap){
-  document.getElementById('tTitle').textContent=(curGroup==='All'?'All SKUs':(GK[curGroup]||curGroup)+' SKUs')+' — September';
+function sortMetrics(metrics){
   var col=SKU_COLS.find(function(c){return c.key===sortCol;})||SKU_COLS[0];
-  var metrics=d.map(function(r){return computeRowMetrics(r,priceMap);});
   metrics.sort(function(a,b){
     var av=a[sortCol],bv=b[sortCol];
     if(!col.numeric)return sortDir*(String(av).toLowerCase()<String(bv).toLowerCase()?-1:String(av).toLowerCase()>String(bv).toLowerCase()?1:0);
@@ -600,30 +614,41 @@ function renderTbody(d,priceMap){
     if(an&&bn)return 0; if(an)return 1; if(bn)return -1;
     return sortDir*(av-bv);
   });
+  return metrics;
+}
+
+function skuRowHtml(m){
   function pc(p){return p===null?'var(--muted)':p<0?'var(--red)':p<15?'var(--yellow)':'var(--accent)';}
   function pct(p){return p===null?'—':fmt(p,1)+'%';}
-  document.getElementById('skuTbody').innerHTML=metrics.map(function(m){
-    var r=m.row,barCol=m._sp===null?'#333':m._sp>=80?'#b8f050':m._sp>=60?'#f59e0b':'#ff4545';
-    return '<tr>'
-      +'<td>'+m.sku+(m.cfQty>0?'<span style="font-size:8px;color:var(--yellow);margin-left:4px">CF</span>':'')+'</td>'
-      +'<td style="color:var(--yellow)">'+(m.cfQty>0?fmt(m.cfQty,2):'—')+'</td>'
-      +'<td>'+fmt(m.sepBought,2)+'</td>'
-      +'<td style="font-weight:700">'+fmt(m.total,2)+'</td>'
-      +'<td>'+fmt(m.sold,2)+'</td>'
-      +'<td style="color:'+barCol+'">'+(m._sp!==null?m._sp+'%':'—')+'</td>'
-      +'<td style="color:'+(m.booksRem<0?'var(--red)':'var(--muted2)')+'">'+fmt(m.booksRem,2)+'</td>'
-      +'<td style="color:'+(m._pr!==null?'var(--accent)':'var(--muted2)')+'"><b>'+fmt(m.physical,2)+'</b></td>'
-      +'<td style="color:'+(m.writeoff>0?'var(--red)':'var(--muted)')+'">'+(m.writeoff>0?'−'+fmt(m.writeoff,2):'—')+'</td>'
-      +'<td style="color:var(--accent)">₹'+fmt(m.sales)+'</td>'
-      +'<td style="color:var(--orange)">₹'+fmt(m.spend)+'</td>'
-      +'<td><span style="color:'+(m.mpctCF<0?'var(--red)':m.mpctCF>=25?'var(--blue)':'var(--yellow)')+';font-weight:700">'+(m.mpctCF===null?'—':fmt(m.mpctCF,1)+'%')+'</span></td>'
-      +'<td style="color:'+pc(m.at50CF)+'">'+pct(m.at50CF)+'</td>'
-      +'<td style="color:'+pc(m.at80CF)+'">'+pct(m.at80CF)+'</td>'
-      +'<td><span style="color:'+(m.mpctExCF<0?'var(--red)':m.mpctExCF>=25?'var(--accent)':'var(--yellow)')+';font-weight:700">'+(m.mpctExCF===null?'—':fmt(m.mpctExCF,1)+'%')+'</span></td>'
-      +'<td style="color:'+pc(m.at50ExCF)+'">'+pct(m.at50ExCF)+'</td>'
-      +'<td style="color:'+pc(m.at80ExCF)+'">'+pct(m.at80ExCF)+'</td>'
-      +'</tr>';
-  }).join('');
+  var barCol=m._sp===null?'#333':m._sp>=80?'#b8f050':m._sp>=60?'#f59e0b':'#ff4545';
+  return '<tr>'
+    +'<td>'+m.sku+(m.cfQty>0?'<span style="font-size:8px;color:var(--yellow);margin-left:4px">CF</span>':'')+'</td>'
+    +'<td style="color:var(--yellow)">'+(m.cfQty>0?fmt(m.cfQty,2):'—')+'</td>'
+    +'<td>'+fmt(m.sepBought,2)+'</td>'
+    +'<td style="font-weight:700">'+fmt(m.total,2)+'</td>'
+    +'<td>'+fmt(m.sold,2)+'</td>'
+    +'<td style="color:'+barCol+'">'+(m._sp!==null?m._sp+'%':'—')+'</td>'
+    +'<td style="color:'+(m.booksRem<0?'var(--red)':'var(--muted2)')+'">'+fmt(m.booksRem,2)+'</td>'
+    +'<td style="color:'+(m._pr!==null?'var(--accent)':'var(--muted2)')+'"><b>'+fmt(m.physical,2)+'</b></td>'
+    +'<td style="color:'+(m.writeoff>0?'var(--red)':'var(--muted)')+'">'+(m.writeoff>0?'−'+fmt(m.writeoff,2):'—')+'</td>'
+    +'<td style="color:var(--accent)">₹'+fmt(m.sales)+'</td>'
+    +'<td style="color:var(--orange)">₹'+fmt(m.spend)+'</td>'
+    +'<td><span style="color:'+(m.mpctCF<0?'var(--red)':m.mpctCF>=25?'var(--blue)':'var(--yellow)')+';font-weight:700">'+(m.mpctCF===null?'—':fmt(m.mpctCF,1)+'%')+'</span></td>'
+    +'<td style="color:'+pc(m.at50CF)+'">'+pct(m.at50CF)+'</td>'
+    +'<td style="color:'+pc(m.at80CF)+'">'+pct(m.at80CF)+'</td>'
+    +'<td><span style="color:'+(m.mpctExCF<0?'var(--red)':m.mpctExCF>=25?'var(--accent)':'var(--yellow)')+';font-weight:700">'+(m.mpctExCF===null?'—':fmt(m.mpctExCF,1)+'%')+'</span></td>'
+    +'<td style="color:'+pc(m.at50ExCF)+'">'+pct(m.at50ExCF)+'</td>'
+    +'<td style="color:'+pc(m.at80ExCF)+'">'+pct(m.at80ExCF)+'</td>'
+    +'</tr>';
+}
+
+function renderTbody(d,priceMap){
+  document.getElementById('tTitle').textContent=(curGroup==='All'?'All SKUs':(GK[curGroup]||curGroup)+' SKUs')+' — September';
+  var metrics=d.map(function(r){return computeRowMetrics(r,priceMap);});
+  var fruitMetrics=sortMetrics(metrics.filter(function(m){return !isVegRow(m.row);}));
+  var vegMetrics=sortMetrics(metrics.filter(function(m){return isVegRow(m.row);}));
+  document.getElementById('skuTbody').innerHTML=fruitMetrics.map(skuRowHtml).join('');
+  document.getElementById('skuTbodyVeg').innerHTML=vegMetrics.map(skuRowHtml).join('');
 }
 
 function renderChart(d){
