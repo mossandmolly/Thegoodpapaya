@@ -507,7 +507,7 @@ function renderKPIs(all,allDays){
   function ms(v){return(v>=0?'':'−')+'₹'+fmt(Math.abs(v));}
   document.getElementById('kpis').innerHTML=
     tile('var(--accent)','Total Sales','₹'+fmt(tS),(allDays||[]).length+' days')
-   +tile('var(--orange)','Purchases (Aug+CF)','₹'+fmt(tP),'Aug ₹'+fmt(tP-tCFVal)+' + CF ₹'+fmt(tCFVal))
+   +tile('var(--orange)','Purchases (Sep+CF)','₹'+fmt(tP),'Sep ₹'+fmt(tP-tCFVal)+' + CF ₹'+fmt(tCFVal))
    +tile('var(--yellow)','Total Expenses','₹'+fmt(tAllExp),catBreakdown)
    +tile('#e67e22','Transport','₹'+fmt(tT),'mandi→store')
    +tile('#888','Razorpay 1.3%','₹'+fmt(tG),'auto')
@@ -515,14 +515,14 @@ function renderKPIs(all,allDays){
    +tile(tN>=0?'var(--purple)':'var(--red)','Net Margin (incl. CF)',ms(tN),nP+'%')
    +'<div style="grid-column:1/-1;height:1px;background:var(--border);margin:2px 0"></div>'
    +tile('#1a3a1a','Current Inventory','₹'+fmt(inv.val),inv.skus+' SKUs'+(inv.date?' · '+inv.date:''))
-   +tile('var(--orange)','Aug Purchases Only','₹'+fmt(tP_noCF),'excl. ₹'+fmt(tCFVal)+' Jul CF')
+   +tile('var(--orange)','Sep Purchases Only','₹'+fmt(tP_noCF),'excl. ₹'+fmt(tCFVal)+' Aug CF')
    +'<div class="kpi"></div><div class="kpi"></div><div class="kpi"></div>'
    +tile(tM_noCF>=0?'var(--blue)':'var(--red)','Gross Margin (excl. CF)',ms(tM_noCF),mP_noCF+'%')
    +tile(tN_noCF>=0?'var(--purple)':'var(--red)','Net Margin (excl. CF)',ms(tN_noCF),nP_noCF+'%');
 }
 
 function renderThead(){
-  document.getElementById('skuThead').innerHTML=['SKU','Jul CF','Aug Bought','Total','Sold','Sell%','Books Rem','Physical','Write-off','Sales ₹','Spend ₹','Margin% (w/CF)','@50% (w/CF)','@80% (w/CF)','Margin% (ex CF)','@50% (ex CF)','@80% (ex CF)'].map(function(h){return '<th>'+h+'</th>';}).join('');
+  document.getElementById('skuThead').innerHTML=['SKU','Aug CF','Sep Bought','Total','Sold','Sell%','Books Rem','Physical','Write-off','Sales ₹','Spend ₹','Margin% (w/CF)','@50% (w/CF)','@80% (w/CF)','Margin% (ex CF)','@50% (ex CF)','@80% (ex CF)'].map(function(h){return '<th>'+h+'</th>';}).join('');
 }
 
 function renderTbody(d,priceMap){
@@ -762,8 +762,8 @@ function renderCFSummary(){
   var totalVal=Object.values(cf).reduce(function(s,v){return s+v.value;},0);
   var items=Object.entries(cf).filter(function(e){return e[1].qty>0;}).sort(function(a,b){return b[1].value-a[1].value;});
   var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
-    +'<div><div style="font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-family:DM Mono,monospace;font-weight:700">📦 July carry-forward opening stock</div>'
-    +'<div style="font-size:10px;color:var(--muted2);font-family:DM Mono,monospace;margin-top:3px">At latest July purchase price — baked into cost base</div></div>'
+    +'<div><div style="font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-family:DM Mono,monospace;font-weight:700">📦 August carry-forward opening stock</div>'
+    +'<div style="font-size:10px;color:var(--muted2);font-family:DM Mono,monospace;margin-top:3px">At latest August purchase price — baked into cost base</div></div>'
     +'<div style="text-align:right"><div style="font-size:18px;font-weight:800;color:var(--accent)">₹'+fmt(totalVal)+'</div><div style="font-size:10px;color:var(--muted2);font-family:DM Mono,monospace">'+items.length+' SKUs</div></div></div>';
   html+='<div class="cf-grid">';
   items.forEach(function(e){var k=e[0],v=e[1];var name=ALL_SKUS.find(function(s){return s.toLowerCase()===k;})||k;html+='<div class="cf-sku"><div style="font-size:11px;font-weight:700">'+name+'</div><div style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted2)">'+fmt(v.qty,2)+' × ₹'+fmt(v.avg_cost,1)+'</div><div style="font-size:12px;font-weight:700;color:var(--accent)">₹'+fmt(v.value)+'</div></div>';});
@@ -780,7 +780,7 @@ function renderInvPage(){
     var key=name.toLowerCase().trim(),r=skuData[key];
     var booksRem=r?rem(r):0,physVal=AUG.inventory[key],avgCost=r&&r.bought>0?r.purch/r.bought:0;
     var cfQty=AUGUST_CARRY_FORWARD[key]?AUGUST_CARRY_FORWARD[key].qty:0;
-    var cfNote=cfQty>0?'<div style="font-size:9px;color:var(--yellow);font-family:DM Mono,monospace">CF: '+fmt(cfQty,2)+' from July</div>':'';
+    var cfNote=cfQty>0?'<div style="font-size:9px;color:var(--yellow);font-family:DM Mono,monospace">CF: '+fmt(cfQty,2)+' from August</div>':'';
     var diffHtml='';
     if(physVal!==undefined){var wo=+(booksRem-physVal).toFixed(3),wov=wo>0?+(wo*avgCost).toFixed(0):0;diffHtml='<div style="font-size:10px;font-family:DM Mono,monospace;color:'+(wo>0?'var(--red)':wo<0?'var(--yellow)':'var(--accent)')+';margin-top:3px">'+(wo>0?'↓ write-off '+fmt(wo,2)+(wov>0?' · ₹'+fmt(wov):''):wo<0?'↑ surplus '+fmt(Math.abs(wo),2):'✓ matches')+'</div>';}
     return '<div style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:10px 12px">'
