@@ -387,6 +387,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-single-timer.pk-timer-over{color:#b3261e;animation:pkTimerFlash 1s step-start infinite}
 @keyframes pkTimerFlash{50%{opacity:0.35}}
 .pk-single-wrap{display:block;max-width:360px;margin:0 auto}
+/* Somya's Team view — one column per packer, each showing their current
+   top card plus a short peek at what's next in their queue. */
+.pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+.pk-team-col{display:flex;flex-direction:column;gap:6px}
+.pk-team-col-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#8a7a6a}
+.pk-team-next{font-size:11px;color:#8a7a6a;line-height:1.6;padding:2px 4px}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
 .pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
@@ -395,6 +401,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-qty-label{font-size:12px;font-weight:700;color:#2b2320;white-space:nowrap}
 .pk-instr{font-size:12px;font-weight:700;color:#b3261e;margin-bottom:8px}
 .pk-assigned-to{font-size:10px;color:#8a7a6a;margin-bottom:4px}
+.pk-assigned-editable{cursor:pointer;text-decoration:underline dotted}
+.pk-assigned-editable:hover{color:#2b2320}
+.pk-unassigned{color:#b3261e}
 .pk-packed-by{font-size:10px;color:#8a7a6a;margin-bottom:4px}
 .pk-row{display:flex;gap:6px;margin-bottom:6px}
 .pk-qty{width:100%;padding:7px 8px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit}
@@ -837,6 +846,24 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
+<!-- REASSIGN PACKER MODAL — Somya-only (isVegPerfAllowed gate), opened by
+     clicking a card's "Assigned to" line. Writes order_items.assigned_packer_id
+     for just that one item, overriding the Config default for that fruit
+     without touching it — "Reset to default" clears the override again. -->
+<div class="modal-overlay hidden" id="reassign-packer-modal">
+  <div class="modal-box">
+    <h3>Reassign this item</h3>
+    <label class="modal-label">Packer</label>
+    <select id="reassign-packer-select"></select>
+    <label class="modal-label" style="margin-top:10px">Or add a new packer</label>
+    <input type="text" id="reassign-new-packer-name" placeholder="New packer name">
+    <div class="modal-actions">
+      <button class="btn-sec" id="reassign-packer-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="reassign-packer-confirm" style="margin-bottom:0">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- ADD DELIVERY COMMENT MODAL — usable any time, independent of mark-delivered -->
 <div class="modal-overlay hidden" id="dv-remark-modal">
   <div class="modal-box">
@@ -1001,18 +1028,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 
   <div class="config-section">
-    <h3>📦 Packer Fruit Assignments <span style="font-size:11px;color:#8a7a6a;font-weight:400">(saved — drives Packer tab's My Orders)</span></h3>
+    <h3>📦 Packers</h3>
     <ul class="config-list" id="packer-list"></ul>
     <div class="add-row">
       <input type="text" id="new-packer-name" placeholder="Packer name">
-      <input type="text" id="new-packer-fruits" placeholder="Assigned fruits, comma-separated (optional)" style="flex:2">
-      <select id="new-packer-fruit-picker" style="flex:1">
-        <option value="">+ pick a fruit…</option>
-      </select>
-      <button type="button" onclick="addFruitToPackerInput()">+</button>
       <button onclick="addPacker()">Add</button>
     </div>
-    <p class="note">Editing an existing packer replaces their whole fruit list with whatever's in the box above when you click Add — the dropdown just adds one to the list instead of typing it, it doesn't merge with what they already have saved.</p>
+  </div>
+
+  <div class="config-section">
+    <h3>🍎 Fruit &amp; Vegetable Assignment <span style="font-size:11px;color:#8a7a6a;font-weight:400">(drives Packer tab's My Orders and Single Card queue)</span></h3>
+    <p class="note">Each item goes to exactly one packer — picking a packer here replaces whoever had it before, so an item never ends up on two packers' queues at once. This is the default; a specific order's item can still be reassigned one-off from Single Card view without changing this default for everyone else.</p>
+    <div class="table-scroll">
+      <table class="community-table"><thead><tr><th>Item</th><th>Packer</th></tr></thead><tbody id="item-assignment-tbody"></tbody></table>
+    </div>
   </div>
 
   <div class="config-section">
@@ -1525,7 +1554,7 @@ function switchTab(name){
     if(f&&!f.dataset.loaded){f.dataset.loaded='1';f.src='pnl.html';}
   }
   if(name==='delivery')startLocationPing();else stopLocationPing();
-  if(name!=='packer')stopPkCardTimer();
+  if(name!=='packer'){stopPkCardTimer();stopTeamViewPoll();}
 }
 
 // Shortcut tab — jumps straight to Quick Order Entry inside the Parser
@@ -1551,7 +1580,6 @@ async function renderConfig(){
   document.getElementById('fruit-list').innerHTML=FRUITS.map((f,i)=>`<li>${f}<button class="del-btn" onclick="delFruit(${i})">✕</button></li>`).join('');
   document.getElementById('pkg-list').innerHTML=Object.entries(PKG).map(([k,v])=>`<li>${k}<span>${v} kg/pc</span><button class="del-btn" onclick="delPkg('${k}')">✕</button></li>`).join('');
   document.getElementById('alias-list').innerHTML=Object.entries(ALIASES).map(([k,v])=>`<li>${k}<span>→ ${v}</span><button class="del-btn" onclick="delAlias('${k}')">✕</button></li>`).join('');
-  populatePackerFruitPicker();
   loadPackersConfig();
   // Clusters loaded first — the Communities table's cluster picker needs
   // the full cluster list to already be in clustersCache when it renders.
@@ -2121,31 +2149,6 @@ async function deleteCustomerInstruction(id,name){
   await loadCustomerInstructionsCache();
 }
 
-// Quick-pick dropdown for the packer-assignment fruits box — sourced from
-// the same FRUITS list as the Fruits config section above, so it stays in
-// sync whenever a fruit is added/removed there (renderConfig calls this
-// every time, including right after addFruit/delFruit).
-function populatePackerFruitPicker(){
-  const sel=document.getElementById('new-packer-fruit-picker');
-  if(!sel)return;
-  sel.innerHTML='<option value="">+ pick a fruit…</option>'+
-    [...FRUITS].sort().map(f=>'<option value="'+escH(f)+'">'+escH(f)+'</option>').join('');
-}
-
-// Appends the picked fruit into the comma-separated box rather than
-// requiring it to be typed by hand — doesn't touch what's already saved for
-// a packer until "Add" is actually clicked (see the note in the HTML: Add
-// still replaces the whole list with whatever's in the box at that point).
-function addFruitToPackerInput(){
-  const sel=document.getElementById('new-packer-fruit-picker');
-  const fruit=sel.value;
-  if(!fruit)return;
-  const box=document.getElementById('new-packer-fruits');
-  const existing=box.value.split(',').map(s=>s.trim()).filter(Boolean);
-  if(!existing.includes(fruit))existing.push(fruit);
-  box.value=existing.join(', ');
-  sel.value='';
-}
 function addFruit(){const v=document.getElementById('new-fruit').value.trim();if(!v)return;FRUITS.push(v);document.getElementById('new-fruit').value='';renderConfig();}
 function delFruit(i){FRUITS.splice(i,1);renderConfig();}
 function addPkg(){const f=document.getElementById('new-pkg-fruit').value.trim().toLowerCase();const v=parseFloat(document.getElementById('new-pkg-val').value);if(!f||isNaN(v))return;PKG[f]=v;document.getElementById('new-pkg-fruit').value='';document.getElementById('new-pkg-val').value='';renderConfig();}
@@ -2154,11 +2157,13 @@ function addAlias(){const f=document.getElementById('new-alias-from').value.trim
 function delAlias(k){delete ALIASES[k];renderConfig();}
 
 // ── Packer fruit assignments (DB-backed, unlike the session-only config
-// above) — drives the Packer tab's My Orders filter: "mine" = any item
-// whose fruit is in the current device's packer's assigned_fruits list.
-// Uses the packers + packer_assignments tables that already existed
+// above) — drives the Packer tab's My Orders filter and the Single Card
+// queue: "mine" = any item whose fruit is assigned to the current device's
+// packer. Uses the packers + packer_assignments tables that already existed
 // (migration 005) rather than a new one — packersCache is reshaped
 // client-side into [{id,name,assigned_fruits:[...]}] by joining the two.
+// Exclusive by design since migration 110 (one packer per item_name) — the
+// Item -> Packer table below is the only place assignment is edited now.
 let packersCache=[];
 async function loadPackersConfig(){
   const[{data:packers,error:pErr},{data:assignments,error:aErr}]=await Promise.all([
@@ -2177,51 +2182,61 @@ async function loadPackersConfig(){
     // inside this attribute's own double-quoted onclick="..." string, which
     // breaks the HTML parse and silently kills the click handler. escH()
     // turns those into &quot; so the attribute stays intact.
-    '<li>'+escH(p.name)+'<span>'+escH(p.assigned_fruits.join(', ')||'no fruits assigned')+'</span>'+
+    '<li>'+escH(p.name)+
     '<span style="display:flex;gap:2px;flex-shrink:0">'+
-      '<button class="edit-btn" onclick="editPacker('+escH(JSON.stringify(p.id))+')" title="Edit">✎</button>'+
       '<button class="del-btn" onclick="deletePacker('+escH(JSON.stringify(p.id))+')">✕</button>'+
     '</span></li>'
   ).join('');
+  renderItemAssignmentTable();
 }
 async function addPacker(){
-  const name=document.getElementById('new-packer-name').value.trim();
-  const fruitsRaw=document.getElementById('new-packer-fruits').value.trim();
+  const nameEl=document.getElementById('new-packer-name');
+  const name=nameEl.value.trim();
   if(!name)return;
-  const assignedFruits=fruitsRaw?fruitsRaw.split(',').map(s=>s.trim()).filter(Boolean):[];
-  const{data,error}=await sb.from('packers').upsert({name},{onConflict:'name'}).select('id').single();
+  const{error}=await sb.from('packers').upsert({name},{onConflict:'name'});
   if(error){uxAlert('Failed to save: '+error.message);return;}
-  // Replace this packer's whole assignment set rather than merge — the
-  // fruits box is meant to reflect exactly what's typed in it.
-  const{error:delErr}=await sb.from('packer_assignments').delete().eq('packer_id',data.id);
-  if(delErr){uxAlert('Failed to save: '+delErr.message);return;}
-  if(assignedFruits.length){
-    const{error:insErr}=await sb.from('packer_assignments').insert(assignedFruits.map(item_name=>({packer_id:data.id,item_name})));
-    if(insErr){uxAlert('Failed to save: '+insErr.message);return;}
-  }
-  document.getElementById('new-packer-name').value='';
-  document.getElementById('new-packer-fruits').value='';
+  nameEl.value='';
   await loadPackersConfig();
-}
-// Populates the add/edit form above from an existing packer's saved
-// values — addPacker() already upserts by name, so submitting this back
-// via the same Add button replaces that packer's fruit list rather than
-// creating a duplicate. This just removes the need to retype everything
-// by hand to make a small change.
-function editPacker(id){
-  const packer=packersCache.find(p=>p.id===id);
-  if(!packer)return;
-  document.getElementById('new-packer-name').value=packer.name;
-  document.getElementById('new-packer-fruits').value=packer.assigned_fruits.join(', ');
-  document.getElementById('new-packer-name').scrollIntoView({behavior:'smooth',block:'center'});
-  document.getElementById('new-packer-fruits').focus();
 }
 async function deletePacker(id){
   const packer=packersCache.find(p=>p.id===id);
-  if(!await uxConfirm('Remove packer "'+(packer?.name||id)+'"?'))return;
+  if(!await uxConfirm('Remove packer "'+(packer?.name||id)+'"? Every item currently assigned to them becomes unassigned, not reassigned to anyone else.'))return;
   // packer_assignments rows are cleaned up automatically (on delete cascade).
   const{error}=await sb.from('packers').delete().eq('id',id);
   if(error){uxAlert('Failed: '+error.message);return;}
+  await loadPackersConfig();
+}
+
+// One row per FRUITS entry, one dropdown each — exactly one packer (or
+// none) per item, saved immediately on change rather than needing a
+// separate save button per row given how many items this list has.
+function renderItemAssignmentTable(){
+  const tbody=document.getElementById('item-assignment-tbody');
+  if(!tbody)return;
+  const packerIdByItem={};
+  packersCache.forEach(p=>p.assigned_fruits.forEach(item=>{packerIdByItem[item]=p.id;}));
+  tbody.innerHTML=[...FRUITS].sort().map(item=>{
+    const assignedId=packerIdByItem[item]||'';
+    return '<tr>'+
+      '<td>'+escH(item)+'</td>'+
+      '<td><select onchange="setItemPacker('+escH(JSON.stringify(item))+',this.value)">'+
+        '<option value="">— Unassigned —</option>'+
+        packersCache.map(p=>'<option value="'+escH(p.id)+'"'+(p.id===assignedId?' selected':'')+'>'+escH(p.name)+'</option>').join('')+
+      '</select></td>'+
+    '</tr>';
+  }).join('');
+}
+
+async function setItemPacker(itemName,packerId){
+  // Exclusive by design (migration 110's unique index on item_name) —
+  // clear whoever had this item before, then assign the new packer (or
+  // leave it unassigned if "— Unassigned —" was picked).
+  const{error:delErr}=await sb.from('packer_assignments').delete().eq('item_name',itemName);
+  if(delErr){uxAlert('Failed to update: '+delErr.message);return;}
+  if(packerId){
+    const{error:insErr}=await sb.from('packer_assignments').insert({packer_id:packerId,item_name:itemName});
+    if(insErr){uxAlert('Failed to update: '+insErr.message);return;}
+  }
   await loadPackersConfig();
 }
 
@@ -3291,7 +3306,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,pending_review,no_bill');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,pending_review,no_bill,assigned_packer_id');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
@@ -6308,7 +6323,7 @@ async function deleteItem(id){
 }
 
 // ── Packer ────────────────────────────────────────────────────────────────
-let packerItems=[],packerCustomerMap={},packerUnitByItem={},packerAssignedNameByFruit={};
+let packerItems=[],packerCustomerMap={},packerUnitByItem={},packerIdByFruit={},packerNameByFruit={};
 const packerFilters={search:'',fruits:new Set(),statuses:new Set()};
 let packerScope='all'; // 'all' | 'mine' — 'mine' = items whose fruit is in this device's packer's assigned_fruits (packers config table)
 // Per-group (society/trip) collapse — tracks which are EXPANDED, empty by
@@ -6362,16 +6377,24 @@ function matchCommunityPriority(text){
   return best; // {unique_id, rank, ...} or null
 }
 
+// Which packer actually owns this item right now: a per-item override
+// (order_items.assigned_packer_id, set from Single Card view — see
+// openReassignPacker below) wins over the default Item -> Packer
+// assignment from Config. Returns a packer id, or null if unassigned.
+function effectivePackerIdForItem(item){
+  return item.assigned_packer_id||packerIdByFruit[item.item_name]||null;
+}
+
 // This packer's next-up queue: ranked by community priority, with a hard
 // time-sensitive override, and smaller orders first within the same rank
 // tier (so a rider can start dispatching sooner rather than everyone
 // finishing large orders together). Splitting one order's items across
-// multiple packers falls out for free — each packer's own assigned_fruits
+// multiple packers falls out for free — each packer's own assignment
 // naturally filters them to only their slice of any given order.
 function computePackerQueue(packerName){
   const packer=packersCache.find(p=>p.name===packerName);
-  const myFruits=new Set(packer?.assigned_fruits||[]);
-  const openItems=packerItems.filter(i=>i.status==='open'&&myFruits.has(i.item_name));
+  if(!packer)return[];
+  const openItems=packerItems.filter(i=>i.status==='open'&&effectivePackerIdForItem(i)===packer.id);
   const bySoid={};
   openItems.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
   const orderMeta=Object.keys(bySoid).map(soid=>{
@@ -6397,25 +6420,48 @@ function computePackerQueue(packerName){
 function renderPackerModeToggle(){
   document.getElementById('pk-mode-toggle').innerHTML=
     '<span class="filter-pill'+(packerViewMode==='grid'?' active':'')+'" onclick="setPackerViewMode(\'grid\')">Grid</span>'+
-    '<span class="filter-pill'+(packerViewMode==='single'?' active':'')+'" onclick="setPackerViewMode(\'single\')">Single Card</span>';
+    '<span class="filter-pill'+(packerViewMode==='single'?' active':'')+'" onclick="setPackerViewMode(\'single\')">Single Card</span>'+
+    // Team view is Somya-only (isVegPerfAllowed — same single-email gate as
+    // P&L/VegPerf) — a supervisor overview of every packer's own Single
+    // Card queue at once, not something a packer needs on their own device.
+    (isVegPerfAllowed?'<span class="filter-pill'+(packerViewMode==='team'?' active':'')+'" onclick="setPackerViewMode(\'team\')">Team</span>':'');
 }
 
 async function setPackerViewMode(mode){
+  if(mode==='team'&&!isVegPerfAllowed)mode='grid';
   packerViewMode=mode;
   renderPackerModeToggle();
-  // The fruit/status filters only apply to the everything-at-once Grid
-  // view — Single Card ignores them by design (it always shows exactly one
-  // item, chosen by rank), so hide rather than leave controls on screen
-  // that silently do nothing.
-  const single=mode==='single';
-  document.getElementById('pk-scope-tabs').style.display=single?'none':'';
-  document.getElementById('pk-fruit-filter-label').style.display=single?'none':'';
-  document.getElementById('pk-fruit-pills').style.display=single?'none':'';
-  document.getElementById('pk-status-filter-label').style.display=single?'none':'';
-  document.getElementById('pk-status-pills').style.display=single?'none':'';
-  document.getElementById('pk-search').style.display=single?'none':'';
+  // The fruit/status filters, search, and scope tabs only make sense for
+  // the everything-at-once Grid view — Single Card and Team both ignore
+  // them by design, so hide rather than leave controls on screen that
+  // silently do nothing.
+  const single=mode==='single',team=mode==='team',hideGridControls=single||team;
+  document.getElementById('pk-scope-tabs').style.display=hideGridControls?'none':'';
+  document.getElementById('pk-fruit-filter-label').style.display=hideGridControls?'none':'';
+  document.getElementById('pk-fruit-pills').style.display=hideGridControls?'none':'';
+  document.getElementById('pk-status-filter-label').style.display=hideGridControls?'none':'';
+  document.getElementById('pk-status-pills').style.display=hideGridControls?'none':'';
+  document.getElementById('pk-search').style.display=hideGridControls?'none':'';
   if(single)await ensurePackerIdentityForQueue();
+  if(team)startTeamViewPoll();else stopTeamViewPoll();
   renderPackerGrid();
+}
+
+// Somya's Team view auto-refreshes so she sees packing progress across the
+// whole team without manually reloading — same clear-then-restart interval
+// convention as startLocationPing/stopPkCardTimer. Stopped whenever Team
+// view isn't the active mode (leaving the tab, switching to Grid/Single).
+const TEAM_VIEW_POLL_MS=20000;
+let teamViewPollTimer=null;
+function startTeamViewPoll(){
+  if(teamViewPollTimer)return;
+  teamViewPollTimer=setInterval(()=>{
+    if(packerViewMode==='team'&&document.getElementById('panel-packer').classList.contains('active'))loadPackerView();
+    else stopTeamViewPoll();
+  },TEAM_VIEW_POLL_MS);
+}
+function stopTeamViewPoll(){
+  if(teamViewPollTimer){clearInterval(teamViewPollTimer);teamViewPollTimer=null;}
 }
 
 const pkIdentityModal=document.getElementById('pk-identity-modal'),pkIdentitySelect=document.getElementById('pk-identity-select');
@@ -6443,6 +6489,56 @@ function ensurePackerIdentityForQueue(){
     confirmBtn.addEventListener('click',onConfirm);
   });
 }
+
+// ── Somya-only per-item reassignment ──────────────────────────────────────
+// Opened by clicking a card's "Assigned to" line (packCardHtml, gated on
+// isVegPerfAllowed). Writes order_items.assigned_packer_id for just the one
+// item clicked — a one-off override that wins over the Config-level
+// Item -> Packer default (effectivePackerIdForItem) without changing that
+// default for anyone else's orders of the same fruit.
+let reassignTargetItemId=null;
+const reassignPackerModal=document.getElementById('reassign-packer-modal'),
+      reassignPackerSelect=document.getElementById('reassign-packer-select'),
+      reassignNewPackerNameInput=document.getElementById('reassign-new-packer-name');
+
+function openReassignPacker(itemId){
+  const item=packerItems.find(i=>i.id===itemId);
+  if(!item)return;
+  reassignTargetItemId=itemId;
+  const currentId=item.assigned_packer_id||'';
+  reassignPackerSelect.innerHTML=
+    (item.assigned_packer_id
+      ?'<option value="__default__">— Reset to default ('+escH(packerNameByFruit[item.item_name]||'unassigned')+') —</option>'
+      :'<option value="">— Pick a packer —</option>')+
+    packersCache.map(p=>'<option value="'+escH(p.id)+'"'+(p.id===currentId?' selected':'')+'>'+escH(p.name)+'</option>').join('');
+  reassignNewPackerNameInput.value='';
+  reassignPackerModal.classList.remove('hidden');
+}
+
+document.getElementById('reassign-packer-cancel').addEventListener('click',()=>{reassignPackerModal.classList.add('hidden');});
+
+document.getElementById('reassign-packer-confirm').addEventListener('click',async()=>{
+  const itemId=reassignTargetItemId;
+  if(!itemId)return;
+  const newName=reassignNewPackerNameInput.value.trim();
+  let packerId=reassignPackerSelect.value;
+  if(newName){
+    // Add-a-new-packer inline, rather than needing to leave this modal, go
+    // to Config, add them there, then come back and reassign again.
+    const{data,error}=await sb.from('packers').upsert({name:newName},{onConflict:'name'}).select('id').single();
+    if(error){uxAlert('Failed to add packer: '+error.message);return;}
+    packerId=data.id;
+    await loadPackersConfig();
+  }
+  if(!packerId){uxAlert('Pick a packer, or type a new one to add');return;}
+  const override=packerId==='__default__'?null:packerId;
+  const{error:updErr}=await sb.from('order_items').update({assigned_packer_id:override}).eq('id',itemId);
+  if(updErr){uxAlert('Failed to reassign: '+updErr.message);return;}
+  const item=packerItems.find(i=>i.id===itemId);
+  if(item)item.assigned_packer_id=override;
+  reassignPackerModal.classList.add('hidden');
+  renderPackerGrid();
+});
 
 // Purely visual per-card timer — resets on page refresh, same as every
 // other timer-ish thing in this dashboard (e.g. location ping). Fetched
@@ -6506,15 +6602,14 @@ async function loadPackerView(){
   packerCustomerMap=map||{};
   packerUnitByItem={};
   (catalog||[]).forEach(c=>{packerUnitByItem[c.item_name]=c.unit||'kg';});
-  // Reverse index of packersCache's assigned_fruits — which packer(s) (if
-  // any) have this fruit assigned to them via the Config tab, so a card can
-  // show "assigned to" without every packer having to check Config. A fruit
-  // with no one assigned (or "My Orders" not in use) just shows nothing here.
-  packerAssignedNameByFruit={};
+  // Reverse index of packersCache's assigned_fruits — which packer (if any)
+  // has this fruit assigned via Config's Item -> Packer table, so a card
+  // can show "assigned to" without every packer having to check Config.
+  // Exclusive since migration 110 (one packer per item_name), so at most
+  // one entry per fruit — an item with no one assigned shows nothing here.
+  packerIdByFruit={};packerNameByFruit={};
   packersCache.forEach(p=>{
-    p.assigned_fruits.forEach(fruit=>{
-      (packerAssignedNameByFruit[fruit]=packerAssignedNameByFruit[fruit]||[]).push(p.name);
-    });
+    p.assigned_fruits.forEach(fruit=>{packerIdByFruit[fruit]=p.id;packerNameByFruit[fruit]=p.name;});
   });
 
   // Default-expand whichever group(s) belong to today's #1-ranked trip so
@@ -6603,8 +6698,28 @@ function packerOrderLike(item){
 // reuse the exact same markup/actions (savePackedQty/markFinal) instead of
 // inventing a parallel one-click transition — keeps the existing "confirm
 // final qty before invoicing" step intact in both views.
+// The default Item -> Packer assignment (Config), unless this specific
+// item has a one-off override (see openReassignPacker) — which wins.
+// Returns null if nobody's assigned at all (nothing to show on the card).
+function assignedPackerDisplay(item){
+  if(item.assigned_packer_id){
+    const p=packersCache.find(p=>p.id===item.assigned_packer_id);
+    if(p)return{name:p.name,isOverride:true};
+  }
+  const name=packerNameByFruit[item.item_name];
+  return name?{name,isOverride:false}:null;
+}
+
 function packCardHtml(item,dupIds){
   if(!dupIds)dupIds=computeDuplicateItemIds(packerItems);
+  // Only Somya (isVegPerfAllowed — same single-email gate as P&L/VegPerf)
+  // can click through to reassign an item's packer one-off from here.
+  const assigned=assignedPackerDisplay(item);
+  const assignedLine=assigned
+    ?'<div class="pk-assigned-to'+(isVegPerfAllowed?' pk-assigned-editable':'')+'"'+(isVegPerfAllowed?' onclick="openReassignPacker(\''+item.id+'\')"':'')+'>'+
+      (assigned.isOverride?'↩ Reassigned to ':'👤 Assigned to ')+escH(assigned.name)+(isVegPerfAllowed?' ✎':'')+
+     '</div>'
+    :(isVegPerfAllowed?'<div class="pk-assigned-to pk-assigned-editable pk-unassigned" onclick="openReassignPacker(\''+item.id+'\')">👤 Unassigned ✎</div>':'');
   return '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+'" data-id="'+item.id+'">'+
       '<div class="pk-status-badge status-'+item.status+'">'+escH(ITEM_STATUS_LABEL[item.status]||item.status)+'</div>'+
       '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+(packerCustomerMap[item.sales_order_id]?.is_pickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+'</div>'+
@@ -6615,7 +6730,7 @@ function packCardHtml(item,dupIds){
         '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></span>'+
       '</div>'+
       (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
-      (packerAssignedNameByFruit[item.item_name]?.length?'<div class="pk-assigned-to">👤 Assigned to '+escH(packerAssignedNameByFruit[item.item_name].join(', '))+'</div>':'')+
+      assignedLine+
       (item.packed_by?'<div class="pk-packed-by">📦 Packed by '+escH(item.packed_by)+'</div>':'')+
       '<div class="pk-row">'+
         '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'" oninput="this.nextElementSibling.disabled=false">'+
@@ -6668,18 +6783,52 @@ function renderPackerSingleCard(){
   renderPkCardTimerDisplay();
 }
 
+// Somya's supervisor overview: every packer's own Single Card queue shown
+// side by side, in the exact same rank order each packer sees on their own
+// device (computePackerQueue, unchanged) — not a separate ranking system.
+// Each column shows the packer's current top card in full (same markup/
+// actions as their own screen, including the reassign-clickable "Assigned
+// to" line since this session is already isVegPerfAllowed) plus a short
+// peek at what's coming up next, so progress is visible without switching
+// to each packer's device. Auto-refreshes — see startTeamViewPoll.
+function renderPackerTeamView(){
+  const grid=document.getElementById('pk-grid');
+  document.getElementById('pk-rc').textContent='';
+  if(!isVegPerfAllowed){packerViewMode='grid';renderPackerModeToggle();renderPackerGrid();return;}
+  if(!packersCache.length){grid.innerHTML='<div class="to-empty">No packers configured yet.</div>';return;}
+  grid.innerHTML='<div class="pk-team-grid">'+
+    packersCache.map(p=>{
+      const queue=computePackerQueue(p.name);
+      const top=queue[0];
+      const upcoming=queue.slice(1,4);
+      return '<div class="pk-team-col">'+
+        '<div class="pk-team-col-header">'+escH(p.name)+' <span class="sh-count">('+queue.length+' left)</span></div>'+
+        (top?packCardHtml(top):'<div class="to-empty" style="padding:14px 8px">Nothing queued ✓</div>')+
+        (upcoming.length?'<div class="pk-team-next">Up next: '+
+          upcoming.map(i=>escH(i.item_name)+' — '+escH(packerCustomerMap[i.sales_order_id]?.customer_name||i.sales_order_id)).join('<br>')+
+        '</div>':'')+
+      '</div>';
+    }).join('')+
+  '</div>';
+}
+
 function renderPackerGrid(){
   if(packerViewMode==='single'){renderPackerSingleCard();return;}
+  if(packerViewMode==='team'){renderPackerTeamView();return;}
   const grid=document.getElementById('pk-grid');
   const search=packerFilters.search.trim().toLowerCase();
-  const myFruits=riderName?(packersCache.find(p=>p.name===riderName)?.assigned_fruits||[]):[];
+  const myPacker=riderName?packersCache.find(p=>p.name===riderName):null;
+  const myFruits=myPacker?.assigned_fruits||[];
 
   // Packer contributes too, not just Overview/Delivery, so
   // isLeftoverOrder still works for someone who only ever has Packer open.
   todaysOrdersForLeftoverCheck=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
 
   const filtered=packerItems.filter(item=>{
-    if(packerScope==='mine'&&!myFruits.includes(item.item_name))return false;
+    // effectivePackerIdForItem (not just the default assigned_fruits list)
+    // so a one-off reassignment (see openReassignPacker) correctly moves an
+    // item into/out of "My Orders" for whichever packer it's really on now.
+    if(packerScope==='mine'&&(!myPacker||effectivePackerIdForItem(item)!==myPacker.id))return false;
     if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
     if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
     const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
