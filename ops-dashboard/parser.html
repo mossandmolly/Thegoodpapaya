@@ -1067,14 +1067,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
   <div class="config-section">
     <h3>🔗 Combinable Groups <span style="font-size:11px;color:#8a7a6a;font-weight:400">(phase 2 foundation — not yet used by any live logic)</span></h3>
-    <p class="note">Groups of communities (by unique ID, from the table above) that could share a trip if order density is low in one or more of them. Nothing reads this yet — it's captured now so a later phase can use it without another migration.</p>
+    <p class="note">Groups of communities (from the table above) that could share a trip if order density is low in one or more of them. Ctrl/Cmd-click to pick more than one community per group. A community already picked for another group won't show up as an option here — each community can only belong to one combinable group at a time. Nothing reads this yet — it's captured now so a later phase can use it without another migration.</p>
     <div class="add-row">
       <input type="text" id="new-cpg-name" placeholder="Group name">
       <button onclick="addCombinableGroup()">Add</button>
     </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Group</th><th>Members (community unique IDs, comma-separated)</th><th></th>
+        <th>Group</th><th>Members</th><th></th>
       </tr></thead><tbody id="combinable-group-tbody"></tbody></table>
     </div>
   </div>
@@ -1978,24 +1978,36 @@ function renderCombinableGroupsTable(){
   const tbody=document.getElementById('combinable-group-tbody');
   if(!tbody)return;
   const rows=Object.values(combinableGroupsCache).sort((a,b)=>a.name.localeCompare(b.name));
-  tbody.innerHTML=rows.map(g=>
-    '<tr>'+
+  const communityOptions=Object.values(communityPriorityCache).sort((a,b)=>a.display_name.localeCompare(b.display_name));
+  tbody.innerHTML=rows.map(g=>{
+    // A community already picked for a DIFFERENT group doesn't show up as
+    // an option here — each community belongs to at most one combinable
+    // group, so there's nothing to re-pick on another row, and no way to
+    // accidentally double-assign one.
+    const usedElsewhere=new Set();
+    rows.forEach(other=>{if(other.id!==g.id)(other.members||[]).forEach(m=>usedElsewhere.add(m));});
+    const options=communityOptions
+      .filter(c=>!usedElsewhere.has(c.unique_id))
+      .map(c=>'<option value="'+escH(c.unique_id)+'"'+((g.members||[]).includes(c.unique_id)?' selected':'')+'>'+escH(c.display_name)+'</option>')
+      .join('');
+    return '<tr>'+
       '<td><input type="text" id="cpg-name-'+g.id+'" value="'+escH(g.name)+'"></td>'+
-      '<td><input type="text" id="cpg-members-'+g.id+'" value="'+escH((g.members||[]).join(', '))+'" placeholder="e.g. srp, greenwoods"></td>'+
+      '<td><select multiple id="cpg-members-'+g.id+'" size="'+Math.min(Math.max(communityOptions.length,2),5)+'" style="min-width:170px">'+options+'</select></td>'+
       '<td style="white-space:nowrap">'+
         '<button class="del-btn" style="color:#2d6b2d" onclick="saveCombinableGroup('+escH(JSON.stringify(g.id))+')" title="Save">💾</button>'+
         '<button class="del-btn" onclick="deleteCombinableGroup('+escH(JSON.stringify(g.id))+')" title="Delete">✕</button>'+
       '</td>'+
-    '</tr>'
-  ).join('');
+    '</tr>';
+  }).join('');
 }
 
 async function saveCombinableGroup(id){
   const name=document.getElementById('cpg-name-'+id).value.trim();
   if(!name){uxAlert('Group name can\'t be empty');return;}
-  const members=document.getElementById('cpg-members-'+id).value.split(',').map(m=>m.trim().toLowerCase()).filter(Boolean);
-  const unknown=members.filter(m=>!communityPriorityCache[m]);
-  if(unknown.length){uxAlert('Unknown community unique ID(s): '+unknown.join(', '));return;}
+  // Options are pre-filtered to valid, not-used-elsewhere unique_ids (see
+  // renderCombinableGroupsTable), so whatever's selected is always valid —
+  // no separate "unknown ID" check needed like the old free-text field had.
+  const members=Array.from(document.getElementById('cpg-members-'+id).selectedOptions).map(o=>o.value);
   const{error:updErr}=await sb.from('community_combinable_groups').update({name}).eq('id',id);
   if(updErr){uxAlert('Failed to save: '+updErr.message);return;}
   const{error:delErr}=await sb.from('community_combinable_group_members').delete().eq('group_id',id);
