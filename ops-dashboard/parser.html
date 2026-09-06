@@ -387,12 +387,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-single-timer.pk-timer-over{color:#b3261e;animation:pkTimerFlash 1s step-start infinite}
 @keyframes pkTimerFlash{50%{opacity:0.35}}
 .pk-single-wrap{display:block;max-width:360px;margin:0 auto}
-/* Somya's Team view — one column per packer, each showing their current
-   top card plus a short peek at what's next in their queue. */
-.pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
-.pk-team-col{display:flex;flex-direction:column;gap:6px}
-.pk-team-col-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#8a7a6a}
-.pk-team-next{font-size:11px;color:#8a7a6a;line-height:1.6;padding:2px 4px}
+/* Somya's Team view — one column per packer, showing every card in their
+   queue stacked in the exact order they'll see them. */
+.pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;align-items:start}
+.pk-team-col{display:flex;flex-direction:column;gap:8px}
+.pk-team-col-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#8a7a6a;position:sticky;top:0;background:#ffffff;padding:4px 0;z-index:1}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
 .pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
@@ -6783,27 +6782,23 @@ function renderPackerSingleCard(){
 // Somya's supervisor overview: every packer's own Single Card queue shown
 // side by side, in the exact same rank order each packer sees on their own
 // device (computePackerQueue, unchanged) — not a separate ranking system.
-// Each column shows the packer's current top card in full (same markup/
-// actions as their own screen, including the reassign-clickable "Assigned
-// to" line since this session is already isVegPerfAllowed) plus a short
-// peek at what's coming up next, so progress is visible without switching
-// to each packer's device. Auto-refreshes — see startTeamViewPoll.
+// Each column shows EVERY card in that packer's queue, stacked top to
+// bottom in the exact order they'll actually be shown to that packer one
+// at a time — not just the current card, so Somya can see the whole
+// upcoming lineup, not only what's in front of the packer right now.
+// Auto-refreshes — see startTeamViewPoll.
 function renderPackerTeamView(){
   const grid=document.getElementById('pk-grid');
   document.getElementById('pk-rc').textContent='';
   if(!isVegPerfAllowed){packerViewMode='grid';renderPackerModeToggle();renderPackerGrid();return;}
   if(!packersCache.length){grid.innerHTML='<div class="to-empty">No packers configured yet.</div>';return;}
+  const dupIds=computeDuplicateItemIds(packerItems);
   grid.innerHTML='<div class="pk-team-grid">'+
     packersCache.map(p=>{
       const queue=computePackerQueue(p.name);
-      const top=queue[0];
-      const upcoming=queue.slice(1,4);
       return '<div class="pk-team-col">'+
         '<div class="pk-team-col-header">'+escH(p.name)+' <span class="sh-count">('+queue.length+' left)</span></div>'+
-        (top?packCardHtml(top):'<div class="to-empty" style="padding:14px 8px">Nothing queued ✓</div>')+
-        (upcoming.length?'<div class="pk-team-next">Up next: '+
-          upcoming.map(i=>escH(i.item_name)+' — '+escH(packerCustomerMap[i.sales_order_id]?.customer_name||i.sales_order_id)).join('<br>')+
-        '</div>':'')+
+        (queue.length?queue.map(item=>packCardHtml(item,dupIds)).join(''):'<div class="to-empty" style="padding:14px 8px">Nothing queued ✓</div>')+
       '</div>';
     }).join('')+
   '</div>';
