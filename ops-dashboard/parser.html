@@ -436,19 +436,21 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-order-stack{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;grid-column:1/-1}
 .pk-order-stack-header{font-size:12px;font-weight:700;color:#2b2320;margin-bottom:8px}
 .pk-order-stack-sub{font-size:10px;font-weight:400;color:#8a7a6a}
-.pk-order-card{display:flex;align-items:center;gap:8px;padding:6px 4px;border-radius:8px;background:#ffffff;border:1px solid #eee0d0;margin-bottom:6px;cursor:grab}
+.pk-order-card{padding:6px 4px;border-radius:8px;background:#ffffff;border:1px solid #eee0d0;margin-bottom:6px;cursor:grab}
 .pk-order-card:last-child{margin-bottom:0}
 .pk-order-card.pk-order-dragging{opacity:0.4}
+.pk-order-card-row{display:flex;align-items:center;gap:8px}
 .pk-order-handle{color:#c8bdae;font-size:14px;flex-shrink:0}
 .pk-order-name{font-size:12px;color:#2b2320;flex:0 0 130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pk-order-progress-track{flex:1;height:8px;background:#f2ede4;border-radius:4px;overflow:hidden}
 .pk-order-progress-fill{height:100%}
 .pk-order-pct{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 32px;text-align:right;font-variant-numeric:tabular-nums}
-.pk-order-count{font-size:10px;color:#8a7a6a;flex:0 0 110px;text-align:right;white-space:nowrap}
-@media (max-width:600px){.pk-order-card{flex-wrap:wrap}.pk-order-count{flex:0 0 100%;text-align:left;margin-left:22px}}
 .pk-order-arrows{display:flex;flex-direction:column;flex-shrink:0}
 .pk-order-arrow{background:none;border:none;color:#8a7a6a;font-size:9px;padding:0 4px;cursor:pointer;line-height:1.3}
 .pk-order-arrow:disabled{opacity:0.25;cursor:not-allowed}
+/* Order/item volume line — full card width, below the main row, so there's
+   room for both counts without squeezing the progress bar. */
+.pk-order-detail{font-size:10px;color:#8a7a6a;margin:4px 0 0 22px}
 @media (max-width:600px){.pk-order-name{flex-basis:90px}}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
@@ -7031,15 +7033,28 @@ let currentPriorityOrderList=[];
 // Groups EVERY packer's items today (not scoped to one packer, unlike
 // computePackerQueue/computePackerTimeline) by the same deriveGroupKey
 // Overview/Delivery use, so "society" here means the same thing it does
-// everywhere else in the app.
+// everywhere else in the app. Tracks both item-level counts (the actual
+// packing workload) and order-level counts (an order counts as "pending"
+// the moment any one of its items still is, even if others are already
+// done) — orderPending only ever gets flipped true, never back to false,
+// so it comes out the same regardless of which item of an order is seen
+// first.
 function computeGroupProgressToday(){
   const active=packerItems.filter(i=>i.status!=='cancelled');
   const byGroup={},ordersByGroup={};
   active.forEach(item=>{
     const key=deriveGroupKey(packerOrderLike(item));
-    if(!byGroup[key])byGroup[key]={done:0,pending:0};
-    if(item.packed_at)byGroup[key].done++;else byGroup[key].pending++;
+    if(!byGroup[key])byGroup[key]={itemsDone:0,itemsPending:0,orderPending:{}};
+    const g=byGroup[key];
+    if(item.packed_at)g.itemsDone++;else g.itemsPending++;
+    if(!(item.sales_order_id in g.orderPending))g.orderPending[item.sales_order_id]=false;
+    if(!item.packed_at)g.orderPending[item.sales_order_id]=true;
     (ordersByGroup[key]=ordersByGroup[key]||[]).push(packerOrderLike(item));
+  });
+  Object.values(byGroup).forEach(g=>{
+    const flags=Object.values(g.orderPending);
+    g.ordersTotal=flags.length;
+    g.ordersPending=flags.filter(Boolean).length;
   });
   return{byGroup,ordersByGroup};
 }
@@ -7055,19 +7070,25 @@ function renderCurrentOrderStack(){
     '<div class="pk-order-stack-header">Current Order <span class="pk-order-stack-sub">— drag (or use the arrows) to reprioritize; overrides today only, for everyone</span></div>'+
     ordered.map((name,i)=>{
       const g=byGroup[name];
-      const total=g.done+g.pending;
-      const pct=total?Math.round(g.done/total*100):0;
+      const totalItems=g.itemsDone+g.itemsPending;
+      const pct=totalItems?Math.round(g.itemsDone/totalItems*100):0;
       return '<div class="pk-order-card" draggable="true" data-name="'+escH(name)+'" '+
         'ondragstart="priorityDragStart(event)" ondragover="priorityDragOver(event)" ondrop="priorityDrop(event)" ondragend="priorityDragEnd(event)">'+
-        '<span class="pk-order-handle">⠿</span>'+
-        '<span class="pk-order-name">'+escH(name)+'</span>'+
-        '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>'+
-        '<span class="pk-order-pct">'+pct+'%</span>'+
-        '<span class="pk-order-count">'+total+' total · '+g.pending+' pending</span>'+
-        '<span class="pk-order-arrows">'+
-          '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',-1)" '+(i===0?'disabled':'')+' title="Move up">▲</button>'+
-          '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',1)" '+(i===ordered.length-1?'disabled':'')+' title="Move down">▼</button>'+
-        '</span>'+
+        '<div class="pk-order-card-row">'+
+          '<span class="pk-order-handle">⠿</span>'+
+          '<span class="pk-order-name">'+escH(name)+'</span>'+
+          '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>'+
+          '<span class="pk-order-pct">'+pct+'%</span>'+
+          '<span class="pk-order-arrows">'+
+            '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',-1)" '+(i===0?'disabled':'')+' title="Move up">▲</button>'+
+            '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',1)" '+(i===ordered.length-1?'disabled':'')+' title="Move down">▼</button>'+
+          '</span>'+
+        '</div>'+
+        // Volume left, at a glance — order count (a coarser "how many
+        // customers") and item count (the actual packing workload; one
+        // order can carry several items) shown separately since they can
+        // tell very different stories (few orders, lots of items each).
+        '<div class="pk-order-detail">'+g.ordersTotal+' order'+(g.ordersTotal!==1?'s':'')+' ('+g.ordersPending+' pending) · '+totalItems+' item'+(totalItems!==1?'s':'')+' ('+g.itemsPending+' pending)</div>'+
       '</div>';
     }).join('')+
   '</div>';
@@ -7190,7 +7211,11 @@ function renderPackerTeamView(){
   const perPacker=packersCache.map(p=>({packer:p,...computePackerTimeline(p.name)}));
 
   const summaryRows=[
-    ...((unassigned.done.length||unassigned.pending.length)?[{label:'⚠️ Unassigned',done:unassigned.done.length,pending:unassigned.pending.length,isWarn:true}]:[]),
+    // Always included (even at 0/0) — so the Overall total is visibly
+    // accounted-for rather than silently omitting a row the moment
+    // there's nothing unassigned, and it's obvious there's currently no
+    // gap rather than the category just not being shown at all.
+    {label:'⚠️ Unassigned',done:unassigned.done.length,pending:unassigned.pending.length,isWarn:true},
     // No avgPackSeconds for Unassigned — a pack rate belongs to a specific
     // packer, not to a pile of items nobody's actually claimed.
     ...perPacker.map(r=>({label:r.packer.name,done:r.done.length,pending:r.pending.length,avgPackSeconds:avgPackSecondsPerItem(r.done)})),
