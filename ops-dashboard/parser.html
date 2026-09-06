@@ -6,7 +6,8 @@
 <title>Good Papaya · Order Parser</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320;min-height:100vh;padding:20px 16px 48px}
+body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320;min-height:100vh;padding:20px 16px 48px;overflow-x:hidden}
+@media (max-width:600px){body{padding:12px 10px 36px}}
 .top-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:10px;flex-wrap:wrap}
 .top-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .logo{font-size:20px;font-weight:700;color:#c2570a}.logo span{color:#2b2320;font-weight:300}
@@ -14,8 +15,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .header-btn:disabled{opacity:0.5;cursor:not-allowed}
 .date-picker{width:100%;padding:9px 10px;border:1.5px solid #f5c896;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:10px;background:#fdead9}
 .section-divider{border:none;border-top:1px solid #eee0d0;margin:24px 0}
-.tabs{display:flex;gap:8px;margin-bottom:20px}
-.tab{padding:8px 16px;border-radius:20px;border:1.5px solid #eee0d0;background:transparent;color:#8a7a6a;font-size:13px;cursor:pointer;font-family:inherit}
+/* Own horizontally-scrolling strip rather than wrapping or overflowing the
+   page — on a narrow phone, 8 tabs plain-wrapped would either blow out the
+   whole page width (stretching everything else's apparent whitespace along
+   with it) or wrap into an awkward multi-row block. A momentum-scrollable
+   single row is the standard mobile tab-bar pattern. Harmless on desktop,
+   where the row already fits and this is simply a no-op. */
+.tabs{display:flex;gap:8px;margin-bottom:20px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap}
+.tab{padding:8px 16px;border-radius:20px;border:1.5px solid #eee0d0;background:transparent;color:#8a7a6a;font-size:13px;cursor:pointer;font-family:inherit;flex-shrink:0}
 .tab.active{background:#e8720c;color:#ffffff;border-color:#e8720c;font-weight:600}
 .panel{display:none}.panel.active{display:block}
 .drop-zone{border:1.5px dashed #eee0d0;border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:12px;position:relative;background:#fdf8f3}
@@ -386,7 +393,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-single-timer{font-weight:700;font-size:15px;color:#2b2320;font-variant-numeric:tabular-nums}
 .pk-single-timer.pk-timer-over{color:#b3261e;animation:pkTimerFlash 1s step-start infinite}
 @keyframes pkTimerFlash{50%{opacity:0.35}}
-.pk-single-wrap{display:block;max-width:360px;margin:0 auto}
+/* Full width by default (mobile-first — this is the packing team's actual
+   device) — a fixed cap here was leaving visible side gaps on any phone
+   wider than 360px+padding, which is most of them. The 360px reading-width
+   cap only kicks in on a genuinely wide (desktop/tablet) viewport, via the
+   media query below. */
+.pk-single-wrap{display:block;width:100%;margin:0 auto}
+@media (min-width:601px){.pk-single-wrap{max-width:360px}}
 /* Somya's Team view — one column per packer, showing every card in their
    queue stacked in the exact order they'll see them. */
 .pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;align-items:start}
@@ -404,6 +417,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-team-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
 .pk-team-bar-row:last-child{margin-bottom:0}
 .pk-team-bar-label{font-size:11px;color:#2b2320;flex:0 0 120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:600px){.pk-team-bar-label{flex-basis:80px}}
 .pk-team-bar-track{flex:1;height:10px;background:#f2ede4;border-radius:5px;overflow:hidden;display:flex}
 .pk-team-bar-seg{height:100%}
 .pk-team-bar-done{background:#2d6b2d;margin-right:2px}
