@@ -392,6 +392,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;align-items:start}
 .pk-team-col{display:flex;flex-direction:column;gap:8px}
 .pk-team-col-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#8a7a6a;position:sticky;top:0;background:#ffffff;padding:4px 0;z-index:1}
+.pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
+.pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
+.pk-done-time{font-weight:700;color:#3f7a34;font-variant-numeric:tabular-nums}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
 .pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
@@ -6381,18 +6384,15 @@ function effectivePackerIdForItem(item){
   return item.assigned_packer_id||packerIdByFruit[item.item_name]||null;
 }
 
-// This packer's next-up queue: ranked by community priority, with a hard
-// time-sensitive override, and smaller orders first within the same rank
-// tier (so a rider can start dispatching sooner rather than everyone
-// finishing large orders together). Splitting one order's items across
-// multiple packers falls out for free — each packer's own assignment
-// naturally filters them to only their slice of any given order.
-function computePackerQueue(packerName){
-  const packer=packersCache.find(p=>p.name===packerName);
-  if(!packer)return[];
-  const openItems=packerItems.filter(i=>i.status==='open'&&effectivePackerIdForItem(i)===packer.id);
+// Ranks an arbitrary set of one packer's items by community priority, with
+// a hard time-sensitive override, and smaller orders first within the same
+// rank tier (so a rider can start dispatching sooner rather than everyone
+// finishing large orders together). Shared by computePackerQueue (open
+// items only, for a packer's own live queue) and computePackerTimeline
+// (open+held+packed, for Somya's fuller Team view) — same rule either way.
+function orderItemsByQueuePriority(items){
   const bySoid={};
-  openItems.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
+  items.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
   const orderMeta=Object.keys(bySoid).map(soid=>{
     const o=packerCustomerMap[soid]||{};
     const community=matchCommunityPriority(o.society||o.customer_name);
@@ -6411,6 +6411,33 @@ function computePackerQueue(packerName){
     return a.openItemCount-b.openItemCount; // smaller orders first within same priority tier
   });
   return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
+}
+
+// This packer's next-up queue: every still-open item they own, ranked by
+// priority. Splitting one order's items across multiple packers falls out
+// for free — each packer's own assignment naturally filters them to only
+// their slice of any given order.
+function computePackerQueue(packerName){
+  const packer=packersCache.find(p=>p.name===packerName);
+  if(!packer)return[];
+  const openItems=packerItems.filter(i=>i.status==='open'&&effectivePackerIdForItem(i)===packer.id);
+  return orderItemsByQueuePriority(openItems);
+}
+
+// Team view's fuller picture for one packer: everything they own today,
+// split into two chronological/priority halves — items already finalized
+// (packed_at set), oldest first with a real timestamp, and everything
+// still pending (open/held/packed-not-yet-final), in the same priority
+// order computePackerQueue uses. "Pending" here is deliberately broader
+// than computePackerQueue's open-only set, since Somya needs visibility
+// into held/packed-awaiting-final items too, not just untouched ones.
+function computePackerTimeline(packerName){
+  const packer=packersCache.find(p=>p.name===packerName);
+  if(!packer)return{done:[],pending:[]};
+  const mine=packerItems.filter(i=>i.status!=='cancelled'&&effectivePackerIdForItem(i)===packer.id);
+  const done=mine.filter(i=>i.packed_at).sort((a,b)=>new Date(a.packed_at)-new Date(b.packed_at));
+  const pending=orderItemsByQueuePriority(mine.filter(i=>!i.packed_at));
+  return{done,pending};
 }
 
 function renderPackerModeToggle(){
@@ -6779,13 +6806,24 @@ function renderPackerSingleCard(){
   renderPkCardTimerDisplay();
 }
 
-// Somya's supervisor overview: every packer's own Single Card queue shown
-// side by side, in the exact same rank order each packer sees on their own
-// device (computePackerQueue, unchanged) — not a separate ranking system.
-// Each column shows EVERY card in that packer's queue, stacked top to
-// bottom in the exact order they'll actually be shown to that packer one
-// at a time — not just the current card, so Somya can see the whole
-// upcoming lineup, not only what's in front of the packer right now.
+// Compact, read-only row for an already-finalized item in Team view — no
+// qty input/action buttons (nothing left to do), just what/who/when.
+function doneItemRowHtml(item){
+  return '<div class="pk-done-row">'+
+    '<span class="pk-done-time">'+escH(formatOrderTime(item.packed_at)||'')+'</span> '+
+    escH(item.item_name)+' — '+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+
+  '</div>';
+}
+
+// Somya's supervisor overview: every packer's own queue shown side by
+// side, in the exact same rank order each packer sees on their own device
+// (computePackerQueue/orderItemsByQueuePriority, unchanged) — not a
+// separate ranking system. Each column shows:
+//   1. Every still-pending card (open/held/packed-not-yet-final), stacked
+//      top to bottom in priority order — the live working queue.
+//   2. Below that, everything already finalized today, oldest first, each
+//      with the actual time it was packed — a chronological log, not the
+//      priority queue (there's no "priority" left once something's done).
 // Auto-refreshes — see startTeamViewPoll.
 function renderPackerTeamView(){
   const grid=document.getElementById('pk-grid');
@@ -6795,10 +6833,11 @@ function renderPackerTeamView(){
   const dupIds=computeDuplicateItemIds(packerItems);
   grid.innerHTML='<div class="pk-team-grid">'+
     packersCache.map(p=>{
-      const queue=computePackerQueue(p.name);
+      const{done,pending}=computePackerTimeline(p.name);
       return '<div class="pk-team-col">'+
-        '<div class="pk-team-col-header">'+escH(p.name)+' <span class="sh-count">('+queue.length+' left)</span></div>'+
-        (queue.length?queue.map(item=>packCardHtml(item,dupIds)).join(''):'<div class="to-empty" style="padding:14px 8px">Nothing queued ✓</div>')+
+        '<div class="pk-team-col-header">'+escH(p.name)+' <span class="sh-count">('+done.length+' done, '+pending.length+' left)</span></div>'+
+        (pending.length?pending.map(item=>packCardHtml(item,dupIds)).join(''):(done.length?'':'<div class="to-empty" style="padding:14px 8px">Nothing queued ✓</div>'))+
+        (done.length?'<div class="pk-done-log">'+done.map(doneItemRowHtml).join('')+'</div>':'')+
       '</div>';
     }).join('')+
   '</div>';
