@@ -423,6 +423,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-team-bar-done{background:#2d6b2d;margin-right:2px}
 .pk-team-bar-pending{background:#c9a227}
 .pk-team-bar-count{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 40px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pk-team-overall-row{font-weight:700;padding-bottom:8px;margin-bottom:8px !important;border-bottom:1px solid #eee0d0}
+.pk-team-overall-row .pk-team-bar-label{color:#2b2320;font-weight:700}
+.pk-team-bar-rate{font-size:10px;color:#8a7a6a;margin:-3px 0 6px 128px}
+@media (max-width:600px){.pk-team-bar-rate{margin-left:88px}}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
 .pk-done-time{font-weight:700;color:#3f7a34;font-variant-numeric:tabular-nums}
@@ -6535,6 +6539,26 @@ function computePackerTimeline(packerName){
   return{done,pending};
 }
 
+// Average seconds between consecutive finalized items for one packer today
+// — literally the metric migration 043's own packed_at comment anticipated
+// ("packed_at is what a future average-time-per-item metric gets computed
+// from — the gap between one item's packed_at and the next one the same
+// packer finished"). doneSortedByPackedAt: computePackerTimeline's `done`
+// array, already sorted ascending. Needs at least 2 to have a gap at all.
+function avgPackSecondsPerItem(doneSortedByPackedAt){
+  if(doneSortedByPackedAt.length<2)return null;
+  let totalSec=0;
+  for(let i=1;i<doneSortedByPackedAt.length;i++){
+    totalSec+=(new Date(doneSortedByPackedAt[i].packed_at)-new Date(doneSortedByPackedAt[i-1].packed_at))/1000;
+  }
+  return totalSec/(doneSortedByPackedAt.length-1);
+}
+
+function formatPackRate(seconds){
+  if(seconds==null)return null;
+  return seconds<60?Math.round(seconds)+'s/item':(seconds/60).toFixed(1)+'m/item';
+}
+
 // Items nobody actually owns right now — no per-item override AND no
 // default Item -> Packer assignment for that fruit in Config. These never
 // show up in any packer's own column (effectivePackerIdForItem is null,
@@ -6925,6 +6949,54 @@ function doneItemRowHtml(item){
   '</div>';
 }
 
+// Bar-per-packer summary shown above the columns: bar length is that
+// packer's total (done+pending) relative to whoever has the most today, so
+// a glance at length alone flags who's overloaded vs idle; the done/pending
+// split within each bar (and the "done/total" count) shows how far along
+// they are, and a small "avg X/item" line under each packer's own bar
+// shows their pack rate (avgPackSecondsPerItem — the gap between their
+// consecutive packed_at timestamps). Sorted busiest-first so imbalance is
+// the first thing seen. An "Overall" row up top (its own single line, not
+// scaled against the packer bars, which would otherwise always dwarf them
+// since it's their sum) gives the whole-team total/done/left at a glance.
+function renderPackerTeamSummary(rows){
+  if(!rows.length)return '';
+  const overallDone=rows.reduce((s,r)=>s+r.done,0);
+  const overallPending=rows.reduce((s,r)=>s+r.pending,0);
+  const overallTotal=overallDone+overallPending;
+  const overallDonePct=overallTotal?overallDone/overallTotal*100:0;
+  const overallPendingPct=overallTotal?overallPending/overallTotal*100:0;
+
+  const sorted=[...rows].sort((a,b)=>(b.done+b.pending)-(a.done+a.pending));
+  const maxTotal=Math.max(1,...sorted.map(r=>r.done+r.pending));
+
+  return '<div class="pk-team-summary">'+
+    '<div class="pk-team-summary-legend"><span class="pk-legend-swatch pk-legend-done"></span>Done <span class="pk-legend-swatch pk-legend-pending"></span>Pending</div>'+
+    '<div class="pk-team-bar-row pk-team-overall-row">'+
+      '<span class="pk-team-bar-label">Overall</span>'+
+      '<div class="pk-team-bar-track">'+
+        (overallDone?'<div class="pk-team-bar-seg pk-team-bar-done" style="width:'+overallDonePct+'%" title="'+overallDone+' done"></div>':'')+
+        (overallPending?'<div class="pk-team-bar-seg pk-team-bar-pending" style="width:'+overallPendingPct+'%" title="'+overallPending+' pending"></div>':'')+
+      '</div>'+
+      '<span class="pk-team-bar-count">'+overallDone+'/'+overallTotal+'</span>'+
+    '</div>'+
+    sorted.map(r=>{
+      const total=r.done+r.pending;
+      const donePct=r.done/maxTotal*100,pendingPct=r.pending/maxTotal*100;
+      const rate=r.avgPackSeconds!=null?formatPackRate(r.avgPackSeconds):null;
+      return '<div class="pk-team-bar-row">'+
+        '<span class="pk-team-bar-label'+(r.isWarn?' pk-team-col-header-warn':'')+'">'+escH(r.label)+'</span>'+
+        '<div class="pk-team-bar-track">'+
+          (r.done?'<div class="pk-team-bar-seg pk-team-bar-done" style="width:'+donePct+'%" title="'+r.done+' done"></div>':'')+
+          (r.pending?'<div class="pk-team-bar-seg pk-team-bar-pending" style="width:'+pendingPct+'%" title="'+r.pending+' pending"></div>':'')+
+        '</div>'+
+        '<span class="pk-team-bar-count">'+r.done+'/'+total+'</span>'+
+      '</div>'+
+      (rate?'<div class="pk-team-bar-rate">avg '+escH(rate)+'</div>':'');
+    }).join('')+
+  '</div>';
+}
+
 // Somya's supervisor overview: every packer's own queue shown side by
 // side, in the exact same rank order each packer sees on their own device
 // (computePackerQueue/orderItemsByQueuePriority, unchanged) — not a
@@ -6939,31 +7011,6 @@ function doneItemRowHtml(item){
 // packer's column at all. Each card's "Unassigned ✎" is Somya's own
 // entry point to fix the gap right from here (openReassignPacker).
 // Auto-refreshes — see startTeamViewPoll.
-// Bar-per-packer summary shown above the columns: bar length is that
-// packer's total (done+pending) relative to whoever has the most today, so
-// a glance at length alone flags who's overloaded vs idle; the done/pending
-// split within each bar shows how far along they are. Sorted busiest-first
-// so imbalance is the first thing seen, not something to hunt for.
-function renderPackerTeamSummary(rows){
-  if(!rows.length)return '';
-  const sorted=[...rows].sort((a,b)=>(b.done+b.pending)-(a.done+a.pending));
-  const maxTotal=Math.max(1,...sorted.map(r=>r.done+r.pending));
-  return '<div class="pk-team-summary">'+
-    '<div class="pk-team-summary-legend"><span class="pk-legend-swatch pk-legend-done"></span>Done <span class="pk-legend-swatch pk-legend-pending"></span>Pending</div>'+
-    sorted.map(r=>{
-      const total=r.done+r.pending;
-      const donePct=r.done/maxTotal*100,pendingPct=r.pending/maxTotal*100;
-      return '<div class="pk-team-bar-row">'+
-        '<span class="pk-team-bar-label'+(r.isWarn?' pk-team-col-header-warn':'')+'">'+escH(r.label)+'</span>'+
-        '<div class="pk-team-bar-track">'+
-          (r.done?'<div class="pk-team-bar-seg pk-team-bar-done" style="width:'+donePct+'%" title="'+r.done+' done"></div>':'')+
-          (r.pending?'<div class="pk-team-bar-seg pk-team-bar-pending" style="width:'+pendingPct+'%" title="'+r.pending+' pending"></div>':'')+
-        '</div>'+
-        '<span class="pk-team-bar-count">'+r.done+'/'+total+'</span>'+
-      '</div>';
-    }).join('')+
-  '</div>';
-}
 
 function renderPackerTeamView(){
   const grid=document.getElementById('pk-grid');
@@ -6976,7 +7023,9 @@ function renderPackerTeamView(){
 
   const summaryRows=[
     ...((unassigned.done.length||unassigned.pending.length)?[{label:'⚠️ Unassigned',done:unassigned.done.length,pending:unassigned.pending.length,isWarn:true}]:[]),
-    ...perPacker.map(r=>({label:r.packer.name,done:r.done.length,pending:r.pending.length})),
+    // No avgPackSeconds for Unassigned — a pack rate belongs to a specific
+    // packer, not to a pile of items nobody's actually claimed.
+    ...perPacker.map(r=>({label:r.packer.name,done:r.done.length,pending:r.pending.length,avgPackSeconds:avgPackSecondsPerItem(r.done)})),
   ];
 
   const unassignedCol=(unassigned.done.length||unassigned.pending.length)
