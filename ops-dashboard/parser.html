@@ -7032,12 +7032,11 @@ let currentPriorityOrderList=[];
 // computePackerQueue/computePackerTimeline) by the same deriveGroupKey
 // Overview/Delivery use, so "society" here means the same thing it does
 // everywhere else in the app. Tracks both item-level counts (the actual
-// packing workload) and per-order state (pending the moment any one of
-// its items still is, even if others are already done — `pending` only
+// packing workload) and per-order state — pending the moment any one of
+// its items still is, even if others are already done (`pending` only
 // ever gets flipped true, never back to false, so it comes out the same
-// regardless of which item of an order is seen first; `maxPackedAt`
-// tracks the latest packed_at among that order's items, used as the
-// order's own completion time once every item is done).
+// regardless of which item of an order is seen first), plus that order's
+// own placed/entered time (orders.created_at, via packerCustomerMap).
 function computeGroupProgressToday(){
   const active=packerItems.filter(i=>i.status!=='cancelled');
   const byGroup={},ordersByGroup={};
@@ -7047,9 +7046,8 @@ function computeGroupProgressToday(){
     const g=byGroup[key];
     if(item.packed_at)g.itemsDone++;else g.itemsPending++;
     const soid=item.sales_order_id;
-    if(!g.orders[soid])g.orders[soid]={pending:false,maxPackedAt:null};
+    if(!g.orders[soid])g.orders[soid]={pending:false,enteredAt:packerCustomerMap[soid]?.created_at||null};
     if(!item.packed_at)g.orders[soid].pending=true;
-    if(item.packed_at&&(!g.orders[soid].maxPackedAt||item.packed_at>g.orders[soid].maxPackedAt))g.orders[soid].maxPackedAt=item.packed_at;
     (ordersByGroup[key]=ordersByGroup[key]||[]).push(packerOrderLike(item));
   });
   Object.values(byGroup).forEach(g=>{
@@ -7057,12 +7055,12 @@ function computeGroupProgressToday(){
     g.ordersTotal=orderList.length;
     g.ordersPending=orderList.filter(o=>o.pending).length;
     g.ordersDone=g.ordersTotal-g.ordersPending;
-    // "Last order fulfilled" — the most recent completion time among
-    // orders that are FULLY done (every item packed_at), not just the
-    // latest single item, so one item finishing on an otherwise-still-open
-    // order doesn't get mistaken for that whole order being done.
-    const completedTimes=orderList.filter(o=>!o.pending&&o.maxPackedAt).map(o=>o.maxPackedAt);
-    g.lastFulfilledAt=completedTimes.length?completedTimes.sort().slice(-1)[0]:null;
+    // Not "when was the last order packed" — "orders entered up to what
+    // time have all been fulfilled": the latest placed/entered time among
+    // orders that are FULLY done (every item packed_at). Lets a viewer
+    // read it as "anything that came in before this is cleared."
+    const enteredTimes=orderList.filter(o=>!o.pending&&o.enteredAt).map(o=>o.enteredAt);
+    g.fulfilledUpToAt=enteredTimes.length?enteredTimes.sort().slice(-1)[0]:null;
   });
   return{byGroup,ordersByGroup};
 }
@@ -7098,7 +7096,7 @@ function renderCurrentOrderStack(){
         // tell very different stories (few orders, lots of items each) —
         // plus when this society's last order was actually fulfilled.
         '<div class="pk-order-detail">Total orders: '+g.ordersTotal+' · Completed: '+g.ordersDone+' · Pending: '+g.ordersPending+' · Pending items: '+g.itemsPending+'</div>'+
-        '<div class="pk-order-detail pk-order-detail-sub">'+(g.lastFulfilledAt?'Last order fulfilled at '+escH(formatOrderTime(g.lastFulfilledAt)):'No orders fulfilled yet')+'</div>'+
+        '<div class="pk-order-detail pk-order-detail-sub">'+(g.fulfilledUpToAt?'Orders entered up to '+escH(formatOrderTime(g.fulfilledUpToAt))+' fulfilled':'No orders fulfilled yet')+'</div>'+
       '</div>';
     }).join('')+
   '</div>';
