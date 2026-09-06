@@ -451,6 +451,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 /* Order/item volume line — full card width, below the main row, so there's
    room for both counts without squeezing the progress bar. */
 .pk-order-detail{font-size:10px;color:#8a7a6a;margin:4px 0 0 22px}
+.pk-order-detail-sub{margin-top:2px;font-style:italic}
 @media (max-width:600px){.pk-order-name{flex-basis:90px}}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
@@ -6531,9 +6532,9 @@ function effectivePackerIdForItem(item){
 }
 
 // Ranks an arbitrary set of one packer's items by community priority, with
-// a hard time-sensitive override, and smaller orders first within the same
-// rank tier (so a rider can start dispatching sooner rather than everyone
-// finishing large orders together). Shared by computePackerQueue (open
+// a hard time-sensitive override; within the same community/rank tier,
+// earliest-placed order first (first come, first served within a
+// society) rather than by order size. Shared by computePackerQueue (open
 // items only, for a packer's own live queue) and computePackerTimeline
 // (open+held+packed, for Somya's fuller Team view) — same rule either way.
 // Also honors priorityOverrideByGroup (Somya's Current Order stack) —
@@ -6547,13 +6548,10 @@ function orderItemsByQueuePriority(items){
     const o=packerCustomerMap[soid]||{};
     const community=matchCommunityPriority(o.society||o.customer_name);
     const groupName=community?community.display_name:deriveSociety(o.customer_name);
-    // Whole order's remaining item count (across every packer/fruit), not
-    // just this packer's own slice — the point of "smaller first" is the
-    // WHOLE order finishing sooner so the rider can dispatch it.
-    const openItemCount=packerItems.filter(i=>i.sales_order_id===soid&&i.status==='open').length;
     return{soid,items:bySoid[soid],rank:community?.rank??Infinity,
       timeConstrained:isTimeConstrainedOrder(o.deliver_by),
-      deadlineMins:minutesToDeadline(o.deliver_by),openItemCount,
+      deadlineMins:minutesToDeadline(o.deliver_by),
+      createdAt:o.created_at?new Date(o.created_at).getTime():Infinity,
       override:priorityOverrideByGroup[groupName]};
   });
   orderMeta.sort((a,b)=>{
@@ -6563,7 +6561,7 @@ function orderItemsByQueuePriority(items){
     if(a.timeConstrained!==b.timeConstrained)return a.timeConstrained?-1:1;
     if(a.timeConstrained)return a.deadlineMins-b.deadlineMins; // both constrained: soonest deadline first
     if(a.rank!==b.rank)return a.rank-b.rank;
-    return a.openItemCount-b.openItemCount; // smaller orders first within same priority tier
+    return a.createdAt-b.createdAt; // same society/tier: earliest-placed order first
   });
   return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
 }
@@ -7034,27 +7032,37 @@ let currentPriorityOrderList=[];
 // computePackerQueue/computePackerTimeline) by the same deriveGroupKey
 // Overview/Delivery use, so "society" here means the same thing it does
 // everywhere else in the app. Tracks both item-level counts (the actual
-// packing workload) and order-level counts (an order counts as "pending"
-// the moment any one of its items still is, even if others are already
-// done) — orderPending only ever gets flipped true, never back to false,
-// so it comes out the same regardless of which item of an order is seen
-// first.
+// packing workload) and per-order state (pending the moment any one of
+// its items still is, even if others are already done — `pending` only
+// ever gets flipped true, never back to false, so it comes out the same
+// regardless of which item of an order is seen first; `maxPackedAt`
+// tracks the latest packed_at among that order's items, used as the
+// order's own completion time once every item is done).
 function computeGroupProgressToday(){
   const active=packerItems.filter(i=>i.status!=='cancelled');
   const byGroup={},ordersByGroup={};
   active.forEach(item=>{
     const key=deriveGroupKey(packerOrderLike(item));
-    if(!byGroup[key])byGroup[key]={itemsDone:0,itemsPending:0,orderPending:{}};
+    if(!byGroup[key])byGroup[key]={itemsDone:0,itemsPending:0,orders:{}};
     const g=byGroup[key];
     if(item.packed_at)g.itemsDone++;else g.itemsPending++;
-    if(!(item.sales_order_id in g.orderPending))g.orderPending[item.sales_order_id]=false;
-    if(!item.packed_at)g.orderPending[item.sales_order_id]=true;
+    const soid=item.sales_order_id;
+    if(!g.orders[soid])g.orders[soid]={pending:false,maxPackedAt:null};
+    if(!item.packed_at)g.orders[soid].pending=true;
+    if(item.packed_at&&(!g.orders[soid].maxPackedAt||item.packed_at>g.orders[soid].maxPackedAt))g.orders[soid].maxPackedAt=item.packed_at;
     (ordersByGroup[key]=ordersByGroup[key]||[]).push(packerOrderLike(item));
   });
   Object.values(byGroup).forEach(g=>{
-    const flags=Object.values(g.orderPending);
-    g.ordersTotal=flags.length;
-    g.ordersPending=flags.filter(Boolean).length;
+    const orderList=Object.values(g.orders);
+    g.ordersTotal=orderList.length;
+    g.ordersPending=orderList.filter(o=>o.pending).length;
+    g.ordersDone=g.ordersTotal-g.ordersPending;
+    // "Last order fulfilled" — the most recent completion time among
+    // orders that are FULLY done (every item packed_at), not just the
+    // latest single item, so one item finishing on an otherwise-still-open
+    // order doesn't get mistaken for that whole order being done.
+    const completedTimes=orderList.filter(o=>!o.pending&&o.maxPackedAt).map(o=>o.maxPackedAt);
+    g.lastFulfilledAt=completedTimes.length?completedTimes.sort().slice(-1)[0]:null;
   });
   return{byGroup,ordersByGroup};
 }
@@ -7087,8 +7095,10 @@ function renderCurrentOrderStack(){
         // Volume left, at a glance — order count (a coarser "how many
         // customers") and item count (the actual packing workload; one
         // order can carry several items) shown separately since they can
-        // tell very different stories (few orders, lots of items each).
-        '<div class="pk-order-detail">'+g.ordersTotal+' order'+(g.ordersTotal!==1?'s':'')+' ('+g.ordersPending+' pending) · '+totalItems+' item'+(totalItems!==1?'s':'')+' ('+g.itemsPending+' pending)</div>'+
+        // tell very different stories (few orders, lots of items each) —
+        // plus when this society's last order was actually fulfilled.
+        '<div class="pk-order-detail">Total orders: '+g.ordersTotal+' · Completed: '+g.ordersDone+' · Pending: '+g.ordersPending+' · Pending items: '+g.itemsPending+'</div>'+
+        '<div class="pk-order-detail pk-order-detail-sub">'+(g.lastFulfilledAt?'Last order fulfilled at '+escH(formatOrderTime(g.lastFulfilledAt)):'No orders fulfilled yet')+'</div>'+
       '</div>';
     }).join('')+
   '</div>';
