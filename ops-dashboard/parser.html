@@ -427,6 +427,23 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-team-overall-row .pk-team-bar-label{color:#2b2320;font-weight:700}
 .pk-team-bar-rate{font-size:10px;color:#8a7a6a;margin:-3px 0 6px 128px}
 @media (max-width:600px){.pk-team-bar-rate{margin-left:88px}}
+/* Somya's drag/arrow-reorderable "Current Order" stack — completion bar
+   reuses packProgressColor's existing red/amber/green convention. */
+.pk-order-stack{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px}
+.pk-order-stack-header{font-size:12px;font-weight:700;color:#2b2320;margin-bottom:8px}
+.pk-order-stack-sub{font-size:10px;font-weight:400;color:#8a7a6a}
+.pk-order-card{display:flex;align-items:center;gap:8px;padding:6px 4px;border-radius:8px;background:#ffffff;border:1px solid #eee0d0;margin-bottom:6px;cursor:grab}
+.pk-order-card:last-child{margin-bottom:0}
+.pk-order-card.pk-order-dragging{opacity:0.4}
+.pk-order-handle{color:#c8bdae;font-size:14px;flex-shrink:0}
+.pk-order-name{font-size:12px;color:#2b2320;flex:0 0 130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pk-order-progress-track{flex:1;height:8px;background:#f2ede4;border-radius:4px;overflow:hidden}
+.pk-order-progress-fill{height:100%}
+.pk-order-pct{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 32px;text-align:right;font-variant-numeric:tabular-nums}
+.pk-order-arrows{display:flex;flex-direction:column;flex-shrink:0}
+.pk-order-arrow{background:none;border:none;color:#8a7a6a;font-size:9px;padding:0 4px;cursor:pointer;line-height:1.3}
+.pk-order-arrow:disabled{opacity:0.25;cursor:not-allowed}
+@media (max-width:600px){.pk-order-name{flex-basis:90px}}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
 .pk-done-time{font-weight:700;color:#3f7a34;font-variant-numeric:tabular-nums}
@@ -3489,6 +3506,7 @@ async function loadTodaysOrders(){
   const[{data,error},custRes]=await Promise.all([
     fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
     fetchAllCustomerLookupByDatePrefix(viewDate),
+    loadPriorityOverride().catch(e=>console.error('Could not load priority override',e)),
   ]);
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
 
@@ -4416,6 +4434,24 @@ function sortTripGroupNames(groupNames,ordersByName){
   });
 }
 
+// Somya's manual "Current Order" override (Team view, isVegPerfAllowed-
+// gated) — a drag-reordered stack for viewDate that outranks even a hard
+// time-sensitive deadline, since she's already accounting for real-world
+// urgency (a demanding customer, a rider already at a society, etc.) when
+// she rearranges it by hand. Keyed by group_name -> sort_order (lower =
+// first), loaded fresh whenever viewDate changes — see loadPriorityOverride.
+// A group with no entry here just falls through to the algorithmic rule
+// below, filed in after every overridden group rather than jumping ahead
+// of her explicit sequence.
+let priorityOverrideByGroup={};
+
+async function loadPriorityOverride(){
+  const{data,error}=await sb.from('packer_priority_override').select('group_name,sort_order').eq('view_date',viewDate);
+  if(error){console.error('Could not load priority override',error);return;}
+  priorityOverrideByGroup={};
+  (data||[]).forEach(r=>{priorityOverrideByGroup[r.group_name]=r.sort_order;});
+}
+
 // Same rule as orderItemsByQueuePriority (community priority rank, hard
 // time-sensitive override, smaller group first) but at group/society
 // granularity instead of per-order — powers the "Time Sensitive" view on
@@ -4437,10 +4473,13 @@ function sortGroupsByPriority(groupNames,ordersByName){
         if(mins<deadlineMins)deadlineMins=mins;
       }
     });
-    return[name,{rank,timeConstrained,deadlineMins,size:orders.length}];
+    return[name,{rank,timeConstrained,deadlineMins,size:orders.length,override:priorityOverrideByGroup[name]}];
   }));
   return[...groupNames].sort((a,b)=>{
     const ma=meta.get(a),mb=meta.get(b);
+    if(ma.override!=null&&mb.override!=null)return ma.override-mb.override;
+    if(ma.override!=null)return -1;
+    if(mb.override!=null)return 1;
     if(ma.timeConstrained!==mb.timeConstrained)return ma.timeConstrained?-1:1;
     if(ma.timeConstrained)return ma.deadlineMins-mb.deadlineMins;
     if(ma.rank!==mb.rank)return ma.rank-mb.rank;
@@ -6756,6 +6795,7 @@ async function loadPackerView(){
     loadPackersConfig(),
     loadCommunityPriorityConfig().catch(e=>console.error('Could not load community priority config',e)),
     ensurePackerCardTimerSetting(),
+    loadPriorityOverride().catch(e=>console.error('Could not load priority override',e)),
   ]);
   packerCustomerMap=map||{};
   packerUnitByItem={};
@@ -6959,6 +6999,117 @@ function doneItemRowHtml(item){
 // the first thing seen. An "Overall" row up top (its own single line, not
 // scaled against the packer bars, which would otherwise always dwarf them
 // since it's their sum) gives the whole-team total/done/left at a glance.
+// Somya's "Current Order" stack — every society with an item today, in
+// the exact order sortGroupsByPriority would put them (which already
+// honors any override she's previously saved), shown as a drag- or
+// arrow-reorderable list with a completion bar per card. Reordering here
+// writes a new packer_priority_override row set for viewDate, which
+// sortGroupsByPriority then picks up everywhere it's used — Order
+// Overview's Time Sensitive view, Packer's Time Sensitive view, AND every
+// packer's own Single Card queue — not just this screen.
+// This session's working copy of the order, kept in sync with what's
+// actually on screen so drag/arrow moves know current positions without
+// re-deriving them.
+let currentPriorityOrderList=[];
+
+// Groups EVERY packer's items today (not scoped to one packer, unlike
+// computePackerQueue/computePackerTimeline) by the same deriveGroupKey
+// Overview/Delivery use, so "society" here means the same thing it does
+// everywhere else in the app.
+function computeGroupProgressToday(){
+  const active=packerItems.filter(i=>i.status!=='cancelled');
+  const byGroup={},ordersByGroup={};
+  active.forEach(item=>{
+    const key=deriveGroupKey(packerOrderLike(item));
+    if(!byGroup[key])byGroup[key]={done:0,pending:0};
+    if(item.packed_at)byGroup[key].done++;else byGroup[key].pending++;
+    (ordersByGroup[key]=ordersByGroup[key]||[]).push(packerOrderLike(item));
+  });
+  return{byGroup,ordersByGroup};
+}
+
+function renderCurrentOrderStack(){
+  if(!isVegPerfAllowed)return '';
+  const{byGroup,ordersByGroup}=computeGroupProgressToday();
+  const names=Object.keys(byGroup);
+  if(!names.length){currentPriorityOrderList=[];return '';}
+  const ordered=sortGroupsByPriority(names,name=>ordersByGroup[name]);
+  currentPriorityOrderList=ordered;
+  return '<div class="pk-order-stack">'+
+    '<div class="pk-order-stack-header">Current Order <span class="pk-order-stack-sub">— drag (or use the arrows) to reprioritize; overrides today only, for everyone</span></div>'+
+    ordered.map((name,i)=>{
+      const g=byGroup[name];
+      const total=g.done+g.pending;
+      const pct=total?Math.round(g.done/total*100):0;
+      return '<div class="pk-order-card" draggable="true" data-name="'+escH(name)+'" '+
+        'ondragstart="priorityDragStart(event)" ondragover="priorityDragOver(event)" ondrop="priorityDrop(event)" ondragend="priorityDragEnd(event)">'+
+        '<span class="pk-order-handle">⠿</span>'+
+        '<span class="pk-order-name">'+escH(name)+'</span>'+
+        '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>'+
+        '<span class="pk-order-pct">'+pct+'%</span>'+
+        '<span class="pk-order-arrows">'+
+          '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',-1)" '+(i===0?'disabled':'')+' title="Move up">▲</button>'+
+          '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',1)" '+(i===ordered.length-1?'disabled':'')+' title="Move down">▼</button>'+
+        '</span>'+
+      '</div>';
+    }).join('')+
+  '</div>';
+}
+
+let priorityDragName=null;
+function priorityDragStart(e){
+  priorityDragName=e.currentTarget.dataset.name;
+  e.dataTransfer.effectAllowed='move';
+  e.currentTarget.classList.add('pk-order-dragging');
+}
+function priorityDragOver(e){
+  e.preventDefault(); // required for drop to fire at all
+}
+function priorityDragEnd(e){
+  e.currentTarget.classList.remove('pk-order-dragging');
+}
+async function priorityDrop(e){
+  e.preventDefault();
+  const targetName=e.currentTarget.dataset.name;
+  const draggedName=priorityDragName;
+  priorityDragName=null;
+  if(!draggedName||draggedName===targetName)return;
+  await savePriorityOrder(reinsert(currentPriorityOrderList,draggedName,targetName));
+}
+
+// Moves `name` to sit just before `beforeName` in `list`, without the
+// index-arithmetic footguns of splicing in place (removing `name` first
+// shifts every later index by one, including `beforeName`'s own).
+function reinsert(list,name,beforeName){
+  const withoutName=list.filter(n=>n!==name);
+  const idx=withoutName.indexOf(beforeName);
+  withoutName.splice(idx,0,name);
+  return withoutName;
+}
+
+async function movePriorityGroup(name,delta){
+  const list=[...currentPriorityOrderList];
+  const idx=list.indexOf(name);
+  const newIdx=idx+delta;
+  if(idx===-1||newIdx<0||newIdx>=list.length)return;
+  [list[idx],list[newIdx]]=[list[newIdx],list[idx]];
+  await savePriorityOrder(list);
+}
+
+async function savePriorityOrder(orderedNames){
+  // Full replace rather than a partial patch — simpler than reconciling
+  // adds/removes/reorders against whatever was there before, and this
+  // list is always "every society with an item today" in one shot anyway.
+  const{error:delErr}=await sb.from('packer_priority_override').delete().eq('view_date',viewDate);
+  if(delErr){uxAlert('Failed to save order: '+delErr.message);return;}
+  const rows=orderedNames.map((name,i)=>({view_date:viewDate,group_name:name,sort_order:i}));
+  const{error:insErr}=await sb.from('packer_priority_override').insert(rows);
+  if(insErr){uxAlert('Failed to save order: '+insErr.message);return;}
+  priorityOverrideByGroup={};
+  orderedNames.forEach((name,i)=>{priorityOverrideByGroup[name]=i;});
+  renderPackerTeamView();
+}
+
 function renderPackerTeamSummary(rows){
   if(!rows.length)return '';
   const overallDone=rows.reduce((s,r)=>s+r.done,0);
@@ -7037,6 +7188,7 @@ function renderPackerTeamView(){
     :'';
 
   grid.innerHTML=
+    renderCurrentOrderStack()+
     renderPackerTeamSummary(summaryRows)+
     '<div class="pk-team-grid">'+
     unassignedCol+
