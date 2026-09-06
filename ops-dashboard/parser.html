@@ -4226,8 +4226,19 @@ function effectiveTripKey(order,departedKeys){
 
 // order needs {customer, tripOverride} at minimum — every per-order object
 // in Overview/Delivery already carries both.
+//
+// Flat/society grouping (not Trip view — that keeps its own independent
+// deriveTrip/cluster-rank logic, untouched by this) first checks whether
+// the order's society (falling back to customer name) matches a Community
+// Priority keyword — if so, every variant spelling that matches the same
+// keyword set collapses into ONE header under that community's clean
+// display name, same merge idea as the P&L dashboard's SKU_ALIAS grouping.
+// Falls back to the plain derived-society text when nothing matches, so
+// this is purely additive — no match, no behavior change from before.
 function deriveGroupKey(order){
-  return viewGrouping==='trip'?effectiveTripKey(order,departedTripKeys(todaysOrdersForLeftoverCheck)):deriveSociety(order.customer);
+  if(viewGrouping==='trip')return effectiveTripKey(order,departedTripKeys(todaysOrdersForLeftoverCheck));
+  const matched=matchCommunityPriority(order.society||order.customer);
+  return matched?matched.display_name:deriveSociety(order.customer);
 }
 
 // ── Trip-view priority ordering ──────────────────────────────────────────
@@ -6581,7 +6592,7 @@ function togglePackerStatusPill(status){
 function packerOrderLike(item){
   const o=packerCustomerMap[item.sales_order_id];
   return{
-    customer:o?.customer_name||item.sales_order_id,tripOverride:o?.trip_override||null,deliverBy:o?.deliver_by||null,
+    customer:o?.customer_name||item.sales_order_id,society:o?.society||null,tripOverride:o?.trip_override||null,deliverBy:o?.deliver_by||null,
     deliveryStatus:o?.delivery_status||'not_dispatched',orderStatus:o?.status||'active',
   };
 }
@@ -7038,6 +7049,7 @@ async function loadDeliveryView(silent){
       const o=customerMap[key];
       bySalesOrder[key]={
         customer:              o?.customer_name||key,
+        society:               o?.society||null,
         phone:                 o?.phone||null,
         orderStatus:           o?.status||'active',
         invoiceStatus:         o?.invoice_status||null,
