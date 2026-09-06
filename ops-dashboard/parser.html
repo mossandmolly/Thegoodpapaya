@@ -58,7 +58,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .listener-status.ls-warn{background:#fdf3d8;color:#9a6a00}
 .listener-status.ls-err{background:#fbe7e4;color:#b3261e}
 .live-raw-text{max-width:220px;max-height:90px;overflow-y:auto;white-space:pre-wrap;font-size:11px;line-height:1.4;color:#5c4f42;background:#fdf8f3;border:1px solid #eee0d0;border-radius:6px;padding:6px 8px}
-.to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px}
+/* grid-column is a no-op when the parent isn't actually a CSS grid (e.g.
+   #to-list/#dv-list, plain divs) — harmless there, and needed for when the
+   parent IS one (#pk-grid, .pack-grid) so a single wide block like this
+   doesn't get squeezed into one narrow auto-fill track on a wide screen. */
+.to-empty{font-size:12px;color:#8a7a6a;text-align:center;padding:16px;grid-column:1/-1}
 .society-header{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#ffffff;background:#c2570a;margin:18px 0 8px;padding:9px 12px;border-radius:8px}
 .society-header:first-child{margin-top:0}
 .sh-count{font-weight:400;text-transform:none;letter-spacing:normal;color:#fbdec2;font-size:11px}
@@ -398,18 +402,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    wider than 360px+padding, which is most of them. The 360px reading-width
    cap only kicks in on a genuinely wide (desktop/tablet) viewport, via the
    media query below. */
-.pk-single-wrap{display:block;width:100%;margin:0 auto}
+.pk-single-wrap{display:block;width:100%;margin:0 auto;grid-column:1/-1}
 @media (min-width:601px){.pk-single-wrap{max-width:360px}}
 /* Somya's Team view — one column per packer, showing every card in their
    queue stacked in the exact order they'll see them. */
-.pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;align-items:start}
+.pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;align-items:start;grid-column:1/-1}
 .pk-team-col{display:flex;flex-direction:column;gap:8px}
 .pk-team-col-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#8a7a6a;position:sticky;top:0;background:#ffffff;padding:4px 0;z-index:1}
 .pk-team-col-header-warn{color:#b3261e}
 /* Team view's per-packer distribution/completion summary bars — done in
    green (matches the existing 'final' status color), pending in amber
    (matches 'open'), same status-color convention as the rest of Packer. */
-.pk-team-summary{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px}
+.pk-team-summary{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;grid-column:1/-1}
 .pk-team-summary-legend{display:flex;gap:14px;font-size:10px;color:#8a7a6a;margin-bottom:8px;align-items:center}
 .pk-legend-swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
 .pk-legend-done{background:#2d6b2d}
@@ -429,7 +433,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 @media (max-width:600px){.pk-team-bar-rate{margin-left:88px}}
 /* Somya's drag/arrow-reorderable "Current Order" stack — completion bar
    reuses packProgressColor's existing red/amber/green convention. */
-.pk-order-stack{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px}
+.pk-order-stack{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;grid-column:1/-1}
 .pk-order-stack-header{font-size:12px;font-weight:700;color:#2b2320;margin-bottom:8px}
 .pk-order-stack-sub{font-size:10px;font-weight:400;color:#8a7a6a}
 .pk-order-card{display:flex;align-items:center;gap:8px;padding:6px 4px;border-radius:8px;background:#ffffff;border:1px solid #eee0d0;margin-bottom:6px;cursor:grab}
@@ -440,6 +444,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-order-progress-track{flex:1;height:8px;background:#f2ede4;border-radius:4px;overflow:hidden}
 .pk-order-progress-fill{height:100%}
 .pk-order-pct{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 32px;text-align:right;font-variant-numeric:tabular-nums}
+.pk-order-count{font-size:10px;color:#8a7a6a;flex:0 0 110px;text-align:right;white-space:nowrap}
+@media (max-width:600px){.pk-order-card{flex-wrap:wrap}.pk-order-count{flex:0 0 100%;text-align:left;margin-left:22px}}
 .pk-order-arrows{display:flex;flex-direction:column;flex-shrink:0}
 .pk-order-arrow{background:none;border:none;color:#8a7a6a;font-size:9px;padding:0 4px;cursor:pointer;line-height:1.3}
 .pk-order-arrow:disabled{opacity:0.25;cursor:not-allowed}
@@ -7050,6 +7056,7 @@ function renderCurrentOrderStack(){
         '<span class="pk-order-name">'+escH(name)+'</span>'+
         '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>'+
         '<span class="pk-order-pct">'+pct+'%</span>'+
+        '<span class="pk-order-count">'+total+' total · '+g.pending+' pending</span>'+
         '<span class="pk-order-arrows">'+
           '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',-1)" '+(i===0?'disabled':'')+' title="Move up">▲</button>'+
           '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',1)" '+(i===ordered.length-1?'disabled':'')+' title="Move down">▼</button>'+
