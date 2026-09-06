@@ -379,6 +379,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    the card is currently in. */
 .order-row.leftover-order{background:#fff3e0;border-color:#f0b060}
 .pack-card.leftover-order{background:#fff3e0;border-color:#f0b060}
+/* Packer Single Card queue — one pack-card at a time, with a header
+   showing who's packing, how many are left, and a plain elapsed-time
+   timer that flashes red past packer_card_timer_seconds (app_settings). */
+.pk-single-header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:#8a7a6a}
+.pk-single-timer{font-weight:700;font-size:15px;color:#2b2320;font-variant-numeric:tabular-nums}
+.pk-single-timer.pk-timer-over{color:#b3261e;animation:pkTimerFlash 1s step-start infinite}
+@keyframes pkTimerFlash{50%{opacity:0.35}}
+.pk-single-wrap{display:block;max-width:360px;margin:0 auto}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
 .pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
@@ -545,16 +553,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <button type="button" class="date-nav-btn" id="pk-date-next" onclick="setViewDate(addDays(viewDate,1))" title="Next day">›</button>
     </div>
   </div>
-  <div class="dv-scope-tabs">
+  <div class="dv-scope-tabs" id="pk-scope-tabs">
     <button class="dv-scope-btn active" id="pk-scope-all" onclick="setPackerScope('all')">All orders</button>
     <button class="dv-scope-btn" id="pk-scope-mine" onclick="setPackerScope('mine')">My orders</button>
   </div>
   <input type="text" class="pk-search" id="pk-search" placeholder="🔍 Search society or fruit...">
   <div class="filter-group-label">View</div>
   <div id="pk-grouping-toggle" class="filter-pills status-pills"></div>
-  <div class="filter-group-label">Fruit</div>
+  <div id="pk-mode-toggle" class="filter-pills status-pills"></div>
+  <div class="filter-group-label" id="pk-fruit-filter-label">Fruit</div>
   <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
-  <div class="filter-group-label">Status</div>
+  <div class="filter-group-label" id="pk-status-filter-label">Status</div>
   <div id="pk-status-pills" class="filter-pills status-pills"></div>
   <div id="pk-grid" class="pack-grid"><div class="to-empty">Loading…</div></div>
 </div>
@@ -813,6 +822,24 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
+<!-- PACKER IDENTITY MODAL — picked (not typed) from packersCache, used only
+     when switching into the Packer tab's Single Card queue, which needs to
+     know which packer's fruit assignment to filter to. Same underlying
+     riderName/RIDER_NAME_KEY as everywhere else (Flat/Trip, Delivery,
+     packed_by attribution) — this just adds a pick-from-list entry point
+     instead of the free-text changeRiderName() prompt. -->
+<div class="modal-overlay hidden" id="pk-identity-modal">
+  <div class="modal-box">
+    <h3>Who's packing?</h3>
+    <label class="modal-label">Packer</label>
+    <select id="pk-identity-select"></select>
+    <div class="modal-actions">
+      <button class="btn-sec" id="pk-identity-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="pk-identity-confirm" style="margin-bottom:0">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <!-- ADD DELIVERY COMMENT MODAL — usable any time, independent of mark-delivered -->
 <div class="modal-overlay hidden" id="dv-remark-modal">
   <div class="modal-box">
@@ -1018,6 +1045,37 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <table class="community-table"><thead><tr>
         <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th>Cluster</th><th></th>
       </tr></thead><tbody id="community-tbody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>🎯 Community Priority <span style="font-size:11px;color:#8a7a6a;font-weight:400">(drives the Packer tab's Single Card queue order)</span></h3>
+    <p class="note">Separate, hand-curated list from Communities above — used only by the Packer tab's Single Card queue. Each row has a unique ID and one or more keyword phrases; if an order's society (or customer name, as fallback) CONTAINS any of a community's keywords — e.g. "srp" and "royal pavilion" both mapping to the same community — it gets that community's rank. Lower rank packs first; blank rank sorts last. Keywords are comma-separated and replace the whole list when you save a row; each keyword phrase can only belong to one community.</p>
+    <div class="add-row">
+      <input type="text" id="new-cp-id" placeholder="Unique ID (e.g. srp)" style="max-width:160px">
+      <input type="text" id="new-cp-name" placeholder="Display name">
+      <input type="number" id="new-cp-rank" placeholder="Rank" style="max-width:90px">
+      <input type="text" id="new-cp-keywords" placeholder="Keywords, comma-separated" style="flex:2">
+      <button onclick="addCommunityPriority()">Add</button>
+    </div>
+    <div class="table-scroll">
+      <table class="community-table"><thead><tr>
+        <th>Unique ID</th><th>Display name</th><th>Rank</th><th>Keywords (comma-separated)</th><th></th>
+      </tr></thead><tbody id="community-priority-tbody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>🔗 Combinable Groups <span style="font-size:11px;color:#8a7a6a;font-weight:400">(phase 2 foundation — not yet used by any live logic)</span></h3>
+    <p class="note">Groups of communities (by unique ID, from the table above) that could share a trip if order density is low in one or more of them. Nothing reads this yet — it's captured now so a later phase can use it without another migration.</p>
+    <div class="add-row">
+      <input type="text" id="new-cpg-name" placeholder="Group name">
+      <button onclick="addCombinableGroup()">Add</button>
+    </div>
+    <div class="table-scroll">
+      <table class="community-table"><thead><tr>
+        <th>Group</th><th>Members (community unique IDs, comma-separated)</th><th></th>
+      </tr></thead><tbody id="combinable-group-tbody"></tbody></table>
     </div>
   </div>
 
@@ -1362,6 +1420,12 @@ async function initAppAfterLogin(){
     .catch(e=>console.error('Could not load clusters config',e))
     .then(()=>loadCommunitiesConfig())
     .catch(e=>console.error('Could not load communities config',e));
+  // Separate, hand-curated model that only feeds the Packer Single Card
+  // queue — pre-warmed here so the cache is ready before Packer ever loads.
+  loadCommunityPriorityConfig()
+    .catch(e=>console.error('Could not load community priority config',e))
+    .then(()=>loadCombinableGroupsConfig())
+    .catch(e=>console.error('Could not load combinable groups config',e));
   // Just pre-warms the Config panel's own cache (see migration 050 for
   // where instructions actually get applied to new orders) — loaded at
   // boot purely to avoid a flicker the first time Config opens.
@@ -1464,6 +1528,7 @@ function switchTab(name){
     if(f&&!f.dataset.loaded){f.dataset.loaded='1';f.src='pnl.html';}
   }
   if(name==='delivery')startLocationPing();else stopLocationPing();
+  if(name!=='packer')stopPkCardTimer();
 }
 
 // Shortcut tab — jumps straight to Quick Order Entry inside the Parser
@@ -1794,6 +1859,168 @@ async function deleteCommunity(id,name){
   const{error}=await sb.from('communities').delete().eq('id',id);
   if(error){uxAlert('Failed to delete: '+error.message);return;}
   await loadCommunitiesConfig();
+}
+
+// ── Community Priority (Packer Single-Card queue) ─────────────────────────
+// Separate, hand-curated model from communities/clusters above — powers
+// only the Packer tab's Single Card queue (see computePackerQueue /
+// matchCommunityPriority). Keyed by unique_id; each entry carries its own
+// keyword list so multiple phrases (e.g. "srp", "royal pavilion") can map
+// to one ranked community.
+let communityPriorityCache={}; // unique_id -> {unique_id,display_name,rank,keywords:[...]}
+
+async function loadCommunityPriorityConfig(){
+  const[{data:cpRows,error:cpErr},{data:kwRows,error:kwErr}]=await Promise.all([
+    sb.from('community_priority').select('*'),
+    sb.from('community_priority_keywords').select('*'),
+  ]);
+  if(cpErr){console.error(cpErr);return;}
+  if(kwErr){console.error(kwErr);return;}
+  communityPriorityCache={};
+  (cpRows||[]).forEach(c=>{communityPriorityCache[c.unique_id]={...c,keywords:[]};});
+  (kwRows||[]).forEach(k=>{
+    if(communityPriorityCache[k.community_unique_id])communityPriorityCache[k.community_unique_id].keywords.push(k.keyword);
+  });
+  renderCommunityPriorityTable();
+}
+
+function renderCommunityPriorityTable(){
+  const tbody=document.getElementById('community-priority-tbody');
+  if(!tbody)return;
+  const rows=Object.values(communityPriorityCache).sort((a,b)=>(a.rank??Infinity)-(b.rank??Infinity));
+  tbody.innerHTML=rows.map(c=>
+    '<tr>'+
+      '<td>'+escH(c.unique_id)+'</td>'+
+      '<td><input type="text" id="cp-name-'+escH(c.unique_id)+'" value="'+escH(c.display_name)+'"></td>'+
+      '<td><input type="number" id="cp-rank-'+escH(c.unique_id)+'" value="'+(c.rank??'')+'"></td>'+
+      '<td><input type="text" id="cp-kw-'+escH(c.unique_id)+'" value="'+escH((c.keywords||[]).join(', '))+'"></td>'+
+      '<td style="white-space:nowrap">'+
+        '<button class="del-btn" style="color:#2d6b2d" onclick="saveCommunityPriority('+escH(JSON.stringify(c.unique_id))+')" title="Save">💾</button>'+
+        '<button class="del-btn" onclick="deleteCommunityPriority('+escH(JSON.stringify(c.unique_id))+')" title="Delete">✕</button>'+
+      '</td>'+
+    '</tr>'
+  ).join('');
+}
+
+async function saveCommunityPriority(uniqueId){
+  const name=document.getElementById('cp-name-'+uniqueId).value.trim();
+  if(!name){uxAlert('Display name can\'t be empty');return;}
+  const rank=document.getElementById('cp-rank-'+uniqueId).value;
+  const keywords=document.getElementById('cp-kw-'+uniqueId).value.split(',').map(k=>k.trim()).filter(Boolean);
+  const{error:updErr}=await sb.from('community_priority').update({
+    display_name:name,rank:rank===''?null:parseInt(rank,10),
+  }).eq('unique_id',uniqueId);
+  if(updErr){uxAlert('Failed to save: '+updErr.message);return;}
+  // Replace, don't merge — same convention as packer fruit assignment above.
+  const{error:delErr}=await sb.from('community_priority_keywords').delete().eq('community_unique_id',uniqueId);
+  if(delErr){uxAlert('Failed to update keywords: '+delErr.message);return;}
+  if(keywords.length){
+    const{error:insErr}=await sb.from('community_priority_keywords').insert(
+      keywords.map(keyword=>({community_unique_id:uniqueId,keyword}))
+    );
+    if(insErr){uxAlert('Failed to save keywords (a keyword phrase can only belong to one community — one of these may already be used elsewhere): '+insErr.message);return;}
+  }
+  await loadCommunityPriorityConfig();
+}
+
+async function addCommunityPriority(){
+  const idEl=document.getElementById('new-cp-id'),nameEl=document.getElementById('new-cp-name'),
+        rankEl=document.getElementById('new-cp-rank'),kwEl=document.getElementById('new-cp-keywords');
+  const uniqueId=idEl.value.trim().toLowerCase();
+  const name=nameEl.value.trim();
+  if(!uniqueId||!name){uxAlert('Unique ID and display name are both required');return;}
+  if(communityPriorityCache[uniqueId]){uxAlert('"'+uniqueId+'" already exists');return;}
+  const rank=rankEl.value;
+  const{error:insErr}=await sb.from('community_priority').insert({
+    unique_id:uniqueId,display_name:name,rank:rank===''?null:parseInt(rank,10),
+  });
+  if(insErr){uxAlert('Failed to add: '+insErr.message);return;}
+  const keywords=kwEl.value.split(',').map(k=>k.trim()).filter(Boolean);
+  if(keywords.length){
+    const{error:kwErr}=await sb.from('community_priority_keywords').insert(
+      keywords.map(keyword=>({community_unique_id:uniqueId,keyword}))
+    );
+    if(kwErr)uxAlert('Community added, but failed to save keywords (a keyword phrase can only belong to one community): '+kwErr.message);
+  }
+  idEl.value='';nameEl.value='';rankEl.value='';kwEl.value='';
+  await loadCommunityPriorityConfig();
+}
+
+async function deleteCommunityPriority(uniqueId){
+  if(!await uxConfirm('Remove community priority "'+uniqueId+'"? This only affects the Packer Single Card queue, not the Communities/Clusters tables above.'))return;
+  const{error}=await sb.from('community_priority').delete().eq('unique_id',uniqueId);
+  if(error){uxAlert('Failed to delete: '+error.message);return;}
+  await loadCommunityPriorityConfig();
+}
+
+// ── Combinable Groups (phase 2 foundation — not read by any live logic yet)
+let combinableGroupsCache={}; // group id -> {id,name,members:[unique_id,...]}
+
+async function loadCombinableGroupsConfig(){
+  const[{data:gRows,error:gErr},{data:mRows,error:mErr}]=await Promise.all([
+    sb.from('community_combinable_groups').select('*').order('name'),
+    sb.from('community_combinable_group_members').select('*'),
+  ]);
+  if(gErr){console.error(gErr);return;}
+  if(mErr){console.error(mErr);return;}
+  combinableGroupsCache={};
+  (gRows||[]).forEach(g=>{combinableGroupsCache[g.id]={...g,members:[]};});
+  (mRows||[]).forEach(m=>{
+    if(combinableGroupsCache[m.group_id])combinableGroupsCache[m.group_id].members.push(m.community_unique_id);
+  });
+  renderCombinableGroupsTable();
+}
+
+function renderCombinableGroupsTable(){
+  const tbody=document.getElementById('combinable-group-tbody');
+  if(!tbody)return;
+  const rows=Object.values(combinableGroupsCache).sort((a,b)=>a.name.localeCompare(b.name));
+  tbody.innerHTML=rows.map(g=>
+    '<tr>'+
+      '<td><input type="text" id="cpg-name-'+g.id+'" value="'+escH(g.name)+'"></td>'+
+      '<td><input type="text" id="cpg-members-'+g.id+'" value="'+escH((g.members||[]).join(', '))+'" placeholder="e.g. srp, greenwoods"></td>'+
+      '<td style="white-space:nowrap">'+
+        '<button class="del-btn" style="color:#2d6b2d" onclick="saveCombinableGroup('+escH(JSON.stringify(g.id))+')" title="Save">💾</button>'+
+        '<button class="del-btn" onclick="deleteCombinableGroup('+escH(JSON.stringify(g.id))+')" title="Delete">✕</button>'+
+      '</td>'+
+    '</tr>'
+  ).join('');
+}
+
+async function saveCombinableGroup(id){
+  const name=document.getElementById('cpg-name-'+id).value.trim();
+  if(!name){uxAlert('Group name can\'t be empty');return;}
+  const members=document.getElementById('cpg-members-'+id).value.split(',').map(m=>m.trim().toLowerCase()).filter(Boolean);
+  const unknown=members.filter(m=>!communityPriorityCache[m]);
+  if(unknown.length){uxAlert('Unknown community unique ID(s): '+unknown.join(', '));return;}
+  const{error:updErr}=await sb.from('community_combinable_groups').update({name}).eq('id',id);
+  if(updErr){uxAlert('Failed to save: '+updErr.message);return;}
+  const{error:delErr}=await sb.from('community_combinable_group_members').delete().eq('group_id',id);
+  if(delErr){uxAlert('Failed to update members: '+delErr.message);return;}
+  if(members.length){
+    const{error:insErr}=await sb.from('community_combinable_group_members').insert(
+      members.map(community_unique_id=>({group_id:id,community_unique_id}))
+    );
+    if(insErr){uxAlert('Failed to save members: '+insErr.message);return;}
+  }
+  await loadCombinableGroupsConfig();
+}
+
+async function addCombinableGroup(){
+  const nameEl=document.getElementById('new-cpg-name');
+  const name=nameEl.value.trim();
+  if(!name)return;
+  const{error}=await sb.from('community_combinable_groups').insert({name});
+  if(error){uxAlert('Failed to add: '+error.message);return;}
+  nameEl.value='';
+  await loadCombinableGroupsConfig();
+}
+
+async function deleteCombinableGroup(id){
+  if(!await uxConfirm('Remove combinable group "'+(combinableGroupsCache[id]?.name||'')+'"?'))return;
+  const{error}=await sb.from('community_combinable_groups').delete().eq('id',id);
+  if(error){uxAlert('Failed to delete: '+error.message);return;}
+  await loadCombinableGroupsConfig();
 }
 
 // ── Customer standing instructions ────────────────────────────────────────
@@ -3114,7 +3341,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at')
+      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -6074,6 +6301,161 @@ function setPackerScope(scope){
   renderPackerGrid();
 }
 
+// ── Single Card queue (phase 1) ───────────────────────────────────────────
+// A third Packer view, independent of the shared Flat/Trip viewGrouping
+// toggle above (that one also drives Overview/Delivery; this one is
+// Packer-only). Grid/Trip still show everything at once — Single Card
+// instead pushes exactly one item at a time, in an order computed by
+// computePackerQueue() below, so a packer never has to decide what's next.
+let packerViewMode='grid'; // 'grid' | 'single'
+
+// The owner's rule is exactly "packing must start now to make T-90" — a
+// separate constant from PACK_TO_DELIVERY_BUFFER_MIN/ESCALATE_LEAD_MIN
+// above, which power Trip view's own, different escalation display.
+const PACKER_QUEUE_TIME_BUFFER_MIN=90;
+function isTimeConstrainedOrder(deliverBy){
+  const mins=minutesToDeadline(deliverBy);
+  return mins!=null&&mins<=PACKER_QUEUE_TIME_BUFFER_MIN;
+}
+
+// Plain case-insensitive substring match against community_priority's
+// keywords, longest keyword wins on overlap — same rule the reference
+// match_community_priority() SQL function documents, mirrored here in JS
+// so the queue recomputes instantly on every packed-item update with no
+// round trip. Deliberately not fuzzy/Levenshtein like deriveSociety() —
+// this table is small and hand-curated, not auto-grown.
+function matchCommunityPriority(text){
+  if(!text)return null;
+  let best=null,bestLen=-1;
+  Object.values(communityPriorityCache).forEach(c=>{
+    (c.keywords||[]).forEach(kw=>{
+      if(kw&&text.toLowerCase().includes(kw.toLowerCase())&&kw.length>bestLen){best=c;bestLen=kw.length;}
+    });
+  });
+  return best; // {unique_id, rank, ...} or null
+}
+
+// This packer's next-up queue: ranked by community priority, with a hard
+// time-sensitive override, and smaller orders first within the same rank
+// tier (so a rider can start dispatching sooner rather than everyone
+// finishing large orders together). Splitting one order's items across
+// multiple packers falls out for free — each packer's own assigned_fruits
+// naturally filters them to only their slice of any given order.
+function computePackerQueue(packerName){
+  const packer=packersCache.find(p=>p.name===packerName);
+  const myFruits=new Set(packer?.assigned_fruits||[]);
+  const openItems=packerItems.filter(i=>i.status==='open'&&myFruits.has(i.item_name));
+  const bySoid={};
+  openItems.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
+  const orderMeta=Object.keys(bySoid).map(soid=>{
+    const o=packerCustomerMap[soid]||{};
+    const community=matchCommunityPriority(o.society||o.customer_name);
+    // Whole order's remaining item count (across every packer/fruit), not
+    // just this packer's own slice — the point of "smaller first" is the
+    // WHOLE order finishing sooner so the rider can dispatch it.
+    const openItemCount=packerItems.filter(i=>i.sales_order_id===soid&&i.status==='open').length;
+    return{soid,items:bySoid[soid],rank:community?.rank??Infinity,
+      timeConstrained:isTimeConstrainedOrder(o.deliver_by),
+      deadlineMins:minutesToDeadline(o.deliver_by),openItemCount};
+  });
+  orderMeta.sort((a,b)=>{
+    if(a.timeConstrained!==b.timeConstrained)return a.timeConstrained?-1:1;
+    if(a.timeConstrained)return a.deadlineMins-b.deadlineMins; // both constrained: soonest deadline first
+    if(a.rank!==b.rank)return a.rank-b.rank;
+    return a.openItemCount-b.openItemCount; // smaller orders first within same priority tier
+  });
+  return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
+}
+
+function renderPackerModeToggle(){
+  document.getElementById('pk-mode-toggle').innerHTML=
+    '<span class="filter-pill'+(packerViewMode==='grid'?' active':'')+'" onclick="setPackerViewMode(\'grid\')">Grid</span>'+
+    '<span class="filter-pill'+(packerViewMode==='single'?' active':'')+'" onclick="setPackerViewMode(\'single\')">Single Card</span>';
+}
+
+async function setPackerViewMode(mode){
+  packerViewMode=mode;
+  renderPackerModeToggle();
+  // The fruit/status filters and the grouping (Flat/Trip) toggle only apply
+  // to the everything-at-once Grid view — Single Card ignores them by
+  // design (it always shows exactly one item, chosen by rank), so hide
+  // rather than leave controls on screen that silently do nothing.
+  const single=mode==='single';
+  document.getElementById('pk-scope-tabs').style.display=single?'none':'';
+  document.getElementById('pk-grouping-toggle').style.display=single?'none':'';
+  document.getElementById('pk-fruit-filter-label').style.display=single?'none':'';
+  document.getElementById('pk-fruit-pills').style.display=single?'none':'';
+  document.getElementById('pk-status-filter-label').style.display=single?'none':'';
+  document.getElementById('pk-status-pills').style.display=single?'none':'';
+  document.getElementById('pk-search').style.display=single?'none':'';
+  if(single)await ensurePackerIdentityForQueue();
+  renderPackerGrid();
+}
+
+const pkIdentityModal=document.getElementById('pk-identity-modal'),pkIdentitySelect=document.getElementById('pk-identity-select');
+
+// Reuses riderName/RIDER_NAME_KEY — the same identity that already drives
+// "My Orders" fruit-matching, Delivery's assignment, and packed_by
+// attribution — rather than forking a second identity concept just for
+// this queue. Only opens the picker if riderName isn't already a real,
+// current packer name (e.g. first time on this device, or a rider-only
+// name that was never a packer).
+function ensurePackerIdentityForQueue(){
+  if(riderName&&packersCache.some(p=>p.name===riderName))return Promise.resolve();
+  return new Promise(resolve=>{
+    pkIdentitySelect.innerHTML=packersCache.map(p=>'<option value="'+escH(p.name)+'">'+escH(p.name)+'</option>').join('')||'<option value="">— No packers configured yet —</option>';
+    pkIdentityModal.classList.remove('hidden');
+    const cleanup=()=>{pkIdentityModal.classList.add('hidden');cancelBtn.removeEventListener('click',onCancel);confirmBtn.removeEventListener('click',onConfirm);};
+    const cancelBtn=document.getElementById('pk-identity-cancel'),confirmBtn=document.getElementById('pk-identity-confirm');
+    const onCancel=()=>{cleanup();resolve();};
+    const onConfirm=()=>{
+      const picked=pkIdentitySelect.value;
+      if(picked){riderName=picked;localStorage.setItem(RIDER_NAME_KEY,riderName);renderRiderBadge();}
+      cleanup();resolve();
+    };
+    cancelBtn.addEventListener('click',onCancel);
+    confirmBtn.addEventListener('click',onConfirm);
+  });
+}
+
+// Purely visual per-card timer — resets on page refresh, same as every
+// other timer-ish thing in this dashboard (e.g. location ping). Fetched
+// once from app_settings (migration 042's key/value table) rather than
+// hardcoded, so the owner can retune it from the SQL editor without a
+// redeploy; falls back to 90s on any error/missing row.
+let packerCardTimerSeconds=90,packerCardTimerFetched=false;
+async function ensurePackerCardTimerSetting(){
+  if(packerCardTimerFetched)return;
+  packerCardTimerFetched=true;
+  try{
+    const{data}=await sb.from('app_settings').select('value').eq('key','packer_card_timer_seconds').maybeSingle();
+    if(data&&data.value!=null&&!isNaN(parseInt(data.value,10)))packerCardTimerSeconds=parseInt(data.value,10);
+  }catch(e){console.error('Could not load packer_card_timer_seconds, using default',e);}
+}
+
+let pkCardTimerInterval=null,pkCardTimerStartedAt=null,pkCardTimerItemId=null;
+function stopPkCardTimer(){
+  if(pkCardTimerInterval){clearInterval(pkCardTimerInterval);pkCardTimerInterval=null;}
+  pkCardTimerStartedAt=null;pkCardTimerItemId=null;
+}
+function startPkCardTimer(itemId){
+  if(pkCardTimerItemId===itemId&&pkCardTimerInterval)return; // already timing this exact item
+  stopPkCardTimer();
+  pkCardTimerItemId=itemId;
+  pkCardTimerStartedAt=Date.now();
+  pkCardTimerInterval=setInterval(renderPkCardTimerDisplay,1000);
+  renderPkCardTimerDisplay();
+}
+function renderPkCardTimerDisplay(){
+  const el=document.getElementById('pk-single-timer');
+  if(!el||!pkCardTimerStartedAt)return;
+  const elapsed=Math.floor((Date.now()-pkCardTimerStartedAt)/1000);
+  const over=elapsed>packerCardTimerSeconds;
+  const mm=String(Math.floor(elapsed/60)).padStart(2,'0'),ss=String(elapsed%60).padStart(2,'0');
+  el.textContent=mm+':'+ss;
+  el.classList.toggle('pk-timer-over',over);
+}
+
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
   const tomorrowDate=addDays(CALENDAR_TODAY,1);
@@ -6092,6 +6474,8 @@ async function loadPackerView(){
     // to no unit labels rather than blocking the whole view if it fails.
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
     loadPackersConfig(),
+    loadCommunityPriorityConfig().catch(e=>console.error('Could not load community priority config',e)),
+    ensurePackerCardTimerSetting(),
   ]);
   packerCustomerMap=map||{};
   packerUnitByItem={};
@@ -6136,6 +6520,7 @@ const ALL_ORDER_STATUSES=['open','held','packed','final','invoiced','cancelled']
 
 function renderPackerFilterPills(){
   document.getElementById('pk-grouping-toggle').innerHTML=renderGroupingToggle();
+  renderPackerModeToggle();
   const fruits=[...new Set(packerItems.map(i=>i.item_name))].sort();
   document.getElementById('pk-fruit-pills').innerHTML=
     '<span class="filter-pill'+(packerFilters.fruits.size===0?' active':'')+'" onclick="clearPackerFruitFilter()">All</span>'+
@@ -6189,7 +6574,77 @@ function packerOrderLike(item){
   };
 }
 
+// Pulled out of renderPackerGrid so renderPackerSingleCard (below) can
+// reuse the exact same markup/actions (savePackedQty/markFinal) instead of
+// inventing a parallel one-click transition — keeps the existing "confirm
+// final qty before invoicing" step intact in both views.
+function packCardHtml(item,dupIds){
+  if(!dupIds)dupIds=computeDuplicateItemIds(packerItems);
+  return '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+'" data-id="'+item.id+'">'+
+      '<div class="pk-status-badge status-'+item.status+'">'+escH(ITEM_STATUS_LABEL[item.status]||item.status)+'</div>'+
+      '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+(packerCustomerMap[item.sales_order_id]?.is_pickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+'</div>'+
+      '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+
+        (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
+        (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
+        escH(item.item_name)+'</span>'+
+        '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></span>'+
+      '</div>'+
+      (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
+      (packerAssignedNameByFruit[item.item_name]?.length?'<div class="pk-assigned-to">👤 Assigned to '+escH(packerAssignedNameByFruit[item.item_name].join(', '))+'</div>':'')+
+      (item.packed_by?'<div class="pk-packed-by">📦 Packed by '+escH(item.packed_by)+'</div>':'')+
+      '<div class="pk-row">'+
+        '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'" oninput="this.nextElementSibling.disabled=false">'+
+        '<button class="pk-tick" disabled onclick="savePackedQty(\''+item.id+'\')" title="Change the quantity to save">✓</button>'+
+      '</div>'+
+      '<button class="pk-final" onclick="markFinal(\''+item.id+'\')" '+(item.status!=='packed'?'disabled title="Save a final quantity first"':'')+'>Mark as Final</button>'+
+    '</div>';
+}
+
+// Single-card queue view — an item stays "pinned" as the displayed card
+// from computePackerQueue's open-only pool through to markFinal, since
+// savePackedQty moves it to 'packed' (one step before 'final') and the
+// packer still needs to see it to complete that second step, not have it
+// silently skipped the instant it leaves the 'open' pool.
+let pkSinglePinnedItemId=null;
+
+function renderPackerSingleCard(){
+  const grid=document.getElementById('pk-grid');
+  document.getElementById('pk-rc').textContent='';
+  todaysOrdersForLeftoverCheck=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
+
+  if(!riderName||!packersCache.some(p=>p.name===riderName)){
+    pkSinglePinnedItemId=null;
+    stopPkCardTimer();
+    grid.innerHTML='<div class="to-empty">Pick a packer to see your queue.<br><button class="btn-sec" onclick="ensurePackerIdentityForQueue().then(renderPackerGrid)">Pick packer</button></div>';
+    return;
+  }
+
+  const queue=computePackerQueue(riderName);
+  const pinned=pkSinglePinnedItemId?packerItems.find(i=>i.id===pkSinglePinnedItemId&&i.status==='packed'):null;
+  const item=pinned||queue[0];
+  if(!item){
+    pkSinglePinnedItemId=null;
+    stopPkCardTimer();
+    grid.innerHTML='<div class="to-empty">Nothing left to pack for you ✓</div>';
+    return;
+  }
+  pkSinglePinnedItemId=item.id;
+  const remaining=queue.length+(pinned?1:0);
+  startPkCardTimer(item.id);
+  grid.innerHTML=
+    '<div class="pk-single-wrap">'+
+      '<div class="pk-single-header">'+
+        '<span>Packing as <strong>'+escH(riderName)+'</strong> <button class="btn-sec" style="padding:2px 8px;font-size:11px;margin-bottom:0" onclick="ensurePackerIdentityForQueue().then(renderPackerGrid)">change</button></span>'+
+        '<span>Item 1 of '+remaining+' for you today</span>'+
+        '<span id="pk-single-timer" class="pk-single-timer">00:00</span>'+
+      '</div>'+
+      packCardHtml(item)+
+    '</div>';
+  renderPkCardTimerDisplay();
+}
+
 function renderPackerGrid(){
+  if(packerViewMode==='single'){renderPackerSingleCard();return;}
   const grid=document.getElementById('pk-grid');
   const search=packerFilters.search.trim().toLowerCase();
   const myFruits=riderName?(packersCache.find(p=>p.name===riderName)?.assigned_fruits||[]):[];
@@ -6219,25 +6674,7 @@ function renderPackerGrid(){
 
   const dupIds=computeDuplicateItemIds(packerItems);
 
-  const cardHtml=item=>
-    '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+'" data-id="'+item.id+'">'+
-      '<div class="pk-status-badge status-'+item.status+'">'+escH(ITEM_STATUS_LABEL[item.status]||item.status)+'</div>'+
-      '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+(packerCustomerMap[item.sales_order_id]?.is_pickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+'</div>'+
-      '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+
-        (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
-        (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
-        escH(item.item_name)+'</span>'+
-        '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></span>'+
-      '</div>'+
-      (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
-      (packerAssignedNameByFruit[item.item_name]?.length?'<div class="pk-assigned-to">👤 Assigned to '+escH(packerAssignedNameByFruit[item.item_name].join(', '))+'</div>':'')+
-      (item.packed_by?'<div class="pk-packed-by">📦 Packed by '+escH(item.packed_by)+'</div>':'')+
-      '<div class="pk-row">'+
-        '<input type="number" class="pk-qty" id="pk-qty-'+item.id+'" step="0.01" min="0" placeholder="Final qty" value="'+(item.final_quantity??'')+'" oninput="this.nextElementSibling.disabled=false">'+
-        '<button class="pk-tick" disabled onclick="savePackedQty(\''+item.id+'\')" title="Change the quantity to save">✓</button>'+
-      '</div>'+
-      '<button class="pk-final" onclick="markFinal(\''+item.id+'\')" '+(item.status!=='packed'?'disabled title="Save a final quantity first"':'')+'>Mark as Final</button>'+
-    '</div>';
+  const cardHtml=item=>packCardHtml(item,dupIds);
 
   // Always grouped — by society (default/flat view) or by trip (trip
   // view), same deriveGroupKey the Overview/Delivery tabs use, just
