@@ -567,6 +567,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div id="to-delivery-pills" class="filter-pills delivery-status-pills"></div>
   <div id="to-payment-pills" class="filter-pills delivery-status-pills"></div>
+  <div class="filter-group-label">View</div>
+  <div id="to-sort-toggle" class="filter-pills status-pills"></div>
   <div id="to-notdispatched-summary"></div>
   <div id="to-ofd-summary"></div>
   <div id="to-past-trips-summary"></div>
@@ -3576,6 +3578,7 @@ function renderOrdersList(){
   const tripInfo=computeTripNumbers(todaysOrdersForLeftoverCheck);
 
   renderOverviewSummaryPills(tripInfo);
+  renderOverviewSortToggle();
 
   // Group orders by society (default) or by trip (viewGrouping==='trip') —
   // same underlying list, just a different grouping key. Search matches
@@ -3596,12 +3599,12 @@ function renderOrdersList(){
     bySociety[soc].push({soid,...order});
   });
 
-  // By Trip view only — still-pending orders (not yet packed/invoiced, or
-  // not yet delivered) sort above ones with nothing left to do, so what
-  // actually needs attention under a trip header isn't buried beneath
-  // orders that are already done. Stable sort keeps each tier's original
-  // relative order.
-  if(viewGrouping==='trip'){
+  // By Trip view / Time Sensitive view — still-pending orders (not yet
+  // packed/invoiced, or not yet delivered) sort above ones with nothing
+  // left to do, so what actually needs attention under a group header
+  // isn't buried beneath orders that are already done. Stable sort keeps
+  // each tier's original relative order.
+  if(viewGrouping==='trip'||overviewSortMode==='priority'){
     Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>overviewOrderPendingRank(a)-overviewOrderPendingRank(b)));
   }else{
     // Flat (society) view — alphabetical by customer name within each
@@ -3611,11 +3614,17 @@ function renderOrdersList(){
 
   const socNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
-    // Case-insensitive — group names can come from either a Community
-    // Priority display_name (whatever case it was typed in) or deriveSociety's
-    // own casing, and a plain case-sensitive sort ranks every uppercase
-    // letter before every lowercase one, so two differently-cased sources
-    // wouldn't interleave alphabetically the way a person expects.
+    :overviewSortMode==='priority'
+    // Time Sensitive — same community-priority-rank + hard time-sensitive
+    // override rule that orders a packer's own Single Card queue, applied
+    // at group level so a society's position here matches why its orders
+    // would be packed when they are.
+    ?sortGroupsByPriority(Object.keys(bySociety),name=>bySociety[name])
+    // Flat — case-insensitive since group names can come from either a
+    // Community Priority display_name (whatever case it was typed in) or
+    // deriveSociety's own casing, and a plain case-sensitive sort ranks
+    // every uppercase letter before every lowercase one, so two
+    // differently-cased sources wouldn't interleave the way a person expects.
     :Object.keys(bySociety).sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
   document.getElementById('to-collapse-btn').textContent=collapsedOverviewGroups.size?'▸ Expand All':'▾ Collapse All';
   if(!socNames.length){
@@ -4406,6 +4415,39 @@ function sortTripGroupNames(groupNames,ordersByName){
   });
 }
 
+// Same rule as orderItemsByQueuePriority (community priority rank, hard
+// time-sensitive override, smaller group first) but at group/society
+// granularity instead of per-order — powers the "Time Sensitive" view on
+// both Order Overview and Packer, so a group's position here matches
+// exactly why a packer's own Single Card queue would pack it when it does.
+// groupNames: the keys to order. ordersByName(name): that group's orders
+// (each needs {customer, society, deliverBy}) — callers adapt their own
+// group shape (order objects vs. packer items) to that before calling.
+function sortGroupsByPriority(groupNames,ordersByName){
+  const meta=new Map(groupNames.map(name=>{
+    const orders=ordersByName(name);
+    let rank=Infinity,timeConstrained=false,deadlineMins=Infinity;
+    orders.forEach(o=>{
+      const community=matchCommunityPriority(o.society||o.customer);
+      if(community&&community.rank!=null&&community.rank<rank)rank=community.rank;
+      const mins=minutesToDeadline(o.deliverBy);
+      if(mins!=null&&mins<=PACKER_QUEUE_TIME_BUFFER_MIN){
+        timeConstrained=true;
+        if(mins<deadlineMins)deadlineMins=mins;
+      }
+    });
+    return[name,{rank,timeConstrained,deadlineMins,size:orders.length}];
+  }));
+  return[...groupNames].sort((a,b)=>{
+    const ma=meta.get(a),mb=meta.get(b);
+    if(ma.timeConstrained!==mb.timeConstrained)return ma.timeConstrained?-1:1;
+    if(ma.timeConstrained)return ma.deadlineMins-mb.deadlineMins;
+    if(ma.rank!==mb.rank)return ma.rank-mb.rank;
+    if(ma.size!==mb.size)return ma.size-mb.size; // smaller group first within the same priority tier
+    return a.localeCompare(b,undefined,{sensitivity:'base'});
+  });
+}
+
 const TRIP_ORDER_CAP=10;
 
 // Trip N — a group's 1-based position in today's cluster-priority order
@@ -4513,6 +4555,26 @@ function setViewGrouping(mode){
     renderPackerGrid();
   }
   if(document.getElementById('panel-delivery').classList.contains('active'))renderDeliveryList();
+}
+
+// Order Overview's own Flat/Time Sensitive toggle — separate from
+// viewGrouping above (that one's shared with Packer/Delivery and is about
+// Flat vs the old Trip view, now unreachable). "Time Sensitive" here sorts
+// groups by sortGroupsByPriority — the same community-priority-rank +
+// hard time-sensitive-override rule that orders a packer's own Single Card
+// queue — instead of plain alphabetical.
+let overviewSortMode='alpha'; // 'alpha' | 'priority'
+
+function renderOverviewSortToggle(){
+  document.getElementById('to-sort-toggle').innerHTML=
+    '<span class="filter-pill'+(overviewSortMode==='alpha'?' active':'')+'" onclick="setOverviewSortMode(\'alpha\')">Flat</span>'+
+    '<span class="filter-pill'+(overviewSortMode==='priority'?' active':'')+'" onclick="setOverviewSortMode(\'priority\')">Time Sensitive</span>';
+}
+
+function setOverviewSortMode(mode){
+  overviewSortMode=mode;
+  renderOverviewSortToggle();
+  renderOrdersList();
 }
 
 // Moves just this one order into a different trip, independent of its
@@ -6491,6 +6553,10 @@ function computeUnassignedTimeline(){
 function renderPackerModeToggle(){
   document.getElementById('pk-mode-toggle').innerHTML=
     '<span class="filter-pill'+(packerViewMode==='grid'?' active':'')+'" onclick="setPackerViewMode(\'grid\')">Grid</span>'+
+    // Time Sensitive — same grouped everything-at-once view as Grid, just
+    // ordered by community priority rank + hard time-sensitive override
+    // (sortGroupsByPriority) instead of alphabetically.
+    '<span class="filter-pill'+(packerViewMode==='priority'?' active':'')+'" onclick="setPackerViewMode(\'priority\')">Time Sensitive</span>'+
     '<span class="filter-pill'+(packerViewMode==='single'?' active':'')+'" onclick="setPackerViewMode(\'single\')">Single Card</span>'+
     // Team view is Somya-only (isVegPerfAllowed — same single-email gate as
     // P&L/VegPerf) — a supervisor overview of every packer's own Single
@@ -6503,9 +6569,9 @@ async function setPackerViewMode(mode){
   packerViewMode=mode;
   renderPackerModeToggle();
   // The fruit/status filters, search, and scope tabs only make sense for
-  // the everything-at-once Grid view — Single Card and Team both ignore
-  // them by design, so hide rather than leave controls on screen that
-  // silently do nothing.
+  // the everything-at-once views (Grid, Time Sensitive) — Single Card and
+  // Team both ignore them by design, so hide rather than leave controls on
+  // screen that silently do nothing.
   const single=mode==='single',team=mode==='team',hideGridControls=single||team;
   document.getElementById('pk-scope-tabs').style.display=hideGridControls?'none':'';
   document.getElementById('pk-fruit-filter-label').style.display=hideGridControls?'none':'';
@@ -6991,6 +7057,11 @@ function renderPackerGrid(){
   // same trip-priority sort/numbering those two use.
   const groupNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(byGroup),name=>byGroup[name].map(packerOrderLike))
+    :packerViewMode==='priority'
+    // Time Sensitive — same community-priority-rank + hard time-sensitive
+    // override rule that orders a packer's own Single Card queue, applied
+    // at group level here since this view still shows everything at once.
+    ?sortGroupsByPriority(Object.keys(byGroup),name=>byGroup[name].map(packerOrderLike))
     // Case-insensitive — see the matching comment on Overview/Delivery's
     // own group-name sort.
     :Object.keys(byGroup).sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
