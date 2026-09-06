@@ -392,6 +392,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;align-items:start}
 .pk-team-col{display:flex;flex-direction:column;gap:8px}
 .pk-team-col-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#8a7a6a;position:sticky;top:0;background:#ffffff;padding:4px 0;z-index:1}
+.pk-team-col-header-warn{color:#b3261e}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
 .pk-done-time{font-weight:700;color:#3f7a34;font-variant-numeric:tabular-nums}
@@ -6442,6 +6443,18 @@ function computePackerTimeline(packerName){
   return{done,pending};
 }
 
+// Items nobody actually owns right now — no per-item override AND no
+// default Item -> Packer assignment for that fruit in Config. These never
+// show up in any packer's own column (effectivePackerIdForItem is null,
+// matches no one), so without this they'd be invisible in Team view even
+// though nothing is going to pack them until someone assigns or reassigns.
+function computeUnassignedTimeline(){
+  const mine=packerItems.filter(i=>i.status!=='cancelled'&&effectivePackerIdForItem(i)===null);
+  const done=mine.filter(i=>i.packed_at).sort((a,b)=>new Date(a.packed_at)-new Date(b.packed_at));
+  const pending=orderItemsByQueuePriority(mine.filter(i=>!i.packed_at));
+  return{done,pending};
+}
+
 function renderPackerModeToggle(){
   document.getElementById('pk-mode-toggle').innerHTML=
     '<span class="filter-pill'+(packerViewMode==='grid'?' active':'')+'" onclick="setPackerViewMode(\'grid\')">Grid</span>'+
@@ -6826,6 +6839,10 @@ function doneItemRowHtml(item){
 //   2. Below that, everything already finalized today, oldest first, each
 //      with the actual time it was packed — a chronological log, not the
 //      priority queue (there's no "priority" left once something's done).
+// An extra "Unassigned" column comes first — items with no default
+// assignment and no override, which otherwise wouldn't show up in ANY
+// packer's column at all. Each card's "Unassigned ✎" is Somya's own
+// entry point to fix the gap right from here (openReassignPacker).
 // Auto-refreshes — see startTeamViewPoll.
 function renderPackerTeamView(){
   const grid=document.getElementById('pk-grid');
@@ -6833,7 +6850,16 @@ function renderPackerTeamView(){
   if(!isVegPerfAllowed){packerViewMode='grid';renderPackerModeToggle();renderPackerGrid();return;}
   if(!packersCache.length){grid.innerHTML='<div class="to-empty">No packers configured yet.</div>';return;}
   const dupIds=computeDuplicateItemIds(packerItems);
+  const{done:unassignedDone,pending:unassignedPending}=computeUnassignedTimeline();
+  const unassignedCol=(unassignedDone.length||unassignedPending.length)
+    ?'<div class="pk-team-col">'+
+      '<div class="pk-team-col-header pk-team-col-header-warn">⚠️ Unassigned <span class="sh-count">('+unassignedPending.length+' left)</span></div>'+
+      unassignedPending.map(item=>packCardHtml(item,dupIds)).join('')+
+      (unassignedDone.length?'<div class="pk-done-log">'+unassignedDone.map(doneItemRowHtml).join('')+'</div>':'')+
+    '</div>'
+    :'';
   grid.innerHTML='<div class="pk-team-grid">'+
+    unassignedCol+
     packersCache.map(p=>{
       const{done,pending}=computePackerTimeline(p.name);
       return '<div class="pk-team-col">'+
