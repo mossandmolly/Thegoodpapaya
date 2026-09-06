@@ -393,6 +393,22 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-team-col{display:flex;flex-direction:column;gap:8px}
 .pk-team-col-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#8a7a6a;position:sticky;top:0;background:#ffffff;padding:4px 0;z-index:1}
 .pk-team-col-header-warn{color:#b3261e}
+/* Team view's per-packer distribution/completion summary bars — done in
+   green (matches the existing 'final' status color), pending in amber
+   (matches 'open'), same status-color convention as the rest of Packer. */
+.pk-team-summary{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px}
+.pk-team-summary-legend{display:flex;gap:14px;font-size:10px;color:#8a7a6a;margin-bottom:8px;align-items:center}
+.pk-legend-swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.pk-legend-done{background:#2d6b2d}
+.pk-legend-pending{background:#c9a227}
+.pk-team-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.pk-team-bar-row:last-child{margin-bottom:0}
+.pk-team-bar-label{font-size:11px;color:#2b2320;flex:0 0 120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pk-team-bar-track{flex:1;height:10px;background:#f2ede4;border-radius:5px;overflow:hidden;display:flex}
+.pk-team-bar-seg{height:100%}
+.pk-team-bar-done{background:#2d6b2d;margin-right:2px}
+.pk-team-bar-pending{background:#c9a227}
+.pk-team-bar-count{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 22px;text-align:right}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
 .pk-done-time{font-weight:700;color:#3f7a34;font-variant-numeric:tabular-nums}
@@ -6843,30 +6859,65 @@ function doneItemRowHtml(item){
 // packer's column at all. Each card's "Unassigned ✎" is Somya's own
 // entry point to fix the gap right from here (openReassignPacker).
 // Auto-refreshes — see startTeamViewPoll.
+// Bar-per-packer summary shown above the columns: bar length is that
+// packer's total (done+pending) relative to whoever has the most today, so
+// a glance at length alone flags who's overloaded vs idle; the done/pending
+// split within each bar shows how far along they are. Sorted busiest-first
+// so imbalance is the first thing seen, not something to hunt for.
+function renderPackerTeamSummary(rows){
+  if(!rows.length)return '';
+  const sorted=[...rows].sort((a,b)=>(b.done+b.pending)-(a.done+a.pending));
+  const maxTotal=Math.max(1,...sorted.map(r=>r.done+r.pending));
+  return '<div class="pk-team-summary">'+
+    '<div class="pk-team-summary-legend"><span class="pk-legend-swatch pk-legend-done"></span>Done <span class="pk-legend-swatch pk-legend-pending"></span>Pending</div>'+
+    sorted.map(r=>{
+      const total=r.done+r.pending;
+      const donePct=r.done/maxTotal*100,pendingPct=r.pending/maxTotal*100;
+      return '<div class="pk-team-bar-row">'+
+        '<span class="pk-team-bar-label'+(r.isWarn?' pk-team-col-header-warn':'')+'">'+escH(r.label)+'</span>'+
+        '<div class="pk-team-bar-track">'+
+          (r.done?'<div class="pk-team-bar-seg pk-team-bar-done" style="width:'+donePct+'%" title="'+r.done+' done"></div>':'')+
+          (r.pending?'<div class="pk-team-bar-seg pk-team-bar-pending" style="width:'+pendingPct+'%" title="'+r.pending+' pending"></div>':'')+
+        '</div>'+
+        '<span class="pk-team-bar-count">'+total+'</span>'+
+      '</div>';
+    }).join('')+
+  '</div>';
+}
+
 function renderPackerTeamView(){
   const grid=document.getElementById('pk-grid');
   document.getElementById('pk-rc').textContent='';
   if(!isVegPerfAllowed){packerViewMode='grid';renderPackerModeToggle();renderPackerGrid();return;}
   if(!packersCache.length){grid.innerHTML='<div class="to-empty">No packers configured yet.</div>';return;}
   const dupIds=computeDuplicateItemIds(packerItems);
-  const{done:unassignedDone,pending:unassignedPending}=computeUnassignedTimeline();
-  const unassignedCol=(unassignedDone.length||unassignedPending.length)
+  const unassigned=computeUnassignedTimeline();
+  const perPacker=packersCache.map(p=>({packer:p,...computePackerTimeline(p.name)}));
+
+  const summaryRows=[
+    ...((unassigned.done.length||unassigned.pending.length)?[{label:'⚠️ Unassigned',done:unassigned.done.length,pending:unassigned.pending.length,isWarn:true}]:[]),
+    ...perPacker.map(r=>({label:r.packer.name,done:r.done.length,pending:r.pending.length})),
+  ];
+
+  const unassignedCol=(unassigned.done.length||unassigned.pending.length)
     ?'<div class="pk-team-col">'+
-      '<div class="pk-team-col-header pk-team-col-header-warn">⚠️ Unassigned <span class="sh-count">('+unassignedPending.length+' left)</span></div>'+
-      unassignedPending.map(item=>packCardHtml(item,dupIds)).join('')+
-      (unassignedDone.length?'<div class="pk-done-log">'+unassignedDone.map(doneItemRowHtml).join('')+'</div>':'')+
+      '<div class="pk-team-col-header pk-team-col-header-warn">⚠️ Unassigned <span class="sh-count">('+unassigned.pending.length+' left)</span></div>'+
+      unassigned.pending.map(item=>packCardHtml(item,dupIds)).join('')+
+      (unassigned.done.length?'<div class="pk-done-log">'+unassigned.done.map(doneItemRowHtml).join('')+'</div>':'')+
     '</div>'
     :'';
-  grid.innerHTML='<div class="pk-team-grid">'+
+
+  grid.innerHTML=
+    renderPackerTeamSummary(summaryRows)+
+    '<div class="pk-team-grid">'+
     unassignedCol+
-    packersCache.map(p=>{
-      const{done,pending}=computePackerTimeline(p.name);
-      return '<div class="pk-team-col">'+
+    perPacker.map(({packer:p,done,pending})=>
+      '<div class="pk-team-col">'+
         '<div class="pk-team-col-header">'+escH(p.name)+' <span class="sh-count">('+done.length+' done, '+pending.length+' left)</span></div>'+
         (pending.length?pending.map(item=>packCardHtml(item,dupIds)).join(''):(done.length?'':'<div class="to-empty" style="padding:14px 8px">Nothing queued ✓</div>'))+
         (done.length?'<div class="pk-done-log">'+done.map(doneItemRowHtml).join('')+'</div>':'')+
-      '</div>';
-    }).join('')+
+      '</div>'
+    ).join('')+
   '</div>';
 }
 
