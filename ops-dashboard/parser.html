@@ -1050,7 +1050,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
   <div class="config-section">
     <h3>🎯 Community Priority <span style="font-size:11px;color:#8a7a6a;font-weight:400">(drives the Packer tab's Single Card queue order)</span></h3>
-    <p class="note">Separate, hand-curated list from Communities above — used only by the Packer tab's Single Card queue. Each row has a unique ID and one or more keyword phrases; if an order's society (or customer name, as fallback) CONTAINS any of a community's keywords — e.g. "srp" and "royal pavilion" both mapping to the same community — it gets that community's rank. Lower rank packs first; blank rank sorts last. Keywords are comma-separated and replace the whole list when you save a row; each keyword phrase can only belong to one community.</p>
+    <p class="note">Separate, hand-curated list from Communities above — used only by the Packer tab's Single Card queue (and, for grouping/display purposes, Order Overview/Packer/Delivery's Flat view). Each row has a unique ID and one or more keyword phrases; if an order's society (or customer name, as fallback) CONTAINS any of a community's keywords — e.g. "srp" and "royal pavilion" both mapping to the same community — it gets that community's rank. Lower rank packs first; blank rank sorts last. Keywords are comma-separated and replace the whole list when you save a row; each keyword phrase can only belong to one community. Every field here — including the Unique ID itself — can be edited in place; renaming a Unique ID automatically carries its keywords and any combinable group membership along with it.</p>
     <div class="add-row">
       <input type="text" id="new-cp-id" placeholder="Unique ID (e.g. srp)" style="max-width:160px">
       <input type="text" id="new-cp-name" placeholder="Display name">
@@ -1890,7 +1890,7 @@ function renderCommunityPriorityTable(){
   const rows=Object.values(communityPriorityCache).sort((a,b)=>(a.rank??Infinity)-(b.rank??Infinity));
   tbody.innerHTML=rows.map(c=>
     '<tr>'+
-      '<td>'+escH(c.unique_id)+'</td>'+
+      '<td><input type="text" id="cp-id-'+escH(c.unique_id)+'" value="'+escH(c.unique_id)+'"></td>'+
       '<td><input type="text" id="cp-name-'+escH(c.unique_id)+'" value="'+escH(c.display_name)+'"></td>'+
       '<td><input type="number" id="cp-rank-'+escH(c.unique_id)+'" value="'+(c.rank??'')+'"></td>'+
       '<td><input type="text" id="cp-kw-'+escH(c.unique_id)+'" value="'+escH((c.keywords||[]).join(', '))+'"></td>'+
@@ -1902,21 +1902,29 @@ function renderCommunityPriorityTable(){
   ).join('');
 }
 
-async function saveCommunityPriority(uniqueId){
-  const name=document.getElementById('cp-name-'+uniqueId).value.trim();
-  if(!name){uxAlert('Display name can\'t be empty');return;}
-  const rank=document.getElementById('cp-rank-'+uniqueId).value;
-  const keywords=document.getElementById('cp-kw-'+uniqueId).value.split(',').map(k=>k.trim()).filter(Boolean);
+async function saveCommunityPriority(oldId){
+  const newId=document.getElementById('cp-id-'+oldId).value.trim().toLowerCase();
+  const name=document.getElementById('cp-name-'+oldId).value.trim();
+  if(!newId||!name){uxAlert('Unique ID and display name can\'t be empty');return;}
+  if(newId!==oldId&&communityPriorityCache[newId]){uxAlert('"'+newId+'" already exists — pick a different unique ID');return;}
+  const rank=document.getElementById('cp-rank-'+oldId).value;
+  const keywords=document.getElementById('cp-kw-'+oldId).value.split(',').map(k=>k.trim()).filter(Boolean);
+  // unique_id is the primary key that community_priority_keywords and
+  // community_combinable_group_members both reference with ON UPDATE
+  // CASCADE (migrations 108/109) — renaming it is just this one update,
+  // Postgres carries every child row over to the new id automatically.
   const{error:updErr}=await sb.from('community_priority').update({
-    display_name:name,rank:rank===''?null:parseInt(rank,10),
-  }).eq('unique_id',uniqueId);
+    unique_id:newId,display_name:name,rank:rank===''?null:parseInt(rank,10),
+  }).eq('unique_id',oldId);
   if(updErr){uxAlert('Failed to save: '+updErr.message);return;}
   // Replace, don't merge — same convention as packer fruit assignment above.
-  const{error:delErr}=await sb.from('community_priority_keywords').delete().eq('community_unique_id',uniqueId);
+  // Matched on newId since the rename (if any) has already taken effect by
+  // the time this runs.
+  const{error:delErr}=await sb.from('community_priority_keywords').delete().eq('community_unique_id',newId);
   if(delErr){uxAlert('Failed to update keywords: '+delErr.message);return;}
   if(keywords.length){
     const{error:insErr}=await sb.from('community_priority_keywords').insert(
-      keywords.map(keyword=>({community_unique_id:uniqueId,keyword}))
+      keywords.map(keyword=>({community_unique_id:newId,keyword}))
     );
     if(insErr){uxAlert('Failed to save keywords (a keyword phrase can only belong to one community — one of these may already be used elsewhere): '+insErr.message);return;}
   }
