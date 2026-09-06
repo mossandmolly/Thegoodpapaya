@@ -3309,7 +3309,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,pending_review,no_bill,assigned_packer_id');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,packed_at,pending_review,no_bill,assigned_packer_id');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
