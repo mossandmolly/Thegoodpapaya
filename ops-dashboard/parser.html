@@ -3580,7 +3580,12 @@ function renderOrdersList(){
 
   const socNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
-    :Object.keys(bySociety).sort();
+    // Case-insensitive — group names can come from either a Community
+    // Priority display_name (whatever case it was typed in) or deriveSociety's
+    // own casing, and a plain case-sensitive sort ranks every uppercase
+    // letter before every lowercase one, so two differently-cased sources
+    // wouldn't interleave alphabetically the way a person expects.
+    :Object.keys(bySociety).sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
   document.getElementById('to-collapse-btn').textContent=collapsedOverviewGroups.size?'▸ Expand All':'▾ Collapse All';
   if(!socNames.length){
     list.innerHTML='<div class="to-empty">'+(Object.keys(currentOrdersById).length?'No orders match this filter':'No orders for '+viewDate)+'</div>';
@@ -6896,7 +6901,9 @@ function renderPackerGrid(){
   // same trip-priority sort/numbering those two use.
   const groupNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(byGroup),name=>byGroup[name].map(packerOrderLike))
-    :Object.keys(byGroup).sort();
+    // Case-insensitive — see the matching comment on Overview/Delivery's
+    // own group-name sort.
+    :Object.keys(byGroup).sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
   // Independent of the search/scope filters above — reflects today's whole
   // picture so numbers/caps don't shift depending on which filter's active.
   const tripInfo=computeTripNumbers(packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike));
@@ -7485,7 +7492,12 @@ function renderDeliveryList(){
 
   const socNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
-    :Object.keys(bySociety).sort();
+    // Case-insensitive — group names can come from either a Community
+    // Priority display_name (whatever case it was typed in) or deriveSociety's
+    // own casing, and a plain case-sensitive sort ranks every uppercase
+    // letter before every lowercase one, so two differently-cased sources
+    // wouldn't interleave alphabetically the way a person expects.
+    :Object.keys(bySociety).sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
   // Independent of scope/search/status filters — reflects today's whole
   // picture so numbers/caps don't shift depending on which filter's active.
   const tripInfo=computeTripNumbers(todaysOrdersForLeftoverCheck);
