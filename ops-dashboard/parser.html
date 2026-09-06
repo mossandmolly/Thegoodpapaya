@@ -6537,21 +6537,30 @@ function effectivePackerIdForItem(item){
 // finishing large orders together). Shared by computePackerQueue (open
 // items only, for a packer's own live queue) and computePackerTimeline
 // (open+held+packed, for Somya's fuller Team view) — same rule either way.
+// Also honors priorityOverrideByGroup (Somya's Current Order stack) —
+// the group name computed per order here must match deriveGroupKey's own
+// output exactly, or a reordered stack would silently not apply to actual
+// packer queues even though it does apply to the group-level views.
 function orderItemsByQueuePriority(items){
   const bySoid={};
   items.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
   const orderMeta=Object.keys(bySoid).map(soid=>{
     const o=packerCustomerMap[soid]||{};
     const community=matchCommunityPriority(o.society||o.customer_name);
+    const groupName=community?community.display_name:deriveSociety(o.customer_name);
     // Whole order's remaining item count (across every packer/fruit), not
     // just this packer's own slice — the point of "smaller first" is the
     // WHOLE order finishing sooner so the rider can dispatch it.
     const openItemCount=packerItems.filter(i=>i.sales_order_id===soid&&i.status==='open').length;
     return{soid,items:bySoid[soid],rank:community?.rank??Infinity,
       timeConstrained:isTimeConstrainedOrder(o.deliver_by),
-      deadlineMins:minutesToDeadline(o.deliver_by),openItemCount};
+      deadlineMins:minutesToDeadline(o.deliver_by),openItemCount,
+      override:priorityOverrideByGroup[groupName]};
   });
   orderMeta.sort((a,b)=>{
+    if(a.override!=null&&b.override!=null)return a.override-b.override;
+    if(a.override!=null)return -1;
+    if(b.override!=null)return 1;
     if(a.timeConstrained!==b.timeConstrained)return a.timeConstrained?-1:1;
     if(a.timeConstrained)return a.deadlineMins-b.deadlineMins; // both constrained: soonest deadline first
     if(a.rank!==b.rank)return a.rank-b.rank;
