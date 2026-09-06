@@ -528,7 +528,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="to-notdispatched-summary"></div>
   <div id="to-ofd-summary"></div>
   <div id="to-past-trips-summary"></div>
-  <div id="to-grouping-toggle" class="filter-pills status-pills"></div>
   <div class="push-row bulk-actions-row">
     <button class="btn-push" id="to-bulk-invoice" style="margin-bottom:0" disabled>🧾 Generate Invoices (0)</button>
     <button class="btn-sec" id="to-bulk-paylink" disabled>💳 Payment Links (0)</button>
@@ -559,7 +558,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <input type="text" class="pk-search" id="pk-search" placeholder="🔍 Search society or fruit...">
   <div class="filter-group-label">View</div>
-  <div id="pk-grouping-toggle" class="filter-pills status-pills"></div>
   <div id="pk-mode-toggle" class="filter-pills status-pills"></div>
   <div class="filter-group-label" id="pk-fruit-filter-label">Fruit</div>
   <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
@@ -584,7 +582,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="dv-scope-btn" id="dv-scope-mine" onclick="setDeliveryScope('mine')">My orders</button>
   </div>
   <div id="dv-summary-pills" class="filter-pills status-pills"></div>
-  <div id="dv-grouping-toggle" class="filter-pills status-pills"></div>
   <input type="text" class="pk-search" id="dv-search" placeholder="🔍 Search society or customer...">
   <div class="push-row bulk-actions-row hidden" id="dv-assign-row" style="margin-bottom:12px">
     <button class="btn-push" id="dv-assign-me" disabled>🙋 Assign to me (0)</button>
@@ -3531,7 +3528,6 @@ function renderOrdersList(){
   const tripInfo=computeTripNumbers(todaysOrdersForLeftoverCheck);
 
   renderOverviewSummaryPills(tripInfo);
-  document.getElementById('to-grouping-toggle').innerHTML=renderGroupingToggle();
 
   // Group orders by society (default) or by trip (viewGrouping==='trip') —
   // same underlying list, just a different grouping key. Search matches
@@ -6410,13 +6406,12 @@ function renderPackerModeToggle(){
 async function setPackerViewMode(mode){
   packerViewMode=mode;
   renderPackerModeToggle();
-  // The fruit/status filters and the grouping (Flat/Trip) toggle only apply
-  // to the everything-at-once Grid view — Single Card ignores them by
-  // design (it always shows exactly one item, chosen by rank), so hide
-  // rather than leave controls on screen that silently do nothing.
+  // The fruit/status filters only apply to the everything-at-once Grid
+  // view — Single Card ignores them by design (it always shows exactly one
+  // item, chosen by rank), so hide rather than leave controls on screen
+  // that silently do nothing.
   const single=mode==='single';
   document.getElementById('pk-scope-tabs').style.display=single?'none':'';
-  document.getElementById('pk-grouping-toggle').style.display=single?'none':'';
   document.getElementById('pk-fruit-filter-label').style.display=single?'none':'';
   document.getElementById('pk-fruit-pills').style.display=single?'none':'';
   document.getElementById('pk-status-filter-label').style.display=single?'none':'';
@@ -6553,7 +6548,6 @@ async function loadPackerView(){
 const ALL_ORDER_STATUSES=['open','held','packed','final','invoiced','cancelled'];
 
 function renderPackerFilterPills(){
-  document.getElementById('pk-grouping-toggle').innerHTML=renderGroupingToggle();
   renderPackerModeToggle();
   const fruits=[...new Set(packerItems.map(i=>i.item_name))].sort();
   document.getElementById('pk-fruit-pills').innerHTML=
@@ -7295,7 +7289,6 @@ function renderDeliveryList(){
     .map(([soid,order])=>({soid,...order}))
     .filter(order=>deliveryScope==='all'||order.assignedRider===riderName);
   renderDeliverySummaryPills(scoped);
-  document.getElementById('dv-grouping-toggle').innerHTML=renderGroupingToggle();
   document.getElementById('dv-collapse-btn').textContent=expandedDeliveryOrders.size?'▾ Collapse All':'▸ Expand All';
 
   // Full unfiltered picture, not just what scope/search/status narrows
