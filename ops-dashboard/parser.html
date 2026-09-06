@@ -408,7 +408,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-team-bar-seg{height:100%}
 .pk-team-bar-done{background:#2d6b2d;margin-right:2px}
 .pk-team-bar-pending{background:#c9a227}
-.pk-team-bar-count{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 22px;text-align:right}
+.pk-team-bar-count{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 40px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
 .pk-done-time{font-weight:700;color:#3f7a34;font-variant-numeric:tabular-nums}
@@ -6879,7 +6879,7 @@ function renderPackerTeamSummary(rows){
           (r.done?'<div class="pk-team-bar-seg pk-team-bar-done" style="width:'+donePct+'%" title="'+r.done+' done"></div>':'')+
           (r.pending?'<div class="pk-team-bar-seg pk-team-bar-pending" style="width:'+pendingPct+'%" title="'+r.pending+' pending"></div>':'')+
         '</div>'+
-        '<span class="pk-team-bar-count">'+total+'</span>'+
+        '<span class="pk-team-bar-count">'+r.done+'/'+total+'</span>'+
       '</div>';
     }).join('')+
   '</div>';
