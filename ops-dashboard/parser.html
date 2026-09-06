@@ -6960,32 +6960,33 @@ function packCardHtml(item,dupIds){
 // from computePackerQueue's open-only pool through to markFinal, since
 // savePackedQty moves it to 'packed' (one step before 'final') and the
 // packer still needs to see it to complete that second step, not have it
-// silently skipped the instant it leaves the 'open' pool.
-let pkSinglePinnedItemId=null;
-
+// silently skipped the instant it leaves the 'open' pool. Derived fresh
+// from persisted status + assignment on every render (not a remembered
+// id) so a genuine page refresh — not just an in-app re-render — still
+// shows the same in-progress item instead of it vanishing (computePackerQueue
+// is open-only, so a plain refresh with no pin memory would otherwise lose
+// track of anything already moved to 'packed').
 function renderPackerSingleCard(){
   const grid=document.getElementById('pk-grid');
   document.getElementById('pk-rc').textContent='';
   todaysOrdersForLeftoverCheck=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
 
   if(!riderName||!packersCache.some(p=>p.name===riderName)){
-    pkSinglePinnedItemId=null;
     stopPkCardTimer();
     grid.innerHTML='<div class="to-empty">Pick a packer to see your queue.<br><button class="btn-sec" onclick="ensurePackerIdentityForQueue().then(renderPackerGrid)">Pick packer</button></div>';
     return;
   }
 
+  const packer=packersCache.find(p=>p.name===riderName);
+  const stillPacking=packerItems.find(i=>i.status==='packed'&&effectivePackerIdForItem(i)===packer.id);
   const queue=computePackerQueue(riderName);
-  const pinned=pkSinglePinnedItemId?packerItems.find(i=>i.id===pkSinglePinnedItemId&&i.status==='packed'):null;
-  const item=pinned||queue[0];
+  const item=stillPacking||queue[0];
   if(!item){
-    pkSinglePinnedItemId=null;
     stopPkCardTimer();
     grid.innerHTML='<div class="to-empty">Nothing left to pack for you ✓</div>';
     return;
   }
-  pkSinglePinnedItemId=item.id;
-  const remaining=queue.length+(pinned?1:0);
+  const remaining=queue.length+(stillPacking?1:0);
   startPkCardTimer(item.id);
   grid.innerHTML=
     '<div class="pk-single-wrap">'+
