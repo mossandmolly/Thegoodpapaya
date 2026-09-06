@@ -7333,8 +7333,12 @@ async function savePackedQty(id){
   // Common case: nothing else on the order changed, so just patch this one
   // item locally and redraw — no need for the full network round trip
   // (refetch every item today + the whole catalog) that loadPackerView does.
-  // Only fall back to that when invalidation touched sibling items too.
-  if(invalidated){
+  // Falls back to that when invalidation touched sibling items too, OR
+  // always in Single Card mode — a packer working through their queue one
+  // card at a time needs every step to pick up Somya's Current Order
+  // rearranges/rank edits from Config, which a local-only patch would
+  // otherwise leave stale until the next full tab reload.
+  if(invalidated||packerViewMode==='single'){
     await loadPackerView();
   }else{
     if(item){item.final_quantity=qty;item.status='packed';}
@@ -7352,7 +7356,11 @@ async function markFinal(id){
   // average-time-per-item metric gets computed from.
   const{error}=await sb.from('order_items').update({status:'final',packed_by:riderName||null,packed_at:new Date().toISOString()}).eq('id',id);
   if(error){uxAlert('Failed to mark final: '+error.message);return;}
-  if(invalidated){
+  // Same "always fully reload in Single Card mode" reasoning as
+  // savePackedQty above — this is the point where a card actually advances
+  // to the next one, so it's the moment a stale priority order would be
+  // most visible/confusing if it didn't refresh.
+  if(invalidated||packerViewMode==='single'){
     await loadPackerView();
   }else{
     if(item){item.status='final';item.packed_by=riderName||null;}
