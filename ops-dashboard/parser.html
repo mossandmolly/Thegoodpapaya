@@ -6697,6 +6697,10 @@ function ensurePackerIdentityForQueue(){
     const onCancel=()=>{cleanup();resolve();};
     const onConfirm=()=>{
       const picked=pkIdentitySelect.value;
+      // A skip is specific to whoever was packing when they clicked it —
+      // switching to a different packer on this device shouldn't carry
+      // their deferred items over to someone else's queue.
+      if(picked&&picked!==riderName)pkSkipRemaining={};
       if(picked){riderName=picked;localStorage.setItem(RIDER_NAME_KEY,riderName);renderRiderBadge();}
       cleanup();resolve();
     };
@@ -6956,6 +6960,31 @@ function packCardHtml(item,dupIds){
     '</div>';
 }
 
+// Single Card's own "skip" — packer-local and purely ephemeral (resets on
+// a page refresh, never written to the DB), only changes what THIS
+// device's Single Card view shows next. Doesn't touch the underlying
+// priority order, Team view, or any other packer's queue — Grid view
+// still shows every item regardless. Skipping an item defers it 5 card-
+// advances (its own skip, or another card's markFinal) before it's
+// eligible to be the displayed card again; it still counts toward the
+// remaining total the whole time, it just isn't the one on screen.
+let pkSkipRemaining={}; // itemId -> card-advances left before eligible again
+
+// Called whenever the displayed card actually moves on to something else
+// (a skip, or markFinal in Single Card mode) — ticks every other
+// currently-deferred item one step closer to reappearing.
+function advancePkSkipCounters(){
+  Object.keys(pkSkipRemaining).forEach(id=>{
+    if(--pkSkipRemaining[id]<=0)delete pkSkipRemaining[id];
+  });
+}
+
+function skipPkCard(id){
+  advancePkSkipCounters(); // this card moving away is itself an advance for everyone already waiting
+  pkSkipRemaining[id]=5;
+  renderPackerGrid();
+}
+
 // Single-card queue view — an item stays "pinned" as the displayed card
 // from computePackerQueue's open-only pool through to markFinal, since
 // savePackedQty moves it to 'packed' (one step before 'final') and the
@@ -6965,7 +6994,9 @@ function packCardHtml(item,dupIds){
 // id) so a genuine page refresh — not just an in-app re-render — still
 // shows the same in-progress item instead of it vanishing (computePackerQueue
 // is open-only, so a plain refresh with no pin memory would otherwise lose
-// track of anything already moved to 'packed').
+// track of anything already moved to 'packed'). A pinned item can still be
+// skipped like any other — savePackedQty's final_quantity is already
+// saved, so deferring the display doesn't lose anything already entered.
 function renderPackerSingleCard(){
   const grid=document.getElementById('pk-grid');
   document.getElementById('pk-rc').textContent='';
@@ -6978,15 +7009,21 @@ function renderPackerSingleCard(){
   }
 
   const packer=packersCache.find(p=>p.name===riderName);
-  const stillPacking=packerItems.find(i=>i.status==='packed'&&effectivePackerIdForItem(i)===packer.id);
+  const stillPackingRaw=packerItems.find(i=>i.status==='packed'&&effectivePackerIdForItem(i)===packer.id);
+  const stillPacking=(stillPackingRaw&&!(stillPackingRaw.id in pkSkipRemaining))?stillPackingRaw:null;
   const queue=computePackerQueue(riderName);
-  const item=stillPacking||queue[0];
+  const eligibleQueue=queue.filter(i=>!(i.id in pkSkipRemaining));
+  // Falls back to the natural front item if literally everything's
+  // currently deferred, so a packer never sees "nothing to pack" while
+  // real work still exists — skip is meant to reorder, not to be able to
+  // empty the queue.
+  const item=stillPacking||eligibleQueue[0]||stillPackingRaw||queue[0];
   if(!item){
     stopPkCardTimer();
     grid.innerHTML='<div class="to-empty">Nothing left to pack for you ✓</div>';
     return;
   }
-  const remaining=queue.length+(stillPacking?1:0);
+  const remaining=queue.length+(stillPackingRaw?1:0);
   startPkCardTimer(item.id);
   grid.innerHTML=
     '<div class="pk-single-wrap">'+
@@ -6995,6 +7032,7 @@ function renderPackerSingleCard(){
         '<span id="pk-single-timer" class="pk-single-timer">00:00</span>'+
       '</div>'+
       packCardHtml(item)+
+      '<button class="btn-sec" style="width:100%;margin-top:8px" onclick="skipPkCard(\''+item.id+'\')" title="Not available right now — show this again after 5 other cards">⏭ Skip for now</button>'+
     '</div>';
   renderPkCardTimerDisplay();
 }
@@ -7447,7 +7485,10 @@ async function markFinal(id){
   // Same "always fully reload in Single Card mode" reasoning as
   // savePackedQty above — this is the point where a card actually advances
   // to the next one, so it's the moment a stale priority order would be
-  // most visible/confusing if it didn't refresh.
+  // most visible/confusing if it didn't refresh. Also a genuine "card
+  // advance" for the skip mechanism — ticks any other deferred item
+  // closer to becoming eligible again.
+  if(packerViewMode==='single')advancePkSkipCounters();
   if(invalidated||packerViewMode==='single'){
     await loadPackerView();
   }else{
