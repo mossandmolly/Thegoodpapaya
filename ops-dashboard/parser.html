@@ -7209,6 +7209,27 @@ function renderPackerTeamSummary(rows){
 // entry point to fix the gap right from here (openReassignPacker).
 // Auto-refreshes — see startTeamViewPoll.
 
+// Which packer's column(s) to show — 'all' (default) or one packer's
+// name, or '__unassigned__' for just the Unassigned column. Only narrows
+// the per-packer card columns; the Current Order stack (about societies,
+// not packers) and the workload summary (the whole point is comparing
+// everyone at once) are unaffected by this filter.
+let teamPackerFilter='all';
+
+function setTeamPackerFilter(name){
+  teamPackerFilter=name;
+  renderPackerTeamView();
+}
+
+function renderTeamPackerFilterPills(hasUnassigned){
+  const options=[{key:'all',label:'All'}]
+    .concat(hasUnassigned?[{key:'__unassigned__',label:'⚠️ Unassigned'}]:[])
+    .concat(packersCache.map(p=>({key:p.name,label:p.name})));
+  return '<div class="filter-pills status-pills" style="grid-column:1/-1;margin-bottom:10px">'+
+    options.map(o=>'<span class="filter-pill'+(teamPackerFilter===o.key?' active':'')+'" onclick="setTeamPackerFilter('+escH(JSON.stringify(o.key))+')">'+escH(o.label)+'</span>').join('')+
+  '</div>';
+}
+
 function renderPackerTeamView(){
   const grid=document.getElementById('pk-grid');
   document.getElementById('pk-rc').textContent='';
@@ -7229,7 +7250,9 @@ function renderPackerTeamView(){
     ...perPacker.map(r=>({label:r.packer.name,done:r.done.length,pending:r.pending.length,avgPackSeconds:avgPackSecondsPerItem(r.done)})),
   ];
 
-  const unassignedCol=(unassigned.done.length||unassigned.pending.length)
+  const hasUnassigned=unassigned.done.length>0||unassigned.pending.length>0;
+  const showUnassigned=hasUnassigned&&(teamPackerFilter==='all'||teamPackerFilter==='__unassigned__');
+  const unassignedCol=showUnassigned
     ?'<div class="pk-team-col">'+
       '<div class="pk-team-col-header pk-team-col-header-warn">⚠️ Unassigned <span class="sh-count">('+unassigned.pending.length+' left)</span></div>'+
       unassigned.pending.map(item=>packCardHtml(item,dupIds)).join('')+
@@ -7237,12 +7260,17 @@ function renderPackerTeamView(){
     '</div>'
     :'';
 
+  const visiblePackers=teamPackerFilter==='all'?perPacker
+    :teamPackerFilter==='__unassigned__'?[]
+    :perPacker.filter(r=>r.packer.name===teamPackerFilter);
+
   grid.innerHTML=
     renderCurrentOrderStack()+
     renderPackerTeamSummary(summaryRows)+
+    renderTeamPackerFilterPills(hasUnassigned)+
     '<div class="pk-team-grid">'+
     unassignedCol+
-    perPacker.map(({packer:p,done,pending})=>
+    visiblePackers.map(({packer:p,done,pending})=>
       '<div class="pk-team-col">'+
         '<div class="pk-team-col-header">'+escH(p.name)+' <span class="sh-count">('+done.length+' done, '+pending.length+' left)</span></div>'+
         (pending.length?pending.map(item=>packCardHtml(item,dupIds)).join(''):(done.length?'':'<div class="to-empty" style="padding:14px 8px">Nothing queued ✓</div>'))+
