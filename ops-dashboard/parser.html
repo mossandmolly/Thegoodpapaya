@@ -6544,6 +6544,13 @@ function effectivePackerIdForItem(item){
 // the group name computed per order here must match deriveGroupKey's own
 // output exactly, or a reordered stack would silently not apply to actual
 // packer queues even though it does apply to the group-level views.
+//
+// Time-sensitivity escalates the WHOLE society, not just the one order
+// that's actually close to its deadline — same rule sortGroupsByPriority
+// already applies when ranking society listings. Otherwise a rider would
+// get handed one urgent order out of a society while every other order
+// from that same society sits wherever its own rank happens to put it,
+// defeating the point of packing a society together.
 function orderItemsByQueuePriority(items){
   const bySoid={};
   items.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
@@ -6551,18 +6558,30 @@ function orderItemsByQueuePriority(items){
     const o=packerCustomerMap[soid]||{};
     const community=matchCommunityPriority(o.society||o.customer_name);
     const groupName=community?community.display_name:deriveSociety(o.customer_name);
-    return{soid,items:bySoid[soid],rank:community?.rank??Infinity,
-      timeConstrained:isTimeConstrainedOrder(o.deliver_by),
-      deadlineMins:minutesToDeadline(o.deliver_by),
+    return{soid,items:bySoid[soid],rank:community?.rank??Infinity,groupName,
+      ownTimeConstrained:isTimeConstrainedOrder(o.deliver_by),
+      ownDeadlineMins:minutesToDeadline(o.deliver_by),
       createdAt:o.created_at?new Date(o.created_at).getTime():Infinity,
       override:priorityOverrideByGroup[groupName]};
+  });
+  // A society escalates the moment ANY one of its orders is time-
+  // constrained, using that society's soonest such deadline.
+  const groupDeadline={};
+  orderMeta.forEach(m=>{
+    if(m.ownTimeConstrained&&(!(m.groupName in groupDeadline)||m.ownDeadlineMins<groupDeadline[m.groupName])){
+      groupDeadline[m.groupName]=m.ownDeadlineMins;
+    }
+  });
+  orderMeta.forEach(m=>{
+    m.timeConstrained=m.groupName in groupDeadline;
+    m.deadlineMins=m.timeConstrained?groupDeadline[m.groupName]:Infinity;
   });
   orderMeta.sort((a,b)=>{
     if(a.override!=null&&b.override!=null)return a.override-b.override;
     if(a.override!=null)return -1;
     if(b.override!=null)return 1;
     if(a.timeConstrained!==b.timeConstrained)return a.timeConstrained?-1:1;
-    if(a.timeConstrained)return a.deadlineMins-b.deadlineMins; // both constrained: soonest deadline first
+    if(a.timeConstrained)return a.deadlineMins-b.deadlineMins; // both constrained: soonest society deadline first
     if(a.rank!==b.rank)return a.rank-b.rank;
     return a.createdAt-b.createdAt; // same society/tier: earliest-placed order first
   });
