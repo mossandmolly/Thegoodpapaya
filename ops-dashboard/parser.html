@@ -6500,10 +6500,10 @@ function setPackerScope(scope){
 // computePackerQueue() below, so a packer never has to decide what's next.
 let packerViewMode='grid'; // 'grid' | 'single'
 
-// The owner's rule is exactly "packing must start now to make T-90" — a
+// The owner's rule is exactly "packing must start now to make T-120" — a
 // separate constant from PACK_TO_DELIVERY_BUFFER_MIN/ESCALATE_LEAD_MIN
 // above, which power Trip view's own, different escalation display.
-const PACKER_QUEUE_TIME_BUFFER_MIN=90;
+const PACKER_QUEUE_TIME_BUFFER_MIN=120;
 function isTimeConstrainedOrder(deliverBy){
   const mins=minutesToDeadline(deliverBy);
   return mins!=null&&mins<=PACKER_QUEUE_TIME_BUFFER_MIN;
