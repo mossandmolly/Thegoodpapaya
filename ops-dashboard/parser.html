@@ -526,6 +526,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab" onclick="switchTab('pnl')" id="tab-pnl">📈 P&amp;L</button>
   <button class="tab" onclick="switchTab('purchases')" id="tab-purchases" style="margin-left:auto">🧺 Purchases</button>
   <button class="tab" onclick="openQuickAdd()" id="tab-quickadd">⚡ Quick Add</button>
+  <button class="tab" onclick="openAdhocPaymentLink()" id="tab-adhoc-pay">💳 Payment Link</button>
 </div>
 
 <!-- PARSER -->
@@ -925,6 +926,28 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div class="modal-actions">
       <button class="btn-sec" id="reassign-packer-cancel" style="margin-bottom:0">Cancel</button>
       <button class="btn-parse" id="reassign-packer-confirm" style="margin-bottom:0">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- AD-HOC PAYMENT LINK MODAL — standalone Razorpay link, not tied to any
+     sales order/invoice (e.g. a one-off collection over the phone). Deliberately
+     omits sales_order_id from the Razorpay notes, so the payment webhook is a
+     safe no-op for it — nothing gets auto-recorded, this is purely a
+     convenience for generating a link to send the customer. -->
+<div class="modal-overlay hidden" id="adhoc-pay-modal">
+  <div class="modal-box">
+    <h3>Create payment link</h3>
+    <label class="modal-label">Phone number</label>
+    <input type="text" id="adhoc-pay-phone" placeholder="10-digit phone number">
+    <label class="modal-label" style="margin-top:10px">Amount (₹)</label>
+    <input type="number" id="adhoc-pay-amount" placeholder="e.g. 500" min="1" step="0.01">
+    <label class="modal-label" style="margin-top:10px">Description (optional)</label>
+    <input type="text" id="adhoc-pay-desc" placeholder="e.g. Advance for next week">
+    <div id="adhoc-pay-result" class="hidden" style="margin-top:10px;padding:8px;background:#f4f4f4;border-radius:6px;word-break:break-all;font-size:13px"></div>
+    <div class="modal-actions">
+      <button class="btn-sec" id="adhoc-pay-cancel" style="margin-bottom:0">Close</button>
+      <button class="btn-parse" id="adhoc-pay-confirm" style="margin-bottom:0">Create link</button>
     </div>
   </div>
 </div>
@@ -1471,14 +1494,14 @@ function applyRoleRestrictions(){
     });
   }
   if(isBuyerRole){
-    ['tab-parser','tab-live','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd'].forEach(id=>{
+    ['tab-parser','tab-live','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd','tab-adhoc-pay'].forEach(id=>{
       const el=document.getElementById(id);
       if(el)el.style.display='none';
     });
     return;
   }
   if(!isDeliveryRole)return;
-  ['tab-parser','tab-live','tab-today','tab-packer','tab-stock','tab-purchases','tab-quickadd'].forEach(id=>{
+  ['tab-parser','tab-live','tab-today','tab-packer','tab-stock','tab-purchases','tab-quickadd','tab-adhoc-pay'].forEach(id=>{
     const el=document.getElementById(id);
     if(el)el.style.display='none';
   });
@@ -8530,6 +8553,48 @@ document.getElementById('dv-remark-save').addEventListener('click',async()=>{
       uxAlert(e.message);
       await loadDeliveryView();
     }
+  }
+});
+
+// ── Ad-hoc payment link (Order Overview, next to Quick Add) ──────────────
+// Standalone Razorpay link with no sales_order_id — see the modal's own
+// comment for why that's safe (razorpay-webhook no-ops cleanly without one).
+const adhocPayModal=document.getElementById('adhoc-pay-modal'),
+  adhocPayPhone=document.getElementById('adhoc-pay-phone'),
+  adhocPayAmount=document.getElementById('adhoc-pay-amount'),
+  adhocPayDesc=document.getElementById('adhoc-pay-desc'),
+  adhocPayResult=document.getElementById('adhoc-pay-result');
+
+function openAdhocPaymentLink(){
+  adhocPayPhone.value='';
+  adhocPayAmount.value='';
+  adhocPayDesc.value='';
+  adhocPayResult.classList.add('hidden');
+  adhocPayResult.textContent='';
+  adhocPayModal.classList.remove('hidden');
+}
+
+document.getElementById('adhoc-pay-cancel').addEventListener('click',()=>{adhocPayModal.classList.add('hidden');});
+
+document.getElementById('adhoc-pay-confirm').addEventListener('click',async()=>{
+  const phone=adhocPayPhone.value.trim();
+  const amount=parseFloat(adhocPayAmount.value);
+  const description=adhocPayDesc.value.trim();
+  if(!isValidPhoneForPayment(phone)){uxAlert('Enter a valid phone number (8-14 digits).');return;}
+  if(!amount||amount<=0){uxAlert('Enter a valid amount.');return;}
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/create-adhoc-payment-link',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({phone,amount,description}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not generate payment link');
+    adhocPayResult.classList.remove('hidden');
+    adhocPayResult.innerHTML='✅ Link created: <a href="'+escH(data.payment_url)+'" target="_blank">'+escH(data.payment_url)+'</a> '+
+      '<button class="btn-sec" style="margin-left:8px" onclick="navigator.clipboard.writeText('+escH(JSON.stringify(data.payment_url))+').then(()=>uxAlert(\'Copied!\'))">Copy</button>';
+  }catch(e){
+    uxAlert('Failed: '+e.message);
   }
 });
 
