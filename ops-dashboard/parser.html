@@ -8582,6 +8582,10 @@ document.getElementById('adhoc-pay-confirm').addEventListener('click',async()=>{
   const description=adhocPayDesc.value.trim();
   if(!isValidPhoneForPayment(phone)){uxAlert('Enter a valid phone number (8-14 digits).');return;}
   if(!amount||amount<=0){uxAlert('Enter a valid amount.');return;}
+  const btn=document.getElementById('adhoc-pay-confirm');
+  const original=btn.textContent;
+  btn.innerHTML='<span class="spinner"></span>Creating…';
+  btn.style.pointerEvents='none';
   try{
     const res=await fetch(SUPABASE_URL+'/functions/v1/create-adhoc-payment-link',{
       method:'POST',
@@ -8595,6 +8599,9 @@ document.getElementById('adhoc-pay-confirm').addEventListener('click',async()=>{
       '<button class="btn-sec" style="margin-left:8px" onclick="navigator.clipboard.writeText('+escH(JSON.stringify(data.payment_url))+').then(()=>uxAlert(\'Copied!\'))">Copy</button>';
   }catch(e){
     uxAlert('Failed: '+e.message);
+  }finally{
+    btn.textContent=original;
+    btn.style.pointerEvents='';
   }
 });
 
