@@ -219,6 +219,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .cs-time-chip .cs-time-label{font-size:9px;text-transform:uppercase;letter-spacing:0.3px;color:#8a7a6a}
 .cs-time-chip .cs-time-strong{font-size:13px;font-weight:800;color:#2b2320}
 .cs-trip-houses{margin-top:6px;font-size:11px;color:#5c4f42}
+.rt-legend{display:flex;gap:14px;align-items:center;font-size:11px;color:#8a7a6a;margin-bottom:10px}
+.rt-legend-dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:middle}
+.rt-legend-dot.rt-active{background:#e8720c}
+.rt-legend-dot.rt-idle{background:#eee0d0;border:1px solid #e0cfb0}
+.rt-axis{position:relative;height:14px;margin:0 0 6px}
+.rt-axis-tick{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap;font-size:9px;color:#8a7a6a}
+.rt-row{padding:8px 0;border-bottom:1px solid #f0dfc8}
+.rt-row:last-child{border-bottom:none;padding-bottom:0}
+.rt-row:first-child{padding-top:0}
+.rt-row-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:14px;font-weight:800;color:#2b2320;margin-bottom:6px}
+.rt-row-head .rt-row-meta{font-size:11px;font-weight:600;color:#8a7a6a}
+.rt-bar{position:relative;height:22px;background:#eee0d0;border-radius:5px;overflow:hidden}
+.rt-bar-tick{position:absolute;top:0;bottom:0;width:1px;background:rgba(0,0,0,0.07)}
+.rt-seg{position:absolute;top:2px;bottom:2px;background:#e8720c;border-radius:4px;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.35)}
 .dv-cancelled-items{font-size:12px;color:#8a7a6a;text-decoration:line-through}
 .rider-badge{font-size:12px;color:#5c4f42;cursor:pointer;margin-right:14px}
 .rider-badge:hover{text-decoration:underline}
@@ -5976,6 +5990,29 @@ function renderOfdRiderSummary(active,tripInfo){
 // Never-dispatched leftovers (see isLeftoverOrder) belong to no rider, so
 // they're not shown here — they're already highlighted on every order
 // card and listed in the Not Dispatched by Cluster box above.
+// Formats a millisecond duration as "1h 20m" / "42m" — used only by the
+// timeline's idle readout below.
+function formatDurationShort(ms){
+  const mins=Math.round(ms/60000);
+  if(mins<1)return '<1m';
+  const h=Math.floor(mins/60),m=mins%60;
+  return h?(h+'h'+(m?' '+m+'m':'')):(m+'m');
+}
+
+// Single shared-hour-axis timeline, one row per rider, replacing the old
+// per-trip Start/End card list — answers "what was each rider doing, and
+// when were they idle" at a glance instead of reading every trip block one
+// at a time. Runs are computed exactly as before (computeRunStats over
+// mergeOverlappingRuns, same "nothing landed yet -> not past" filter) —
+// this only changes the DISPLAY. A run still holding an 'ofd' order extends
+// its bar to "now" instead of stopping at its last delivery so far, same
+// "extend to now" convention tripProgressBarHtml already uses for a
+// single trip's own bar. All riders share one hour axis (rounded out to
+// the whole hour spanning every rider's earliest start to latest
+// end/now) so their bars are directly comparable top to bottom.
+// "Idle" is the gap between one of a rider's OWN runs ending and their
+// next one starting — not the time before their first run or after their
+// last, since neither of those is time they were "supposed" to be out.
 function renderPastTripsSummary(active,tripInfo){
   const el=document.getElementById('to-past-trips-summary');
   if(!el)return;
@@ -6003,34 +6040,60 @@ function renderPastTripsSummary(active,tripInfo){
   const riderNames=Object.keys(byRider).sort();
   if(!riderNames.length){el.innerHTML='';return;}
 
-  const riderRows=riderNames.map(rider=>{
-    const runs=mergeOverlappingRuns(byRider[rider],stat=>stat.end);
+  const now=Date.now();
+  const riderData=riderNames.map(rider=>{
+    const runs=mergeOverlappingRuns(byRider[rider],stat=>stat.end)
+      .map(r=>{
+        const stillOut=r.orders.some(o=>o.deliveryStatus==='ofd');
+        return{...r,segStart:r.stat.start,segEnd:stillOut?now:(r.stat.end||r.stat.start),stillOut};
+      })
+      .sort((a,b)=>a.segStart-b.segStart);
     const totalDelivered=runs.reduce((n,r)=>n+r.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered').length,0);
-    const blocks=runs.map(r=>{
-      const deliveredOrders=r.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered');
-      const stillOut=r.orders.filter(o=>o.deliveryStatus==='ofd').length;
-      return '<div class="cs-trip-block">'+
-        '<div class="cs-trip-line">'+
-          '<span class="cs-trip-tag">'+runTripLabel(r)+'</span>'+
-          '<span class="cs-time-chip"><span class="cs-time-label">Start</span><span class="cs-time-strong">'+fmtTripTime(r.stat.start)+'</span></span>'+
-          '<span class="cs-time-chip"><span class="cs-time-label">End</span><span class="cs-time-strong">'+fmtTripTime(r.stat.end)+'</span></span>'+
-          '<span>'+deliveredOrders.length+' delivered'+(stillOut?' · '+stillOut+' still out':'')+'</span>'+
-        '</div>'+
-        tripProgressBarHtml(r.stat)+
-        '<div class="cs-trip-houses">'+deliveredOrders.map(o=>escH(o.customer)).join(', ')+'</div>'+
-      '</div>';
-    }).join('');
-    const latestEnd=Math.max(0,...runs.map(r=>r.stat.end||0));
-    return{end:latestEnd,html:
-      '<div class="cs-rider-block">'+
-        '<div class="cs-rider-name">✅ '+escH(rider)+' <span class="cs-rider-count">— '+totalDelivered+' delivered</span></div>'+
-        blocks+
-      '</div>'};
+    let idleMs=0;
+    for(let i=1;i<runs.length;i++){
+      const gap=runs[i].segStart-runs[i-1].segEnd;
+      if(gap>0)idleMs+=gap;
+    }
+    const latestEnd=Math.max(0,...runs.map(r=>r.segEnd));
+    return{rider,runs,totalDelivered,idleMs,latestEnd};
   });
-  riderRows.sort((a,b)=>b.end-a.end); // rider with the most recently completed delivery first
+  riderData.sort((a,b)=>b.latestEnd-a.latestEnd); // rider with the most recently completed delivery first
+
+  const axisStartRaw=Math.min(...riderData.flatMap(r=>r.runs.map(x=>x.segStart)));
+  const axisEndRaw=Math.max(...riderData.flatMap(r=>r.runs.map(x=>x.segEnd)));
+  const axisStartHour=new Date(axisStartRaw);axisStartHour.setMinutes(0,0,0);
+  const axisEndHour=new Date(axisEndRaw);axisEndHour.setMinutes(0,0,0);axisEndHour.setHours(axisEndHour.getHours()+1);
+  const axisStartMs=axisStartHour.getTime(),axisEndMs=axisEndHour.getTime();
+  const axisSpan=Math.max(axisEndMs-axisStartMs,3600000);
+  const pctOf=ms=>Math.min(100,Math.max(0,((ms-axisStartMs)/axisSpan)*100));
+
+  const hourTicks=[];
+  for(let t=axisStartMs;t<=axisEndMs;t+=3600000)hourTicks.push(t);
+  const tickHtml=hourTicks.map(t=>'<div class="rt-bar-tick" style="left:'+pctOf(t).toFixed(2)+'%"></div>').join('');
+  const axisHtml='<div class="rt-axis">'+hourTicks.map(t=>
+    '<span class="rt-axis-tick" style="left:'+pctOf(t).toFixed(2)+'%">'+escH(new Date(t).toLocaleTimeString([],{hour:'numeric'}))+'</span>'
+  ).join('')+'</div>';
+  const legendHtml='<div class="rt-legend">'+
+    '<span><span class="rt-legend-dot rt-active"></span>Delivering</span>'+
+    '<span><span class="rt-legend-dot rt-idle"></span>Idle</span>'+
+  '</div>';
+
+  const rowsHtml=riderData.map(({rider,runs,totalDelivered,idleMs})=>{
+    const segsHtml=runs.map(r=>{
+      const left=pctOf(r.segStart),width=Math.max(pctOf(r.segEnd)-left,0.6);
+      const houses=r.orders.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered').map(o=>o.customer).join(', ');
+      const tip=runTripLabel(r)+' · '+fmtTripTime(r.segStart)+'–'+(r.stillOut?'still out':fmtTripTime(r.segEnd))+' · '+houses;
+      return '<div class="rt-seg" style="left:'+left.toFixed(2)+'%;width:'+width.toFixed(2)+'%" title="'+escH(tip)+'" onclick="uxAlert('+escH(JSON.stringify(tip))+')"></div>';
+    }).join('');
+    const idleLabel=idleMs>0?' · Idle '+formatDurationShort(idleMs):'';
+    return '<div class="rt-row">'+
+      '<div class="rt-row-head">✅ '+escH(rider)+' <span class="rt-row-meta">— '+totalDelivered+' delivered'+idleLabel+'</span></div>'+
+      '<div class="rt-bar">'+tickHtml+segsHtml+'</div>'+
+    '</div>';
+  }).join('');
 
   const totalDeliveredToday=active.filter(o=>o.deliveryStatus==='delivered'||o.deliveryStatus==='partially_delivered').length;
-  el.innerHTML=summaryBoxHtml('past','📜 Past Deliveries — By Rider ('+totalDeliveredToday+')',riderRows.map(r=>r.html).join(''));
+  el.innerHTML=summaryBoxHtml('past','📜 Past Deliveries — By Rider ('+totalDeliveredToday+')',legendHtml+axisHtml+rowsHtml);
 }
 
 // One shared checkbox selection drives all three bulk actions — each button
