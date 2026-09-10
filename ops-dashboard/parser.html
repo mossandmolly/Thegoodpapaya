@@ -185,6 +185,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .vp-sortable:hover{color:#2d6b2d}
 .vp-sort-ind{margin-left:4px;font-size:10px}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
+.deliver-by-badge.deliver-by-default{background:#8a7a6a}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
 .replacement-only-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
 .paid-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
@@ -1178,17 +1179,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 
   <div class="config-section">
     <h3>🎯 Community Priority <span style="font-size:11px;color:#8a7a6a;font-weight:400">(drives the Packer tab's Single Card queue order)</span></h3>
-    <p class="note">Separate, hand-curated list from Communities above — used only by the Packer tab's Single Card queue (and, for grouping/display purposes, Order Overview/Packer/Delivery's Flat view). Each row has a unique ID and one or more keyword phrases; if an order's society (or customer name, as fallback) CONTAINS any of a community's keywords — e.g. "srp" and "royal pavilion" both mapping to the same community — it gets that community's rank. Lower rank packs first; blank rank sorts last. Keywords are comma-separated and replace the whole list when you save a row; each keyword phrase can only belong to one community. Every field here — including the Unique ID itself — can be edited in place; renaming a Unique ID automatically carries its keywords and any combinable group membership along with it.</p>
+    <p class="note">Separate, hand-curated list from Communities above — used only by the Packer tab's Single Card queue (and, for grouping/display purposes, Order Overview/Packer/Delivery's Flat view). Each row has a unique ID and one or more keyword phrases; if an order's society (or customer name, as fallback) CONTAINS any of a community's keywords — e.g. "srp" and "royal pavilion" both mapping to the same community — it gets that community's rank. Lower rank packs first; blank rank sorts last. Keywords are comma-separated and replace the whole list when you save a row; each keyword phrase can only belong to one community. Every field here — including the Unique ID itself — can be edited in place; renaming a Unique ID automatically carries its keywords and any combinable group membership along with it. Default deliver-by is a standing policy time (e.g. "16:30" for "Iksha society by 4:30") used ONLY when an order in that community has no deadline of its own set — an order's own deliver_by always wins. It feeds the same Time Sensitive escalation as a real deadline would, on both Order Overview and the Packer queue, and shows as a muted "(default)" badge on Order Overview.</p>
     <div class="add-row">
       <input type="text" id="new-cp-id" placeholder="Unique ID (e.g. srp)" style="max-width:160px">
       <input type="text" id="new-cp-name" placeholder="Display name">
       <input type="number" id="new-cp-rank" placeholder="Rank" style="max-width:90px">
       <input type="text" id="new-cp-keywords" placeholder="Keywords, comma-separated" style="flex:2">
+      <input type="time" id="new-cp-deadline" title="Default deliver-by (optional) — used only when an order has no deadline of its own" style="max-width:110px">
       <button onclick="addCommunityPriority()">Add</button>
     </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Unique ID</th><th>Display name</th><th>Rank</th><th>Keywords (comma-separated)</th><th></th>
+        <th>Unique ID</th><th>Display name</th><th>Rank</th><th>Keywords (comma-separated)</th><th>Default deliver-by</th><th></th>
       </tr></thead><tbody id="community-priority-tbody"></tbody></table>
     </div>
   </div>
@@ -2021,6 +2023,7 @@ function renderCommunityPriorityTable(){
       '<td><input type="text" id="cp-name-'+escH(c.unique_id)+'" value="'+escH(c.display_name)+'"></td>'+
       '<td><input type="number" id="cp-rank-'+escH(c.unique_id)+'" value="'+(c.rank??'')+'"></td>'+
       '<td><input type="text" id="cp-kw-'+escH(c.unique_id)+'" value="'+escH((c.keywords||[]).join(', '))+'"></td>'+
+      '<td><input type="time" id="cp-deadline-'+escH(c.unique_id)+'" value="'+(c.default_deliver_by?c.default_deliver_by.slice(0,5):'')+'" title="Default deliver-by (optional)"></td>'+
       '<td style="white-space:nowrap">'+
         '<button class="del-btn" style="color:#2d6b2d" onclick="saveCommunityPriority('+escH(JSON.stringify(c.unique_id))+')" title="Save">💾</button>'+
         '<button class="del-btn" onclick="deleteCommunityPriority('+escH(JSON.stringify(c.unique_id))+')" title="Delete">✕</button>'+
@@ -2036,12 +2039,13 @@ async function saveCommunityPriority(oldId){
   if(newId!==oldId&&communityPriorityCache[newId]){uxAlert('"'+newId+'" already exists — pick a different unique ID');return;}
   const rank=document.getElementById('cp-rank-'+oldId).value;
   const keywords=document.getElementById('cp-kw-'+oldId).value.split(',').map(k=>k.trim()).filter(Boolean);
+  const deadline=document.getElementById('cp-deadline-'+oldId).value||null;
   // unique_id is the primary key that community_priority_keywords and
   // community_combinable_group_members both reference with ON UPDATE
   // CASCADE (migrations 108/109) — renaming it is just this one update,
   // Postgres carries every child row over to the new id automatically.
   const{error:updErr}=await sb.from('community_priority').update({
-    unique_id:newId,display_name:name,rank:rank===''?null:parseInt(rank,10),
+    unique_id:newId,display_name:name,rank:rank===''?null:parseInt(rank,10),default_deliver_by:deadline,
   }).eq('unique_id',oldId);
   if(updErr){uxAlert('Failed to save: '+updErr.message);return;}
   // Replace, don't merge — same convention as packer fruit assignment above.
@@ -2060,14 +2064,15 @@ async function saveCommunityPriority(oldId){
 
 async function addCommunityPriority(){
   const idEl=document.getElementById('new-cp-id'),nameEl=document.getElementById('new-cp-name'),
-        rankEl=document.getElementById('new-cp-rank'),kwEl=document.getElementById('new-cp-keywords');
+        rankEl=document.getElementById('new-cp-rank'),kwEl=document.getElementById('new-cp-keywords'),
+        deadlineEl=document.getElementById('new-cp-deadline');
   const uniqueId=idEl.value.trim().toLowerCase();
   const name=nameEl.value.trim();
   if(!uniqueId||!name){uxAlert('Unique ID and display name are both required');return;}
   if(communityPriorityCache[uniqueId]){uxAlert('"'+uniqueId+'" already exists');return;}
   const rank=rankEl.value;
   const{error:insErr}=await sb.from('community_priority').insert({
-    unique_id:uniqueId,display_name:name,rank:rank===''?null:parseInt(rank,10),
+    unique_id:uniqueId,display_name:name,rank:rank===''?null:parseInt(rank,10),default_deliver_by:deadlineEl.value||null,
   });
   if(insErr){uxAlert('Failed to add: '+insErr.message);return;}
   const keywords=kwEl.value.split(',').map(k=>k.trim()).filter(Boolean);
@@ -2077,7 +2082,7 @@ async function addCommunityPriority(){
     );
     if(kwErr)uxAlert('Community added, but failed to save keywords (a keyword phrase can only belong to one community): '+kwErr.message);
   }
-  idEl.value='';nameEl.value='';rankEl.value='';kwEl.value='';
+  idEl.value='';nameEl.value='';rankEl.value='';kwEl.value='';deadlineEl.value='';
   await loadCommunityPriorityConfig();
 }
 
@@ -3731,10 +3736,14 @@ function renderOrdersList(){
         // Shown on the right end of the header, next to the rider tag/expand
         // caret, not inline with the other left-side status badges.
         const paidPill=(!cancelled&&fullyInvoiced&&!order.isPickup)?paidStatusBadgeHtml(order):'';
+        const deliverWindow=cancelled?null:deliveryWindowLabelWithDefault(order);
+        const deliverWindowBadge=deliverWindow
+          ?' <span class="deliver-by-badge'+(deliverWindow.isDefault?' deliver-by-default':'')+'">⏰ '+escH(deliverWindow.label)+'</span>'
+          :'';
         const statusBadges=(order.isPickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
           (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
-          (!cancelled&&deliveryWindowLabel(order)?' <span class="deliver-by-badge">⏰ '+escH(deliveryWindowLabel(order))+'</span>':'')+
+          deliverWindowBadge+
           (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus):'')+
           (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'')+
           (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'')+
@@ -3974,6 +3983,20 @@ function deliveryWindowLabel(order){
   return null;
 }
 
+// Falls back to the order's society's default_deliver_by (Config ->
+// Community Priority) when the order itself has no explicit deliver_by/
+// deliver_after — a standing ops policy ("Iksha society by 4:30") rather
+// than something this particular customer asked for, so it's worded and
+// styled differently (deliver-by-default, muted) to avoid the two being
+// mistaken for each other. Returns null if neither exists.
+function deliveryWindowLabelWithDefault(order){
+  const explicit=deliveryWindowLabel(order);
+  if(explicit)return{label:explicit,isDefault:false};
+  const community=matchCommunityPriority(order.society||order.customer);
+  if(!community?.default_deliver_by)return null;
+  return{label:'by '+community.default_deliver_by.slice(0,5)+' (default)',isDefault:true};
+}
+
 // Shared with the Delivery tab's per-card badge (renderDeliveryCard) so
 // Overview shows the exact same wording/color for the exact same underlying
 // orders.delivery_status — 'not_dispatched' is the DB column's default
@@ -4181,7 +4204,14 @@ function deliveryWindowBadgesHtml(orders){
     const l=deliveryWindowLabel(o);
     if(l)labels.add(l);
   });
-  return deliveryWindowBadgesFromSet(labels);
+  if(labels.size)return deliveryWindowBadgesFromSet(labels);
+  // No order in this group has a deadline of its own — fall back to the
+  // group's community default_deliver_by (Config -> Community Priority), if
+  // any, so a collapsed header still shows the standing policy deadline.
+  const rep=orders.find(o=>o.orderStatus!=='cancelled');
+  const community=rep&&matchCommunityPriority(rep.society||rep.customer);
+  if(!community?.default_deliver_by)return '';
+  return ' <span class="deliver-by-badge deliver-by-default">⏰ by '+escH(community.default_deliver_by.slice(0,5))+' (default)</span>';
 }
 
 // Fill color progresses red -> amber -> green as completion rises, rather
@@ -4513,7 +4543,11 @@ function sortGroupsByPriority(groupNames,ordersByName){
     orders.forEach(o=>{
       const community=matchCommunityPriority(o.society||o.customer);
       if(community&&community.rank!=null&&community.rank<rank)rank=community.rank;
-      const mins=minutesToDeadline(o.deliverBy);
+      // An order's own deadline always wins; a community's default_deliver_by
+      // (Config -> Community Priority) only fills in when the order has none
+      // of its own — a standing policy like "Iksha society by 4:30", not a
+      // customer's own request.
+      const mins=minutesToDeadline(o.deliverBy||community?.default_deliver_by);
       if(mins!=null&&mins<=PACKER_QUEUE_TIME_BUFFER_MIN){
         timeConstrained=true;
         if(mins<deadlineMins)deadlineMins=mins;
@@ -6641,9 +6675,14 @@ function orderItemsByQueuePriority(items){
     const o=packerCustomerMap[soid]||{};
     const community=matchCommunityPriority(o.society||o.customer_name);
     const groupName=community?community.display_name:deriveSociety(o.customer_name);
+    // An order's own deliver_by always wins; the community's
+    // default_deliver_by (Config -> Community Priority) only fills in when
+    // this order has no deadline of its own — same fallback rule
+    // sortGroupsByPriority applies for the Time Sensitive listing views.
+    const effectiveDeliverBy=o.deliver_by||community?.default_deliver_by;
     return{soid,items:bySoid[soid],rank:community?.rank??Infinity,groupName,
-      ownTimeConstrained:isTimeConstrainedOrder(o.deliver_by),
-      ownDeadlineMins:minutesToDeadline(o.deliver_by),
+      ownTimeConstrained:isTimeConstrainedOrder(effectiveDeliverBy),
+      ownDeadlineMins:minutesToDeadline(effectiveDeliverBy),
       createdAt:o.created_at?new Date(o.created_at).getTime():Infinity,
       override:priorityOverrideByGroup[groupName]};
   });

@@ -1,0 +1,17 @@
+-- Per-community default delivery deadline (e.g. "Iksha society by 4:30 PM")
+-- — a standing ops policy, not something set per order. Lives on
+-- community_priority (the new, hand-curated table from migration 108 that
+-- already drives Order Overview's Time Sensitive view and the Packer
+-- queue), NOT the older communities.no_later_than column: that column
+-- exists but is dead — nothing has ever read it — and communities.name is
+-- keyed by deriveSociety() (customer-name parsing), a different identity
+-- space from community_priority's keyword-matched display_name that
+-- already powers Order Overview's actual grouping/ranking. Reactivating
+-- old, never-consumed no_later_than values could silently surface stale
+-- data nobody expects; a fresh column here has no such risk.
+--
+-- "HH:MM" 24-hour text, same format/convention as orders.deliver_by — an
+-- order's OWN deliver_by always wins when set; this is only the fallback
+-- used when an order has no explicit deadline of its own (see
+-- sortGroupsByPriority/orderItemsByQueuePriority in parser.html).
+alter table public.community_priority add column if not exists default_deliver_by text;
