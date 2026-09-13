@@ -312,6 +312,23 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .stock-wastage.stock-wastage-none{background:#e3f3e3;color:#2d6b2d}
 .del-btn{background:none;border:none;color:#b3261e;cursor:pointer;font-size:14px;padding:0 4px}
 .edit-btn{background:none;border:none;color:#2f6690;cursor:pointer;font-size:14px;padding:0 4px}
+.bc-box{background:#fffdf9;border:1px solid #f0dfc8;border-radius:8px;padding:14px;margin-bottom:14px}
+.bc-summary{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-bottom:12px;font-size:13px}
+.bc-summary b{font-size:15px}
+.bc-diff-pos{color:#b3261e}
+.bc-diff-neg{color:#2d6b2d}
+.bc-section-title{font-weight:700;font-size:13px;margin:12px 0 6px;color:#2b2320}
+.bc-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12px;padding:7px 9px;border-radius:6px;margin-bottom:5px}
+.bc-row.bc-missing{background:#fff3b0}
+.bc-row.bc-extra{background:#fbe9e7}
+.bc-row.bc-mismatch{background:#eaf1f7}
+.bc-row-name{font-weight:700;flex:1;min-width:110px}
+.bc-row-detail{color:#5c4f42}
+.bc-row-actions{display:flex;gap:6px;margin-left:auto}
+.bc-row-actions button{font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid #d9c7a8;background:#ffffff;cursor:pointer;font-family:inherit}
+.bc-row-actions button:disabled{opacity:0.5;cursor:not-allowed}
+.bc-row-actions button.bc-act-primary{background:#e8720c;border-color:#e8720c;color:#ffffff}
+.bc-empty-note{font-size:12px;color:#8a7a6a;margin-bottom:6px}
 .add-row{display:flex;gap:8px;margin-top:10px}
 .add-row input{flex:1;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;color:#2b2320;font-size:12px;font-family:inherit}
 .add-row input::placeholder{color:#8a7a6a}
@@ -803,6 +820,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <button type="button" class="date-nav-btn" id="purchases-date-next" onclick="setViewDate(addDays(viewDate,1))" title="Next day">›</button>
     </div>
   </div>
+  <button class="btn-sec" onclick="openBuyerCompareModal()" style="margin-bottom:12px">🔍 Compare with buyer text</button>
+  <div id="buyer-compare-results"></div>
   <input type="text" class="pk-search" id="purchases-search" placeholder="🔍 Search fruit..." oninput="renderPurchasesTable()">
   <div class="stock-table-wrap">
     <table class="community-table" id="purchases-table"><thead><tr>
@@ -963,6 +982,24 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <div class="modal-actions">
       <button class="btn-sec" id="adhoc-pay-cancel" style="margin-bottom:0">Close</button>
       <button class="btn-parse" id="adhoc-pay-confirm" style="margin-bottom:0">Create link</button>
+    </div>
+  </div>
+</div>
+
+<!-- BUYER TEXT COMPARE MODAL — paste the buyer's rough WhatsApp-style purchase
+     report; parse-buyer-purchase-text (AI) turns it into structured
+     item/expense rows, compared client-side against today's stock_purchases/
+     daily_expenses. Results render into #buyer-compare-results in the
+     Purchases panel itself, not in this modal — the modal just closes once
+     parsing succeeds. -->
+<div class="modal-overlay hidden" id="buyer-compare-modal">
+  <div class="modal-box">
+    <h3>Compare with buyer text</h3>
+    <p class="note" style="margin-top:0">Paste the buyer's message listing what was bought (and any costs/expenses) for <b id="buyer-compare-date"></b>. This compares it against what's already logged below and shows what's missing, extra, or different.</p>
+    <textarea id="buyer-compare-text" rows="8" placeholder="e.g. Papaya 55kg 2370, Watermelon 30kg 450, transport 500..."></textarea>
+    <div class="modal-actions">
+      <button class="btn-sec" id="buyer-compare-cancel" style="margin-bottom:0">Cancel</button>
+      <button class="btn-parse" id="buyer-compare-confirm" style="margin-bottom:0">Compare</button>
     </div>
   </div>
 </div>
@@ -10206,6 +10243,313 @@ async function deleteExpense(id){
   const idx=expensesRows.findIndex(r=>r.id===id);
   if(idx>-1)expensesRows.splice(idx,1);
   renderExpensesTable();
+}
+
+// ── Compare with buyer text (Purchases tab) ──────────────────────────────
+// Parses the buyer's rough WhatsApp-style purchase report (parse-buyer-
+// purchase-text, AI) and diffs it against what's already logged in
+// stock_purchases/daily_expenses for viewDate — the same two tables/rows
+// (purchasesRows/expensesRows) the tables just below already render, so
+// every write here just calls loadPurchasesView() to pick the change up
+// everywhere (Stock tab's own live aggregation off stock_purchases
+// included, automatically — no separate "stock" write needed).
+// Matching grain: purchases by item_name (case-insensitive), expenses by
+// category (the one field a buyer's rough text and a logged expense can
+// actually be expected to agree on — description is free text on both
+// sides and won't line up word-for-word).
+let buyerCompareDiff=null; // {purchases:{missing,extra,mismatch}, expenses:{...}, buyerTotal, systemTotal}
+let bcRowKeySeq=0;
+
+const buyerCompareModal=document.getElementById('buyer-compare-modal'),
+  buyerCompareText=document.getElementById('buyer-compare-text');
+
+function openBuyerCompareModal(){
+  document.getElementById('buyer-compare-date').textContent=viewDate;
+  buyerCompareText.value='';
+  buyerCompareModal.classList.remove('hidden');
+}
+document.getElementById('buyer-compare-cancel').addEventListener('click',()=>{buyerCompareModal.classList.add('hidden');});
+
+document.getElementById('buyer-compare-confirm').addEventListener('click',async()=>{
+  const text=buyerCompareText.value.trim();
+  if(!text){uxAlert('Paste the buyer\'s text first');return;}
+  const btn=document.getElementById('buyer-compare-confirm');
+  const original=btn.textContent;
+  btn.innerHTML='<span class="spinner"></span>Comparing…';
+  btn.style.pointerEvents='none';
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/parse-buyer-purchase-text',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({text}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not parse text');
+    buyerCompareDiff=computeBuyerCompareDiff(data.purchases||[],data.expenses||[]);
+    buyerCompareModal.classList.add('hidden');
+    renderBuyerCompareResults();
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+  }finally{
+    btn.textContent=original;
+    btn.style.pointerEvents='';
+  }
+});
+
+const BC_QTY_TOLERANCE=0.01,BC_COST_TOLERANCE=1;
+
+function computeBuyerCompareDiff(buyerPurchases,buyerExpenses){
+  // ── Purchases: grain = item_name, case-insensitive ──
+  const sysByItem={};
+  purchasesRows.forEach(r=>{
+    const key=r.item_name.trim().toLowerCase();
+    const g=sysByItem[key]=sysByItem[key]||{label:r.item_name,qty:0,cost:0,ids:[]};
+    g.qty+=Number(r.qty)||0;g.cost+=Number(r.cost)||0;g.ids.push(r.id);
+  });
+  const buyerByItem={};
+  buyerPurchases.forEach(p=>{
+    const key=(p.item_name||'').trim().toLowerCase();
+    if(!key)return;
+    const g=buyerByItem[key]=buyerByItem[key]||{label:p.item_name,qty:0,cost:0};
+    g.qty+=Number(p.qty)||0;g.cost+=(Number(p.cost)||0);
+  });
+  const purchases={missing:[],extra:[],mismatch:[]};
+  new Set([...Object.keys(sysByItem),...Object.keys(buyerByItem)]).forEach(key=>{
+    const sys=sysByItem[key],buyer=buyerByItem[key];
+    if(buyer&&!sys){
+      purchases.missing.push({_key:'p'+(bcRowKeySeq++),itemName:buyer.label,buyerQty:buyer.qty,buyerCost:buyer.cost});
+    }else if(sys&&!buyer){
+      purchases.extra.push({_key:'p'+(bcRowKeySeq++),itemName:sys.label,systemQty:sys.qty,systemCost:sys.cost,ids:sys.ids});
+    }else if(sys&&buyer){
+      const qtyDiff=Math.abs(sys.qty-buyer.qty)>BC_QTY_TOLERANCE;
+      const costDiff=Math.abs(sys.cost-buyer.cost)>BC_COST_TOLERANCE;
+      if(qtyDiff||costDiff){
+        purchases.mismatch.push({_key:'p'+(bcRowKeySeq++),itemName:sys.label,buyerQty:buyer.qty,buyerCost:buyer.cost,systemQty:sys.qty,systemCost:sys.cost,ids:sys.ids});
+      }
+    }
+  });
+
+  // ── Expenses: grain = category (the fixed, controlled-vocabulary field) ──
+  const sysByCat={};
+  expensesRows.forEach(r=>{
+    const g=sysByCat[r.category]=sysByCat[r.category]||{amount:0,ids:[],descriptions:[]};
+    g.amount+=Number(r.amount)||0;g.ids.push(r.id);
+    if(r.description)g.descriptions.push(r.description);
+  });
+  const buyerByCat={};
+  buyerExpenses.forEach(e=>{
+    const cat=EXPENSE_CATEGORIES.includes(e.category)?e.category:'Other';
+    const g=buyerByCat[cat]=buyerByCat[cat]||{amount:0,descriptions:[]};
+    g.amount+=Number(e.amount)||0;
+    if(e.description)g.descriptions.push(e.description);
+  });
+  const expenses={missing:[],extra:[],mismatch:[]};
+  new Set([...Object.keys(sysByCat),...Object.keys(buyerByCat)]).forEach(cat=>{
+    const sys=sysByCat[cat],buyer=buyerByCat[cat];
+    if(buyer&&!sys){
+      expenses.missing.push({_key:'e'+(bcRowKeySeq++),category:cat,description:buyer.descriptions.join(', ')||null,buyerAmount:buyer.amount});
+    }else if(sys&&!buyer){
+      expenses.extra.push({_key:'e'+(bcRowKeySeq++),category:cat,description:sys.descriptions.join(', ')||null,systemAmount:sys.amount,ids:sys.ids});
+    }else if(sys&&buyer){
+      if(Math.abs(sys.amount-buyer.amount)>BC_COST_TOLERANCE){
+        expenses.mismatch.push({_key:'e'+(bcRowKeySeq++),category:cat,description:buyer.descriptions.join(', ')||sys.descriptions.join(', ')||null,buyerAmount:buyer.amount,systemAmount:sys.amount,ids:sys.ids});
+      }
+    }
+  });
+
+  const buyerTotal=buyerPurchases.reduce((s,p)=>s+(Number(p.cost)||0),0)+buyerExpenses.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const systemTotal=purchasesRows.reduce((s,r)=>s+(Number(r.cost)||0),0)+expensesRows.reduce((s,r)=>s+(Number(r.amount)||0),0);
+  return{purchases,expenses,buyerTotal,systemTotal};
+}
+
+function bcFmtMoney(n){return '₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});}
+
+function bcFindRow(section,bucket,key){
+  const list=buyerCompareDiff?.[section]?.[bucket];
+  return list?list.find(r=>r._key===key):null;
+}
+function bcRemoveRow(section,bucket,key){
+  const list=buyerCompareDiff?.[section]?.[bucket];
+  if(!list)return;
+  const idx=list.findIndex(r=>r._key===key);
+  if(idx>-1)list.splice(idx,1);
+}
+
+function bcIgnoreRow(section,bucket,key){
+  bcRemoveRow(section,bucket,key);
+  renderBuyerCompareResults();
+}
+
+async function bcAddPurchase(key){
+  const row=bcFindRow('purchases','missing',key);
+  if(!row)return;
+  const{error}=await sb.from('stock_purchases').insert({
+    item_name:row.itemName,date:viewDate,qty:row.buyerQty,cost:row.buyerCost||null,source:'Buyer text',
+  });
+  if(error){uxAlert('Failed to add: '+error.message);return;}
+  bcRemoveRow('purchases','missing',key);
+  await loadPurchasesView();
+  renderBuyerCompareResults();
+}
+
+async function bcRemovePurchase(key){
+  const row=bcFindRow('purchases','extra',key);
+  if(!row)return;
+  if(!await uxConfirm('Delete '+row.ids.length+' purchase entr'+(row.ids.length===1?'y':'ies')+' for "'+row.itemName+'" totaling '+bcFmtMoney(row.systemCost)+'? This can\'t be undone.'))return;
+  const{error}=await sb.from('stock_purchases').delete().in('id',row.ids);
+  if(error){uxAlert('Failed to remove: '+error.message);return;}
+  bcRemoveRow('purchases','extra',key);
+  await loadPurchasesView();
+  renderBuyerCompareResults();
+}
+
+async function bcUpdatePurchase(key){
+  const row=bcFindRow('purchases','mismatch',key);
+  if(!row||row.ids.length!==1)return;
+  const{error}=await sb.from('stock_purchases').update({qty:row.buyerQty,cost:row.buyerCost||null}).eq('id',row.ids[0]);
+  if(error){uxAlert('Failed to update: '+error.message);return;}
+  bcRemoveRow('purchases','mismatch',key);
+  await loadPurchasesView();
+  renderBuyerCompareResults();
+}
+
+async function bcAddExpense(key){
+  const row=bcFindRow('expenses','missing',key);
+  if(!row)return;
+  const{error}=await sb.from('daily_expenses').insert({
+    date:viewDate,category:row.category,description:row.description,amount:row.buyerAmount,
+  });
+  if(error){uxAlert('Failed to add: '+error.message);return;}
+  bcRemoveRow('expenses','missing',key);
+  await loadPurchasesView();
+  renderBuyerCompareResults();
+}
+
+async function bcRemoveExpense(key){
+  const row=bcFindRow('expenses','extra',key);
+  if(!row)return;
+  if(!await uxConfirm('Delete '+row.ids.length+' '+row.category+' expense entr'+(row.ids.length===1?'y':'ies')+' totaling '+bcFmtMoney(row.systemAmount)+'? This can\'t be undone.'))return;
+  const{error}=await sb.from('daily_expenses').delete().in('id',row.ids);
+  if(error){uxAlert('Failed to remove: '+error.message);return;}
+  bcRemoveRow('expenses','extra',key);
+  await loadPurchasesView();
+  renderBuyerCompareResults();
+}
+
+async function bcUpdateExpense(key){
+  const row=bcFindRow('expenses','mismatch',key);
+  if(!row||row.ids.length!==1)return;
+  const{error}=await sb.from('daily_expenses').update({amount:row.buyerAmount}).eq('id',row.ids[0]);
+  if(error){uxAlert('Failed to update: '+error.message);return;}
+  bcRemoveRow('expenses','mismatch',key);
+  await loadPurchasesView();
+  renderBuyerCompareResults();
+}
+
+function bcRowHtml(html,cls){
+  return '<div class="bc-row bc-'+cls+'">'+html+'</div>';
+}
+
+function renderBuyerCompareResults(){
+  const el=document.getElementById('buyer-compare-results');
+  if(!el)return;
+  if(!buyerCompareDiff){el.innerHTML='';return;}
+  const{purchases,expenses,buyerTotal,systemTotal}=buyerCompareDiff;
+  const totalRows=purchases.missing.length+purchases.extra.length+purchases.mismatch.length+
+    expenses.missing.length+expenses.extra.length+expenses.mismatch.length;
+  const diff=buyerTotal-systemTotal;
+  const diffCls=diff>0?'bc-diff-pos':(diff<0?'bc-diff-neg':'');
+
+  let body='<div class="bc-summary">'+
+    '<span>Buyer text total: <b>'+bcFmtMoney(buyerTotal)+'</b></span>'+
+    '<span>System total: <b>'+bcFmtMoney(systemTotal)+'</b></span>'+
+    '<span>Difference: <b class="'+diffCls+'">'+(diff>0?'+':'')+bcFmtMoney(diff)+'</b></span>'+
+    '<button class="btn-sec" style="margin-bottom:0;margin-left:auto" onclick="buyerCompareDiff=null;renderBuyerCompareResults()">✕ Clear</button>'+
+  '</div>';
+
+  if(!totalRows){
+    body+='<div class="bc-empty-note">✓ Buyer text matches what\'s already logged for '+escH(viewDate)+' — no differences found.</div>';
+    el.innerHTML='<div class="bc-box">'+body+'</div>';
+    return;
+  }
+
+  if(purchases.missing.length){
+    body+='<div class="bc-section-title">🥭 Purchases — missing in system ('+purchases.missing.length+')</div>';
+    body+=purchases.missing.map(r=>bcRowHtml(
+      '<span class="bc-row-name">'+escH(r.itemName)+'</span>'+
+      '<span class="bc-row-detail">Buyer says '+r.buyerQty+'kg'+(r.buyerCost?' · '+bcFmtMoney(r.buyerCost):'')+' — not logged yet</span>'+
+      '<span class="bc-row-actions">'+
+        '<button class="bc-act-primary" onclick="bcAddPurchase('+escH(JSON.stringify(r._key))+')">+ Add to purchases</button>'+
+        '<button onclick="bcIgnoreRow(\'purchases\',\'missing\','+escH(JSON.stringify(r._key))+')">Ignore</button>'+
+      '</span>','missing'
+    )).join('');
+  }
+  if(purchases.extra.length){
+    body+='<div class="bc-section-title">🥭 Purchases — extra in system, not in buyer text ('+purchases.extra.length+')</div>';
+    body+=purchases.extra.map(r=>bcRowHtml(
+      '<span class="bc-row-name">'+escH(r.itemName)+'</span>'+
+      '<span class="bc-row-detail">System has '+r.systemQty+'kg'+(r.systemCost?' · '+bcFmtMoney(r.systemCost):'')+' — buyer didn\'t mention this</span>'+
+      '<span class="bc-row-actions">'+
+        '<button class="bc-act-primary" onclick="bcRemovePurchase('+escH(JSON.stringify(r._key))+')">🗑 Remove</button>'+
+        '<button onclick="bcIgnoreRow(\'purchases\',\'extra\','+escH(JSON.stringify(r._key))+')">Ignore</button>'+
+      '</span>','extra'
+    )).join('');
+  }
+  if(purchases.mismatch.length){
+    body+='<div class="bc-section-title">🥭 Purchases — different qty/cost ('+purchases.mismatch.length+')</div>';
+    body+=purchases.mismatch.map(r=>{
+      const multi=r.ids.length!==1;
+      return bcRowHtml(
+        '<span class="bc-row-name">'+escH(r.itemName)+'</span>'+
+        '<span class="bc-row-detail">Buyer: '+r.buyerQty+'kg · '+bcFmtMoney(r.buyerCost)+' — System: '+r.systemQty+'kg · '+bcFmtMoney(r.systemCost)+
+          (multi?' (multiple entries — edit rows below instead)':'')+'</span>'+
+        '<span class="bc-row-actions">'+
+          '<button class="bc-act-primary" '+(multi?'disabled title="Multiple entries logged for this item — edit them individually below"':'')+' onclick="bcUpdatePurchase('+escH(JSON.stringify(r._key))+')">Update to buyer\'s figures</button>'+
+          '<button onclick="bcIgnoreRow(\'purchases\',\'mismatch\','+escH(JSON.stringify(r._key))+')">Ignore</button>'+
+        '</span>','mismatch'
+      );
+    }).join('');
+  }
+
+  if(expenses.missing.length){
+    body+='<div class="bc-section-title">🧾 Expenses — missing in system ('+expenses.missing.length+')</div>';
+    body+=expenses.missing.map(r=>bcRowHtml(
+      '<span class="bc-row-name">'+escH(r.category)+'</span>'+
+      '<span class="bc-row-detail">Buyer says '+bcFmtMoney(r.buyerAmount)+(r.description?' — '+escH(r.description):'')+' — not logged yet</span>'+
+      '<span class="bc-row-actions">'+
+        '<button class="bc-act-primary" onclick="bcAddExpense('+escH(JSON.stringify(r._key))+')">+ Add to expenses</button>'+
+        '<button onclick="bcIgnoreRow(\'expenses\',\'missing\','+escH(JSON.stringify(r._key))+')">Ignore</button>'+
+      '</span>','missing'
+    )).join('');
+  }
+  if(expenses.extra.length){
+    body+='<div class="bc-section-title">🧾 Expenses — extra in system, not in buyer text ('+expenses.extra.length+')</div>';
+    body+=expenses.extra.map(r=>bcRowHtml(
+      '<span class="bc-row-name">'+escH(r.category)+'</span>'+
+      '<span class="bc-row-detail">System has '+bcFmtMoney(r.systemAmount)+(r.description?' — '+escH(r.description):'')+' — buyer didn\'t mention this</span>'+
+      '<span class="bc-row-actions">'+
+        '<button class="bc-act-primary" onclick="bcRemoveExpense('+escH(JSON.stringify(r._key))+')">🗑 Remove</button>'+
+        '<button onclick="bcIgnoreRow(\'expenses\',\'extra\','+escH(JSON.stringify(r._key))+')">Ignore</button>'+
+      '</span>','extra'
+    )).join('');
+  }
+  if(expenses.mismatch.length){
+    body+='<div class="bc-section-title">🧾 Expenses — different amount ('+expenses.mismatch.length+')</div>';
+    body+=expenses.mismatch.map(r=>{
+      const multi=r.ids.length!==1;
+      return bcRowHtml(
+        '<span class="bc-row-name">'+escH(r.category)+'</span>'+
+        '<span class="bc-row-detail">Buyer: '+bcFmtMoney(r.buyerAmount)+' — System: '+bcFmtMoney(r.systemAmount)+
+          (multi?' (multiple entries — edit rows below instead)':'')+'</span>'+
+        '<span class="bc-row-actions">'+
+          '<button class="bc-act-primary" '+(multi?'disabled title="Multiple entries logged for this category — edit them individually below"':'')+' onclick="bcUpdateExpense('+escH(JSON.stringify(r._key))+')">Update to buyer\'s figure</button>'+
+          '<button onclick="bcIgnoreRow(\'expenses\',\'mismatch\','+escH(JSON.stringify(r._key))+')">Ignore</button>'+
+        '</span>','mismatch'
+      );
+    }).join('');
+  }
+
+  el.innerHTML='<div class="bc-box">'+body+'</div>';
 }
 
 // ── CATALOG IMAGES (storefront product thumbnails) ──────────────────────
