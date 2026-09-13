@@ -329,6 +329,15 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .bc-row-actions button:disabled{opacity:0.5;cursor:not-allowed}
 .bc-row-actions button.bc-act-primary{background:#e8720c;border-color:#e8720c;color:#ffffff}
 .bc-empty-note{font-size:12px;color:#8a7a6a;margin-bottom:6px}
+#purchases-table{table-layout:fixed}
+#purchases-table td:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.purchase-source-group{display:flex;flex-wrap:wrap;gap:2px 8px;white-space:normal}
+.purchase-source-group label{display:inline-flex;align-items:center;gap:2px;font-size:11px;cursor:pointer;white-space:nowrap}
+.purchase-source-group input{width:auto!important;margin:0}
+.ps-total-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px}
+.ps-total-chip{background:#fffdf9;border:1px solid #f0dfc8;border-radius:8px;padding:6px 12px;font-size:12px}
+.ps-total-chip b{font-size:13px}
+.ps-total-chip.ps-total-untagged{color:#8a7a6a}
 .add-row{display:flex;gap:8px;margin-top:10px}
 .add-row input{flex:1;background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:8px 10px;color:#2b2320;font-size:12px;font-family:inherit}
 .add-row input::placeholder{color:#8a7a6a}
@@ -822,9 +831,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <button class="btn-sec" onclick="openBuyerCompareModal()" style="margin-bottom:12px">🔍 Compare with buyer text</button>
   <div id="buyer-compare-results"></div>
+  <div id="purchase-source-totals" class="ps-total-row"></div>
   <input type="text" class="pk-search" id="purchases-search" placeholder="🔍 Search fruit..." oninput="renderPurchasesTable()">
   <div class="stock-table-wrap">
-    <table class="community-table" id="purchases-table"><thead><tr>
+    <table class="community-table" id="purchases-table">
+      <colgroup><col style="width:90px"><col style="width:55px"><col style="width:130px"><col style="width:70px"><col style="width:110px"></colgroup>
+      <thead><tr>
       <th>Fruit</th><th>Qty</th><th>Source</th><th>Time</th><th>Cost (₹)</th>
     </tr></thead><tbody id="purchases-tbody"></tbody>
     <tfoot><tr class="purchases-total-row hidden" id="purchases-total-row">
@@ -10118,13 +10130,21 @@ async function loadPurchasesView(){
   loadExpensesView();
 }
 
+// Which mandi/market a purchase came from — a plain radio pick per row
+// rather than the old free-text source field, so totals below can actually
+// group by a fixed, known set of buckets instead of arbitrary strings.
+const PURCHASE_SOURCES=['KR','Huskur','Local'];
+
 function renderPurchasesTable(){
   const tbody=document.getElementById('purchases-tbody');
   const q=(document.getElementById('purchases-search').value||'').trim().toLowerCase();
   const rows=purchasesRows.filter(r=>!q||r.item_name.toLowerCase().includes(q));
   document.getElementById('purchases-rc').textContent=rows.length?('('+rows.length+')'):'';
   tbody.innerHTML=rows.length?rows.map(r=>
-    '<tr><td>'+escH(r.item_name)+'</td><td>'+r.qty+'</td><td>'+escH(r.source||'—')+'</td>'+
+    '<tr><td title="'+escH(r.item_name)+'">'+escH(r.item_name)+'</td><td>'+r.qty+'</td>'+
+    '<td><span class="purchase-source-group">'+PURCHASE_SOURCES.map(s=>
+      '<label><input type="radio" name="src-'+escH(r.id)+'" value="'+s+'" '+(r.source===s?'checked':'')+' onchange="setPurchaseSource('+escH(JSON.stringify(r.id))+','+escH(JSON.stringify(s))+')">'+s+'</label>'
+    ).join('')+'</span></td>'+
     '<td>'+new Date(r.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</td>'+
     '<td><input type="number" class="stock-qty-input" step="0.01" min="0" placeholder="₹" value="'+(r.cost??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
       '<button class="pk-tick" disabled onclick="savePurchaseCost(this.previousElementSibling,'+escH(JSON.stringify(r.id))+')" title="Save cost">✓</button></td></tr>'
@@ -10138,6 +10158,38 @@ function renderPurchasesTable(){
   }else{
     totalRow.classList.add('hidden');
   }
+
+  renderPurchaseSourceTotals();
+}
+
+// Always reflects every purchase logged for the date, not just what the
+// search box currently filters the table to — a top-level daily stat, not
+// a filtered-view artifact.
+function renderPurchaseSourceTotals(){
+  const el=document.getElementById('purchase-source-totals');
+  if(!el)return;
+  if(!purchasesRows.length){el.innerHTML='';return;}
+  const bySource={};
+  PURCHASE_SOURCES.forEach(s=>bySource[s]=0);
+  let untagged=0;
+  purchasesRows.forEach(r=>{
+    const cost=r.cost!=null?Number(r.cost):0;
+    if(PURCHASE_SOURCES.includes(r.source))bySource[r.source]+=cost;
+    else untagged+=cost;
+  });
+  el.innerHTML=PURCHASE_SOURCES.map(s=>
+    '<span class="ps-total-chip">'+escH(s)+': <b>₹'+bySource[s].toLocaleString('en-IN',{maximumFractionDigits:2})+'</b></span>'
+  ).join('')+(untagged>0
+    ?'<span class="ps-total-chip ps-total-untagged">Not tagged yet: <b>₹'+untagged.toLocaleString('en-IN',{maximumFractionDigits:2})+'</b></span>'
+    :'');
+}
+
+async function setPurchaseSource(id,source){
+  const{error}=await sb.from('stock_purchases').update({source}).eq('id',id);
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  const row=purchasesRows.find(r=>r.id===id);
+  if(row)row.source=source;
+  renderPurchaseSourceTotals();
 }
 
 async function savePurchaseCost(inputEl,id){
