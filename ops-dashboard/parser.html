@@ -832,6 +832,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="btn-sec" onclick="openBuyerCompareModal()" style="margin-bottom:12px">🔍 Compare with buyer text</button>
   <div id="buyer-compare-results"></div>
   <div id="purchase-source-totals" class="ps-total-row"></div>
+  <div id="purchases-sort-toggle" class="filter-pills status-pills"></div>
   <input type="text" class="pk-search" id="purchases-search" placeholder="🔍 Search fruit..." oninput="renderPurchasesTable()">
   <div class="stock-table-wrap">
     <table class="community-table" id="purchases-table">
@@ -10131,10 +10132,39 @@ async function loadPurchasesView(){
 // group by a fixed, known set of buckets instead of arbitrary strings.
 const PURCHASE_SOURCES=['KR','Huskur','Local'];
 
+// 'fruit' = alphabetical by item (the DB's own .order('item_name'), i.e.
+// the original behavior); 'source' = grouped by the radio pick above —
+// untagged rows sort last in their own group rather than disappearing.
+let purchasesSortMode='fruit';
+
+function renderPurchasesSortToggle(){
+  const el=document.getElementById('purchases-sort-toggle');
+  if(!el)return;
+  el.innerHTML='<span class="filter-pill'+(purchasesSortMode==='fruit'?' active':'')+'" onclick="setPurchasesSortMode(\'fruit\')">Sort: Fruit</span>'+
+    '<span class="filter-pill'+(purchasesSortMode==='source'?' active':'')+'" onclick="setPurchasesSortMode(\'source\')">Sort: Source</span>';
+}
+
+function setPurchasesSortMode(mode){
+  purchasesSortMode=mode;
+  renderPurchasesTable();
+}
+
+function purchaseSourceRank(source){
+  const i=PURCHASE_SOURCES.indexOf(source);
+  return i===-1?PURCHASE_SOURCES.length:i; // untagged sorts after every named source
+}
+
 function renderPurchasesTable(){
+  renderPurchasesSortToggle();
   const tbody=document.getElementById('purchases-tbody');
   const q=(document.getElementById('purchases-search').value||'').trim().toLowerCase();
-  const rows=purchasesRows.filter(r=>!q||r.item_name.toLowerCase().includes(q));
+  const rows=purchasesRows.filter(r=>!q||r.item_name.toLowerCase().includes(q)).sort((a,b)=>{
+    if(purchasesSortMode==='source'){
+      const rankDiff=purchaseSourceRank(a.source)-purchaseSourceRank(b.source);
+      if(rankDiff!==0)return rankDiff;
+    }
+    return a.item_name.localeCompare(b.item_name,undefined,{sensitivity:'base'});
+  });
   document.getElementById('purchases-rc').textContent=rows.length?('('+rows.length+')'):'';
   tbody.innerHTML=rows.length?rows.map(r=>
     '<tr><td title="'+escH(r.item_name)+'">'+escH(r.item_name)+'</td><td>'+r.qty+'</td>'+
