@@ -116,6 +116,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .item-pill.status-final{background:#e3f3e3;border-color:#b8e0b8;color:#2d6b2d}
 .item-pill.status-invoiced{background:#ede3f7;border-color:#d4bdec;color:#6b3fa0}
 .item-pill.dup-item{color:#b3261e;font-weight:700}
+.item-pill.qty-mismatch{border:2px solid #b3261e;color:#b3261e;font-weight:700}
 .item-pill.status-cancelled{background:#eeeeee;border-color:#cccccc;color:#8a8a8a;text-decoration:line-through}
 /* Order-level summary badge — same hues as the item pills above, but as a
    solid dark fill (the pill text colors, promoted to backgrounds) with
@@ -1667,7 +1668,7 @@ function signOut(){
 // ── Default config ────────────────────────────────────────────────────────
 let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pomegranate small","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango","Cauliflower","Cabbage","Capsicum green","Capsicum yellow","Capsicum red","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus","Fenugreek","Mangalore cucumber","Drumstick","Chilli bhajji","Coccinia","Mint","Lettuce","Beetroot","Zucchini green","Zucchini yellow","Red cabbage","Mushroom","Garlic","Lemon","Pumpkin","Snake gourd","Sweet potato","Radish","Baby corn","Parwal","Spine gourd","Long beans","Brinjal long","Spring onion","Arvi","Cherry tomato","Cluster beans"];
 
-let PKG={"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50};
+let PKG={"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50,"watermelon":2.5};
 
 let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orange","sweet orange":"Mandarin orange","yellaki":"Yelakki banana","yellakki":"Yelakki banana","yalakki":"Yelakki banana","yalaki":"Yelakki banana","elaichi banana":"Yelakki banana","elachi banana":"Yelakki banana","banana":"Yelakki banana","y banana":"Yelakki banana","y bananas":"Yelakki banana","langda":"Langra mango","langdaa":"Langra mango","langra":"Langra mango","langa":"Langra mango","kesar":"Kesar mango","alphonso":"Alphonso mango","dasheri":"Dasheri mango","dussehri":"Dasheri mango","badami":"Badami mango","beganpalli":"Banganapalli mango","baganpalli":"Banganapalli mango","pedanpally":"Banganapalli mango","banganphalli":"Banganapalli mango","baiganphali":"Banganapalli mango","bagganpalli":"Banganapalli mango","cherry sweet":"Cherry Indian","cherry":"Cherry Indian","grapes":"Green grapes","litchi":"Lychee","lichi":"Lychee","sweet lime":"Mosambi","rocket apple":"Rockit apple","rock apple":"Rockit apple","rambuttan":"Rambutan","rambutten":"Rambutan","rambhutan":"Rambutan","rambuthan":"Rambutan","imanpasad":"Imampasand mango","imampasad":"Imampasand mango","thai guava":"Guava white","white guava":"Guava white","dragon fruit red":"Dragon red","dragonfruit red":"Dragon red","methi":"Fenugreek","yellow cucumber":"Mangalore cucumber","chilli bhaji":"Chilli bhajji","big chilli":"Chilli bhajji","kundru":"Coccinia","pudina":"Mint"};
 
@@ -3684,6 +3685,52 @@ async function loadTodaysOrders(){
   renderOrdersList();
 }
 
+// Extracts an explicit quantity from an item's free-text description, e.g.
+// "5-6 kg" (range -> average), "3.5 kg", "2 pcs"/"2 pieces". Deliberately
+// narrow — only fires on an unambiguous number+unit, so plain notes like
+// "extra ripe" or "no seeds" never get misread as a quantity override.
+// Range/piece units are converted to kg via PKG the same way the qty-column
+// fallback path is, so both paths always compare in the same unit.
+function parseQtyFromDescription(description,itemNameLower){
+  const text=(description||'').toLowerCase();
+  if(!text)return null;
+  const range=text.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*kg/);
+  if(range)return(parseFloat(range[1])+parseFloat(range[2]))/2;
+  const kg=text.match(/(\d+(?:\.\d+)?)\s*kg/);
+  if(kg)return parseFloat(kg[1]);
+  const pcs=text.match(/(\d+(?:\.\d+)?)\s*(?:pcs?|pieces?)\b/);
+  if(pcs)return parseFloat(pcs[1])*(PKG[itemNameLower]||1);
+  return null;
+}
+
+// "Asked quantity" in kg — triangulates the description (wins when it
+// contains an explicit number) against the requested_quantity column
+// (converted from piece-count to kg via PKG for items sold by the piece,
+// e.g. watermelon at ~2.5kg/piece — see PKG above). Returns null when
+// there's nothing to compare against (blank requested_quantity), which
+// callers treat as "can't evaluate," not "matches."
+function resolveAskedQtyKg(item){
+  const itemNameLower=(item.item_name||'').toLowerCase();
+  const fromDescription=parseQtyFromDescription(item.description,itemNameLower);
+  if(fromDescription!=null)return fromDescription;
+  const requested=parseFloat(item.requested_quantity);
+  if(!requested)return null;
+  return requested*(PKG[itemNameLower]||1);
+}
+
+// >25% off the asked quantity once it's actually been weighed/packed —
+// deliberately only checked once final_quantity exists (nothing to flag
+// before packing), and never for a cancelled item (nothing was fulfilled).
+function qtyMismatchInfo(item){
+  if(item.status==='cancelled'||item.final_quantity==null)return null;
+  const asked=resolveAskedQtyKg(item);
+  if(!asked)return null;
+  const final=parseFloat(item.final_quantity);
+  const pct=Math.abs(final-asked)/asked;
+  if(pct<=0.25)return null;
+  return{asked,final,pct};
+}
+
 // Pure re-render from the already-fetched currentOrdersById/currentItemsById
 // — no network calls — so toggling a society's "select all" checkbox can
 // just update selectedOrders and redraw instantly instead of re-fetching.
@@ -3863,10 +3910,13 @@ function renderOrdersList(){
           (order.whatsappRawText?'<div class="dv-notes" style="white-space:pre-wrap;background:#fff8e6;border-left:3px solid #e6c927">💬 <b>WhatsApp'+(order.whatsappGroupName?' — '+escH(order.whatsappGroupName):'')+':</b><br>'+escH(order.whatsappRawText)+'</div>':'')+
           '<div class="or-pills">'+order.items.map(item=>{
             const itemCancelled=item.status==='cancelled';
-            return '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+'" title="'+escH(item.description||'')+(itemCancelled?' — tap to delete clean':'')+'" onclick="pillClick(\''+item.id+'\')">'+
+            const mismatch=qtyMismatchInfo(item);
+            const mismatchTip=mismatch?'Asked ~'+mismatch.asked.toFixed(1)+'kg, packed '+mismatch.final.toFixed(1)+'kg ('+Math.round(mismatch.pct*100)+'% off) — check quantity. ':'';
+            return '<span class="item-pill status-'+item.status+(dupIds.has(item.id)?' dup-item':'')+(mismatch?' qty-mismatch':'')+'" title="'+escH(mismatchTip+(item.description||''))+(itemCancelled?' — tap to delete clean':'')+'" onclick="pillClick(\''+item.id+'\')">'+
               (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
               (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
               (item.pending_review?'<span class="cf-badge" style="background:#fff3b0;color:#8a6d00" title="From WhatsApp — needs review">REVIEW</span> ':'')+
+              (mismatch?'<span class="dup-badge" style="background:#b3261e">⚠ QTY</span> ':'')+
               escH(item.item_name)+' × '+item.requested_quantity+
               (item.pending_review?'<button class="pill-x" style="color:#2d6b2d" onclick="event.stopPropagation();approvePendingReviewItem(\''+item.id+'\')" title="Approve">✓</button>':'')+
               (itemCancelled?'':'<button class="pill-x" onclick="event.stopPropagation();deleteItem(\''+item.id+'\')" title="Remove">✕</button>')+
