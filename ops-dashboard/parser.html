@@ -732,7 +732,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="stock-fruit-pills" id="stock-fruit-pills"></div>
   <div class="stock-table-wrap">
     <table class="community-table" id="stock-table"><thead><tr>
-      <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th>Packed/Invoiced</th><th>Pending orders</th><th>Available</th><th>Status</th><th>Closing stock</th><th>Wastage</th>
+      <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th class="vp-sortable" onclick="sortStockRows('packed')">Packed/Invoiced<span id="stock-sort-packed" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('pending')">Pending orders<span id="stock-sort-pending" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('available')">Available<span id="stock-sort-available" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('status')">Status<span id="stock-sort-status" class="vp-sort-ind"></span></th><th>Closing stock</th><th>Wastage</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
   </div>
   <div id="stock-buy-list"></div>
@@ -9924,12 +9924,31 @@ async function stopTrackingStockFruit(name){
   renderStockTable();
 }
 
+// Status ranked by urgency (need-to-order first) rather than alphabetically
+// — ranking a string column numerically like this is the same idea
+// sortVpItems already applies to its own numeric columns.
+const STOCK_STATUS_RANK={need:0,trending:1,ok:2};
+
+let stockSortKey=null; // null = default alphabetical-by-name; else 'packed'|'pending'|'available'|'status'
+let stockSortDir='desc';
+
+function sortStockRows(key){
+  if(stockSortKey===key){stockSortDir=stockSortDir==='desc'?'asc':'desc';}
+  else{stockSortKey=key;stockSortDir=key==='available'||key==='status'?'asc':'desc';}
+  renderStockTable();
+}
+
 function renderStockTable(){
   const activeCatalog=stockCatalog.filter(c=>isStockFruitActive(c.item_name));
   renderStockSummaryPills(activeCatalog);
   renderStockTypePills(activeCatalog);
   const search=document.getElementById('stock-search').value.trim().toLowerCase();
   const tbody=document.getElementById('stock-tbody');
+
+  ['packed','pending','available','status'].forEach(k=>{
+    const el=document.getElementById('stock-sort-'+k);
+    if(el)el.textContent=k===stockSortKey?(stockSortDir==='desc'?'▾':'▴'):'';
+  });
 
   const rows=activeCatalog.filter(c=>{
     if(search&&!c.item_name.toLowerCase().includes(search))return false;
@@ -9940,7 +9959,18 @@ function renderStockTable(){
       if(stockTypeFilter==='fruit'&&isVeg)return false;
     }
     return true;
-  }).sort((a,b)=>a.item_name.localeCompare(b.item_name));
+  }).map(c=>({c,s:stockStatusFor(c.item_name)}));
+
+  if(stockSortKey){
+    const dir=stockSortDir==='desc'?-1:1;
+    rows.sort((a,b)=>{
+      const av=stockSortKey==='status'?STOCK_STATUS_RANK[a.s.status]:a.s[stockSortKey];
+      const bv=stockSortKey==='status'?STOCK_STATUS_RANK[b.s.status]:b.s[stockSortKey];
+      return dir*(av-bv)||a.c.item_name.localeCompare(b.c.item_name);
+    });
+  }else{
+    rows.sort((a,b)=>a.c.item_name.localeCompare(b.c.item_name));
+  }
 
   document.getElementById('stock-rc').textContent=rows.length?'— '+rows.length+' fruit'+(rows.length!==1?'s':''):'';
 
@@ -9952,8 +9982,7 @@ function renderStockTable(){
     return;
   }
 
-  tbody.innerHTML=rows.map(c=>{
-    const s=stockStatusFor(c.item_name);
+  tbody.innerHTML=rows.map(({c,s})=>{
     const unit=c.unit||'';
     const history=(stockOpeningHistoryMap[c.item_name]||[]).slice(0,3);
     const historyHtml=history.length
