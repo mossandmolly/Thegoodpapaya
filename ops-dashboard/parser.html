@@ -432,6 +432,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    the card is currently in. */
 .order-row.leftover-order{background:#fff3e0;border-color:#f0b060}
 .pack-card.leftover-order{background:#fff3e0;border-color:#f0b060}
+.pack-card.qty-mismatch{border:2px solid #b3261e}
+.pk-qty-mismatch-note{color:#b3261e;font-weight:700;font-size:11px;margin-bottom:4px}
 /* Packer Single Card queue — one pack-card at a time, with a header
    showing who's packing, how many are left, and a plain elapsed-time
    timer that flashes red past packer_card_timer_seconds (app_settings). */
@@ -680,6 +682,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
   <div class="filter-group-label" id="pk-status-filter-label">Status</div>
   <div id="pk-status-pills" class="filter-pills status-pills"></div>
+  <div class="filter-group-label" id="pk-flags-filter-label">Flags</div>
+  <div id="pk-flags-pills" class="filter-pills status-pills"></div>
   <div id="pk-grid" class="pack-grid"><div class="to-empty">Loading…</div></div>
 </div>
 
@@ -6690,7 +6694,7 @@ async function deleteItem(id){
 
 // ── Packer ────────────────────────────────────────────────────────────────
 let packerItems=[],packerCustomerMap={},packerUnitByItem={},packerIdByFruit={},packerNameByFruit={};
-const packerFilters={search:'',fruits:new Set(),statuses:new Set()};
+const packerFilters={search:'',fruits:new Set(),statuses:new Set(),offQtyOnly:false};
 let packerScope='all'; // 'all' | 'mine' — 'mine' = items whose fruit is in this device's packer's assigned_fruits (packers config table)
 // Per-group (society/trip) collapse — tracks which are EXPANDED, empty by
 // default so every bucket starts collapsed to just its header, same
@@ -7114,6 +7118,20 @@ function renderPackerFilterPills(){
     ALL_ORDER_STATUSES.map(s=>
       '<span class="filter-pill'+(packerFilters.statuses.has(s)?' active':'')+'" onclick="togglePackerStatusPill('+escH(JSON.stringify(s))+')">'+escH(ITEM_STATUS_LABEL[s]||s)+'</span>'
     ).join('');
+
+  // Same >25% asked-vs-packed check as Order Overview's red item-pill flag
+  // (qtyMismatchInfo) — surfaced here as a filter too, since a packer/Somya
+  // reviewing what's already been weighed wants a quick way to pull up just
+  // the ones worth double-checking instead of scanning every card.
+  const offQtyCount=packerItems.filter(i=>qtyMismatchInfo(i)).length;
+  document.getElementById('pk-flags-pills').innerHTML=
+    '<span class="filter-pill'+(packerFilters.offQtyOnly?' active':'')+'" onclick="togglePackerOffQtyFilter()">⚠ Off Qty ('+offQtyCount+')</span>';
+}
+
+function togglePackerOffQtyFilter(){
+  packerFilters.offQtyOnly=!packerFilters.offQtyOnly;
+  renderPackerFilterPills();
+  renderPackerGrid();
 }
 
 function clearPackerFruitFilter(){
@@ -7181,7 +7199,8 @@ function packCardHtml(item,dupIds){
       (assigned.isOverride?'↩ Reassigned to ':'👤 Assigned to ')+escH(assigned.name)+(isVegPerfAllowed?' ✎':'')+
      '</div>'
     :(isVegPerfAllowed?'<div class="pk-assigned-to pk-assigned-editable pk-unassigned" onclick="openReassignPacker(\''+item.id+'\')">👤 Unassigned ✎</div>':'');
-  return '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+'" data-id="'+item.id+'">'+
+  const mismatch=qtyMismatchInfo(item);
+  return '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+(mismatch?' qty-mismatch':'')+'" data-id="'+item.id+'">'+
       '<div class="pk-status-badge status-'+item.status+'">'+escH(ITEM_STATUS_LABEL[item.status]||item.status)+'</div>'+
       '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+(packerCustomerMap[item.sales_order_id]?.is_pickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+'</div>'+
       '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+
@@ -7190,6 +7209,7 @@ function packCardHtml(item,dupIds){
         escH(item.item_name)+'</span>'+
         '<span class="pk-line1-right"><span class="pk-qty-label">Qty: '+item.requested_quantity+' '+escH(packerUnitByItem[item.item_name]||'')+'</span></span>'+
       '</div>'+
+      (mismatch?'<div class="pk-qty-mismatch-note">⚠ Asked ~'+mismatch.asked.toFixed(1)+'kg, packed '+mismatch.final.toFixed(1)+'kg ('+Math.round(mismatch.pct*100)+'% off) — check quantity</div>':'')+
       (item.description?'<div class="pk-instr">'+escH(item.description)+'</div>':'')+
       assignedLine+
       (item.packed_by?'<div class="pk-packed-by">📦 Packed by '+escH(item.packed_by)+'</div>':'')+
@@ -7604,6 +7624,7 @@ function renderPackerGrid(){
     if(packerScope==='mine'&&(!myPacker||effectivePackerIdForItem(item)!==myPacker.id))return false;
     if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
     if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
+    if(packerFilters.offQtyOnly&&!qtyMismatchInfo(item))return false;
     const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
     // Match anywhere in the full customer name, not just the derived
     // society token (its first word) — searching a later word in the name
