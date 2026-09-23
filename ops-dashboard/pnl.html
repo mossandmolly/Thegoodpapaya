@@ -462,10 +462,21 @@ function currentMonthLabel(){
 function loadFromSupabase(){
   document.getElementById('loadingText').textContent='Loading from Supabase…';
   var monthStart=currentMonthStart();
+  // order=date.DESC, not asc — Supabase's own project-wide "Max Rows"
+  // setting silently caps every response at a fixed row count (1000 on
+  // this project) regardless of the limit=5000 asked for here, with no
+  // error to say so. Sorted ascending, that cap was quietly truncating
+  // off the LATEST days once a busy month passed ~1000 total rows —
+  // exactly the "today's entries don't show" symptom, since the most
+  // recent dates were the ones falling past the cutoff. Descending means
+  // whatever gets cut off (if anything still does) is the OLDEST days
+  // instead, which matters far less on a live current-month view. The
+  // real fix is raising/removing Max Rows in Supabase's own dashboard
+  // (Project Settings -> API) — this is a mitigation, not a substitute.
   return Promise.all([
-    sbGet('stock_purchases','date=gte.'+monthStart+'&order=date.asc&limit=5000'),
-    sbGet('daily_sales','date=gte.'+monthStart+'&order=date.asc&limit=5000'),
-    sbGet('daily_expenses','date=gte.'+monthStart+'&order=date.asc&limit=5000'),
+    sbGet('stock_purchases','date=gte.'+monthStart+'&order=date.desc&limit=5000'),
+    sbGet('daily_sales','date=gte.'+monthStart+'&order=date.desc&limit=5000'),
+    sbGet('daily_expenses','date=gte.'+monthStart+'&order=date.desc&limit=5000'),
     sbGet('stock_closing','date=gte.'+monthStart+'&order=date.desc&limit=500'),
     sbGet('catalog','select=item_name,category')
   ]).then(function(results){
