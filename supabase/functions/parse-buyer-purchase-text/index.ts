@@ -67,9 +67,16 @@ const SYSTEM_PROMPT = `You parse a fruit/vegetable buyer's rough daily purchase 
 Known item names (normalize to the closest one if the text clearly means it — otherwise keep the buyer's own wording as-is):
 ${ITEM_NAMES.join(', ')}
 
+The text may cover more than one vendor/supplier in one message (e.g. separate sections headed by a name, or a vendor's own letterhead like "The Good Papaya"). Combine every section into ONE flat list — these are all still purchases for the same day, regardless of which supplier they came from.
+
 Two kinds of lines:
 1. A fruit/vegetable purchase: item name + quantity (assume kg unless the text says "pc"/"piece"/"box" etc.) + optional cost in rupees.
-2. A running expense NOT tied to a specific fruit — transport, loading/unloading, packaging materials, etc. Categorize into exactly one of: ${EXPENSE_CATEGORIES.join(', ')} (use "Other" if unclear).
+2. A running expense NOT tied to a specific fruit — transport/auto fare, porter/loading-unloading labor, parking, packaging materials, etc. Categorize into exactly one of: ${EXPENSE_CATEGORIES.join(', ')} (porter/auto/parking/loading -> "Transport", use "Other" if unclear).
+
+Skip entirely (neither a purchase nor an expense):
+- Running-total, settlement, or balance-due arithmetic (e.g. "16395 - 15000 = 1,395", "45 Milaga", "Total = 12387 (Farhan payment)").
+- Section headers/names with no item or amount of their own (e.g. "--- FARHAN ---", "The Good Papaya").
+- Pure chit-chat with no item/quantity or expense amount.
 
 Return ONLY this JSON shape, no prose:
 {"purchases":[{"item_name":"...","qty":0,"unit":"kg","cost":0}],"expenses":[{"category":"...","description":"...","amount":0}]}
@@ -77,8 +84,8 @@ Return ONLY this JSON shape, no prose:
 Rules:
 - qty is always a number (never a string, never a range — if a range is given, use the midpoint).
 - cost/amount are numbers when a price is mentioned, or null when it is not.
-- Skip lines that are pure chit-chat with no item/quantity or expense amount.
-- Do not invent costs that aren't in the text.`;
+- Do not invent costs that aren't in the text.
+- Keep the "description" field on expenses short (a few words) — the response must stay valid, complete JSON even for a long input with many lines, so don't pad it with extra commentary.`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -94,7 +101,12 @@ Deno.serve(async (req) => {
       headers: { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 2048,
+        // A single message can cover several vendors/dozens of line items
+        // (real example: three suppliers, ~65 lines, in one paste) — 2048
+        // was cutting Claude's own JSON off mid-array on inputs that size,
+        // producing a hard parse failure with no usable fallback. Sized
+        // generously since this is plain structured JSON, not prose.
+        max_tokens: 8000,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: `Buyer's text to parse:\n"${text.trim()}"` }],
       }),
@@ -106,7 +118,18 @@ Deno.serve(async (req) => {
     const raw = aiData.content?.[0]?.text ?? '{}';
     let parsed: any;
     try { parsed = JSON.parse(raw); }
-    catch (_) { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : { purchases: [], expenses: [] }; }
+    catch (_) {
+      // Fallback for when Claude wraps the JSON in a little prose despite
+      // being told not to — NOT a fix for genuine truncation (a response
+      // cut off mid-array is still invalid JSON after this regex), so this
+      // itself is wrapped rather than left to throw a raw, cryptic
+      // "Expected ',' or ']'"-style parser error straight at the user.
+      const m = raw.match(/\{[\s\S]*\}/);
+      try { parsed = m ? JSON.parse(m[0]) : { purchases: [], expenses: [] }; }
+      catch (_e) {
+        throw new Error('The AI response was too long or got cut off (a very large paste — many vendors/lines at once — is the usual cause). Try splitting the text into smaller chunks and comparing each separately.');
+      }
+    }
 
     const purchases = (parsed.purchases ?? []).map((p: any) => ({
       item_name: (p.item_name ?? '').trim(),
