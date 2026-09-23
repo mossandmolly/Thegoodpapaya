@@ -1710,7 +1710,17 @@ function switchTab(name){
     // reads back as the resolved URL "about:blank" (truthy), not an empty
     // string, so that check was always false and this never actually ran,
     // ever, on any click. A dedicated flag doesn't have that ambiguity.
-    if(f&&!f.dataset.loaded){f.dataset.loaded='1';f.src='pnl.html';}
+    if(f&&!f.dataset.loaded){
+      f.dataset.loaded='1';f.src='pnl.html';
+    }else if(f){
+      // Already loaded once this session — the iframe itself never
+      // refetches on its own (deliberately, to avoid re-loading this
+      // whole page's weight on every tab click), so anything entered in
+      // Supabase since that first load would otherwise just silently not
+      // show up until a full browser refresh. Poke it to re-run its own
+      // loadFromSupabase() instead.
+      f.contentWindow.postMessage('refresh','*');
+    }
   }
   if(name==='delivery')startLocationPing();else stopLocationPing();
   if(name!=='packer'){stopPkCardTimer();stopTeamViewPoll();}

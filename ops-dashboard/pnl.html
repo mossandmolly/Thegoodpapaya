@@ -219,10 +219,13 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="page active" id="page-dashboard">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px;padding:24px 24px 0;">
       <div>
-        <div style="font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted2);font-family:'DM Mono',monospace;margin-bottom:4px;">September 2026 · Month to date</div>
+        <div id="mtdLabel" style="font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted2);font-family:'DM Mono',monospace;margin-bottom:4px;">September 2026 · Month to date</div>
         <div style="font-size:20px;font-weight:800;">Purchase vs Sales · Margin</div>
       </div>
-      <div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace" id="periodLabel">—</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="refreshBtn" title="Reload the latest purchases/sales/expenses from Supabase — this page only fetches once when the P&L tab is first opened, not automatically after that" style="font-size:10px;font-family:'DM Mono',monospace;letter-spacing:.08em;text-transform:uppercase;padding:5px 10px;border-radius:5px;border:1px solid rgba(184,240,80,.2);background:rgba(184,240,80,.08);color:var(--accent);cursor:pointer">🔄 Refresh</button>
+        <div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace" id="periodLabel">—</div>
+      </div>
     </div>
     <div style="padding:0 24px 24px">
       <div id="sellTomorrow"></div>
@@ -252,7 +255,7 @@ input:focus,select:focus{border-color:var(--accent);}
   </div>
 
   <div class="page" id="page-purchases" style="padding:24px">
-    <div style="font-size:20px;font-weight:800;margin-bottom:16px;">Purchases — September</div>
+    <div id="purchPageTitle" style="font-size:20px;font-weight:800;margin-bottom:16px;">Purchases — September</div>
     <div id="purchSummary"></div>
     <div class="card">
       <div class="section-title">Add entry</div>
@@ -272,7 +275,7 @@ input:focus,select:focus{border-color:var(--accent);}
   </div>
 
   <div class="page" id="page-sales" style="padding:24px">
-    <div style="font-size:20px;font-weight:800;margin-bottom:16px;">Sales — September</div>
+    <div id="salesPageTitle" style="font-size:20px;font-weight:800;margin-bottom:16px;">Sales — September</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <div class="card">
         <div class="section-title">Upload Zoho CSV</div>
@@ -296,7 +299,7 @@ input:focus,select:focus{border-color:var(--accent);}
   </div>
 
   <div class="page" id="page-expenses" style="padding:24px">
-    <div style="font-size:20px;font-weight:800;margin-bottom:16px;">Expenses — September</div>
+    <div id="expPageTitle" style="font-size:20px;font-weight:800;margin-bottom:16px;">Expenses — September</div>
     <div class="card">
       <div class="section-title">Add entry</div>
       <div class="date-bar"><label>Date</label><input type="date" id="expDate"></div>
@@ -327,7 +330,7 @@ input:focus,select:focus{border-color:var(--accent);}
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;">
       <div>
         <div style="font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted2);font-family:'DM Mono',monospace;margin-bottom:4px;">Physical stock · as of today</div>
-        <div style="font-size:20px;font-weight:800;">Stock Count — September</div>
+        <div id="invPageTitle" style="font-size:20px;font-weight:800;">Stock Count — September</div>
       </div>
       <span style="font-size:10px;color:var(--muted2);font-family:'DM Mono',monospace" id="invUpdated"></span>
     </div>
@@ -442,13 +445,28 @@ function sbPost(table,rows){
 }
 
 // ── LOAD ALL DATA FROM SUPABASE ──
+// 1st of the real current calendar month, computed fresh on every load —
+// NOT hardcoded, unlike the '2026-09-01' literal this replaced. That
+// literal was the actual cause of "purchases missing the last N days" and
+// "uploaded sales disappearing": it silently stopped covering any date
+// once the real month rolled past whatever was last hardcoded here, with
+// nothing ever erroring to say so — the query just quietly returned less
+// data every day until the new month began, then none at all. No upper
+// bound either now — today() only ever grows, so there's no future
+// boundary left to eventually go stale the same way.
+function currentMonthStart(){return today().slice(0,7)+'-01';}
+function currentMonthLabel(){
+  return new Date().toLocaleDateString('en-US',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'});
+}
+
 function loadFromSupabase(){
   document.getElementById('loadingText').textContent='Loading from Supabase…';
+  var monthStart=currentMonthStart();
   return Promise.all([
-    sbGet('stock_purchases','date=gte.2026-09-01&date=lte.2026-09-30&order=date.asc&limit=5000'),
-    sbGet('daily_sales','date=gte.2026-09-01&date=lte.2026-09-30&order=date.asc&limit=5000'),
-    sbGet('daily_expenses','date=gte.2026-09-01&date=lte.2026-09-30&order=date.asc&limit=5000'),
-    sbGet('stock_closing','date=gte.2026-09-01&date=lte.2026-09-30&order=date.desc&limit=500'),
+    sbGet('stock_purchases','date=gte.'+monthStart+'&order=date.asc&limit=5000'),
+    sbGet('daily_sales','date=gte.'+monthStart+'&order=date.asc&limit=5000'),
+    sbGet('daily_expenses','date=gte.'+monthStart+'&order=date.asc&limit=5000'),
+    sbGet('stock_closing','date=gte.'+monthStart+'&order=date.desc&limit=500'),
     sbGet('catalog','select=item_name,category')
   ]).then(function(results){
     var pRows=results[0],sRows=results[1],eRows=results[2],closingRows=results[3],catalogRows=results[4];
@@ -649,7 +667,7 @@ function skuRowHtml(m){
 }
 
 function renderTbody(d,priceMap){
-  document.getElementById('tTitle').textContent=(curGroup==='All'?'All SKUs':(GK[curGroup]||curGroup)+' SKUs')+' — September';
+  document.getElementById('tTitle').textContent=(curGroup==='All'?'All SKUs':(GK[curGroup]||curGroup)+' SKUs')+' — '+currentMonthLabel();
   var metrics=d.map(function(r){return computeRowMetrics(r,priceMap);});
   var fruitMetrics=sortMetrics(metrics.filter(function(m){return !isVegRow(m.row);}));
   var vegMetrics=sortMetrics(metrics.filter(function(m){return isVegRow(m.row);}));
@@ -1008,7 +1026,49 @@ document.getElementById('groupTabs').addEventListener('click',function(e){
   t.classList.add('active');curGroup=t.dataset.g;renderDashboard();
 });
 
+// Every one of these was a literal "September 2026"/"— September" string
+// in the HTML — cosmetic on their own, but left uncorrected they'd say
+// "September" forever regardless of the actual month being shown, which
+// is exactly as misleading as the query bug above once a new month starts.
+function refreshCurrentMonthLabels(){
+  var label=currentMonthLabel();
+  var monthTab=document.querySelector('.month-tab.active[data-month="september"]');
+  if(monthTab)monthTab.textContent='📊 '+label;
+  document.querySelector('#month-september .nav-brand').innerHTML='<em>Good Papaya</em> — '+label;
+  document.getElementById('mtdLabel').textContent=label+' · Month to date';
+  // tTitle is intentionally NOT set here — renderTbody (called after every
+  // data load and group-tab click) owns that text already and runs after
+  // this, so setting it here would just be immediately overwritten.
+  document.getElementById('purchPageTitle').textContent='Purchases — '+label;
+  document.getElementById('salesPageTitle').textContent='Sales — '+label;
+  document.getElementById('expPageTitle').textContent='Expenses — '+label;
+  document.getElementById('invPageTitle').textContent='Stock Count — '+label;
+}
+
+function doRefresh(){
+  var btn=document.getElementById('refreshBtn'),original=btn.textContent;
+  btn.textContent='Refreshing…';btn.disabled=true;
+  refreshCurrentMonthLabels();
+  return loadFromSupabase().then(function(){
+    populateSKUs();
+    btn.textContent=original;btn.disabled=false;
+  });
+}
+document.getElementById('refreshBtn').addEventListener('click',doRefresh);
+
+// The parent ops-dashboard page loads this iframe only once per browser
+// session (see its own comment on pnl-iframe — deliberate, to avoid
+// re-fetching this whole page's weight on every tab click) — so without
+// this, switching back to the P&L tab later in the day would keep showing
+// whatever was loaded the FIRST time, silently missing anything entered
+// since. The parent posts 'refresh' every time this tab is opened after
+// the first load; this is the other half of that fix.
+window.addEventListener('message',function(e){
+  if(e.data==='refresh')doRefresh();
+});
+
 // ── INIT ──
+refreshCurrentMonthLabels();
 loadFromSupabase();
 populateSKUs();
 </script>
