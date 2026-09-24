@@ -1,9 +1,12 @@
 // Supabase Edge Function — sync-catalog
 // Pulls active items from Zoho Books → catalog table.
-// POST {} to trigger manually from admin panel.
+// POST {} to trigger manually from admin panel, or automatically every
+// hour via pg_cron (migration 118, x-cron-secret) — generate-invoice now
+// prices off this table instead of fetching Zoho live on every invoice,
+// so keeping it current is what keeps invoice pricing current.
 //
 // Required env vars:
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
 //   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN
 //   ZOHO_ORGANIZATION_ID  (or ZOHO_ORG_ID as fallback)
 
@@ -18,14 +21,24 @@ function env(key: string) {
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-cron-secret',
 };
 
 // This function uses the service role internally, so it bypasses RLS
 // regardless of who calls it — the anon key alone is enough to invoke it at
 // the platform level. Requiring a real logged-in user session here is what
 // actually restricts this to signed-in ops staff.
+//
+// x-cron-secret is the one exception — the hourly sync-catalog schedule
+// (migration 118) calls this on a schedule with no user session to send,
+// same shared-secret pattern auto-invoice-final-orders/generate-invoice
+// already use for their own pg_cron triggers.
 async function requireAuth(req: Request): Promise<void> {
+  const cronSecret = req.headers.get('x-cron-secret');
+  if (cronSecret) {
+    if (cronSecret !== env('CRON_SECRET')) throw new Error('Not authorized');
+    return;
+  }
   const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jwt) throw new Error('Not authenticated');
   const res = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, {
