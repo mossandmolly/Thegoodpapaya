@@ -7570,8 +7570,8 @@ function renderPackerTeamView(){
   const unassignedCol=showUnassigned
     ?'<div class="pk-team-col">'+
       '<div class="pk-team-col-header pk-team-col-header-warn">⚠️ Unassigned <span class="sh-count">('+unassigned.pending.length+' left)</span></div>'+
+      (unassigned.done.length?'<div class="pk-done-log">'+unassigned.done.slice().reverse().map(doneItemRowHtml).join('')+'</div>':'')+
       unassigned.pending.map(item=>packCardHtml(item,dupIds)).join('')+
-      (unassigned.done.length?'<div class="pk-done-log">'+unassigned.done.map(doneItemRowHtml).join('')+'</div>':'')+
     '</div>'
     :'';
 
@@ -7588,8 +7588,8 @@ function renderPackerTeamView(){
     visiblePackers.map(({packer:p,done,pending})=>
       '<div class="pk-team-col">'+
         '<div class="pk-team-col-header">'+escH(p.name)+' <span class="sh-count">('+done.length+' done, '+pending.length+' left)</span></div>'+
+        (done.length?'<div class="pk-done-log">'+done.slice().reverse().map(doneItemRowHtml).join('')+'</div>':'')+
         (pending.length?pending.map(item=>packCardHtml(item,dupIds)).join(''):(done.length?'':'<div class="to-empty" style="padding:14px 8px">Nothing queued ✓</div>'))+
-        (done.length?'<div class="pk-done-log">'+done.map(doneItemRowHtml).join('')+'</div>':'')+
       '</div>'
     ).join('')+
   '</div>';
