@@ -6842,12 +6842,22 @@ function computePackerQueue(packerName){
 // order computePackerQueue uses. "Pending" here is deliberately broader
 // than computePackerQueue's open-only set, since Somya needs visibility
 // into held/packed-awaiting-final items too, not just untouched ones.
+//
+// Done and pending are deliberately attributed two DIFFERENT ways: pending
+// items haven't been touched yet, so the default/override Item -> Packer
+// assignment (effectivePackerIdForItem) is the only thing to group them
+// by. But an already-packed item has a real record of who actually did
+// it (packed_by, set from whoever's device called markFinal) — showing it
+// under the ASSIGNED packer instead would credit the wrong person
+// whenever someone packs an item outside their own default fruits (a
+// stand-in, someone clearing a backlog, etc). Done is grouped by that
+// real packed_by identity instead, matching name-for-name since packed_by
+// is stored as the plain riderName string, same as packer.name.
 function computePackerTimeline(packerName){
   const packer=packersCache.find(p=>p.name===packerName);
   if(!packer)return{done:[],pending:[]};
-  const mine=packerItems.filter(i=>i.status!=='cancelled'&&effectivePackerIdForItem(i)===packer.id);
-  const done=mine.filter(i=>i.packed_at).sort((a,b)=>new Date(a.packed_at)-new Date(b.packed_at));
-  const pending=orderItemsByQueuePriority(mine.filter(i=>!i.packed_at));
+  const pending=orderItemsByQueuePriority(packerItems.filter(i=>i.status!=='cancelled'&&!i.packed_at&&effectivePackerIdForItem(i)===packer.id));
+  const done=packerItems.filter(i=>i.status!=='cancelled'&&i.packed_at&&i.packed_by===packerName).sort((a,b)=>new Date(a.packed_at)-new Date(b.packed_at));
   return{done,pending};
 }
 
@@ -6876,10 +6886,17 @@ function formatPackRate(seconds){
 // show up in any packer's own column (effectivePackerIdForItem is null,
 // matches no one), so without this they'd be invisible in Team view even
 // though nothing is going to pack them until someone assigns or reassigns.
+// "Done" here is deliberately NOT the same assignment filter as pending —
+// see computePackerTimeline's own comment for why: an item can be packed
+// by someone other than whoever it's assigned to, and a completed item
+// should credit whoever actually did the work. Unassigned's own "done"
+// bucket is just whatever slipped through with no packed_by recorded at
+// all (pre-attribution data, or a genuine gap), not "packed but assigned
+// to nobody" — once something's packed_by is set, it belongs in that
+// packer's own column regardless of assignment.
 function computeUnassignedTimeline(){
-  const mine=packerItems.filter(i=>i.status!=='cancelled'&&effectivePackerIdForItem(i)===null);
-  const done=mine.filter(i=>i.packed_at).sort((a,b)=>new Date(a.packed_at)-new Date(b.packed_at));
-  const pending=orderItemsByQueuePriority(mine.filter(i=>!i.packed_at));
+  const pending=orderItemsByQueuePriority(packerItems.filter(i=>i.status!=='cancelled'&&!i.packed_at&&effectivePackerIdForItem(i)===null));
+  const done=packerItems.filter(i=>i.status!=='cancelled'&&i.packed_at&&!i.packed_by).sort((a,b)=>new Date(a.packed_at)-new Date(b.packed_at));
   return{done,pending};
 }
 
