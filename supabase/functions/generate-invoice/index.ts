@@ -51,6 +51,28 @@ function isFreeItem(i: { description?: string | null; no_bill?: boolean }): bool
   return FREE_ITEM_RE.test(i.description ?? '') || !!i.no_bill;
 }
 
+// Some items bill at a different, higher Zoho rate when the order's
+// description calls out a bigger size — the order itself still stays under
+// the plain item name (that's what parsing extracts; there's no separate
+// "Blueberry jumbo"/"Avocado big" order item), only the PRICE lookup
+// changes. Keyed on the order's own item_name, lowercased.
+const SIZE_VARIANT_RULES: Record<string, { keywords: string[]; variantName: string }> = {
+  'blueberry': { keywords: ['jumbo'], variantName: 'blueberry jumbo' },
+  'avocado':   { keywords: ['big', 'large'], variantName: 'avocado big' },
+};
+
+// Returns the variant catalog name (lowercased) when the description calls
+// for one, else the plain item name (lowercased) — just picks which name to
+// look the RATE up under; the caller still falls back to the plain name if
+// the variant isn't actually in Zoho's catalog yet.
+function sizeVariantLookupKey(itemName: string, description: string | null | undefined): string {
+  const nameLower = itemName.toLowerCase();
+  const rule = SIZE_VARIANT_RULES[nameLower];
+  if (!rule) return nameLower;
+  const descLower = (description ?? '').toLowerCase();
+  return rule.keywords.some(kw => descLower.includes(kw)) ? rule.variantName : nameLower;
+}
+
 // Small edit-distance so a typo'd or aliased item name ("Papaya Ripe" vs
 // "Ripe Papaya") still surfaces the right catalog row instead of just failing.
 function levenshtein(a: string, b: string): number {
@@ -519,8 +541,16 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      let lookupKey = (i.item_name as string).toLowerCase();
+      const plainKey = (i.item_name as string).toLowerCase();
+      let lookupKey = sizeVariantLookupKey(i.item_name as string, i.description);
       let rate = rateByLowerName.get(lookupKey);
+      if (rate === undefined && lookupKey !== plainKey) {
+        // Description called for a size variant (e.g. "jumbo") but that
+        // variant isn't in Zoho's catalog yet — bill at the plain item's
+        // rate rather than failing the whole invoice over a naming gap.
+        lookupKey = plainKey;
+        rate = rateByLowerName.get(lookupKey);
+      }
       if (rate === undefined && overrides[i.item_name]) {
         lookupKey = overrides[i.item_name].toLowerCase();
         rate = rateByLowerName.get(lookupKey);
