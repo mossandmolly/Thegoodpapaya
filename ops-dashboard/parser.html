@@ -185,6 +185,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .vp-sortable{cursor:pointer;user-select:none}
 .vp-sortable:hover{color:#2d6b2d}
 .vp-sort-ind{margin-left:4px;font-size:10px}
+.catalog-sync-alert{font-size:18px;font-weight:800;color:#b3261e;margin-bottom:10px}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .deliver-by-badge.deliver-by-default{background:#8a7a6a}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
@@ -638,6 +639,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
       <button type="button" class="date-nav-btn" id="to-date-next" onclick="setViewDate(addDays(viewDate,1))" title="Next day">›</button>
     </div>
   </div>
+  <div id="catalog-sync-banner"></div>
   <input type="text" class="pk-search" id="to-search" placeholder="🔍 Search society, customer, or fruit...">
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div id="to-delivery-pills" class="filter-pills delivery-status-pills"></div>
@@ -3607,6 +3609,22 @@ function setViewDate(dateStr){
   if(document.getElementById('panel-purchases').classList.contains('active'))loadPurchasesView();
 }
 
+// generate-invoice now prices off the local catalog table instead of
+// fetching Zoho live on every invoice (kept fresh by sync-catalog: an
+// hourly pg_cron job, migration 118, plus the manual 💰 Catalog button
+// whenever a price/item is known to have just changed) — this banner is
+// purely a reminder so that manual click actually happens when it
+// matters, not a functional gate on anything.
+async function loadCatalogSyncBanner(){
+  const el=document.getElementById('catalog-sync-banner');
+  if(!el)return;
+  const{data,error}=await sb.from('catalog').select('synced_at').not('synced_at','is',null).order('synced_at',{ascending:false}).limit(1).maybeSingle();
+  if(error){el.innerHTML='';return;}
+  el.innerHTML=data?.synced_at
+    ?'<div class="catalog-sync-alert">🕐 Catalog last synced: '+escH(new Date(data.synced_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}))+'</div>'
+    :'<div class="catalog-sync-alert">⚠ Catalog has never been synced — click 💰 Catalog above now</div>';
+}
+
 async function loadTodaysOrders(){
   const list=document.getElementById('to-list');
   const tomorrowDate=addDays(CALENDAR_TODAY,1);
@@ -3623,6 +3641,7 @@ async function loadTodaysOrders(){
     fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
     fetchAllCustomerLookupByDatePrefix(viewDate),
     loadPriorityOverride().catch(e=>console.error('Could not load priority override',e)),
+    loadCatalogSyncBanner().catch(e=>console.error('Could not load catalog sync status',e)),
   ]);
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
 

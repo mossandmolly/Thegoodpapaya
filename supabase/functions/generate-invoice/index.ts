@@ -256,33 +256,29 @@ function zohoHeaders(token: string): HeadersInit {
   return { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' };
 }
 
-// ── Live item rates ───────────────────────────────────────────────────────────
-// Zoho Books is the single source of truth for pricing. This used to read
-// rates from the local `catalog` table instead — a mirror that only updates
-// when someone remembers to run sync-catalog — so a price changed directly
-// in Zoho could sit un-synced indefinitely while invoices kept going out at
-// the old rate. Pulling live here means every invoice bills whatever Zoho
-// says right now, full stop.
-async function fetchZohoItems(
-  token: string, orgId: string,
+// ── Item rates ────────────────────────────────────────────────────────────────
+// Reads from the local `catalog` table (kept fresh by sync-catalog, run
+// hourly via pg_cron — see migration 118 — plus a manual "Sync Catalog"
+// click whenever a price/item is known to have changed) rather than
+// fetching live from Zoho on every single invoice. This used to fetch live
+// specifically to avoid a stale-mirror bug — a price changed directly in
+// Zoho could sit un-synced indefinitely since sync-catalog only ran when
+// someone remembered to click it — but the live fetch was also the single
+// biggest driver of this function's Zoho API usage (one full catalog page
+// fetch per invoice, including every auto-invoice-final-orders cron tick),
+// which was hitting Zoho's daily rate limit. The hourly cron bounds the old
+// staleness risk to at most ~1 hour instead of "indefinitely"; there's no
+// live-fetch fallback for an item catalog doesn't recognize yet (a
+// deliberate scope decision — see the discussion this was built from).
+async function fetchCatalogItems(
+  supabase: ReturnType<typeof createClient>,
 ): Promise<Array<{ name: string; rate: number; item_id: string; unit: string }>> {
-  let page = 1;
-  const all: Array<{ name: string; rate: number; item_id: string; unit: string }> = [];
-  while (true) {
-    const res = await fetch(
-      zohoUrl(`/items?status=active&page=${page}&per_page=200`, orgId),
-      { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
-    );
-    const d = await res.json();
-    if (!res.ok) throw new Error(`Zoho items fetch failed: ${d.message || res.status}`);
-    const items = d.items ?? [];
-    all.push(...items.map((i: any) => ({
-      name: i.name as string, rate: i.rate ?? 0, item_id: i.item_id as string, unit: i.unit || 'kg',
-    })));
-    if (!d.page_context?.has_more_page) break;
-    page++;
-  }
-  return all;
+  const { data, error } = await supabase
+    .from('catalog').select('item_name,unit_price,zoho_item_id,unit').eq('active', true);
+  if (error) throw new Error(`Catalog fetch failed: ${error.message}`);
+  return (data ?? []).map((c: any) => ({
+    name: c.item_name as string, rate: c.unit_price ?? 0, item_id: c.zoho_item_id as string, unit: c.unit || 'kg',
+  }));
 }
 
 // Same identity rule as the frontend's canonicalCustomerKey — case AND
@@ -490,7 +486,7 @@ Deno.serve(async (req) => {
       throw new Error(`Missing final qty: ${missing.map((i: any) => i.item_name).join(', ')}`);
     }
 
-    const zohoItems = await fetchZohoItems(token, orgId);
+    const zohoItems = await fetchCatalogItems(supabase);
     const catalogNames = zohoItems.map(i => i.name);
     const rateByLowerName = new Map(zohoItems.map(i => [i.name.toLowerCase(), i.rate]));
     // The actual fix for "ghost items" (see fix-invoice-item-casing, the
@@ -505,25 +501,10 @@ Deno.serve(async (req) => {
     // is present.
     const itemIdByLowerName = new Map(zohoItems.map(i => [i.name.toLowerCase(), i.item_id]));
 
-    // Best-effort: keep the local catalog mirror fresh as a side effect of
-    // every invoice, since Config/Stock/Packer still read it for unit labels
-    // and autocomplete — but this never gates or blocks invoicing itself.
-    // Upserts on item_name (catalog's own unique column — see migration
-    // 013), not zoho_item_id: that index is only unique among non-null
-    // values, so conflicting on it silently fails to catch a pre-existing
-    // row at the same item_name under a different/no zoho_item_id, which
-    // then throws catalog's OWN item_name uniqueness constraint instead.
-    // i.name is Zoho's exact casing verbatim (matches sync-catalog) — Zoho
-    // item matching/pricing is case-sensitive, so this table must mirror
-    // that exactly for every order (built from this same autocomplete) to
-    // invoice against the right item.
-    supabase.from('catalog').upsert(
-      zohoItems.map(i => ({
-        item_name: i.name, unit_price: i.rate, unit: i.unit, active: true,
-        zoho_item_id: i.item_id, synced_at: new Date().toISOString(),
-      })),
-      { onConflict: 'item_name' },
-    ).then(({ error }) => { if (error) console.error('Catalog mirror refresh failed:', error.message); });
+    // No catalog write-back here anymore — catalog is now the SOURCE this
+    // function reads from (fetchCatalogItems above), not something it
+    // refreshes as a side effect of a live Zoho fetch. Keeping it current
+    // is sync-catalog's job now (hourly cron + manual trigger).
 
     const freeItems: string[] = [];
     const unresolved: Array<{ item_name: string; suggestions: string[] }> = [];
