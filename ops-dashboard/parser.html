@@ -1723,7 +1723,7 @@ function switchTab(name){
     }
   }
   if(name==='delivery')startLocationPing();else stopLocationPing();
-  if(name!=='packer'){stopPkCardTimer();stopTeamViewPoll();}
+  if(name!=='packer')stopPkCardTimer();
 }
 
 // Shortcut tab — jumps straight to Quick Order Entry inside the Parser
@@ -6913,25 +6913,7 @@ async function setPackerViewMode(mode){
   document.getElementById('pk-status-pills').style.display=hideGridControls?'none':'';
   document.getElementById('pk-search').style.display=hideGridControls?'none':'';
   if(single)await ensurePackerIdentityForQueue();
-  if(team)startTeamViewPoll();else stopTeamViewPoll();
   renderPackerGrid();
-}
-
-// Somya's Team view auto-refreshes so she sees packing progress across the
-// whole team without manually reloading — same clear-then-restart interval
-// convention as startLocationPing/stopPkCardTimer. Stopped whenever Team
-// view isn't the active mode (leaving the tab, switching to Grid/Single).
-const TEAM_VIEW_POLL_MS=20000;
-let teamViewPollTimer=null;
-function startTeamViewPoll(){
-  if(teamViewPollTimer)return;
-  teamViewPollTimer=setInterval(()=>{
-    if(packerViewMode==='team'&&document.getElementById('panel-packer').classList.contains('active'))loadPackerView();
-    else stopTeamViewPoll();
-  },TEAM_VIEW_POLL_MS);
-}
-function stopTeamViewPoll(){
-  if(teamViewPollTimer){clearInterval(teamViewPollTimer);teamViewPollTimer=null;}
 }
 
 const pkIdentityModal=document.getElementById('pk-identity-modal'),pkIdentitySelect=document.getElementById('pk-identity-select');
@@ -7542,8 +7524,6 @@ function renderPackerTeamSummary(rows){
 // assignment and no override, which otherwise wouldn't show up in ANY
 // packer's column at all. Each card's "Unassigned ✎" is Somya's own
 // entry point to fix the gap right from here (openReassignPacker).
-// Auto-refreshes — see startTeamViewPoll.
-
 // Which packer's column(s) to show — 'all' (default) or one packer's
 // name, or '__unassigned__' for just the Unassigned column. Only narrows
 // the per-packer card columns; the Current Order stack (about societies,
