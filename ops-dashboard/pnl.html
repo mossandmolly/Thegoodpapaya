@@ -63,6 +63,8 @@ thead th{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--
 thead th:first-child{text-align:left;}
 td{font-size:11px;padding:7px 7px;border-bottom:1px solid #181818;text-align:right;font-family:'DM Mono',monospace;white-space:nowrap;}
 td:first-child{text-align:left;font-family:'Syne',sans-serif;font-weight:600;font-size:12px;}
+tfoot td{font-weight:700;border-top:1px solid var(--border);border-bottom:none;background:var(--s1);}
+tfoot td .sub{display:block;font-size:9px;font-weight:500;color:var(--muted2);margin-top:2px;}
 tr:hover td{background:var(--s2);}
 .entries-table{width:100%;border-collapse:collapse;}
 .entries-table th{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace;padding:5px 8px;border-bottom:1px solid var(--border);text-align:left;font-weight:500;}
@@ -242,9 +244,9 @@ input:focus,select:focus{border-color:var(--accent);}
         <div class="card">
           <div class="section-title" id="tTitle">All SKUs — September cumulative</div>
           <div style="font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:6px">🍎 Fruits</div>
-          <div class="table-wrap"><table><thead><tr id="skuThead"></tr></thead><tbody id="skuTbody"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr id="skuThead"></tr></thead><tbody id="skuTbody"></tbody><tfoot id="skuTfoot"></tfoot></table></div>
           <div style="font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-family:'DM Mono',monospace;margin:16px 0 6px">🥦 Vegetables</div>
-          <div class="table-wrap"><table><thead><tr id="skuTheadVeg"></tr></thead><tbody id="skuTbodyVeg"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr id="skuTheadVeg"></tr></thead><tbody id="skuTbodyVeg"></tbody><tfoot id="skuTfootVeg"></tfoot></table></div>
         </div>
         <div class="right-col">
           <div class="card"><div class="section-title">Remaining stock</div><canvas id="stockChart"></canvas></div>
@@ -637,6 +639,10 @@ function computeRowMetrics(r,priceMap){
     mpctCF:(r.sales>0?+r.mpct:null), at50CF:pot(r.margin,0.5), at80CF:pot(r.margin,0.8),
     mpctExCF:mpctExCF, at50ExCF:pot(margin_noCF,0.5), at80ExCF:pot(margin_noCF,0.8),
     _pr:pr, _wo:wo, _sp:sp,
+    // Raw inputs for subtotalRowHtml — subtotals re-derive every % from
+    // summed ₹ (sales-weighted), never by averaging per-row percentages.
+    _margin:r.margin, _marginExCF:margin_noCF,
+    _add50:(dr>0&&lp)?dr*0.5*lp:0, _add80:(dr>0&&lp)?dr*0.8*lp:0,
   };
 }
 
@@ -677,6 +683,44 @@ function skuRowHtml(m){
     +'</tr>';
 }
 
+// Subtotal row for one table (fruits or vegetables). Quantities and ₹ are
+// straight sums; Sell% and every margin % are recomputed from those sums so
+// big-ticket SKUs weigh in proportionally. The "@50%/@80%" potentials apply
+// the same formula as pot() in computeRowMetrics over the summed figures.
+function subtotalRowHtml(label,ms){
+  function sum(k){return ms.reduce(function(t,m){return t+(+m[k]||0);},0);}
+  function pct(n,d){return d>0?+(n/d*100).toFixed(1):null;}
+  function pc(p){return p===null?'var(--muted)':p<0?'var(--red)':p<15?'var(--yellow)':'var(--accent)';}
+  function pf(p){return p===null?'—':fmt(p,1)+'%';}
+  function rs(v){return(v<0?'−':'')+'₹'+fmt(Math.abs(v));}
+  if(!ms.length)return '';
+  var cfQty=sum('cfQty'),sep=sum('sepBought'),tot=sum('total'),sold=sum('sold'),books=sum('booksRem'),
+      phys=sum('physical'),wo=sum('writeoff'),sales=sum('sales'),spend=sum('spend'),
+      mCF=sum('_margin'),mEx=sum('_marginExCF'),a50=sum('_add50'),a80=sum('_add80'),
+      sp=pct(sold,tot),mpCF=pct(mCF,sales),mpEx=pct(mEx,sales);
+  function pot(m,a){var ts=sales+a;return ts>0?+((m+a)/ts*100).toFixed(1):null;}
+  var p50CF=pot(mCF,a50),p80CF=pot(mCF,a80),p50Ex=pot(mEx,a50),p80Ex=pot(mEx,a80);
+  return '<tr>'
+    +'<td>'+label+' subtotal<span class="sub">'+ms.length+' SKUs</span></td>'
+    +'<td style="color:var(--yellow)">'+(cfQty>0?fmt(cfQty,2):'—')+'</td>'
+    +'<td>'+fmt(sep,2)+'</td>'
+    +'<td>'+fmt(tot,2)+'</td>'
+    +'<td>'+fmt(sold,2)+'</td>'
+    +'<td>'+(sp===null?'—':sp+'%')+'</td>'
+    +'<td style="color:'+(books<0?'var(--red)':'var(--muted2)')+'">'+fmt(books,2)+'</td>'
+    +'<td>'+fmt(phys,2)+'</td>'
+    +'<td style="color:'+(wo>0?'var(--red)':'var(--muted)')+'">'+(wo>0?'−'+fmt(wo,2):'—')+'</td>'
+    +'<td style="color:var(--accent)">₹'+fmt(sales)+'</td>'
+    +'<td style="color:var(--orange)">₹'+fmt(spend)+'</td>'
+    +'<td style="color:'+(mpCF!==null&&mpCF<0?'var(--red)':mpCF>=25?'var(--blue)':'var(--yellow)')+'">'+pf(mpCF)+'<span class="sub">'+rs(mCF)+'</span></td>'
+    +'<td style="color:'+pc(p50CF)+'">'+pf(p50CF)+'</td>'
+    +'<td style="color:'+pc(p80CF)+'">'+pf(p80CF)+'</td>'
+    +'<td style="color:'+(mpEx!==null&&mpEx<0?'var(--red)':mpEx>=25?'var(--accent)':'var(--yellow)')+'">'+pf(mpEx)+'<span class="sub">'+rs(mEx)+'</span></td>'
+    +'<td style="color:'+pc(p50Ex)+'">'+pf(p50Ex)+'</td>'
+    +'<td style="color:'+pc(p80Ex)+'">'+pf(p80Ex)+'</td>'
+    +'</tr>';
+}
+
 function renderTbody(d,priceMap){
   document.getElementById('tTitle').textContent=(curGroup==='All'?'All SKUs':(GK[curGroup]||curGroup)+' SKUs')+' — '+currentMonthLabel();
   var metrics=d.map(function(r){return computeRowMetrics(r,priceMap);});
@@ -684,6 +728,8 @@ function renderTbody(d,priceMap){
   var vegMetrics=sortMetrics(metrics.filter(function(m){return isVegRow(m.row);}));
   document.getElementById('skuTbody').innerHTML=fruitMetrics.map(skuRowHtml).join('');
   document.getElementById('skuTbodyVeg').innerHTML=vegMetrics.map(skuRowHtml).join('');
+  document.getElementById('skuTfoot').innerHTML=subtotalRowHtml('🍎 Fruits',fruitMetrics);
+  document.getElementById('skuTfootVeg').innerHTML=subtotalRowHtml('🥦 Vegetables',vegMetrics);
 }
 
 function renderChart(d){
