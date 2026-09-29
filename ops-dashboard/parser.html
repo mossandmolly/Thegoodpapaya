@@ -5522,7 +5522,11 @@ async function ensureCatalogSyncedToday(){
   const last=data&&data[0]&&data[0].synced_at;
   const lastDay=last?new Date(new Date(last).getTime()+330*60*1000).toISOString().slice(0,10):null;
   if(lastDay===CALENDAR_TODAY)return;
-  await syncCatalog();
+  // Never block invoicing on this: if Zoho is rate-limited/down, sync-catalog
+  // aborts without touching catalog, and invoices go out at the last
+  // successfully-synced prices instead.
+  try{await syncCatalog();}
+  catch(e){console.warn('Catalog sync failed — invoicing at last synced prices:',e.message);}
 }
 
 const syncCatalogBtn=document.getElementById('to-sync-catalog');

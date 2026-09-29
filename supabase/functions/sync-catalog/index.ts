@@ -1,5 +1,9 @@
 // Supabase Edge Function — sync-catalog
-// Pulls active items from Zoho Books → catalog table.
+// Mirrors Zoho Books' active items → catalog table, exactly:
+//   • in Zoho, not in catalog   → inserted
+//   • in both                   → name/rate/unit/item_id overwritten from Zoho
+//   • in catalog, not in Zoho   → set active=false (not deleted)
+//   • Zoho call fails / empty   → whole sync aborts, catalog untouched
 // POST {} to trigger manually from admin panel, or automatically every
 // hour via pg_cron (migration 118, x-cron-secret) — generate-invoice now
 // prices off this table instead of fetching Zoho live on every invoice,
@@ -109,9 +113,16 @@ async function fetchAllItems(token: string, orgId: string) {
       `https://www.zohoapis.in/books/v3/items?organization_id=${orgId}&status=active&page=${page}&per_page=200`,
       { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
     );
-    const d = await res.json();
-    const items = d.items || [];
-    all.push(...items);
+    const d = await res.json().catch(() => ({}));
+    // Abort on ANY Zoho error (rate limit, auth, outage) instead of treating
+    // it as "no items". This used to fall through to items=[] — and the
+    // deactivation pass below then switched off every catalog item, so
+    // every invoice failed to resolve its items until the next good sync.
+    // Throwing here leaves the catalog exactly as the last good sync left it.
+    if (!res.ok || d.code !== 0 || !Array.isArray(d.items)) {
+      throw new Error(`Zoho items fetch failed (page ${page}, HTTP ${res.status}): ${d.message || 'unexpected response'} — catalog left unchanged`);
+    }
+    all.push(...d.items);
     if (!d.page_context?.has_more_page) break;
     page++;
   }
@@ -127,9 +138,13 @@ Deno.serve(async (req) => {
     const token  = await zohoToken(supabase);
     const orgId  = await getOrgId(token);
     const items  = await fetchAllItems(token, orgId);
+    // Belt-and-braces: a successful-looking but empty response would still
+    // deactivate the entire catalog below. Zoho never legitimately has zero
+    // active items for this org, so refuse rather than wipe.
+    if (!items.length) throw new Error('Zoho returned 0 active items — refusing to sync, catalog left unchanged');
 
     let synced = 0;
-    const syncedZohoIds = new Set<string>();
+    const syncedRowIds = new Set<string>();
     for (const item of items) {
       // Zoho's own exact casing, verbatim — no re-casing. Zoho item
       // matching/pricing is case-sensitive, so if the catalog (and, via
@@ -167,31 +182,30 @@ Deno.serve(async (req) => {
         targetId = byName?.id as string | undefined;
       }
 
-      const { error } = targetId
-        ? await supabase.from('catalog').update(row).eq('id', targetId)
-        : await supabase.from('catalog').insert(row);
+      const { data: saved, error } = targetId
+        ? await supabase.from('catalog').update(row).eq('id', targetId).select('id').single()
+        : await supabase.from('catalog').insert(row).select('id').single();
 
       if (error) throw new Error(`Catalog upsert failed for "${itemName}": ${error.message}`);
-      syncedZohoIds.add(zohoItemId);
+      syncedRowIds.add(saved.id as string);
       synced++;
     }
 
-    // fetchAllItems only ever pulls Zoho's currently-active items, and the
-    // loop above only ever sets active:true — nothing previously reconciled
-    // the other direction, so an item marked inactive (or deleted) in Zoho
-    // stayed active:true in catalog forever, since sync simply stopped
-    // mentioning it rather than ever turning it off. Any catalog row that's
-    // linked to Zoho (has a zoho_item_id) but wasn't in this sync's result
-    // must have gone inactive there since the last sync — deactivate it here
-    // too, so catalog.active actually tracks Zoho status instead of only
-    // ever drifting toward "everything stays active".
-    const { data: staleRows, error: staleErr } = await supabase
-      .from('catalog').select('id,zoho_item_id')
-      .eq('active', true).not('zoho_item_id', 'is', null);
+    // Exact mirror: the set of ACTIVE catalog rows must be exactly the rows
+    // just written from Zoho — nothing more. Any other active row is
+    // deactivated, whether it was linked to an item that has since gone
+    // inactive/deleted in Zoho, or never linked to Zoho at all (a manual
+    // entry, a duplicate row, an old spelling). Rows are deactivated rather
+    // than deleted so local-only data (category, images, pcs_per_kg) and
+    // historical reports that look up old item names keep working; every
+    // live reader (generate-invoice, storefront, order autocomplete) filters
+    // on active=true, so an inactive row is invisible to invoicing.
+    const { data: activeRows, error: staleErr } = await supabase
+      .from('catalog').select('id').eq('active', true);
     if (staleErr) throw new Error(`Stale-item lookup failed: ${staleErr.message}`);
-    const toDeactivate = (staleRows ?? [])
-      .filter(r => !syncedZohoIds.has(r.zoho_item_id as string))
-      .map(r => r.id);
+    const toDeactivate = (activeRows ?? [])
+      .map(r => r.id as string)
+      .filter(id => !syncedRowIds.has(id));
     if (toDeactivate.length) {
       const { error: deactErr } = await supabase.from('catalog').update({ active: false }).in('id', toDeactivate);
       if (deactErr) throw new Error(`Deactivation failed: ${deactErr.message}`);
