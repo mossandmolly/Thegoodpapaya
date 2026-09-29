@@ -13,7 +13,9 @@
 //
 // Rate comes from the local `catalog` table (catalog.unit_price, active rows
 // only), matched to item_name case-insensitively — NOT fetched live from
-// Zoho per invoice. catalog is an exact mirror of Zoho's active items, kept
+// Zoho per invoice, unless invoice_pricing_settings.source = 'zoho' (the
+// "Invoice prices" switch on Order Overview, migration 119), in which case
+// rates come live from Zoho's /items instead. catalog is an exact mirror of Zoho's active items, kept
 // current by sync-catalog (hourly pg_cron, migration 118, plus the manual
 // 💰 Catalog button in Order Overview).
 // Items whose description contains "replacement", "free", or "free sample"
@@ -282,6 +284,41 @@ async function fetchCatalogItems(
   }));
 }
 
+// Live fallback, used only when invoice_pricing_settings.source = 'zoho'
+// (the "Invoice prices" switch on Order Overview) — for when the catalog is
+// known to be wrong. One or more Zoho /items calls per invoice, so it eats
+// into Zoho's daily API limit; switch back to catalog once it's fixed.
+async function fetchZohoItems(
+  token: string, orgId: string,
+): Promise<Array<{ name: string; rate: number; item_id: string; unit: string }>> {
+  let page = 1;
+  const all: Array<{ name: string; rate: number; item_id: string; unit: string }> = [];
+  while (true) {
+    const res = await fetch(
+      zohoUrl(`/items?status=active&page=${page}&per_page=200`, orgId),
+      { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
+    );
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.code !== 0 || !Array.isArray(d.items)) {
+      throw new Error(`Live Zoho price fetch failed: ${d.message || res.status} — switch Invoice prices back to Catalog`);
+    }
+    all.push(...d.items.map((i: any) => ({
+      name: i.name as string, rate: i.rate ?? 0, item_id: i.item_id as string, unit: i.unit || 'kg',
+    })));
+    if (!d.page_context?.has_more_page) break;
+    page++;
+  }
+  return all;
+}
+
+// Missing row or read error → 'catalog', the normal mode.
+async function getPricingSource(supabase: ReturnType<typeof createClient>): Promise<'catalog' | 'zoho'> {
+  const { data, error } = await supabase
+    .from('invoice_pricing_settings').select('source').eq('id', 1).maybeSingle();
+  if (error) console.error('invoice_pricing_settings read failed, using catalog:', error.message);
+  return data?.source === 'zoho' ? 'zoho' : 'catalog';
+}
+
 // Same identity rule as the frontend's canonicalCustomerKey — case AND
 // punctuation/spacing insensitive — so "Assetz 12-098" and "Assetz 12098"
 // match the same Zoho contact instead of the old plain-lowercase compare
@@ -487,7 +524,10 @@ Deno.serve(async (req) => {
       throw new Error(`Missing final qty: ${missing.map((i: any) => i.item_name).join(', ')}`);
     }
 
-    const zohoItems = await fetchCatalogItems(supabase);
+    const pricingSource = await getPricingSource(supabase);
+    const zohoItems = pricingSource === 'zoho'
+      ? await fetchZohoItems(token, orgId)
+      : await fetchCatalogItems(supabase);
     const catalogNames = zohoItems.map(i => i.name);
     const rateByLowerName = new Map(zohoItems.map(i => [i.name.toLowerCase(), i.rate]));
     // The actual fix for "ghost items" (see fix-invoice-item-casing, the
@@ -687,7 +727,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ invoice_id, invoice_number, sales_order_id, free_items: freeItems, payment_link: paymentLink }),
+      JSON.stringify({ invoice_id, invoice_number, sales_order_id, free_items: freeItems, payment_link: paymentLink, pricing_source: pricingSource }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 

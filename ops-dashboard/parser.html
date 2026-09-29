@@ -186,6 +186,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .vp-sortable:hover{color:#2d6b2d}
 .vp-sort-ind{margin-left:4px;font-size:10px}
 .catalog-sync-alert{font-size:18px;font-weight:800;color:#b3261e;margin-bottom:10px}
+.pricing-switch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:13px;font-weight:700}
+.pricing-switch button{border:1px solid #c9bfb3;background:#fff;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;color:#2b2320}
+.pricing-switch button.on{background:#2d6b2d;border-color:#2d6b2d;color:#fff}
+.pricing-switch button.on.live{background:#b3261e;border-color:#b3261e}
+.pricing-live-note{flex-basis:100%;color:#b3261e;font-weight:800}
 .deliver-by-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .deliver-by-badge.deliver-by-default{background:#8a7a6a}
 .invoice-downloaded-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#2d6b2d}
@@ -640,6 +645,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     </div>
   </div>
   <div id="catalog-sync-banner"></div>
+  <div id="invoice-pricing-switch" class="pricing-switch"></div>
   <input type="text" class="pk-search" id="to-search" placeholder="🔍 Search society, customer, or fruit...">
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div id="to-delivery-pills" class="filter-pills delivery-status-pills"></div>
@@ -3625,6 +3631,37 @@ async function loadCatalogSyncBanner(){
     :'<div class="catalog-sync-alert">⚠ Catalog has never been synced — click 💰 Catalog above now</div>';
 }
 
+// Where generate-invoice gets rates (migration 119): the synced catalog
+// (normal) or live Zoho (fallback if the catalog looks wrong). Stored in the
+// DB, so it also applies to auto-invoice-final-orders and every other user.
+async function loadInvoicePricingSwitch(){
+  const el=document.getElementById('invoice-pricing-switch');
+  if(!el)return;
+  const{data,error}=await sb.from('invoice_pricing_settings').select('source,updated_at,updated_by').eq('id',1).maybeSingle();
+  if(error){el.innerHTML='<span style="color:#b3261e">Invoice price switch unavailable: '+escH(error.message)+'</span>';return;}
+  const src=data?.source==='zoho'?'zoho':'catalog';
+  el.innerHTML='Invoice prices:'
+    +'<button type="button" data-src="catalog" class="'+(src==='catalog'?'on':'')+'">📦 Catalog</button>'
+    +'<button type="button" data-src="zoho" class="'+(src==='zoho'?'on live':'')+'">⚡ Live Zoho</button>'
+    +(src==='zoho'?'<div class="pricing-live-note">⚠ Invoices are pricing LIVE from Zoho'
+      +(data?.updated_by?' (set by '+escH(data.updated_by)+')':'')
+      +' — uses extra Zoho API calls. Switch back to Catalog once the catalog is fixed.</div>':'');
+  el.querySelectorAll('button').forEach(b=>b.onclick=()=>setInvoicePricingSource(b.dataset.src,src));
+}
+
+async function setInvoicePricingSource(next,current){
+  if(next===current)return;
+  const msg=next==='zoho'
+    ?'Switch ALL invoicing (including auto-invoicing) to LIVE Zoho prices?\n\nUse this only if the catalog looks wrong. It uses extra Zoho API calls per invoice.'
+    :'Switch invoicing back to Catalog prices?';
+  if(!await uxConfirm(msg))return;
+  const{data:u}=await sb.auth.getUser();
+  const{error}=await sb.from('invoice_pricing_settings')
+    .update({source:next,updated_at:new Date().toISOString(),updated_by:u?.user?.email||null}).eq('id',1);
+  if(error){uxAlert('Could not change invoice prices: '+error.message);return;}
+  loadInvoicePricingSwitch();
+}
+
 async function loadTodaysOrders(){
   const list=document.getElementById('to-list');
   const tomorrowDate=addDays(CALENDAR_TODAY,1);
@@ -3642,6 +3679,7 @@ async function loadTodaysOrders(){
     fetchAllCustomerLookupByDatePrefix(viewDate),
     loadPriorityOverride().catch(e=>console.error('Could not load priority override',e)),
     loadCatalogSyncBanner().catch(e=>console.error('Could not load catalog sync status',e)),
+    loadInvoicePricingSwitch().catch(e=>console.error('Could not load invoice pricing switch',e)),
   ]);
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
 
