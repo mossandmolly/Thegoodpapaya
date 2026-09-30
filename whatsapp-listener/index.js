@@ -17,6 +17,7 @@ import makeWASocket, {
   fetchLatestWaWebVersion,
   fetchLatestBaileysVersion,
   DisconnectReason,
+  Browsers,
 } from '@whiskeysockets/baileys'
 import qrcode from 'qrcode-terminal'
 import P from 'pino'
@@ -632,15 +633,20 @@ async function start() {
     markOnlineOnConnect: false, // stay low-profile; your phone remains the "primary"
     syncFullHistory: false, // only new messages, not full backfill
     qrTimeout: 120000, // give 2 minutes per QR instead of WhatsApp's tighter default before it refreshes
-    // Both needed for requestPairingCode() specifically — the default query
-    // timeout is too aggressive for the pairing round trip (causes an
-    // immediate "Connection Closed"/401), and some WhatsApp versions reject
-    // pairing from Baileys' default browser identifier. Omitted entirely
-    // (not set to undefined) when not pairing — Baileys' own defaults
-    // assume a real array here, so an explicit `browser: undefined` breaks
-    // internals that read browser[0] unconditionally.
+    // defaultQueryTimeoutMs: the default query timeout is too aggressive for
+    // the pairing round trip (causes an immediate "Connection Closed"/401).
+    // browser: was a hand-typed, non-canonical identifier
+    // (['Windows','Chrome','114.0.5735.198']) — WhatsApp's server validates
+    // the pairing handshake against known-canonical browser identifiers and
+    // silently issues a dead code for anything else (documented upstream:
+    // WhiskeySockets/Baileys PR #2559 / issue #2488). Browsers.ubuntu('Chrome')
+    // is one of Baileys' own canonical identifiers, so WhatsApp actually
+    // accepts codes generated with it. Omitted entirely (not set to
+    // undefined) when not pairing — Baileys' own defaults assume a real
+    // array here, so an explicit `browser: undefined` breaks internals that
+    // read browser[0] unconditionally.
     ...(PAIRING_PHONE_NUMBER
-      ? { defaultQueryTimeoutMs: undefined, browser: ['Windows', 'Chrome', '114.0.5735.198'] }
+      ? { defaultQueryTimeoutMs: undefined, browser: Browsers.ubuntu('Chrome') }
       : {}),
   })
   currentSock = sock
