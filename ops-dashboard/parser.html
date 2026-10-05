@@ -71,6 +71,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .order-row{background:#ffffff;border:1px solid #eee0d0;border-radius:8px;padding:12px;margin-bottom:8px}
 .order-row.pickup-order{background:#f6effc;border-color:#c9a3ec}
 .pickup-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#8a4fbf}
+.queue-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#1a6b8a}
 /* Customer name on its own full-width line — squeezing it against the
    action links on narrow screens is what pushed it into a corner and
    wrapped it awkwardly. */
@@ -984,6 +985,27 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 </div>
 
+<!-- PUSH TO QUEUE MODAL — Order Overview only. Pushes one order into a
+     named, numbered queue (Queue 1, Queue 2, ...) that Single Card now
+     reads exclusively from — queue 1's orders exhausted before queue 2's
+     (see computePackerQueue). Pills are rendered dynamically in JS
+     (renderPushQueuePills) since they need to reflect this order's current
+     queue and the live list of queues, not a static option list. -->
+<div class="modal-overlay hidden" id="push-queue-modal">
+  <div class="modal-box">
+    <h3>Push to queue</h3>
+    <div id="push-queue-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
+    <label class="modal-label">New queue</label>
+    <div style="display:flex;gap:6px">
+      <input type="text" id="push-queue-new-name" placeholder="e.g. Queue 3" style="flex:1">
+      <button class="btn-sec" style="margin-bottom:0" onclick="createAndPushQueue()">+ Create</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-sec" id="push-queue-cancel" style="margin-bottom:0">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- AD-HOC PAYMENT LINK MODAL — standalone Razorpay link, not tied to any
      sales order/invoice (e.g. a one-off collection over the phone). Deliberately
      omits sales_order_id from the Razorpay notes, so the payment webhook is a
@@ -1613,6 +1635,11 @@ async function initAppAfterLogin(){
     .catch(e=>console.error('Could not load community priority config',e))
     .then(()=>loadCombinableGroupsConfig())
     .catch(e=>console.error('Could not load combinable groups config',e));
+  // Powers both Order Overview's push-to-queue modal and the Packer tab's
+  // Single Card queue — pre-warmed here so either is ready whichever loads
+  // first.
+  loadPackerQueuesConfig()
+    .catch(e=>console.error('Could not load packer queues',e));
   // Just pre-warms the Config panel's own cache (see migration 050 for
   // where instructions actually get applied to new orders) — loaded at
   // boot purely to avoid a flicker the first time Config opens.
@@ -3499,7 +3526,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at,queue_id,queue_pushed_at')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -3547,7 +3574,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at')
+      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at,queue_id,queue_pushed_at')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -3692,6 +3719,8 @@ async function loadTodaysOrders(){
         whatsappGroupName: o?.whatsapp_group_name||null,
         society:           o?.society||null,
         createdAt:         o?.created_at||null,
+        queueId:           o?.queue_id||null,
+        queuePushedAt:     o?.queue_pushed_at||null,
         items:[],
       };
     }
@@ -3871,6 +3900,7 @@ function renderOrdersList(){
           ?' <span class="deliver-by-badge'+(deliverWindow.isDefault?' deliver-by-default':'')+'">⏰ '+escH(deliverWindow.label)+'</span>'
           :'';
         const statusBadges=(order.isPickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
+          (!cancelled&&order.queueId?' <span class="queue-badge" title="Pushed to packer Single Card queue">📥 '+escH(queueNameById(order.queueId)||'Queued')+'</span>':'')+
           (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           deliverWindowBadge+
@@ -3970,6 +4000,7 @@ function renderOrdersList(){
               // item comes in fresh/open).
               '<a class="or-link" onclick="addItemPrompt(\''+order.soid+'\')">+ add item</a>'+
               '<a class="or-link" onclick="openOrderNotesModal(\''+order.soid+'\')">+ notes</a>'+
+              (cancelled?'':'<a class="or-link" onclick="openPushToQueueModal(\''+order.soid+'\')">'+(order.queueId?'📥 '+escH(queueNameById(order.queueId)||'queued'):'📥 push to queue')+'</a>')+
               (orderHasPendingReview(order)?'<a class="or-link" style="color:#8a6d00" onclick="approveAllPendingReview(\''+order.soid+'\')">✓ approve all pending</a>':'')+
               '<a class="or-link" onclick="renameOrderCustomerPrompt(\''+order.soid+'\')">✎ rename</a>'+
               (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
@@ -3995,6 +4026,81 @@ function renderOrdersList(){
   }).join('');
   updateBulkButtons();
 }
+
+// ── Push to Queue (Single Card queue, phase 2) ────────────────────────────
+// packer_queues is open-RLS, read/written directly from the client — same
+// pattern as packers/communities/community_priority. Only the
+// orders.queue_id/queue_pushed_at write goes through push-order-to-queue
+// (orders itself is service-role-only). Loaded once at boot
+// (initAppAfterLogin) and re-loaded whenever this modal creates a new queue.
+let packerQueuesCache=[]; // [{id,name,seq,created_at}], sorted by seq ascending
+let pushQueueTargetSoid=null;
+
+async function loadPackerQueuesConfig(){
+  const{data,error}=await sb.from('packer_queues').select('*').order('seq');
+  if(error){console.error('Could not load packer queues',error);return;}
+  packerQueuesCache=data||[];
+}
+
+function queueNameById(id){
+  const q=packerQueuesCache.find(q=>q.id===id);
+  return q?q.name:null;
+}
+
+function openPushToQueueModal(soid){
+  pushQueueTargetSoid=soid;
+  renderPushQueuePills();
+  const nextSeq=packerQueuesCache.length?Math.max(...packerQueuesCache.map(q=>q.seq))+1:1;
+  document.getElementById('push-queue-new-name').value='Queue '+nextSeq;
+  document.getElementById('push-queue-modal').classList.remove('hidden');
+}
+
+function renderPushQueuePills(){
+  const order=currentOrdersById[pushQueueTargetSoid];
+  const currentId=order?.queueId||null;
+  document.getElementById('push-queue-pills').innerHTML=
+    packerQueuesCache.map(q=>
+      '<span class="filter-pill'+(q.id===currentId?' active':'')+'" onclick="pushOrderToQueueConfirm('+escH(JSON.stringify(q.id))+')">'+escH(q.name)+'</span>'
+    ).join('')+
+    (currentId?'<span class="filter-pill" style="color:#b3261e" onclick="pushOrderToQueueConfirm(null)">✕ Remove from queue</span>':'');
+}
+
+// Reuses an existing queue by name (case-insensitive) rather than creating a
+// same-named duplicate if Somya retypes "Queue 1" instead of picking its pill.
+async function createAndPushQueue(){
+  const name=document.getElementById('push-queue-new-name').value.trim();
+  if(!name){uxAlert('Queue name can\'t be empty');return;}
+  const existing=packerQueuesCache.find(q=>q.name.toLowerCase()===name.toLowerCase());
+  if(existing){await pushOrderToQueueConfirm(existing.id);return;}
+  const nextSeq=packerQueuesCache.length?Math.max(...packerQueuesCache.map(q=>q.seq))+1:1;
+  const{data,error}=await sb.from('packer_queues').insert({name,seq:nextSeq}).select('*').single();
+  if(error){uxAlert('Failed to create queue: '+error.message);return;}
+  packerQueuesCache.push(data);
+  await pushOrderToQueueConfirm(data.id);
+}
+
+// queueId null removes the order from whatever queue it's in.
+async function pushOrderToQueueConfirm(queueId){
+  const soid=pushQueueTargetSoid;
+  if(!soid)return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/push-order-to-queue',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,queue_id:queueId}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not update queue');
+    evictCustomerLookupCache(soid);
+    if(currentOrdersById[soid]){
+      currentOrdersById[soid].queueId=data.queue_id||null;
+      currentOrdersById[soid].queuePushedAt=data.queue_pushed_at||null;
+    }
+    document.getElementById('push-queue-modal').classList.add('hidden');
+    renderOrdersList();
+  }catch(e){uxAlert('Failed: '+e.message);}
+}
+document.getElementById('push-queue-cancel').addEventListener('click',()=>{document.getElementById('push-queue-modal').classList.add('hidden');});
 
 // Community identity must be agnostic of case AND special characters —
 // "77 degree", "77degree" and "77-degree" are all the same place and must
@@ -6742,12 +6848,23 @@ function setPackerScope(scope){
   renderPackerGrid();
 }
 
-// ── Single Card queue (phase 1) ───────────────────────────────────────────
+// ── Single Card queue ──────────────────────────────────────────────────────
 // A third Packer view, independent of the shared Flat/Trip viewGrouping
 // toggle above (that one also drives Overview/Delivery; this one is
 // Packer-only). Grid/Trip still show everything at once — Single Card
 // instead pushes exactly one item at a time, in an order computed by
 // computePackerQueue() below, so a packer never has to decide what's next.
+//
+// Phase 1 ranked this automatically (community priority + a hard
+// time-sensitive override + smaller-orders-first). Phase 2 replaced that
+// with a manual one: Somya pushes specific orders into a named, numbered
+// queue (Queue 1, Queue 2, ...) from Order Overview (openPushToQueueModal),
+// and Single Card shows ONLY items from pushed orders — queue 1's orders
+// exhausted before queue 2's even starts. Nothing not pushed ever appears
+// here, however urgent; the point is Somya hand-picking exactly which 4-5
+// houses a packer should focus on next, not an algorithm guessing. Grid,
+// Time Sensitive, and Team view are untouched — they still rank everything
+// via orderItemsByQueuePriority exactly as before.
 let packerViewMode='grid'; // 'grid' | 'single'
 
 // The owner's rule is exactly "packing must start now to make T-120" — a
@@ -6843,15 +6960,32 @@ function orderItemsByQueuePriority(items){
   return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
 }
 
-// This packer's next-up queue: every still-open item they own, ranked by
-// priority. Splitting one order's items across multiple packers falls out
-// for free — each packer's own assignment naturally filters them to only
-// their slice of any given order.
+// This packer's next-up queue: every still-open item they own, but ONLY
+// from orders Somya has pushed into a queue (packerCustomerMap[soid].
+// queue_id — set via openPushToQueueModal/push-order-to-queue). Ordered by
+// queue seq first (Queue 1's orders fully before Queue 2's), then by
+// queue_pushed_at within the same queue (first pushed, first packed) —
+// community priority/time-sensitivity/order size play no part here, unlike
+// orderItemsByQueuePriority (Grid/Time Sensitive/Team, unchanged). Splitting
+// one order's items across multiple packers still falls out for free — each
+// packer's own assignment naturally filters to only their slice of any
+// pushed order.
 function computePackerQueue(packerName){
   const packer=packersCache.find(p=>p.name===packerName);
   if(!packer)return[];
   const openItems=packerItems.filter(i=>i.status==='open'&&effectivePackerIdForItem(i)===packer.id);
-  return orderItemsByQueuePriority(openItems);
+  const queued=openItems.filter(i=>packerCustomerMap[i.sales_order_id]?.queue_id);
+  const bySoid={};
+  queued.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
+  const orderMeta=Object.keys(bySoid).map(soid=>{
+    const o=packerCustomerMap[soid]||{};
+    const q=packerQueuesCache.find(qq=>qq.id===o.queue_id);
+    return{soid,items:bySoid[soid],
+      seq:q?q.seq:Infinity,
+      pushedAt:o.queue_pushed_at?new Date(o.queue_pushed_at).getTime():Infinity};
+  });
+  orderMeta.sort((a,b)=>a.seq!==b.seq?a.seq-b.seq:a.pushedAt-b.pushedAt);
+  return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
 }
 
 // Team view's fuller picture for one packer: everything they own today,
@@ -7089,6 +7223,7 @@ async function loadPackerView(){
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
     loadPackersConfig(),
     loadCommunityPriorityConfig().catch(e=>console.error('Could not load community priority config',e)),
+    loadPackerQueuesConfig().catch(e=>console.error('Could not load packer queues',e)),
     ensurePackerCardTimerSetting(),
     loadPriorityOverride().catch(e=>console.error('Could not load priority override',e)),
   ]);
@@ -7309,7 +7444,14 @@ function renderPackerSingleCard(){
   const item=stillPacking||eligibleQueue[0]||stillPackingRaw||queue[0];
   if(!item){
     stopPkCardTimer();
-    grid.innerHTML='<div class="to-empty">Nothing left to pack for you ✓</div>';
+    // Distinguishes "nothing has been pushed to your queue yet" from
+    // "everything pushed is actually done" — otherwise both look identical
+    // and a packer waiting on Somya to push the next batch can't tell the
+    // difference from having genuinely finished for the day.
+    const anyOpenForPacker=packerItems.some(i=>i.status==='open'&&effectivePackerIdForItem(i)===packer.id);
+    grid.innerHTML='<div class="to-empty">'+(anyOpenForPacker
+      ?'No houses pushed to your queue yet — ask Somya to push from Order Overview.'
+      :'Nothing left to pack for you ✓')+'</div>';
     return;
   }
   const remaining=queue.length+(stillPackingRaw?1:0);
