@@ -441,20 +441,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pack-card.leftover-order{background:#fff3e0;border-color:#f0b060}
 .pack-card.qty-mismatch{border:2px solid #b3261e}
 .pk-qty-mismatch-note{color:#b3261e;font-weight:700;font-size:11px;margin-bottom:4px}
-/* Packer Active Queue — one pack-card at a time, with a header
-   showing who's packing, how many are left, and a plain elapsed-time
-   timer that flashes red past packer_card_timer_seconds (app_settings). */
-.pk-single-header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:#8a7a6a}
-.pk-single-timer{font-weight:700;font-size:15px;color:#2b2320;font-variant-numeric:tabular-nums}
-.pk-single-timer.pk-timer-over{color:#b3261e;animation:pkTimerFlash 1s step-start infinite}
-@keyframes pkTimerFlash{50%{opacity:0.35}}
-/* Full width by default (mobile-first — this is the packing team's actual
-   device) — a fixed cap here was leaving visible side gaps on any phone
-   wider than 360px+padding, which is most of them. The 360px reading-width
-   cap only kicks in on a genuinely wide (desktop/tablet) viewport, via the
-   media query below. */
-.pk-single-wrap{display:block;width:100%;margin:0 auto;grid-column:1/-1}
-@media (min-width:601px){.pk-single-wrap{max-width:360px}}
+/* Packer Active Queue renders straight into the shared #pk-grid/.pack-grid
+   container (same auto-fill card grid as Grid view) — no dedicated markup
+   of its own, just a filtered/ordered subset of the same packCardHtml
+   cards. */
 /* Somya's Team view — one column per packer, showing every card in their
    queue stacked in the exact order they'll see them. */
 .pk-team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;align-items:start;grid-column:1/-1}
@@ -1758,7 +1748,6 @@ function switchTab(name){
     }
   }
   if(name==='delivery')startLocationPing();else stopLocationPing();
-  if(name!=='packer')stopPkCardTimer();
 }
 
 // Shortcut tab — jumps straight to Quick Order Entry inside the Parser
@@ -6896,9 +6885,15 @@ function setPackerScope(scope){
 // ── Active Queue ──────────────────────────────────────────────────────
 // A third Packer view, independent of the shared Flat/Trip viewGrouping
 // toggle above (that one also drives Overview/Delivery; this one is
-// Packer-only). Grid/Trip still show everything at once — Active Queue
-// instead pushes exactly one item at a time, in an order computed by
-// computePackerQueue() below, so a packer never has to decide what's next.
+// Packer-only). Grid/Trip group everything by society — Active Queue
+// instead is a flat, shared board of every card currently in play across
+// the active queue(s) (computeActiveQueueItems() below), the same board on
+// every packer's device — NOT split or filtered per packer. Multiple
+// packers work off this one shared board at once, each picking up whatever
+// card matches the fruit they personally handle; riderName still has to be
+// picked before this view works (see ensurePackerIdentityForQueue), but
+// only so markFinal/packed_by attributes correctly to whoever's device it
+// was — it no longer decides which cards that device gets to see.
 //
 // Phase 1 ranked this automatically (community priority + a hard
 // time-sensitive override + smaller-orders-first). Phase 2 replaced that
@@ -6906,13 +6901,13 @@ function setPackerScope(scope){
 // queue (Queue 1, Queue 2, ...) from Order Overview (openPushToQueueModal),
 // and Active Queue shows ONLY items from pushed orders, in queue order.
 // Up to PACKER_QUEUE_ACTIVE_WINDOW (2) queues are ever active/visible at
-// once (computeActiveQueueIds) — a sliding window, not a hard gate, so a
-// packer whose own fruit has nothing left in Queue 1 can already see
-// Queue 2 instead of sitting idle, without every future queue (3, 4, 5...)
-// all showing at once. Nothing outside the active window ever appears,
-// however urgent; the point is Somya hand-picking exactly which 4-5 houses
-// a packer should focus on next, not an algorithm guessing. Grid, Time
-// Sensitive, and Team view are untouched — they still rank everything via
+// once (computeActiveQueueIds) — a sliding window, not a hard gate, so
+// packers never sit idle waiting for Somya to notice Queue 1 is done and
+// push a new one, without every future queue (3, 4, 5...) all showing at
+// once. Nothing outside the active window ever appears, however urgent;
+// the point is Somya hand-picking exactly which 4-5 houses the team should
+// focus on next, not an algorithm guessing. Grid, Time Sensitive, and Team
+// view are untouched — they still rank everything via
 // orderItemsByQueuePriority exactly as before.
 let packerViewMode='grid'; // 'grid' | 'single'
 
@@ -7029,24 +7024,23 @@ function computeActiveQueueIds(){
   return active;
 }
 
-// This packer's next-up queue: every still-open item they own, but ONLY
-// from orders Somya has pushed into one of the currently-active queues
-// (computeActiveQueueIds — at most PACKER_QUEUE_ACTIVE_WINDOW at a time).
-// Ordered by queue seq first (Queue 1's orders before Queue 2's), then by
+// The shared Active Queue board: every still-open item from ANY order
+// Somya has pushed into one of the currently-active queues
+// (computeActiveQueueIds — at most PACKER_QUEUE_ACTIVE_WINDOW at a time) —
+// every packer, not just one. There's deliberately no per-packer filter
+// here (effectivePackerIdForItem plays no part) — multiple packers work
+// off this exact same list at once, each naturally picking up whichever
+// card is their own fruit, same as Grid, just restricted to the active
+// window and ordered by queue instead of grouped by society. Ordered by
+// queue seq first (Queue 1's orders before Queue 2's), then by
 // queue_pushed_at within the same queue (first pushed, first packed) —
 // community priority/time-sensitivity/order size play no part here, unlike
-// orderItemsByQueuePriority (Grid/Time Sensitive/Team, unchanged). Splitting
-// one order's items across multiple packers still falls out for free — each
-// packer's own assignment naturally filters to only their slice of any
-// pushed order.
-function computePackerQueue(packerName){
-  const packer=packersCache.find(p=>p.name===packerName);
-  if(!packer)return[];
+// orderItemsByQueuePriority (Grid/Time Sensitive/Team, unchanged).
+function computeActiveQueueItems(){
   const activeQueueIds=computeActiveQueueIds();
-  const openItems=packerItems.filter(i=>i.status==='open'&&effectivePackerIdForItem(i)===packer.id);
-  const queued=openItems.filter(i=>activeQueueIds.has(packerCustomerMap[i.sales_order_id]?.queue_id));
+  const openItems=packerItems.filter(i=>i.status==='open'&&activeQueueIds.has(packerCustomerMap[i.sales_order_id]?.queue_id));
   const bySoid={};
-  queued.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
+  openItems.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
   const orderMeta=Object.keys(bySoid).map(soid=>{
     const o=packerCustomerMap[soid]||{};
     const q=packerQueuesCache.find(qq=>qq.id===o.queue_id);
@@ -7163,7 +7157,10 @@ const pkIdentityModal=document.getElementById('pk-identity-modal'),pkIdentitySel
 // attribution — rather than forking a second identity concept just for
 // this queue. Only opens the picker if riderName isn't already a real,
 // current packer name (e.g. first time on this device, or a rider-only
-// name that was never a packer).
+// name that was never a packer). Active Queue no longer filters its card
+// list by this identity (every device sees the same shared board — see
+// computeActiveQueueItems) — this still has to be set purely so
+// markFinal/packed_by attributes correctly to whoever's device it was.
 function ensurePackerIdentityForQueue(){
   if(riderName&&packersCache.some(p=>p.name===riderName))return Promise.resolve();
   return new Promise(resolve=>{
@@ -7174,10 +7171,6 @@ function ensurePackerIdentityForQueue(){
     const onCancel=()=>{cleanup();resolve();};
     const onConfirm=()=>{
       const picked=pkIdentitySelect.value;
-      // A skip is specific to whoever was packing when they clicked it —
-      // switching to a different packer on this device shouldn't carry
-      // their deferred items over to someone else's queue.
-      if(picked&&picked!==riderName)pkSkipRemaining={};
       if(picked){riderName=picked;localStorage.setItem(RIDER_NAME_KEY,riderName);renderRiderBadge();}
       cleanup();resolve();
     };
@@ -7236,44 +7229,6 @@ document.getElementById('reassign-packer-confirm').addEventListener('click',asyn
   renderPackerGrid();
 });
 
-// Purely visual per-card timer — resets on page refresh, same as every
-// other timer-ish thing in this dashboard (e.g. location ping). Fetched
-// once from app_settings (migration 042's key/value table) rather than
-// hardcoded, so the owner can retune it from the SQL editor without a
-// redeploy; falls back to 90s on any error/missing row.
-let packerCardTimerSeconds=90,packerCardTimerFetched=false;
-async function ensurePackerCardTimerSetting(){
-  if(packerCardTimerFetched)return;
-  packerCardTimerFetched=true;
-  try{
-    const{data}=await sb.from('app_settings').select('value').eq('key','packer_card_timer_seconds').maybeSingle();
-    if(data&&data.value!=null&&!isNaN(parseInt(data.value,10)))packerCardTimerSeconds=parseInt(data.value,10);
-  }catch(e){console.error('Could not load packer_card_timer_seconds, using default',e);}
-}
-
-let pkCardTimerInterval=null,pkCardTimerStartedAt=null,pkCardTimerItemId=null;
-function stopPkCardTimer(){
-  if(pkCardTimerInterval){clearInterval(pkCardTimerInterval);pkCardTimerInterval=null;}
-  pkCardTimerStartedAt=null;pkCardTimerItemId=null;
-}
-function startPkCardTimer(itemId){
-  if(pkCardTimerItemId===itemId&&pkCardTimerInterval)return; // already timing this exact item
-  stopPkCardTimer();
-  pkCardTimerItemId=itemId;
-  pkCardTimerStartedAt=Date.now();
-  pkCardTimerInterval=setInterval(renderPkCardTimerDisplay,1000);
-  renderPkCardTimerDisplay();
-}
-function renderPkCardTimerDisplay(){
-  const el=document.getElementById('pk-single-timer');
-  if(!el||!pkCardTimerStartedAt)return;
-  const elapsed=Math.floor((Date.now()-pkCardTimerStartedAt)/1000);
-  const over=elapsed>packerCardTimerSeconds;
-  const mm=String(Math.floor(elapsed/60)).padStart(2,'0'),ss=String(elapsed%60).padStart(2,'0');
-  el.textContent=mm+':'+ss;
-  el.classList.toggle('pk-timer-over',over);
-}
-
 async function loadPackerView(){
   const grid=document.getElementById('pk-grid');
   const tomorrowDate=addDays(CALENDAR_TODAY,1);
@@ -7294,7 +7249,6 @@ async function loadPackerView(){
     loadPackersConfig(),
     loadCommunityPriorityConfig().catch(e=>console.error('Could not load community priority config',e)),
     loadPackerQueuesConfig().catch(e=>console.error('Could not load packer queues',e)),
-    ensurePackerCardTimerSetting(),
     loadPriorityOverride().catch(e=>console.error('Could not load priority override',e)),
   ]);
   packerCustomerMap=map||{};
@@ -7406,7 +7360,7 @@ function packerOrderLike(item){
   };
 }
 
-// Pulled out of renderPackerGrid so renderPackerSingleCard (below) can
+// Pulled out of renderPackerGrid so renderPackerActiveQueue (below) can
 // reuse the exact same markup/actions (savePackedQty/markFinal) instead of
 // inventing a parallel one-click transition — keeps the existing "confirm
 // final qty before invoicing" step intact in both views.
@@ -7454,88 +7408,42 @@ function packCardHtml(item,dupIds){
     '</div>';
 }
 
-// Active Queue's own "skip" — packer-local and purely ephemeral (resets on
-// a page refresh, never written to the DB), only changes what THIS
-// device's Active Queue view shows next. Doesn't touch the underlying
-// priority order, Team view, or any other packer's queue — Grid view
-// still shows every item regardless. Skipping an item defers it 5 card-
-// advances (its own skip, or another card's markFinal) before it's
-// eligible to be the displayed card again; it still counts toward the
-// remaining total the whole time, it just isn't the one on screen.
-let pkSkipRemaining={}; // itemId -> card-advances left before eligible again
-
-// Called whenever the displayed card actually moves on to something else
-// (a skip, or markFinal in Active Queue mode) — ticks every other
-// currently-deferred item one step closer to reappearing.
-function advancePkSkipCounters(){
-  Object.keys(pkSkipRemaining).forEach(id=>{
-    if(--pkSkipRemaining[id]<=0)delete pkSkipRemaining[id];
-  });
-}
-
-function skipPkCard(id){
-  advancePkSkipCounters(); // this card moving away is itself an advance for everyone already waiting
-  pkSkipRemaining[id]=5;
-  renderPackerGrid();
-}
-
-// Single-card queue view — an item stays "pinned" as the displayed card
-// from computePackerQueue's open-only pool through to markFinal, since
-// savePackedQty moves it to 'packed' (one step before 'final') and the
-// packer still needs to see it to complete that second step, not have it
-// silently skipped the instant it leaves the 'open' pool. Derived fresh
-// from persisted status + assignment on every render (not a remembered
-// id) so a genuine page refresh — not just an in-app re-render — still
-// shows the same in-progress item instead of it vanishing (computePackerQueue
-// is open-only, so a plain refresh with no pin memory would otherwise lose
-// track of anything already moved to 'packed'). A pinned item can still be
-// skipped like any other — savePackedQty's final_quantity is already
-// saved, so deferring the display doesn't lose anything already entered.
-function renderPackerSingleCard(){
+// Active Queue, as a shared board: every in-progress item (status
+// 'packed', already started by SOMEONE's device, regardless of whose —
+// needs finishing before it can drop off, so it always shows even if its
+// queue has since fallen out of the active window — same "pinned" reason
+// as before, just no longer scoped to one packer) followed by every
+// still-open item from the active queue(s) (computeActiveQueueItems).
+// Everyone's phone renders this exact same list — there's no per-packer
+// slice anymore (see the block comment above packerViewMode for why);
+// riderName is still required before this view works, purely so
+// markFinal/packed_by attributes to whoever's device it was.
+function renderPackerActiveQueue(){
   const grid=document.getElementById('pk-grid');
-  document.getElementById('pk-rc').textContent='';
   todaysOrdersForLeftoverCheck=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
 
   if(!riderName||!packersCache.some(p=>p.name===riderName)){
-    stopPkCardTimer();
-    grid.innerHTML='<div class="to-empty">Pick a packer to see your queue.<br><button class="btn-sec" onclick="ensurePackerIdentityForQueue().then(renderPackerGrid)">Pick packer</button></div>';
+    grid.innerHTML='<div class="to-empty">Pick a packer to see the active queue.<br><button class="btn-sec" onclick="ensurePackerIdentityForQueue().then(renderPackerGrid)">Pick packer</button></div>';
     return;
   }
 
-  const packer=packersCache.find(p=>p.name===riderName);
-  const stillPackingRaw=packerItems.find(i=>i.status==='packed'&&effectivePackerIdForItem(i)===packer.id);
-  const stillPacking=(stillPackingRaw&&!(stillPackingRaw.id in pkSkipRemaining))?stillPackingRaw:null;
-  const queue=computePackerQueue(riderName);
-  const eligibleQueue=queue.filter(i=>!(i.id in pkSkipRemaining));
-  // Falls back to the natural front item if literally everything's
-  // currently deferred, so a packer never sees "nothing to pack" while
-  // real work still exists — skip is meant to reorder, not to be able to
-  // empty the queue.
-  const item=stillPacking||eligibleQueue[0]||stillPackingRaw||queue[0];
-  if(!item){
-    stopPkCardTimer();
-    // Distinguishes "nothing has been pushed to your queue yet" from
+  const inProgress=packerItems.filter(i=>i.status==='packed');
+  const queue=computeActiveQueueItems();
+  const allCards=[...inProgress,...queue];
+  if(!allCards.length){
+    // Distinguishes "nothing has been pushed to a queue yet" from
     // "everything pushed is actually done" — otherwise both look identical
-    // and a packer waiting on Somya to push the next batch can't tell the
-    // difference from having genuinely finished for the day.
-    const anyOpenForPacker=packerItems.some(i=>i.status==='open'&&effectivePackerIdForItem(i)===packer.id);
-    grid.innerHTML='<div class="to-empty">'+(anyOpenForPacker
-      ?'No houses pushed to your queue yet — ask Somya to push from Order Overview.'
-      :'Nothing left to pack for you ✓')+'</div>';
+    // and the team waiting on Somya to push the next batch can't tell the
+    // difference from having genuinely finished.
+    const anyQueuedAtAll=packerItems.some(i=>i.status==='open'&&packerCustomerMap[i.sales_order_id]?.queue_id);
+    document.getElementById('pk-rc').textContent='';
+    grid.innerHTML='<div class="to-empty">'+(anyQueuedAtAll
+      ?'Nothing left in the active queue ✓'
+      :'No orders pushed to a queue yet — push from Order Overview.')+'</div>';
     return;
   }
-  const remaining=queue.length+(stillPackingRaw?1:0);
-  startPkCardTimer(item.id);
-  grid.innerHTML=
-    '<div class="pk-single-wrap">'+
-      '<div class="pk-single-header">'+
-        '<span>Item 1 of '+remaining+' for you today</span>'+
-        '<span id="pk-single-timer" class="pk-single-timer">00:00</span>'+
-      '</div>'+
-      packCardHtml(item)+
-      '<button class="btn-sec" style="width:100%;margin-top:8px" onclick="skipPkCard(\''+item.id+'\')" title="Not available right now — show this again after 5 other cards">⏭ Skip for now</button>'+
-    '</div>';
-  renderPkCardTimerDisplay();
+  document.getElementById('pk-rc').textContent='— '+allCards.length+' item'+(allCards.length!==1?'s':'')+' in the active queue';
+  grid.innerHTML=allCards.map(item=>packCardHtml(item)).join('');
 }
 
 // Compact, read-only row for an already-finalized item in Team view — no
@@ -7845,7 +7753,7 @@ function renderPackerTeamView(){
 }
 
 function renderPackerGrid(){
-  if(packerViewMode==='single'){renderPackerSingleCard();return;}
+  if(packerViewMode==='single'){renderPackerActiveQueue();return;}
   if(packerViewMode==='team'){renderPackerTeamView();return;}
   const grid=document.getElementById('pk-grid');
   const search=packerFilters.search.trim().toLowerCase();
@@ -7963,10 +7871,10 @@ async function savePackedQty(id){
   // item locally and redraw — no need for the full network round trip
   // (refetch every item today + the whole catalog) that loadPackerView does.
   // Falls back to that when invalidation touched sibling items too, OR
-  // always in Active Queue mode — a packer working through their queue one
-  // card at a time needs every step to pick up Somya's Current Order
-  // rearranges/rank edits from Config, which a local-only patch would
-  // otherwise leave stale until the next full tab reload.
+  // always in Active Queue mode — it's a shared board every packer's
+  // device renders, so a local-only patch would leave this device blind to
+  // what someone else just pushed/finished/queued until the next full tab
+  // reload.
   if(invalidated||packerViewMode==='single'){
     await loadPackerView();
   }else{
@@ -7986,12 +7894,9 @@ async function markFinal(id){
   const{error}=await sb.from('order_items').update({status:'final',packed_by:riderName||null,packed_at:new Date().toISOString()}).eq('id',id);
   if(error){uxAlert('Failed to mark final: '+error.message);return;}
   // Same "always fully reload in Active Queue mode" reasoning as
-  // savePackedQty above — this is the point where a card actually advances
-  // to the next one, so it's the moment a stale priority order would be
-  // most visible/confusing if it didn't refresh. Also a genuine "card
-  // advance" for the skip mechanism — ticks any other deferred item
-  // closer to becoming eligible again.
-  if(packerViewMode==='single')advancePkSkipCounters();
+  // savePackedQty above — the active queue is a shared board every
+  // packer's device renders, so it's the moment a stale queue/push state
+  // would be most visible/confusing if it didn't refresh.
   if(invalidated||packerViewMode==='single'){
     await loadPackerView();
   }else{
