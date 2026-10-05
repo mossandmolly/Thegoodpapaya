@@ -7093,17 +7093,19 @@ async function setPackerViewMode(mode){
   if(mode==='priority')mode='grid'; // Time Sensitive pill is hidden for now — don't let a stale link/state land here
   packerViewMode=mode;
   renderPackerModeToggle();
-  // The fruit/status filters, search, and scope tabs only make sense for
-  // the everything-at-once views (Grid, Time Sensitive) — Active Queue and
-  // Team both ignore them by design, so hide rather than leave controls on
-  // screen that silently do nothing.
+  // Scope tabs (All/Mine) and the status filter don't apply to Active
+  // Queue — it's a shared board that ignores packerScope entirely (see
+  // computeActiveQueueItems), and status filtering would fight with its
+  // own in-progress/open grouping. Search and the fruit filter DO still
+  // make sense there (find a customer, or narrow to one fruit across both
+  // queues), so only Team hides everything.
   const single=mode==='single',team=mode==='team',hideGridControls=single||team;
   document.getElementById('pk-scope-tabs').style.display=hideGridControls?'none':'';
-  document.getElementById('pk-fruit-filter-label').style.display=hideGridControls?'none':'';
-  document.getElementById('pk-fruit-pills').style.display=hideGridControls?'none':'';
+  document.getElementById('pk-fruit-filter-label').style.display=team?'none':'';
+  document.getElementById('pk-fruit-pills').style.display=team?'none':'';
   document.getElementById('pk-status-filter-label').style.display=hideGridControls?'none':'';
   document.getElementById('pk-status-pills').style.display=hideGridControls?'none':'';
-  document.getElementById('pk-search').style.display=hideGridControls?'none':'';
+  document.getElementById('pk-search').style.display=team?'none':'';
   if(single)await ensurePackerIdentityForQueue();
   renderPackerGrid();
 }
@@ -7383,7 +7385,21 @@ function packCardHtml(item,dupIds){
 // each item's ACTUAL queue, not just the active set, so a pinned
 // in-progress item whose queue just fell out of the active window (every
 // other item in it already finished) still gets a header instead of
-// floating unlabeled.
+// floating unlabeled. Each header is independently collapsible
+// (collapsedActiveQueueGroups) — defaults to expanded (unlike Grid's
+// per-society groups) since there are normally only 1-2 sections here and
+// packers need to actually see the cards.
+//
+// Shares packerFilters.search/.fruits with Grid (the pk-search box and
+// fruit pills, un-hidden for this mode in setPackerViewMode) — status
+// filter and packerScope (All/Mine) don't apply here, see that function's
+// comment for why.
+let collapsedActiveQueueGroups=new Set();
+function toggleActiveQueueGroup(label){
+  if(collapsedActiveQueueGroups.has(label))collapsedActiveQueueGroups.delete(label);
+  else collapsedActiveQueueGroups.add(label);
+  renderPackerActiveQueue();
+}
 function renderPackerActiveQueue(){
   const grid=document.getElementById('pk-grid');
   todaysOrdersForLeftoverCheck=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
@@ -7395,8 +7411,8 @@ function renderPackerActiveQueue(){
 
   const inProgress=packerItems.filter(i=>i.status==='packed');
   const queue=computeActiveQueueItems();
-  const allCards=[...inProgress,...queue];
-  if(!allCards.length){
+  const unfiltered=[...inProgress,...queue];
+  if(!unfiltered.length){
     // Distinguishes "nothing has been pushed to a queue yet" from
     // "everything pushed is actually done" — otherwise both look identical
     // and the team waiting on Somya to push the next batch can't tell the
@@ -7406,6 +7422,19 @@ function renderPackerActiveQueue(){
     grid.innerHTML='<div class="to-empty">'+(anyQueuedAtAll
       ?'Nothing left in the active queue ✓'
       :'No orders pushed to a queue yet — push from Order Overview.')+'</div>';
+    return;
+  }
+
+  const search=packerFilters.search.trim().toLowerCase();
+  const allCards=unfiltered.filter(item=>{
+    if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
+    const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
+    if(search&&!customer.toLowerCase().includes(search)&&!item.item_name.toLowerCase().includes(search))return false;
+    return true;
+  });
+  if(!allCards.length){
+    document.getElementById('pk-rc').textContent='';
+    grid.innerHTML='<div class="to-empty">No items match these filters</div>';
     return;
   }
 
@@ -7426,8 +7455,12 @@ function renderPackerActiveQueue(){
   grid.innerHTML=sortedQueueIds.map(qid=>{
     const items=byQueueId[qid];
     const label=qid==='__none__'?'Not queued':(queueNameById(qid)||'Queue');
-    return '<div class="society-header" style="grid-column:1/-1">'+escH(label)+' <span class="sh-count">('+items.length+' item'+(items.length!==1?'s':'')+')</span></div>'+
-      items.map(item=>packCardHtml(item)).join('');
+    const collapsed=collapsedActiveQueueGroups.has(label);
+    return '<div class="society-header" style="grid-column:1/-1;cursor:pointer" onclick="toggleActiveQueueGroup('+escH(JSON.stringify(label))+')">'+
+        escH(label)+' <span class="sh-count">('+items.length+' item'+(items.length!==1?'s':'')+')</span>'+
+        '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff">'+(collapsed?'▸':'▾')+'</span>'+
+      '</div>'+
+      (collapsed?'':items.map(item=>packCardHtml(item)).join(''));
   }).join('');
 }
 
