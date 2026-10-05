@@ -6985,23 +6985,29 @@ function computeActiveQueueIds(){
   return active;
 }
 
-// The shared Active Queue board: every still-open item from ANY order
-// Somya has pushed into one of the currently-active queues
-// (computeActiveQueueIds — at most PACKER_QUEUE_ACTIVE_WINDOW at a time) —
-// every packer, not just one. There's deliberately no per-packer filter
-// here (effectivePackerIdForItem plays no part) — multiple packers work
-// off this exact same list at once, each naturally picking up whichever
-// card is their own fruit, same as Grid, just restricted to the active
-// window and ordered by queue instead of grouped by society. Ordered by
-// queue seq first (Queue 1's orders before Queue 2's), then by
-// queue_pushed_at within the same queue (first pushed, first packed) —
-// community priority/time-sensitivity/order size play no part here, unlike
-// orderItemsByQueuePriority (Grid/Time Sensitive/Team, unchanged).
+// The shared Active Queue board: every non-cancelled item — any status,
+// open/held/packed/final/invoiced — from ANY order Somya has pushed into
+// one of the currently-active queues (computeActiveQueueIds — at most
+// PACKER_QUEUE_ACTIVE_WINDOW at a time) — every packer, not just one.
+// Deliberately NOT status-filtered here: once an item's queue is in view,
+// its card stays up through final/invoiced instead of disappearing the
+// moment it's packed — Somya/the team can still see what's done, and the
+// status filter pills (shared with Grid, un-hidden for this mode) narrow
+// it down if wanted. computeActiveQueueIds' OWN window-advancement check
+// stays open-item-only regardless (a queue still counts as active until
+// its open items run out, whatever else this then chooses to display).
+// There's deliberately no per-packer filter here (effectivePackerIdForItem
+// plays no part) — multiple packers work off this exact same list at
+// once, each naturally picking up whichever card is their own fruit, same
+// as Grid, just restricted to the active window and ordered by queue
+// instead of grouped by society. Ordered by queue seq first (Queue 1's
+// orders before Queue 2's), then status rank (open/held first, invoiced
+// last) so pending work reads above what's already done, then item name.
 function computeActiveQueueItems(){
   const activeQueueIds=computeActiveQueueIds();
-  const openItems=packerItems.filter(i=>i.status==='open'&&activeQueueIds.has(packerCustomerMap[i.sales_order_id]?.queue_id));
+  const items=packerItems.filter(i=>i.status!=='cancelled'&&activeQueueIds.has(packerCustomerMap[i.sales_order_id]?.queue_id));
   const bySoid={};
-  openItems.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
+  items.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
   const orderMeta=Object.keys(bySoid).map(soid=>{
     const o=packerCustomerMap[soid]||{};
     const q=packerQueuesCache.find(qq=>qq.id===o.queue_id);
@@ -7010,7 +7016,9 @@ function computeActiveQueueItems(){
       pushedAt:o.queue_pushed_at?new Date(o.queue_pushed_at).getTime():Infinity};
   });
   orderMeta.sort((a,b)=>a.seq!==b.seq?a.seq-b.seq:a.pushedAt-b.pushedAt);
-  return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
+  return orderMeta.flatMap(m=>m.items.sort((x,y)=>
+    (ITEM_STATUS_RANK[x.status]-ITEM_STATUS_RANK[y.status])||x.item_name.localeCompare(y.item_name)
+  ));
 }
 
 // Team view's fuller picture for one packer: everything they own today,
@@ -7096,19 +7104,18 @@ async function setPackerViewMode(mode){
   if(mode==='priority')mode='grid'; // Time Sensitive pill is hidden for now — don't let a stale link/state land here
   packerViewMode=mode;
   renderPackerModeToggle();
-  // Scope tabs (All/Mine) and the status filter don't apply to Active
-  // Queue — it's a shared board that ignores packerScope entirely (see
-  // computeActiveQueueItems), and status filtering would fight with its
-  // own in-progress/open grouping. Search and the fruit filter DO still
-  // make sense there (find a customer, or narrow to one fruit across both
-  // queues), so only Team hides everything.
+  // Scope tabs (All/Mine) don't apply to Active Queue — it's a shared
+  // board that ignores packerScope entirely (see computeActiveQueueItems).
+  // Search, the fruit filter, and status all DO still make sense there
+  // (find a customer, narrow to one fruit, or to just open/packed/final/
+  // invoiced across both queues), so only Team hides everything.
   const single=mode==='single',team=mode==='team',hideGridControls=single||team;
   document.getElementById('pk-scope-tabs').style.display=hideGridControls?'none':'';
   document.getElementById('pk-fruit-filter-label').style.display=team?'none':'';
   document.getElementById('pk-fruit-pills').style.display=team?'none':'';
   document.getElementById('pk-produce-pills').style.display=single?'':'none';
-  document.getElementById('pk-status-filter-label').style.display=hideGridControls?'none':'';
-  document.getElementById('pk-status-pills').style.display=hideGridControls?'none':'';
+  document.getElementById('pk-status-filter-label').style.display=team?'none':'';
+  document.getElementById('pk-status-pills').style.display=team?'none':'';
   document.getElementById('pk-search').style.display=team?'none':'';
   if(single)await ensurePackerIdentityForQueue();
   renderPackerGrid();
@@ -7390,32 +7397,34 @@ function packCardHtml(item,dupIds){
     '</div>';
 }
 
-// Active Queue, as a shared board: every in-progress item (status
-// 'packed', already started by SOMEONE's device, regardless of whose —
-// needs finishing before it can drop off, so it always shows even if its
-// queue has since fallen out of the active window — same "pinned" reason
-// as before, just no longer scoped to one packer) followed by every
-// still-open item from the active queue(s) (computeActiveQueueItems).
-// Everyone's phone renders this exact same list — there's no per-packer
-// slice anymore (see the block comment above packerViewMode for why);
-// riderName is still required before this view works, purely so
-// markFinal/packed_by attributes to whoever's device it was.
+// Active Queue, as a shared board: every non-cancelled item — any status —
+// from the active queue(s) (computeActiveQueueItems), PLUS any in-progress
+// item (status 'packed', already started by SOMEONE's device, regardless
+// of whose) whose queue has since fallen out of the active window — same
+// "pinned" reason as before, just no longer scoped to one packer. A card
+// stays visible all the way through final/invoiced instead of vanishing
+// the moment it's packed — Somya/the team can see what's actually done,
+// and the status pills (shared with Grid, un-hidden for this mode) narrow
+// it down to just open/packed/etc if wanted. Everyone's phone renders
+// this exact same list — there's no per-packer slice anymore (see the
+// block comment above packerViewMode for why); riderName is still
+// required before this view works, purely so markFinal/packed_by
+// attributes to whoever's device it was.
 //
 // Rendered as one section per queue (Queue 1's header + cards, then Queue
 // 2's), same "society-header, grid-column:1/-1" trick Grid's own group
 // headers already use inside this same #pk-grid container. Grouped by
 // each item's ACTUAL queue, not just the active set, so a pinned
-// in-progress item whose queue just fell out of the active window (every
-// other item in it already finished) still gets a header instead of
-// floating unlabeled. Each header is independently collapsible
-// (collapsedActiveQueueGroups) — defaults to expanded (unlike Grid's
-// per-society groups) since there are normally only 1-2 sections here and
-// packers need to actually see the cards.
+// in-progress item whose queue just fell out of the active window still
+// gets a header instead of floating unlabeled. Each header is
+// independently collapsible (collapsedActiveQueueGroups) — defaults to
+// expanded (unlike Grid's per-society groups) since there are normally
+// only 1-2 sections here and packers need to actually see the cards.
 //
-// Shares packerFilters.search/.fruits with Grid (the pk-search box and
-// fruit pills, un-hidden for this mode in setPackerViewMode) — status
-// filter and packerScope (All/Mine) don't apply here, see that function's
-// comment for why.
+// Shares packerFilters.search/.fruits/.statuses with Grid (the pk-search
+// box, fruit pills, and status pills, un-hidden for this mode in
+// setPackerViewMode) — only packerScope (All/Mine) stays hidden, since it
+// doesn't apply to a shared board.
 let collapsedActiveQueueGroups=new Set();
 function toggleActiveQueueGroup(label){
   if(collapsedActiveQueueGroups.has(label))collapsedActiveQueueGroups.delete(label);
@@ -7431,15 +7440,21 @@ function renderPackerActiveQueue(){
     return;
   }
 
-  const inProgress=packerItems.filter(i=>i.status==='packed');
+  const activeQueueIds=computeActiveQueueIds();
+  // Only the edge case: an item mid-pack whose queue has already dropped
+  // out of the window (every other item in it finished first). Anything
+  // still inside the window — any status — comes from computeActiveQueueItems
+  // itself now, so this no longer needs to separately pull every 'packed'
+  // item regardless of queue.
+  const pinned=packerItems.filter(i=>i.status==='packed'&&!activeQueueIds.has(packerCustomerMap[i.sales_order_id]?.queue_id));
   const queue=computeActiveQueueItems();
-  const unfiltered=[...inProgress,...queue];
+  const unfiltered=[...pinned,...queue];
   if(!unfiltered.length){
     // Distinguishes "nothing has been pushed to a queue yet" from
     // "everything pushed is actually done" — otherwise both look identical
     // and the team waiting on Somya to push the next batch can't tell the
     // difference from having genuinely finished.
-    const anyQueuedAtAll=packerItems.some(i=>i.status==='open'&&packerCustomerMap[i.sales_order_id]?.queue_id);
+    const anyQueuedAtAll=packerItems.some(i=>i.status!=='cancelled'&&packerCustomerMap[i.sales_order_id]?.queue_id);
     document.getElementById('pk-rc').textContent='';
     grid.innerHTML='<div class="to-empty">'+(anyQueuedAtAll
       ?'Nothing left in the active queue ✓'
@@ -7449,6 +7464,7 @@ function renderPackerActiveQueue(){
 
   const search=packerFilters.search.trim().toLowerCase();
   const allCards=unfiltered.filter(item=>{
+    if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
     if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
     if(packerProduceFilter!=='all'){
       const isVeg=VEGETABLE_ITEM_NAMES.has((item.item_name||'').toLowerCase());
