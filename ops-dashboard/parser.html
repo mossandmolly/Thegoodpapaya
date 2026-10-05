@@ -436,7 +436,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pack-card.leftover-order{background:#fff3e0;border-color:#f0b060}
 .pack-card.qty-mismatch{border:2px solid #b3261e}
 .pk-qty-mismatch-note{color:#b3261e;font-weight:700;font-size:11px;margin-bottom:4px}
-/* Packer Single Card queue — one pack-card at a time, with a header
+/* Packer Active Queue — one pack-card at a time, with a header
    showing who's packing, how many are left, and a plain elapsed-time
    timer that flashes red past packer_card_timer_seconds (app_settings). */
 .pk-single-header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:#8a7a6a}
@@ -950,7 +950,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 </div>
 
 <!-- PACKER IDENTITY MODAL — picked (not typed) from packersCache, used only
-     when switching into the Packer tab's Single Card queue, which needs to
+     when switching into the Packer tab's Active Queue, which needs to
      know which packer's fruit assignment to filter to. Same underlying
      riderName/RIDER_NAME_KEY as everywhere else (Flat/Trip, Delivery,
      packed_by attribution) — this just adds a pick-from-list entry point
@@ -986,7 +986,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 </div>
 
 <!-- PUSH TO QUEUE MODAL — Order Overview only. Pushes one order into a
-     named, numbered queue (Queue 1, Queue 2, ...) that Single Card now
+     named, numbered queue (Queue 1, Queue 2, ...) that Active Queue now
      reads exclusively from — queue 1's orders exhausted before queue 2's
      (see computePackerQueue). Pills are rendered dynamically in JS
      (renderPushQueuePills) since they need to reflect this order's current
@@ -1219,8 +1219,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 
   <div class="config-section">
-    <h3>🍎 Fruit &amp; Vegetable Assignment <span style="font-size:11px;color:#8a7a6a;font-weight:400">(drives Packer tab's My Orders and Single Card queue)</span></h3>
-    <p class="note">Each item goes to exactly one packer — picking a packer here replaces whoever had it before, so an item never ends up on two packers' queues at once. This is the default; a specific order's item can still be reassigned one-off from Single Card view without changing this default for everyone else.</p>
+    <h3>🍎 Fruit &amp; Vegetable Assignment <span style="font-size:11px;color:#8a7a6a;font-weight:400">(drives Packer tab's My Orders and Active Queue)</span></h3>
+    <p class="note">Each item goes to exactly one packer — picking a packer here replaces whoever had it before, so an item never ends up on two packers' queues at once. This is the default; a specific order's item can still be reassigned one-off from Active Queue view without changing this default for everyone else.</p>
     <div class="table-scroll">
       <table class="community-table"><thead><tr><th>Item</th><th>Packer</th></tr></thead><tbody id="item-assignment-tbody"></tbody></table>
     </div>
@@ -1257,8 +1257,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
 
   <div class="config-section">
-    <h3>🎯 Community Priority <span style="font-size:11px;color:#8a7a6a;font-weight:400">(drives the Packer tab's Single Card queue order)</span></h3>
-    <p class="note">Separate, hand-curated list from Communities above — used only by the Packer tab's Single Card queue (and, for grouping/display purposes, Order Overview/Packer/Delivery's Flat view). Each row has a unique ID and one or more keyword phrases; if an order's society (or customer name, as fallback) CONTAINS any of a community's keywords — e.g. "srp" and "royal pavilion" both mapping to the same community — it gets that community's rank. Lower rank packs first; blank rank sorts last. Keywords are comma-separated and replace the whole list when you save a row; each keyword phrase can only belong to one community. Every field here — including the Unique ID itself — can be edited in place; renaming a Unique ID automatically carries its keywords and any combinable group membership along with it. Default deliver-by is a standing policy time (e.g. "16:30" for "Iksha society by 4:30") used ONLY when an order in that community has no deadline of its own set — an order's own deliver_by always wins. It feeds the same Time Sensitive escalation as a real deadline would, on both Order Overview and the Packer queue, and shows as a muted "(default)" badge on Order Overview.</p>
+    <h3>🎯 Community Priority <span style="font-size:11px;color:#8a7a6a;font-weight:400">(drives Order Overview's Time Sensitive sort)</span></h3>
+    <p class="note">Separate, hand-curated list from Communities above — used by Order Overview's Time Sensitive sort (and, for grouping/display purposes, Order Overview/Packer/Delivery's Flat view). Does NOT drive the Packer tab's Active Queue — that's manual now, pushed order-by-order from Order Overview. Each row has a unique ID and one or more keyword phrases; if an order's society (or customer name, as fallback) CONTAINS any of a community's keywords — e.g. "srp" and "royal pavilion" both mapping to the same community — it gets that community's rank. Lower rank packs first; blank rank sorts last. Keywords are comma-separated and replace the whole list when you save a row; each keyword phrase can only belong to one community. Every field here — including the Unique ID itself — can be edited in place; renaming a Unique ID automatically carries its keywords and any combinable group membership along with it. Default deliver-by is a standing policy time (e.g. "16:30" for "Iksha society by 4:30") used ONLY when an order in that community has no deadline of its own set — an order's own deliver_by always wins. It feeds the same Time Sensitive escalation as a real deadline would on Order Overview, and shows as a muted "(default)" badge there.</p>
     <div class="add-row">
       <input type="text" id="new-cp-id" placeholder="Unique ID (e.g. srp)" style="max-width:160px">
       <input type="text" id="new-cp-name" placeholder="Display name">
@@ -1629,14 +1629,14 @@ async function initAppAfterLogin(){
     .catch(e=>console.error('Could not load clusters config',e))
     .then(()=>loadCommunitiesConfig())
     .catch(e=>console.error('Could not load communities config',e));
-  // Separate, hand-curated model that only feeds the Packer Single Card
+  // Separate, hand-curated model that only feeds the Packer Active Queue
   // queue — pre-warmed here so the cache is ready before Packer ever loads.
   loadCommunityPriorityConfig()
     .catch(e=>console.error('Could not load community priority config',e))
     .then(()=>loadCombinableGroupsConfig())
     .catch(e=>console.error('Could not load combinable groups config',e));
   // Powers both Order Overview's push-to-queue modal and the Packer tab's
-  // Single Card queue — pre-warmed here so either is ready whichever loads
+  // Active Queue — pre-warmed here so either is ready whichever loads
   // first.
   loadPackerQueuesConfig()
     .catch(e=>console.error('Could not load packer queues',e));
@@ -2084,10 +2084,12 @@ async function deleteCommunity(id,name){
   await loadCommunitiesConfig();
 }
 
-// ── Community Priority (Packer Single-Card queue) ─────────────────────────
+// ── Community Priority (Time Sensitive sort) ──────────────────────────────
 // Separate, hand-curated model from communities/clusters above — powers
-// only the Packer tab's Single Card queue (see computePackerQueue /
-// matchCommunityPriority). Keyed by unique_id; each entry carries its own
+// Order Overview's Time Sensitive sort and Grid's grouping/ordering
+// (orderItemsByQueuePriority / matchCommunityPriority). No longer drives the
+// Packer tab's Active Queue — that's manual, push-to-queue based now (see
+// computePackerQueue). Keyed by unique_id; each entry carries its own
 // keyword list so multiple phrases (e.g. "srp", "royal pavilion") can map
 // to one ranked community.
 let communityPriorityCache={}; // unique_id -> {unique_id,display_name,rank,keywords:[...]}
@@ -2181,7 +2183,7 @@ async function addCommunityPriority(){
 }
 
 async function deleteCommunityPriority(uniqueId){
-  if(!await uxConfirm('Remove community priority "'+uniqueId+'"? This only affects the Packer Single Card queue, not the Communities/Clusters tables above.'))return;
+  if(!await uxConfirm('Remove community priority "'+uniqueId+'"? This only affects Order Overview\'s Time Sensitive sort, not the Communities/Clusters tables above.'))return;
   const{error}=await sb.from('community_priority').delete().eq('unique_id',uniqueId);
   if(error){uxAlert('Failed to delete: '+error.message);return;}
   await loadCommunityPriorityConfig();
@@ -2358,7 +2360,7 @@ function addAlias(){const f=document.getElementById('new-alias-from').value.trim
 function delAlias(k){delete ALIASES[k];renderConfig();}
 
 // ── Packer fruit assignments (DB-backed, unlike the session-only config
-// above) — drives the Packer tab's My Orders filter and the Single Card
+// above) — drives the Packer tab's My Orders filter and the Active Queue
 // queue: "mine" = any item whose fruit is assigned to the current device's
 // packer. Uses the packers + packer_assignments tables that already existed
 // (migration 005) rather than a new one — packersCache is reshaped
@@ -3844,10 +3846,10 @@ function renderOrdersList(){
   const socNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
     :overviewSortMode==='priority'
-    // Time Sensitive — same community-priority-rank + hard time-sensitive
-    // override rule that orders a packer's own Single Card queue, applied
-    // at group level so a society's position here matches why its orders
-    // would be packed when they are.
+    // Time Sensitive — community-priority-rank + a hard time-sensitive
+    // override, applied at group level. No longer anything to do with the
+    // Packer tab's Active Queue (that's manual/push-to-queue now) — this is
+    // purely Order Overview's own Flat/Time Sensitive display ordering.
     ?sortGroupsByPriority(Object.keys(bySociety),name=>bySociety[name])
     // Flat — case-insensitive since group names can come from either a
     // Community Priority display_name (whatever case it was typed in) or
@@ -3900,7 +3902,7 @@ function renderOrdersList(){
           ?' <span class="deliver-by-badge'+(deliverWindow.isDefault?' deliver-by-default':'')+'">⏰ '+escH(deliverWindow.label)+'</span>'
           :'';
         const statusBadges=(order.isPickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
-          (!cancelled&&order.queueId?' <span class="queue-badge" title="Pushed to packer Single Card queue">📥 '+escH(queueNameById(order.queueId)||'Queued')+'</span>':'')+
+          (!cancelled&&order.queueId?' <span class="queue-badge" title="Pushed to packer Active Queue">📥 '+escH(queueNameById(order.queueId)||'Queued')+'</span>':'')+
           (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           deliverWindowBadge+
@@ -4027,7 +4029,7 @@ function renderOrdersList(){
   updateBulkButtons();
 }
 
-// ── Push to Queue (Single Card queue, phase 2) ────────────────────────────
+// ── Push to Queue (Active Queue, phase 2) ────────────────────────────
 // packer_queues is open-RLS, read/written directly from the client — same
 // pattern as packers/communities/community_priority. Only the
 // orders.queue_id/queue_pushed_at write goes through push-order-to-queue
@@ -4769,9 +4771,9 @@ async function loadPriorityOverride(){
 
 // Same rule as orderItemsByQueuePriority (community priority rank, hard
 // time-sensitive override, smaller group first) but at group/society
-// granularity instead of per-order — powers the "Time Sensitive" view on
-// both Order Overview and Packer, so a group's position here matches
-// exactly why a packer's own Single Card queue would pack it when it does.
+// granularity instead of per-order — powers Order Overview's own "Time
+// Sensitive" display ordering. No longer tied to the Packer tab's Active
+// Queue (that's manual/push-to-queue now, see computePackerQueue).
 // groupNames: the keys to order. ordersByName(name): that group's orders
 // (each needs {customer, society, deliverBy}) — callers adapt their own
 // group shape (order objects vs. packer items) to that before calling.
@@ -4919,9 +4921,10 @@ function setViewGrouping(mode){
 // Order Overview's own Flat/Time Sensitive toggle — separate from
 // viewGrouping above (that one's shared with Packer/Delivery and is about
 // Flat vs the old Trip view, now unreachable). "Time Sensitive" here sorts
-// groups by sortGroupsByPriority — the same community-priority-rank +
-// hard time-sensitive-override rule that orders a packer's own Single Card
-// queue — instead of plain alphabetical.
+// groups by sortGroupsByPriority — community-priority-rank + a hard
+// time-sensitive override — instead of plain alphabetical. Purely an Order
+// Overview display ordering now; it doesn't drive the Packer tab's Active
+// Queue (manual/push-to-queue there — see computePackerQueue).
 let overviewSortMode='alpha'; // 'alpha' | 'priority'
 
 function renderOverviewSortToggle(){
@@ -6848,10 +6851,10 @@ function setPackerScope(scope){
   renderPackerGrid();
 }
 
-// ── Single Card queue ──────────────────────────────────────────────────────
+// ── Active Queue ──────────────────────────────────────────────────────
 // A third Packer view, independent of the shared Flat/Trip viewGrouping
 // toggle above (that one also drives Overview/Delivery; this one is
-// Packer-only). Grid/Trip still show everything at once — Single Card
+// Packer-only). Grid/Trip still show everything at once — Active Queue
 // instead pushes exactly one item at a time, in an order computed by
 // computePackerQueue() below, so a packer never has to decide what's next.
 //
@@ -6859,7 +6862,7 @@ function setPackerScope(scope){
 // time-sensitive override + smaller-orders-first). Phase 2 replaced that
 // with a manual one: Somya pushes specific orders into a named, numbered
 // queue (Queue 1, Queue 2, ...) from Order Overview (openPushToQueueModal),
-// and Single Card shows ONLY items from pushed orders, in queue order.
+// and Active Queue shows ONLY items from pushed orders, in queue order.
 // Up to PACKER_QUEUE_ACTIVE_WINDOW (2) queues are ever active/visible at
 // once (computeActiveQueueIds) — a sliding window, not a hard gate, so a
 // packer whose own fruit has nothing left in Queue 1 can already see
@@ -6898,7 +6901,7 @@ function matchCommunityPriority(text){
 }
 
 // Which packer actually owns this item right now: a per-item override
-// (order_items.assigned_packer_id, set from Single Card view — see
+// (order_items.assigned_packer_id, set from Active Queue view — see
 // openReassignPacker below) wins over the default Item -> Packer
 // assignment from Config. Returns a packer id, or null if unassigned.
 function effectivePackerIdForItem(item){
@@ -6965,7 +6968,7 @@ function orderItemsByQueuePriority(items){
 }
 
 // At most this many queues are ever "active" (visible to any packer's
-// Single Card) at once — a sliding window, not a strict gate, so a packer
+// Active Queue) at once — a sliding window, not a strict gate, so a packer
 // never has to sit idle waiting for Somya to notice Queue 1 is done and
 // push a new one. Computed from EVERY packer's items (not just one), since
 // "is Queue 1 done" is a whole-team question — skips any queue with no
@@ -7081,23 +7084,23 @@ function computeUnassignedTimeline(){
 function renderPackerModeToggle(){
   document.getElementById('pk-mode-toggle').innerHTML=
     '<span class="filter-pill'+(packerViewMode==='grid'?' active':'')+'" onclick="setPackerViewMode(\'grid\')">Grid</span>'+
-    // Time Sensitive — same grouped everything-at-once view as Grid, just
-    // ordered by community priority rank + hard time-sensitive override
-    // (sortGroupsByPriority) instead of alphabetically.
-    '<span class="filter-pill'+(packerViewMode==='priority'?' active':'')+'" onclick="setPackerViewMode(\'priority\')">Time Sensitive</span>'+
-    '<span class="filter-pill'+(packerViewMode==='single'?' active':'')+'" onclick="setPackerViewMode(\'single\')">Single Card</span>'+
+    // Time Sensitive pill hidden for now (hideable, not removed — the
+    // 'priority' mode/sortGroupsByPriority logic below is untouched and
+    // setPackerViewMode still falls back away from it if ever reached).
+    '<span class="filter-pill'+(packerViewMode==='single'?' active':'')+'" onclick="setPackerViewMode(\'single\')">Active Queue</span>'+
     // Team view is Somya-only (isVegPerfAllowed — same single-email gate as
-    // P&L/VegPerf) — a supervisor overview of every packer's own Single
-    // Card queue at once, not something a packer needs on their own device.
+    // P&L/VegPerf) — a supervisor overview of every packer's own Active
+    // Queue at once, not something a packer needs on their own device.
     (isVegPerfAllowed?'<span class="filter-pill'+(packerViewMode==='team'?' active':'')+'" onclick="setPackerViewMode(\'team\')">Team</span>':'');
 }
 
 async function setPackerViewMode(mode){
   if(mode==='team'&&!isVegPerfAllowed)mode='grid';
+  if(mode==='priority')mode='grid'; // Time Sensitive pill is hidden for now — don't let a stale link/state land here
   packerViewMode=mode;
   renderPackerModeToggle();
   // The fruit/status filters, search, and scope tabs only make sense for
-  // the everything-at-once views (Grid, Time Sensitive) — Single Card and
+  // the everything-at-once views (Grid, Time Sensitive) — Active Queue and
   // Team both ignore them by design, so hide rather than leave controls on
   // screen that silently do nothing.
   const single=mode==='single',team=mode==='team',hideGridControls=single||team;
@@ -7409,9 +7412,9 @@ function packCardHtml(item,dupIds){
     '</div>';
 }
 
-// Single Card's own "skip" — packer-local and purely ephemeral (resets on
+// Active Queue's own "skip" — packer-local and purely ephemeral (resets on
 // a page refresh, never written to the DB), only changes what THIS
-// device's Single Card view shows next. Doesn't touch the underlying
+// device's Active Queue view shows next. Doesn't touch the underlying
 // priority order, Team view, or any other packer's queue — Grid view
 // still shows every item regardless. Skipping an item defers it 5 card-
 // advances (its own skip, or another card's markFinal) before it's
@@ -7420,7 +7423,7 @@ function packCardHtml(item,dupIds){
 let pkSkipRemaining={}; // itemId -> card-advances left before eligible again
 
 // Called whenever the displayed card actually moves on to something else
-// (a skip, or markFinal in Single Card mode) — ticks every other
+// (a skip, or markFinal in Active Queue mode) — ticks every other
 // currently-deferred item one step closer to reappearing.
 function advancePkSkipCounters(){
   Object.keys(pkSkipRemaining).forEach(id=>{
@@ -7518,8 +7521,9 @@ function doneItemRowHtml(item){
 // arrow-reorderable list with a completion bar per card. Reordering here
 // writes a new packer_priority_override row set for viewDate, which
 // sortGroupsByPriority then picks up everywhere it's used — Order
-// Overview's Time Sensitive view, Packer's Time Sensitive view, AND every
-// packer's own Single Card queue — not just this screen.
+// Overview's Time Sensitive view and (while hidden) Packer's own Time
+// Sensitive pill. No longer reaches the Packer tab's Active Queue — that's
+// manual/push-to-queue now (see computePackerQueue), not this.
 // This session's working copy of the order, kept in sync with what's
 // actually on screen so drag/arrow moves know current positions without
 // re-deriving them.
@@ -7853,8 +7857,10 @@ function renderPackerGrid(){
   const groupNames=viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(byGroup),name=>byGroup[name].map(packerOrderLike))
     :packerViewMode==='priority'
-    // Time Sensitive — same community-priority-rank + hard time-sensitive
-    // override rule that orders a packer's own Single Card queue, applied
+    // Time Sensitive — hidden from the Packer tab's pill row for now (see
+    // renderPackerModeToggle/setPackerViewMode), so this branch is currently
+    // unreachable; left in place rather than deleted in case it's un-hidden
+    // later. Community-priority-rank + hard time-sensitive override, applied
     // at group level here since this view still shows everything at once.
     ?sortGroupsByPriority(Object.keys(byGroup),name=>byGroup[name].map(packerOrderLike))
     // Case-insensitive — see the matching comment on Overview/Delivery's
@@ -7915,7 +7921,7 @@ async function savePackedQty(id){
   // item locally and redraw — no need for the full network round trip
   // (refetch every item today + the whole catalog) that loadPackerView does.
   // Falls back to that when invalidation touched sibling items too, OR
-  // always in Single Card mode — a packer working through their queue one
+  // always in Active Queue mode — a packer working through their queue one
   // card at a time needs every step to pick up Somya's Current Order
   // rearranges/rank edits from Config, which a local-only patch would
   // otherwise leave stale until the next full tab reload.
@@ -7937,7 +7943,7 @@ async function markFinal(id){
   // average-time-per-item metric gets computed from.
   const{error}=await sb.from('order_items').update({status:'final',packed_by:riderName||null,packed_at:new Date().toISOString()}).eq('id',id);
   if(error){uxAlert('Failed to mark final: '+error.message);return;}
-  // Same "always fully reload in Single Card mode" reasoning as
+  // Same "always fully reload in Active Queue mode" reasoning as
   // savePackedQty above — this is the point where a card actually advances
   // to the next one, so it's the moment a stale priority order would be
   // most visible/confusing if it didn't refresh. Also a genuine "card
