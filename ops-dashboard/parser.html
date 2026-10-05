@@ -7418,6 +7418,14 @@ function packCardHtml(item,dupIds){
 // slice anymore (see the block comment above packerViewMode for why);
 // riderName is still required before this view works, purely so
 // markFinal/packed_by attributes to whoever's device it was.
+//
+// Rendered as one section per queue (Queue 1's header + cards, then Queue
+// 2's), same "society-header, grid-column:1/-1" trick Grid's own group
+// headers already use inside this same #pk-grid container. Grouped by
+// each item's ACTUAL queue, not just the active set, so a pinned
+// in-progress item whose queue just fell out of the active window (every
+// other item in it already finished) still gets a header instead of
+// floating unlabeled.
 function renderPackerActiveQueue(){
   const grid=document.getElementById('pk-grid');
   todaysOrdersForLeftoverCheck=packerItems.filter(i=>i.status!=='cancelled').map(packerOrderLike);
@@ -7442,8 +7450,27 @@ function renderPackerActiveQueue(){
       :'No orders pushed to a queue yet — push from Order Overview.')+'</div>';
     return;
   }
+
+  const byQueueId={};
+  allCards.forEach(item=>{
+    const qid=packerCustomerMap[item.sales_order_id]?.queue_id||'__none__';
+    (byQueueId[qid]=byQueueId[qid]||[]).push(item);
+  });
+  const sortedQueueIds=Object.keys(byQueueId).sort((a,b)=>{
+    if(a==='__none__')return 1; // shouldn't normally happen — sorts last rather than erroring
+    if(b==='__none__')return -1;
+    const seqA=packerQueuesCache.find(q=>q.id===a)?.seq??Infinity;
+    const seqB=packerQueuesCache.find(q=>q.id===b)?.seq??Infinity;
+    return seqA-seqB;
+  });
+
   document.getElementById('pk-rc').textContent='— '+allCards.length+' item'+(allCards.length!==1?'s':'')+' in the active queue';
-  grid.innerHTML=allCards.map(item=>packCardHtml(item)).join('');
+  grid.innerHTML=sortedQueueIds.map(qid=>{
+    const items=byQueueId[qid];
+    const label=qid==='__none__'?'Not queued':(queueNameById(qid)||'Queue');
+    return '<div class="society-header" style="grid-column:1/-1">'+escH(label)+' <span class="sh-count">('+items.length+' item'+(items.length!==1?'s':'')+')</span></div>'+
+      items.map(item=>packCardHtml(item)).join('');
+  }).join('');
 }
 
 // Compact, read-only row for an already-finalized item in Team view — no
