@@ -679,6 +679,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="pk-mode-toggle" class="filter-pills status-pills"></div>
   <div class="filter-group-label" id="pk-fruit-filter-label">Fruit</div>
   <div id="pk-fruit-pills" class="filter-pills fruit-pills"></div>
+  <!-- Active Queue only (see setPackerViewMode) — category-level, on top of
+       the specific-item fruit pills above. -->
+  <div id="pk-produce-pills" class="filter-pills status-pills" style="display:none"></div>
   <div class="filter-group-label" id="pk-status-filter-label">Status</div>
   <div id="pk-status-pills" class="filter-pills status-pills"></div>
   <div class="filter-group-label" id="pk-flags-filter-label">Flags</div>
@@ -7145,6 +7148,7 @@ async function setPackerViewMode(mode){
   document.getElementById('pk-scope-tabs').style.display=hideGridControls?'none':'';
   document.getElementById('pk-fruit-filter-label').style.display=team?'none':'';
   document.getElementById('pk-fruit-pills').style.display=team?'none':'';
+  document.getElementById('pk-produce-pills').style.display=single?'':'none';
   document.getElementById('pk-status-filter-label').style.display=hideGridControls?'none':'';
   document.getElementById('pk-status-pills').style.display=hideGridControls?'none':'';
   document.getElementById('pk-search').style.display=team?'none':'';
@@ -7315,10 +7319,28 @@ function renderPackerFilterPills(){
   const offQtyCount=packerItems.filter(i=>qtyMismatchInfo(i)).length;
   document.getElementById('pk-flags-pills').innerHTML=
     '<span class="filter-pill'+(packerFilters.offQtyOnly?' active':'')+'" onclick="togglePackerOffQtyFilter()">⚠ Off Qty ('+offQtyCount+')</span>';
+
+  document.getElementById('pk-produce-pills').innerHTML=
+    '<span class="filter-pill'+(packerProduceFilter==='fruit'?' active':'')+'" onclick="setPackerProduceFilter(\'fruit\')">🍎 Fruit only</span>'+
+    '<span class="filter-pill'+(packerProduceFilter==='veg'?' active':'')+'" onclick="setPackerProduceFilter(\'veg\')">🥦 Vegetable only</span>';
 }
 
 function togglePackerOffQtyFilter(){
   packerFilters.offQtyOnly=!packerFilters.offQtyOnly;
+  renderPackerFilterPills();
+  renderPackerGrid();
+}
+
+// Category-level, on top of the specific-item fruit pills above — Active
+// Queue only (hidden elsewhere, see setPackerViewMode). Reuses
+// VEGETABLE_ITEM_NAMES (Order Overview's own vegetable-order filter) rather
+// than inventing a second fruit/vegetable list — there's no category field
+// on order_items itself (see that Set's own comment), so "fruit" here just
+// means "not in VEGETABLE_ITEM_NAMES". Clicking the already-active pill
+// clears back to showing both — these are two toggles, not a 3-pill group.
+let packerProduceFilter='all'; // 'all' | 'fruit' | 'veg'
+function setPackerProduceFilter(type){
+  packerProduceFilter=packerProduceFilter===type?'all':type;
   renderPackerFilterPills();
   renderPackerGrid();
 }
@@ -7470,6 +7492,11 @@ function renderPackerActiveQueue(){
   const search=packerFilters.search.trim().toLowerCase();
   const allCards=unfiltered.filter(item=>{
     if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
+    if(packerProduceFilter!=='all'){
+      const isVeg=VEGETABLE_ITEM_NAMES.has((item.item_name||'').toLowerCase());
+      if(packerProduceFilter==='veg'&&!isVeg)return false;
+      if(packerProduceFilter==='fruit'&&isVeg)return false;
+    }
     const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
     if(search&&!customer.toLowerCase().includes(search)&&!item.item_name.toLowerCase().includes(search))return false;
     return true;
