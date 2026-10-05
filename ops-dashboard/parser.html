@@ -6901,12 +6901,16 @@ function setPackerScope(scope){
 // time-sensitive override + smaller-orders-first). Phase 2 replaced that
 // with a manual one: Somya pushes specific orders into a named, numbered
 // queue (Queue 1, Queue 2, ...) from Order Overview (openPushToQueueModal),
-// and Single Card shows ONLY items from pushed orders — queue 1's orders
-// exhausted before queue 2's even starts. Nothing not pushed ever appears
-// here, however urgent; the point is Somya hand-picking exactly which 4-5
-// houses a packer should focus on next, not an algorithm guessing. Grid,
-// Time Sensitive, and Team view are untouched — they still rank everything
-// via orderItemsByQueuePriority exactly as before.
+// and Single Card shows ONLY items from pushed orders, in queue order.
+// Up to PACKER_QUEUE_ACTIVE_WINDOW (2) queues are ever active/visible at
+// once (computeActiveQueueIds) — a sliding window, not a hard gate, so a
+// packer whose own fruit has nothing left in Queue 1 can already see
+// Queue 2 instead of sitting idle, without every future queue (3, 4, 5...)
+// all showing at once. Nothing outside the active window ever appears,
+// however urgent; the point is Somya hand-picking exactly which 4-5 houses
+// a packer should focus on next, not an algorithm guessing. Grid, Time
+// Sensitive, and Team view are untouched — they still rank everything via
+// orderItemsByQueuePriority exactly as before.
 let packerViewMode='grid'; // 'grid' | 'single'
 
 // The owner's rule is exactly "packing must start now to make T-120" — a
@@ -7002,10 +7006,30 @@ function orderItemsByQueuePriority(items){
   return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
 }
 
+// At most this many queues are ever "active" (visible to any packer's
+// Single Card) at once — a sliding window, not a strict gate, so a packer
+// never has to sit idle waiting for Somya to notice Queue 1 is done and
+// push a new one. Computed from EVERY packer's items (not just one), since
+// "is Queue 1 done" is a whole-team question — skips any queue with no
+// open items left (fully packed, or nothing ever pushed into it yet) and
+// takes the first N queues, by seq, that still have open work. As soon as
+// Queue 1 empties out, Queue 3 slides into the window alongside Queue 2,
+// keeping two active queues without ever showing three+ at once.
+const PACKER_QUEUE_ACTIVE_WINDOW=2;
+function computeActiveQueueIds(){
+  const active=new Set();
+  [...packerQueuesCache].sort((a,b)=>a.seq-b.seq).forEach(q=>{
+    if(active.size>=PACKER_QUEUE_ACTIVE_WINDOW)return;
+    const hasOpen=packerItems.some(i=>i.status==='open'&&packerCustomerMap[i.sales_order_id]?.queue_id===q.id);
+    if(hasOpen)active.add(q.id);
+  });
+  return active;
+}
+
 // This packer's next-up queue: every still-open item they own, but ONLY
-// from orders Somya has pushed into a queue (packerCustomerMap[soid].
-// queue_id — set via openPushToQueueModal/push-order-to-queue). Ordered by
-// queue seq first (Queue 1's orders fully before Queue 2's), then by
+// from orders Somya has pushed into one of the currently-active queues
+// (computeActiveQueueIds — at most PACKER_QUEUE_ACTIVE_WINDOW at a time).
+// Ordered by queue seq first (Queue 1's orders before Queue 2's), then by
 // queue_pushed_at within the same queue (first pushed, first packed) —
 // community priority/time-sensitivity/order size play no part here, unlike
 // orderItemsByQueuePriority (Grid/Time Sensitive/Team, unchanged). Splitting
@@ -7015,8 +7039,9 @@ function orderItemsByQueuePriority(items){
 function computePackerQueue(packerName){
   const packer=packersCache.find(p=>p.name===packerName);
   if(!packer)return[];
+  const activeQueueIds=computeActiveQueueIds();
   const openItems=packerItems.filter(i=>i.status==='open'&&effectivePackerIdForItem(i)===packer.id);
-  const queued=openItems.filter(i=>packerCustomerMap[i.sales_order_id]?.queue_id);
+  const queued=openItems.filter(i=>activeQueueIds.has(packerCustomerMap[i.sales_order_id]?.queue_id));
   const bySoid={};
   queued.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
   const orderMeta=Object.keys(bySoid).map(soid=>{
