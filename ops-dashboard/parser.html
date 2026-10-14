@@ -3997,6 +3997,9 @@ function renderOrdersList(){
               (cancelled?'':'<a class="or-link" onclick="openPushToQueueModal(\''+order.soid+'\')">'+(order.queueId?'📥 '+escH(queueNameById(order.queueId)||'queued'):'📥 push to queue')+'</a>')+
               (orderHasPendingReview(order)?'<a class="or-link" style="color:#8a6d00" onclick="approveAllPendingReview(\''+order.soid+'\')">✓ approve all pending</a>':'')+
               '<a class="or-link" onclick="renameOrderCustomerPrompt(\''+order.soid+'\')">✎ rename</a>'+
+              (cancelled?'':(order.isPickup
+                ?'<a class="or-link" onclick="setOrderPickup(\''+order.soid+'\',false)" title="Treat this order as a normal delivery instead">↩️ remove pickup tag</a>'
+                :'<a class="or-link" onclick="setOrderPickup(\''+order.soid+'\',true)" title="Whole order — still order-level, not per-item">📦 mark as pickup</a>'))+
               (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
               // Move-by-a-day only makes sense relative to today/tomorrow/
               // yesterday — viewing anything further back via the date
@@ -4999,6 +5002,33 @@ document.getElementById('move-trip-confirm').addEventListener('click',async()=>{
     uxAlert('Failed to move order: '+e.message);
   }
 });
+
+// is_pickup is order-level, set once at creation (WhatsApp parse review or
+// Quick Order Entry's pickup checkbox) with no way to fix it afterward
+// until now — a single pickup line item on an otherwise-normal order
+// wrongly tags every other item on it too, hiding the delivery flow for
+// all of them. This flips it back off (or on) from Order Overview. Still
+// whole-order, not per-item — a genuinely mixed order (1 pickup item +
+// others for delivery) isn't representable yet; removing the tag here
+// just puts the whole order back into the normal delivery flow.
+async function setOrderPickup(soid,isPickup){
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/update-order-notes',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,is_pickup:isPickup}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not update pickup tag');
+    evictCustomerLookupCache(soid);
+    if(currentOrdersById[soid])currentOrdersById[soid].isPickup=isPickup;
+    if(deliveryOrders[soid])deliveryOrders[soid].isPickup=isPickup;
+    renderOrdersList();
+    if(document.getElementById('panel-delivery').classList.contains('active'))renderDeliveryList();
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+  }
+}
 
 async function pillClick(id){
   const item=currentItemsById[id];
