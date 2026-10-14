@@ -19,8 +19,17 @@
 // ("deliver after 4pm") rather than a deadline. Both together express a
 // "between X and Y" window.
 //
-// Input:  { sales_order_id: string, admin_notes?: string, deliver_by?: string|null, deliver_after?: string|null, trip_override?: string|null }
-// Output: { sales_order_id, admin_notes, deliver_by, deliver_after, trip_override }
+// is_pickup is set once at order-creation time (WhatsApp parse review or
+// Quick Order Entry's pickup checkbox) and, until now, had no way to be
+// corrected afterward — it's whole-order, not per-item, so a single
+// pickup line on an otherwise-normal delivery order wrongly tagged every
+// other item on it as pickup too (hiding the delivery badge/flow for all
+// of them). This lets Somya flip it back off (or on) from Order Overview
+// after the fact. Still order-level, not per-item — a genuinely mixed
+// order (1 pickup item + others for delivery) isn't representable yet.
+//
+// Input:  { sales_order_id: string, admin_notes?: string, deliver_by?: string|null, deliver_after?: string|null, trip_override?: string|null, is_pickup?: boolean }
+// Output: { sales_order_id, admin_notes, deliver_by, deliver_after, trip_override, is_pickup }
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -53,7 +62,7 @@ Deno.serve(async (req) => {
 
   try {
     await requireAuth(req);
-    const { sales_order_id, admin_notes, deliver_by, deliver_after, trip_override } = await req.json();
+    const { sales_order_id, admin_notes, deliver_by, deliver_after, trip_override, is_pickup } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
@@ -63,13 +72,16 @@ Deno.serve(async (req) => {
     if (deliver_by !== undefined)     update.deliver_by     = deliver_by || null;
     if (deliver_after !== undefined)  update.deliver_after   = deliver_after || null;
     if (trip_override !== undefined)  update.trip_override  = trip_override || null;
+    // Not `|| null` — false is a real, intentional value here (unlike the
+    // string fields above, where an empty string just means "clear it").
+    if (is_pickup !== undefined)      update.is_pickup      = !!is_pickup;
     if (!Object.keys(update).length) throw new Error('Nothing to update');
 
     const { data, error } = await supabase
       .from('orders')
       .update(update)
       .eq('sales_order_id', sales_order_id)
-      .select('sales_order_id, admin_notes, deliver_by, deliver_after, trip_override')
+      .select('sales_order_id, admin_notes, deliver_by, deliver_after, trip_override, is_pickup')
       .single();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);
