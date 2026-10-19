@@ -11,9 +11,16 @@
 //
 // Precedence: a deliver_by within 90 minutes beats everything (soonest
 // first); otherwise Community Priority rank (community_priority.rank),
-// with Somya's same-day manual drag-reorder (packer_priority_override) as
-// a tiebreak that a timeline order still always beats. Orders placed
-// 11:00-13:00 IST are held out entirely until after 15:30 IST. A sequence
+// then group size (smaller group first), then group name alphabetically,
+// then created_at — the same four-tier order parser.html's
+// sortGroupsByPriority/orderItemsByQueuePriority use client-side, so a
+// listing built from either agrees with what the cron actually did. There
+// is no more manual override tier here (packer_priority_override, migration
+// 122): Somya's manual control now happens AFTER a sequence exists, by
+// dragging it directly in the Team tab's Sequences board — which this
+// function never re-touches, since it only ever processes orders whose
+// sequence_number is still null. Orders placed 11:00-13:00 IST are held
+// out entirely until after 15:30 IST. A sequence
 // doesn't linger on one society — once started, it prefers to fill from
 // the same/neighbouring-rank community, but a NEW sequence prefers a
 // society not in the last two sequences' societies (packer_sequence_state)
@@ -127,7 +134,7 @@ interface OrderMeta {
   groupName: string;
   uniqueId: string | null; // community_priority.unique_id, for combinable-group lookup; null if unmatched
   rank: number;            // Infinity if unmatched
-  override: number | null;
+  groupSize: number;       // how many of today's eligible orders share this groupName — filled in after classification
   tier0: boolean;
   deadlineMins: number;    // Infinity if not tier0
   createdAtMs: number;
@@ -149,11 +156,15 @@ function matchCommunity(text: string | null, priorities: CommunityPriority[]): C
   return best;
 }
 
+// Community rank, then smaller group first, then group name alphabetically,
+// then created_at as the final per-order tiebreak within an identical
+// group — the same four tiers parser.html's sortGroupsByPriority/
+// orderItemsByQueuePriority apply client-side (minus their own timeline
+// tier, which is already split out as tier0 before this ever runs).
 function compareTier2(a: OrderMeta, b: OrderMeta): number {
-  if (a.override != null && b.override != null) return a.override - b.override;
-  if (a.override != null) return -1;
-  if (b.override != null) return 1;
   if (a.rank !== b.rank) return a.rank - b.rank;
+  if (a.groupSize !== b.groupSize) return a.groupSize - b.groupSize;
+  if (a.groupName !== b.groupName) return a.groupName.localeCompare(b.groupName);
   return a.createdAtMs - b.createdAtMs;
 }
 
@@ -310,23 +321,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── Community priority + manual override + reference data ────────────
-    const [cpRes, kwRes, overrideRes, catalogRes, packerRes, assignRes, combMemberRes] = await Promise.all([
+    // ── Community priority + reference data ───────────────────────────────
+    const [cpRes, kwRes, catalogRes, packerRes, assignRes, combMemberRes] = await Promise.all([
       supabase.from('community_priority').select('unique_id,display_name,rank,default_deliver_by'),
       supabase.from('community_priority_keywords').select('community_unique_id,keyword'),
-      supabase.from('packer_priority_override').select('group_name,sort_order').eq('view_date', today),
       supabase.from('catalog').select('item_name,category'),
       supabase.from('packers').select('id,name,category').eq('active', true),
       supabase.from('packer_assignments').select('packer_id,item_name'),
       supabase.from('community_combinable_group_members').select('group_id,community_unique_id'),
     ]);
     // None of these are fatal to crash the whole run over — degrade
-    // gracefully (community/override/category/assignment/combinable-group
-    // data just comes up empty, same as if nothing were configured yet) but
-    // log so a persistent problem is actually visible in the function's logs.
-    [cpRes, kwRes, overrideRes, catalogRes, packerRes, assignRes, combMemberRes]
+    // gracefully (community/category/assignment/combinable-group data just
+    // comes up empty, same as if nothing were configured yet) but log so a
+    // persistent problem is actually visible in the function's logs.
+    [cpRes, kwRes, catalogRes, packerRes, assignRes, combMemberRes]
       .forEach(r => { if (r.error) console.error('Reference data fetch failed:', r.error.message); });
-    const cpRows = cpRes.data, kwRows = kwRes.data, overrideRows = overrideRes.data,
+    const cpRows = cpRes.data, kwRows = kwRes.data,
           catalogRows = catalogRes.data, packerRows = packerRes.data, assignRows = assignRes.data,
           combMemberRows = combMemberRes.data;
 
@@ -355,9 +365,6 @@ Deno.serve(async (req) => {
         }
       }
     }
-
-    const overrideByGroup = new Map<string, number>();
-    (overrideRows || []).forEach((r: any) => overrideByGroup.set(r.group_name, r.sort_order));
 
     const categoryByItem = new Map<string, 'fruit' | 'vegetable'>();
     (catalogRows || []).forEach((c: any) => { if (c.category === 'fruit' || c.category === 'vegetable') categoryByItem.set(c.item_name, c.category); });
@@ -394,7 +401,7 @@ Deno.serve(async (req) => {
         groupName,
         uniqueId: match?.unique_id ?? null,
         rank,
-        override: overrideByGroup.has(groupName) ? overrideByGroup.get(groupName)! : null,
+        groupSize: 0, // filled in below, once every order's groupName is known
         tier0,
         deadlineMins: tier0 ? deadlineMins! : Infinity,
         createdAtMs: new Date(o.created_at).getTime(),
@@ -403,6 +410,15 @@ Deno.serve(async (req) => {
     }).filter(m => m.itemCount > 0); // nothing active left to pack — skip entirely
 
     const eligible = metas.filter(m => !m.held);
+    // Group size = how many of this run's eligible orders share a groupName
+    // — an approximation of sortGroupsByPriority's own "size" (which scopes
+    // to every active item today, not just this run's unsequenced ones),
+    // close enough for a tiebreak and cheap to compute from data already in
+    // memory rather than a further query.
+    const groupSizeCounts = new Map<string, number>();
+    eligible.forEach(m => groupSizeCounts.set(m.groupName, (groupSizeCounts.get(m.groupName) || 0) + 1));
+    eligible.forEach(m => { m.groupSize = groupSizeCounts.get(m.groupName) || 1; });
+
     const tier0s = eligible.filter(m => m.tier0).sort((a, b) => a.deadlineMins - b.deadlineMins);
     const tier2s = eligible.filter(m => !m.tier0).sort(compareTier2);
     let remaining = [...tier0s, ...tier2s];
@@ -437,11 +453,20 @@ Deno.serve(async (req) => {
     }
 
     // ── Find the next sequence number for today ───────────────────────────
+    // Always appends after whatever the HIGHEST current sequence_number is,
+    // manually reordered or not — sequence_number is numeric specifically so
+    // a manual drag (parser.html's reorderSequence) can insert a fraction
+    // between two existing values without this query ever needing to know
+    // about it. Appending here can never collide with or disturb a manual
+    // reorder, and a manual reorder can never collide with this, since each
+    // reads a fresh max() at the moment it runs.
     const { data: maxRow } = await supabase
       .from('orders').select('sequence_number')
       .like('sales_order_id', `${today}-%`).not('sequence_number', 'is', null)
       .order('sequence_number', { ascending: false }).limit(1).maybeSingle();
-    let nextSeqNumber = (maxRow?.sequence_number ?? 0) + 1;
+    // PostgREST can return a numeric column as a string to avoid precision
+    // loss — coerce explicitly rather than silently string-concatenating.
+    let nextSeqNumber = (maxRow?.sequence_number != null ? Number(maxRow.sequence_number) : 0) + 1;
 
     let ordersSequenced = 0;
     for (const seq of sequences) {
