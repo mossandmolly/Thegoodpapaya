@@ -488,6 +488,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    room for both counts without squeezing the progress bar. */
 .pk-order-detail{font-size:10px;color:#8a7a6a;margin:4px 0 0 22px}
 .pk-order-detail-sub{margin-top:2px;font-style:italic}
+.pk-seq-bags{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 56px;text-align:right;font-variant-numeric:tabular-nums}
+.pk-order-detail-list{margin:4px 0 0 22px;border-top:1px dashed #eee0d0;padding-top:4px}
+.pk-seq-order-row{font-size:11px;color:#2b2320;padding:3px 4px;cursor:grab;border-radius:4px}
+.pk-seq-order-row:hover{background:#fdf8f3}
+.pk-seq-order-row.pk-order-dragging{opacity:0.4}
+.pk-seq-end-drop{margin-top:4px;padding:8px;border:1px dashed #d8cbb8;border-radius:8px;font-size:10px;color:#8a7a6a;text-align:center}
 @media (max-width:600px){.pk-order-name{flex-basis:90px}}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
@@ -3652,7 +3658,6 @@ async function loadTodaysOrders(){
   const[{data,error},custRes]=await Promise.all([
     fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
     fetchAllCustomerLookupByDatePrefix(viewDate),
-    loadPriorityOverride().catch(e=>console.error('Could not load priority override',e)),
     loadCatalogSyncBanner().catch(e=>console.error('Could not load catalog sync status',e)),
   ]);
   if(error){list.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
@@ -4661,29 +4666,19 @@ function sortTripGroupNames(groupNames,ordersByName){
   });
 }
 
-// Somya's manual "Current Order" override (Team view, isVegPerfAllowed-
-// gated) — a drag-reordered stack for viewDate that outranks even a hard
-// time-sensitive deadline, since she's already accounting for real-world
-// urgency (a demanding customer, a rider already at a society, etc.) when
-// she rearranges it by hand. Keyed by group_name -> sort_order (lower =
-// first), loaded fresh whenever viewDate changes — see loadPriorityOverride.
-// A group with no entry here just falls through to the algorithmic rule
-// below, filed in after every overridden group rather than jumping ahead
-// of her explicit sequence.
-let priorityOverrideByGroup={};
-
-async function loadPriorityOverride(){
-  const{data,error}=await sb.from('packer_priority_override').select('group_name,sort_order').eq('view_date',viewDate);
-  if(error){console.error('Could not load priority override',error);return;}
-  priorityOverrideByGroup={};
-  (data||[]).forEach(r=>{priorityOverrideByGroup[r.group_name]=r.sort_order;});
-}
-
 // Same rule as orderItemsByQueuePriority (community priority rank, hard
-// time-sensitive override, smaller group first) but at group/society
-// granularity instead of per-order — powers Order Overview's own "Time
-// Sensitive" display ordering. No longer tied to the Packer tab's My
-// Sequence (that's auto-sequenced server-side now, see compute-next-sequence).
+// time-sensitive deadline, smaller group first, then alphabetical) but at
+// group/society granularity instead of per-order — powers Order Overview's
+// own "Time Sensitive" display ordering. No longer tied to the Packer tab's
+// My Sequence (that's auto-sequenced server-side now, see
+// compute-next-sequence) and no longer has a manual-override tier — Somya's
+// old day-scoped "Current Order" drag stack (packer_priority_override) is
+// retired; manual control now happens AFTER a sequence exists, by dragging
+// it directly in the Team tab's Sequences board (renderSequenceBoard),
+// which touches orders.sequence_number directly rather than re-ranking
+// groups. This is the exact same four-tier precedence compute-next-sequence
+// uses server-side (timeline -> rank -> size -> alphabetical), so a listing
+// built from either agrees with what the cron actually did.
 // groupNames: the keys to order. ordersByName(name): that group's orders
 // (each needs {customer, society, deliverBy}) — callers adapt their own
 // group shape (order objects vs. packer items) to that before calling.
@@ -4704,13 +4699,10 @@ function sortGroupsByPriority(groupNames,ordersByName){
         if(mins<deadlineMins)deadlineMins=mins;
       }
     });
-    return[name,{rank,timeConstrained,deadlineMins,size:orders.length,override:priorityOverrideByGroup[name]}];
+    return[name,{rank,timeConstrained,deadlineMins,size:orders.length}];
   }));
   return[...groupNames].sort((a,b)=>{
     const ma=meta.get(a),mb=meta.get(b);
-    if(ma.override!=null&&mb.override!=null)return ma.override-mb.override;
-    if(ma.override!=null)return -1;
-    if(mb.override!=null)return 1;
     if(ma.timeConstrained!==mb.timeConstrained)return ma.timeConstrained?-1:1;
     if(ma.timeConstrained)return ma.deadlineMins-mb.deadlineMins;
     if(ma.rank!==mb.rank)return ma.rank-mb.rank;
@@ -6851,16 +6843,13 @@ function effectivePackerIdForItem(item){
 }
 
 // Ranks an arbitrary set of one packer's items by community priority, with
-// a hard time-sensitive override; within the same community/rank tier,
-// earliest-placed order first (first come, first served within a
-// society) rather than by order size. Used by computePackerTimeline (open+
-// held+packed, for Somya's fuller Team view) and Grid/Time Sensitive's own
-// grouping — NOT by My Sequence, which orders purely by
-// orders.sequence_number instead (see computeMyCurrentSequence).
-// Also honors priorityOverrideByGroup (Somya's Current Order stack) —
-// the group name computed per order here must match deriveGroupKey's own
-// output exactly, or a reordered stack would silently not apply to actual
-// packer queues even though it does apply to the group-level views.
+// a hard time-sensitive deadline tier; within the same community/rank/size
+// tier, earliest-placed order first (first come, first served within a
+// society). Used by computePackerTimeline (open+held+packed, for Somya's
+// fuller Team view) and Grid/Time Sensitive's own grouping — NOT by My
+// Sequence, which orders purely by orders.sequence_number instead (see
+// computeMyCurrentSequence). No manual-override tier — see
+// sortGroupsByPriority's own comment on why that's retired.
 //
 // Time-sensitivity escalates the WHOLE society, not just the one order
 // that's actually close to its deadline — same rule sortGroupsByPriority
@@ -6883,8 +6872,7 @@ function orderItemsByQueuePriority(items){
     return{soid,items:bySoid[soid],rank:community?.rank??Infinity,groupName,
       ownTimeConstrained:isTimeConstrainedOrder(effectiveDeliverBy),
       ownDeadlineMins:minutesToDeadline(effectiveDeliverBy),
-      createdAt:o.created_at?new Date(o.created_at).getTime():Infinity,
-      override:priorityOverrideByGroup[groupName]};
+      createdAt:o.created_at?new Date(o.created_at).getTime():Infinity};
   });
   // A society escalates the moment ANY one of its orders is time-
   // constrained, using that society's soonest such deadline.
@@ -6894,17 +6882,19 @@ function orderItemsByQueuePriority(items){
       groupDeadline[m.groupName]=m.ownDeadlineMins;
     }
   });
+  const groupSize={};
+  orderMeta.forEach(m=>{groupSize[m.groupName]=(groupSize[m.groupName]||0)+1;});
   orderMeta.forEach(m=>{
     m.timeConstrained=m.groupName in groupDeadline;
     m.deadlineMins=m.timeConstrained?groupDeadline[m.groupName]:Infinity;
+    m.size=groupSize[m.groupName];
   });
   orderMeta.sort((a,b)=>{
-    if(a.override!=null&&b.override!=null)return a.override-b.override;
-    if(a.override!=null)return -1;
-    if(b.override!=null)return 1;
     if(a.timeConstrained!==b.timeConstrained)return a.timeConstrained?-1:1;
     if(a.timeConstrained)return a.deadlineMins-b.deadlineMins; // both constrained: soonest society deadline first
     if(a.rank!==b.rank)return a.rank-b.rank;
+    if(a.size!==b.size)return a.size-b.size; // smaller group first within the same priority tier
+    if(a.groupName!==b.groupName)return a.groupName.localeCompare(b.groupName,undefined,{sensitivity:'base'});
     return a.createdAt-b.createdAt; // same society/tier: earliest-placed order first
   });
   return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
@@ -7142,7 +7132,6 @@ async function loadPackerView(){
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
     loadPackersConfig(),
     loadCommunityPriorityConfig().catch(e=>console.error('Could not load community priority config',e)),
-    loadPriorityOverride().catch(e=>console.error('Could not load priority override',e)),
   ]);
   packerCustomerMap=map||{};
   packerUnitByItem={};
@@ -7418,171 +7407,168 @@ function doneItemRowHtml(item){
 // the first thing seen. An "Overall" row up top (its own single line, not
 // scaled against the packer bars, which would otherwise always dwarf them
 // since it's their sum) gives the whole-team total/done/left at a glance.
-// Somya's "Current Order" stack — every society with an item today, in
-// the exact order sortGroupsByPriority would put them (which already
-// honors any override she's previously saved), shown as a drag- or
-// arrow-reorderable list with a completion bar per card. Reordering here
-// writes a new packer_priority_override row set for viewDate, which
-// sortGroupsByPriority then picks up everywhere it's used — Order
-// Overview's Time Sensitive view and (while hidden) Packer's own Time
-// Sensitive pill. Also read server-side by compute-next-sequence (the
-// auto-sequencer) as its own same-day tiebreak — but NOT by the Packer
-// tab's My Sequence view directly, which just displays whatever
-// sequence_number that job already decided, rather than re-ranking anything
-// itself client-side.
-// This session's working copy of the order, kept in sync with what's
-// actually on screen so drag/arrow moves know current positions without
-// re-deriving them.
-let currentPriorityOrderList=[];
+// Replaces the old "Current Order" society-level drag stack (retired along
+// with packer_priority_override — see sortGroupsByPriority's comment). This
+// is a direct view onto orders.sequence_number: one card per sequence
+// compute-next-sequence has already produced, each with its own orders
+// listed underneath. Two drag gestures, both just writes to
+// orders.sequence_number:
+//  - drag a WHOLE sequence card onto another one -> every order in the
+//    dragged sequence takes a new fractional sequence_number sitting just
+//    before the target (reorderSequence).
+//  - drag a single ORDER row onto a different sequence card -> that one
+//    order's sequence_number becomes the target sequence's number, merging
+//    it in (moveOrderToSequence).
+// The cron never re-touches an order once it has a sequence_number (it only
+// ever queries sequence_number is null), and always appends a brand new
+// sequence at max(sequence_number)+1 — so any manual reorder here is safe
+// from being overwritten by the next run, and a fresh run can never land in
+// the middle of a manually-reordered list.
+let expandedSequences=new Set();
+function toggleSequenceExpanded(seq){
+  if(expandedSequences.has(seq))expandedSequences.delete(seq);
+  else expandedSequences.add(seq);
+  renderPackerTeamView();
+}
 
-// Groups EVERY packer's items today (not scoped to one packer, unlike
-// computePackerTimeline/computeMyCurrentSequence) by the same deriveGroupKey
-// Overview/Delivery use, so "society" here means the same thing it does
-// everywhere else in the app. Tracks both item-level counts (the actual
-// packing workload) and per-order state — pending the moment any one of
-// its items still is, even if others are already done (`pending` only
-// ever gets flipped true, never back to false, so it comes out the same
-// regardless of which item of an order is seen first), plus that order's
-// own placed/entered time (orders.created_at, via packerCustomerMap).
-function computeGroupProgressToday(){
+// Groups every active item today by its order's sequence_number. Orders
+// without one yet (not swept up by the cron's last run) are counted but not
+// shown as a card — there's nothing to drag until the next run gives them
+// a number.
+function computeSequenceBoard(){
   const active=packerItems.filter(i=>i.status!=='cancelled');
-  const byGroup={},ordersByGroup={};
+  const bySeq=new Map();
+  let unsequencedCount=0;
   active.forEach(item=>{
-    const key=deriveGroupKey(packerOrderLike(item));
-    if(!byGroup[key])byGroup[key]={itemsDone:0,itemsPending:0,orders:{}};
-    const g=byGroup[key];
-    if(item.packed_at)g.itemsDone++;else g.itemsPending++;
-    const soid=item.sales_order_id;
-    if(!g.orders[soid])g.orders[soid]={pending:false,enteredAt:packerCustomerMap[soid]?.created_at||null};
-    if(!item.packed_at)g.orders[soid].pending=true;
-    (ordersByGroup[key]=ordersByGroup[key]||[]).push(packerOrderLike(item));
+    const o=packerCustomerMap[item.sales_order_id];
+    const seq=o?.sequence_number;
+    if(seq==null){unsequencedCount++;return;}
+    if(!bySeq.has(seq))bySeq.set(seq,new Map());
+    const ordersMap=bySeq.get(seq);
+    if(!ordersMap.has(item.sales_order_id))ordersMap.set(item.sales_order_id,[]);
+    ordersMap.get(item.sales_order_id).push(item);
   });
-  Object.values(byGroup).forEach(g=>{
-    const orderList=Object.values(g.orders);
-    g.ordersTotal=orderList.length;
-    g.ordersPending=orderList.filter(o=>o.pending).length;
-    g.ordersDone=g.ordersTotal-g.ordersPending;
-    // Not "when was the last order packed" — "orders entered up to what
-    // time have all been fulfilled": the latest placed/entered time among
-    // orders that are FULLY done (every item packed_at). Lets a viewer
-    // read it as "anything that came in before this is cleared."
-    const enteredTimes=orderList.filter(o=>!o.pending&&o.enteredAt).map(o=>o.enteredAt);
-    g.fulfilledUpToAt=enteredTimes.length?enteredTimes.sort().slice(-1)[0]:null;
+  const seqNumbers=[...bySeq.keys()].sort((a,b)=>a-b);
+  const sequences=seqNumbers.map(seq=>{
+    const ordersMap=bySeq.get(seq);
+    const orders=[...ordersMap.entries()].map(([soid,items])=>{
+      const o=packerCustomerMap[soid]||{};
+      return{soid,customerName:o.customer_name||soid,
+        itemCount:items.length,
+        pendingCount:items.filter(i=>i.status==='open'||i.status==='packed').length,
+        nonPickupCount:o.is_pickup?0:items.length};
+    });
+    return{seq,orders,
+      nonPickupTotal:orders.reduce((s,o)=>s+o.nonPickupCount,0),
+      pendingTotal:orders.reduce((s,o)=>s+o.pendingCount,0),
+      itemTotal:orders.reduce((s,o)=>s+o.itemCount,0)};
   });
-  return{byGroup,ordersByGroup};
+  return{sequences,unsequencedCount};
 }
 
-// Which society cards currently show their detail lines (order/item
-// counts, last-fulfilled time) — collapsed by default, same convention as
-// every other group header in this app (Overview/Delivery/Packer all
-// start collapsed to just the header). Keyed by group name.
-let expandedOrderCards=new Set();
-function toggleOrderCardExpanded(name){
-  if(expandedOrderCards.has(name))expandedOrderCards.delete(name);
-  else expandedOrderCards.add(name);
-  renderPackerTeamView();
-}
-function toggleCollapseAllOrderCards(){
-  expandedOrderCards=expandedOrderCards.size?new Set():new Set(currentPriorityOrderList);
-  renderPackerTeamView();
-}
-
-function renderCurrentOrderStack(){
+function renderSequenceBoard(){
   if(!isVegPerfAllowed)return '';
-  const{byGroup,ordersByGroup}=computeGroupProgressToday();
-  const names=Object.keys(byGroup);
-  if(!names.length){currentPriorityOrderList=[];return '';}
-  const ordered=sortGroupsByPriority(names,name=>ordersByGroup[name]);
-  currentPriorityOrderList=ordered;
+  const{sequences,unsequencedCount}=computeSequenceBoard();
+  if(!sequences.length&&!unsequencedCount)return '';
   return '<div class="pk-order-stack">'+
-    '<div class="pk-order-stack-header">Current Order <span class="pk-order-stack-sub">— drag (or use the arrows) to reprioritize; overrides today only, for everyone</span>'+
-      '<button class="header-btn" style="float:right" onclick="toggleCollapseAllOrderCards()">'+(expandedOrderCards.size?'▾ Collapse All':'▸ Expand All')+'</button>'+
-    '</div>'+
-    ordered.map((name,i)=>{
-      const g=byGroup[name];
-      const totalItems=g.itemsDone+g.itemsPending;
-      const pct=totalItems?Math.round(g.itemsDone/totalItems*100):0;
-      const expanded=expandedOrderCards.has(name);
-      return '<div class="pk-order-card" draggable="true" data-name="'+escH(name)+'" '+
-        'ondragstart="priorityDragStart(event)" ondragover="priorityDragOver(event)" ondrop="priorityDrop(event)" ondragend="priorityDragEnd(event)">'+
-        '<div class="pk-order-card-row" onclick="toggleOrderCardExpanded('+escH(JSON.stringify(name))+')" style="cursor:pointer">'+
+    '<div class="pk-order-stack-header">Sequences <span class="pk-order-stack-sub">— drag a sequence onto another to reorder it; drag a single order onto a different sequence to move it. The cron (every 3 min) only ever adds new orders as a new sequence at the end — it never touches one you\'ve already got a number here.</span></div>'+
+    (unsequencedCount?'<div class="pk-order-detail pk-order-detail-sub">'+unsequencedCount+' item'+(unsequencedCount!==1?'s':'')+' not sequenced yet — waiting for the next cron run.</div>':'')+
+    sequences.map(s=>{
+      const expanded=expandedSequences.has(s.seq);
+      const pct=s.nonPickupTotal?Math.round((s.nonPickupTotal-s.pendingTotal)/s.nonPickupTotal*100):0;
+      return '<div class="pk-order-card" draggable="true" data-seq="'+s.seq+'" '+
+        'ondragstart="sequenceDragStart(event,'+s.seq+')" ondragover="seqDragOver(event)" ondrop="sequenceDrop(event,'+s.seq+')" ondragend="seqDragEndAny(event)">'+
+        '<div class="pk-order-card-row" onclick="toggleSequenceExpanded('+s.seq+')" style="cursor:pointer">'+
           '<span class="pk-order-handle" draggable="false" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">⠿</span>'+
-          '<span class="pk-order-name">'+escH(name)+'</span>'+
+          '<span class="pk-order-name">Sequence '+s.seq+'</span>'+
           '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>'+
-          '<span class="pk-order-pct">'+pct+'%</span>'+
-          '<span class="pk-order-arrows" onclick="event.stopPropagation()">'+
-            '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',-1)" '+(i===0?'disabled':'')+' title="Move up">▲</button>'+
-            '<button class="pk-order-arrow" onclick="movePriorityGroup('+escH(JSON.stringify(name))+',1)" '+(i===ordered.length-1?'disabled':'')+' title="Move down">▼</button>'+
-          '</span>'+
+          '<span class="pk-seq-bags">'+s.nonPickupTotal+' bag'+(s.nonPickupTotal!==1?'s':'')+'</span>'+
           '<span class="dv-expand-caret">'+(expanded?'▾':'▸')+'</span>'+
         '</div>'+
-        // Volume left, at a glance — order count (a coarser "how many
-        // customers") and item count (the actual packing workload; one
-        // order can carry several items) shown separately since they can
-        // tell very different stories (few orders, lots of items each) —
-        // plus when this society's last order was actually fulfilled.
-        // Only shown when this card is expanded, so the stack stays
-        // compact by default with a lot of societies in it.
-        (expanded?
-          '<div class="pk-order-detail">Total orders: '+g.ordersTotal+' · Completed: '+g.ordersDone+' · Pending: '+g.ordersPending+' · Pending items: '+g.itemsPending+'</div>'+
-          '<div class="pk-order-detail pk-order-detail-sub">'+(g.fulfilledUpToAt?'Orders entered up to '+escH(formatOrderTime(g.fulfilledUpToAt))+' fulfilled':'No orders fulfilled yet')+'</div>'
-        :'')+
+        (expanded?'<div class="pk-order-detail-list">'+s.orders.map(o=>
+          '<div class="pk-seq-order-row" draggable="true" data-soid="'+escH(o.soid)+'" '+
+            'ondragstart="orderDragStart(event,\''+escH(o.soid)+'\','+s.seq+')" ondragend="seqDragEndAny(event)">'+
+            '<span class="pk-order-handle" draggable="false">⠿</span> '+escH(o.customerName)+
+            ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+'</span>'+
+          '</div>'
+        ).join('')+'</div>':'')+
       '</div>';
     }).join('')+
+    '<div class="pk-seq-end-drop" ondragover="seqDragOver(event)" ondrop="sequenceDropAtEnd(event)">Drop here to move to the end</div>'+
   '</div>';
 }
 
-let priorityDragName=null;
-function priorityDragStart(e){
-  priorityDragName=e.currentTarget.dataset.name;
+// What's currently being dragged — {type:'sequence',seq} or
+// {type:'order',soid,fromSeq} — read back by whichever drop handler fires.
+let seqDragFrom=null;
+function sequenceDragStart(e,seq){
+  seqDragFrom={type:'sequence',seq};
   e.dataTransfer.effectAllowed='move';
   e.currentTarget.classList.add('pk-order-dragging');
 }
-function priorityDragOver(e){
-  e.preventDefault(); // required for drop to fire at all
+function orderDragStart(e,soid,fromSeq){
+  e.stopPropagation();
+  seqDragFrom={type:'order',soid,fromSeq};
+  e.dataTransfer.effectAllowed='move';
+  e.currentTarget.classList.add('pk-order-dragging');
 }
-function priorityDragEnd(e){
-  e.currentTarget.classList.remove('pk-order-dragging');
-}
-async function priorityDrop(e){
+function seqDragOver(e){e.preventDefault();} // required for drop to fire at all
+function seqDragEndAny(e){e.currentTarget.classList.remove('pk-order-dragging');}
+
+async function sequenceDrop(e,targetSeq){
   e.preventDefault();
-  const targetName=e.currentTarget.dataset.name;
-  const draggedName=priorityDragName;
-  priorityDragName=null;
-  if(!draggedName||draggedName===targetName)return;
-  await savePriorityOrder(reinsert(currentPriorityOrderList,draggedName,targetName));
+  const from=seqDragFrom;seqDragFrom=null;
+  if(!from)return;
+  if(from.type==='order'){
+    if(from.fromSeq===targetSeq)return;
+    await moveOrderToSequence(from.soid,targetSeq);
+  }else if(from.type==='sequence'){
+    if(from.seq===targetSeq)return;
+    await reorderSequence(from.seq,targetSeq);
+  }
 }
 
-// Moves `name` to sit just before `beforeName` in `list`, without the
-// index-arithmetic footguns of splicing in place (removing `name` first
-// shifts every later index by one, including `beforeName`'s own).
-function reinsert(list,name,beforeName){
-  const withoutName=list.filter(n=>n!==name);
-  const idx=withoutName.indexOf(beforeName);
-  withoutName.splice(idx,0,name);
-  return withoutName;
+async function sequenceDropAtEnd(e){
+  e.preventDefault();
+  const from=seqDragFrom;seqDragFrom=null;
+  if(!from)return;
+  const{sequences}=computeSequenceBoard();
+  if(!sequences.length)return;
+  const maxSeq=Math.max(...sequences.map(s=>s.seq));
+  if(from.type==='order'){
+    await moveOrderToSequence(from.soid,maxSeq+1);
+  }else if(from.type==='sequence'){
+    if(from.seq===maxSeq)return;
+    await writeSequenceNumber(sequences.find(s=>s.seq===from.seq)?.orders.map(o=>o.soid)||[],maxSeq+1);
+  }
 }
 
-async function movePriorityGroup(name,delta){
-  const list=[...currentPriorityOrderList];
-  const idx=list.indexOf(name);
-  const newIdx=idx+delta;
-  if(idx===-1||newIdx<0||newIdx>=list.length)return;
-  [list[idx],list[newIdx]]=[list[newIdx],list[idx]];
-  await savePriorityOrder(list);
+// One order joins a different, already-existing sequence outright — same
+// number, no fractional math needed.
+async function moveOrderToSequence(soid,targetSeq){
+  await writeSequenceNumber([soid],targetSeq);
 }
 
-async function savePriorityOrder(orderedNames){
-  // Full replace rather than a partial patch — simpler than reconciling
-  // adds/removes/reorders against whatever was there before, and this
-  // list is always "every society with an item today" in one shot anyway.
-  const{error:delErr}=await sb.from('packer_priority_override').delete().eq('view_date',viewDate);
-  if(delErr){uxAlert('Failed to save order: '+delErr.message);return;}
-  const rows=orderedNames.map((name,i)=>({view_date:viewDate,group_name:name,sort_order:i}));
-  const{error:insErr}=await sb.from('packer_priority_override').insert(rows);
-  if(insErr){uxAlert('Failed to save order: '+insErr.message);return;}
-  priorityOverrideByGroup={};
-  orderedNames.forEach((name,i)=>{priorityOverrideByGroup[name]=i;});
+// Moves every order currently in `fromSeq` to sit just before `beforeSeq`:
+// a fractional value strictly between beforeSeq and whatever currently
+// sits just before it (or beforeSeq-1, if beforeSeq is already first).
+// compute-next-sequence only ever appends at max()+1, so this can never
+// collide with a sequence the cron creates later.
+async function reorderSequence(fromSeq,beforeSeq){
+  const{sequences}=computeSequenceBoard();
+  const seqNumbers=sequences.map(s=>s.seq).filter(s=>s!==fromSeq);
+  const idx=seqNumbers.indexOf(beforeSeq);
+  const prevSeq=idx>0?seqNumbers[idx-1]:null;
+  const newValue=prevSeq!=null?(prevSeq+beforeSeq)/2:beforeSeq-1;
+  const soids=sequences.find(s=>s.seq===fromSeq)?.orders.map(o=>o.soid)||[];
+  await writeSequenceNumber(soids,newValue);
+}
+
+async function writeSequenceNumber(soids,value){
+  if(!soids.length)return;
+  const{error}=await sb.from('orders').update({sequence_number:value}).in('sales_order_id',soids);
+  if(error){uxAlert('Failed to reorder: '+error.message);return;}
+  soids.forEach(soid=>{const o=packerCustomerMap[soid];if(o)o.sequence_number=value;});
   renderPackerTeamView();
 }
 
@@ -7695,7 +7681,7 @@ function renderPackerTeamView(){
     :perPacker.filter(r=>r.packer.name===teamPackerFilter);
 
   grid.innerHTML=
-    renderCurrentOrderStack()+
+    renderSequenceBoard()+
     renderPackerTeamSummary(summaryRows)+
     renderTeamPackerFilterPills(hasUnassigned)+
     '<div class="pk-team-grid">'+
