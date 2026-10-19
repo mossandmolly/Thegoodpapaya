@@ -45,10 +45,14 @@ drop policy if exists "packer_sequence_state_all" on public.packer_sequence_stat
 create policy "packer_sequence_state_all" on public.packer_sequence_state for all using (true) with check (true);
 
 -- order_customer_lookup is the narrow view the frontend reads orders
--- through — redefine onto the new columns BEFORE dropping the old ones,
--- since CREATE OR REPLACE VIEW can't run against columns that no longer
--- exist, and vice versa a dangling view reference would block the drops.
-create or replace view public.order_customer_lookup as
+-- through — CREATE OR REPLACE VIEW can only APPEND columns, never rename
+-- or reposition one (Postgres error 42P16), and this swaps queue_id/
+-- queue_pushed_at out for sequence_number/sequenced_at in the same
+-- position, so the view has to be dropped and recreated outright rather
+-- than replaced in place. Done BEFORE dropping the old orders columns,
+-- since a dangling view reference would otherwise block those drops.
+drop view if exists public.order_customer_lookup;
+create view public.order_customer_lookup as
 select
   sales_order_id, customer_name, phone, razorpay_url, invoice_status, status,
   delivery_status, delivered_at, delivery_notes, delivery_photo_path, invoice_total,
