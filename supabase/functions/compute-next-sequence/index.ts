@@ -21,9 +21,10 @@
 // pre-11:00 orders that run.
 //
 // Once a sequence's order set is fixed, its items are split fruit/veg
-// packer, defaulting to packer_assignments and moving overflow (>130% of
-// that category's per-sequence average) to the least-loaded same-category
-// packer — see balanceCategory() below.
+// packer, defaulting to packer_assignments and then actively evening out
+// the load (moving items one at a time from the most- to least-loaded
+// same-category packer until the gap is at most 1) — see balanceCategory()
+// below.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
@@ -89,7 +90,6 @@ const HOLD_RELEASE_MIN = 15 * 60 + 30;
 const SEQUENCE_TARGET = 30;
 const SEQUENCE_HARD_CAP = 40;
 const RECENT_SOCIETY_WINDOW = 2;
-const PACKER_OVERFLOW_FACTOR = 1.3;
 const MAX_SEQUENCES_PER_RUN = 20;
 
 // Mirrors ops-dashboard/parser.html's own VEGETABLE_ITEM_NAMES — same
@@ -125,6 +125,7 @@ interface OrderMeta {
   order: OrderRow;
   itemCount: number;       // non-cancelled items, regardless of pickup
   groupName: string;
+  uniqueId: string | null; // community_priority.unique_id, for combinable-group lookup; null if unmatched
   rank: number;            // Infinity if unmatched
   override: number | null;
   tier0: boolean;
@@ -167,25 +168,32 @@ function pickSequenceStart(remaining: OrderMeta[], recentGroups: string[]): numb
 
 // Picks the next order to ADD to a sequence already in progress, in order
 // of preference: (1) same society as the sequence's starting order — fills
-// a lone timeline order's trip, or just keeps a society together; (2) the
-// nearest-ranked neighbouring community; (3) next in overall priority order,
-// skipping a recently-used society unless nothing else fits; (4) same,
-// allowing a recently-used society rather than leaving a tiny sequence.
+// a lone timeline order's trip, or just keeps a society together; (2) a
+// community Somya has explicitly grouped with the dominant one as
+// "combinable" (community_combinable_groups, Config-curated — see
+// combinablePartners below); (3) next in overall priority order, skipping a
+// recently-used society unless nothing else fits; (4) same, allowing a
+// recently-used society rather than leaving a tiny sequence. Tier 2 used to
+// fall back to "nearest community_priority.rank" when no combinable group
+// existed, but that only measures how close two communities happen to sit
+// in Somya's priority LIST, not whether they're actually related places —
+// it was observed padding a sequence with four unrelated communities that
+// just happened to have adjacent ranks. Skipping straight to tier 3 when
+// there's no curated group is the deliberate fix: an unconfigured community
+// gets padded by priority order, not by a fabricated "neighbour".
 // Every tier is filtered to orders that actually fit under the remaining
 // capacity — an order that doesn't is left in `remaining` for a LATER
 // sequence instead of delaying this one (the "23-24 item order" case).
-function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, dominantRank: number, recentGroups: string[], capacityLeft: number): number {
+function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, dominantUniqueId: string | null, combinablePartners: Map<string, Set<string>>, recentGroups: string[], capacityLeft: number): number {
   let idx = remaining.findIndex(o => o.groupName === dominantGroup && o.itemCount <= capacityLeft);
   if (idx >= 0) return idx;
 
-  if (dominantRank !== Infinity) {
-    let bestIdx = -1, bestDist = Infinity;
-    remaining.forEach((o, i) => {
-      if (o.rank === Infinity || o.itemCount > capacityLeft) return;
-      const dist = Math.abs(o.rank - dominantRank);
-      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-    });
-    if (bestIdx >= 0) return bestIdx;
+  if (dominantUniqueId) {
+    const partners = combinablePartners.get(dominantUniqueId);
+    if (partners && partners.size) {
+      idx = remaining.findIndex(o => o.uniqueId != null && partners.has(o.uniqueId) && o.itemCount <= capacityLeft);
+      if (idx >= 0) return idx;
+    }
   }
 
   idx = remaining.findIndex(o => o.itemCount <= capacityLeft && !recentGroups.includes(o.groupName));
@@ -196,11 +204,16 @@ function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, domina
 
 // Splits one category's (fruit or veg) items across that category's active
 // packers: defaults to packer_assignments, places anything unassigned on
-// the least-loaded packer, then moves overflow (> PACKER_OVERFLOW_FACTOR
-// times the per-sequence average) from the most- to least-loaded packer
-// until balanced or no further valid move exists. Returns only the item IDs
-// that actually need a DB write (i.e. differ from their current effective
-// packer) — items staying on their default need no override row at all.
+// the least-loaded packer, then actively evens out the load — moving one
+// item at a time from the most- to least-loaded packer until the gap is at
+// most 1 — rather than only intervening once some ratio threshold is
+// crossed. Per Somya: "fruit or vegetable assignment is purely a guideline,
+// not to be tightly held" — a fixed item→packer default shouldn't leave one
+// packer sitting on meaningfully more work than a same-category colleague
+// just because the day's mix of items happened to default that way.
+// Returns only the item IDs that actually need a DB write (i.e. differ from
+// their current effective packer) — items staying on their default need no
+// override row at all.
 function balanceCategory(
   items: ItemRow[],
   defaultPackerIdByItem: Map<string, string>,
@@ -228,19 +241,15 @@ function balanceCategory(
     counts.set(target, counts.get(target)! + 1);
   }
 
-  const avg = items.length / packerIds.length;
-  const threshold = avg * PACKER_OVERFLOW_FACTOR;
   for (let guard = 0; guard < items.length; guard++) { // bounded — at most one move per item, ever
-    const over = packerIds.filter(p => (counts.get(p) || 0) > threshold);
-    if (!over.length) break;
-    const from = over.reduce((a, b) => counts.get(a)! >= counts.get(b)! ? a : b);
-    const to = packerIds.reduce((a, b) => counts.get(a)! <= counts.get(b)! ? a : b);
-    if (from === to) break;
-    const itemToMove = items.find(it => assignment.get(it.id) === from);
+    const mostLoaded = packerIds.reduce((a, b) => counts.get(a)! >= counts.get(b)! ? a : b);
+    const leastLoaded = packerIds.reduce((a, b) => counts.get(a)! <= counts.get(b)! ? a : b);
+    if (counts.get(mostLoaded)! - counts.get(leastLoaded)! <= 1) break; // already as even as a whole-item move can make it
+    const itemToMove = items.find(it => assignment.get(it.id) === mostLoaded);
     if (!itemToMove) break;
-    assignment.set(itemToMove.id, to);
-    counts.set(from, counts.get(from)! - 1);
-    counts.set(to, counts.get(to)! + 1);
+    assignment.set(itemToMove.id, leastLoaded);
+    counts.set(mostLoaded, counts.get(mostLoaded)! - 1);
+    counts.set(leastLoaded, counts.get(leastLoaded)! + 1);
   }
 
   const writes = new Map<string, string>();
@@ -302,25 +311,50 @@ Deno.serve(async (req) => {
     }
 
     // ── Community priority + manual override + reference data ────────────
-    const [cpRes, kwRes, overrideRes, catalogRes, packerRes, assignRes] = await Promise.all([
+    const [cpRes, kwRes, overrideRes, catalogRes, packerRes, assignRes, combMemberRes] = await Promise.all([
       supabase.from('community_priority').select('unique_id,display_name,rank,default_deliver_by'),
       supabase.from('community_priority_keywords').select('community_unique_id,keyword'),
       supabase.from('packer_priority_override').select('group_name,sort_order').eq('view_date', today),
       supabase.from('catalog').select('item_name,category'),
       supabase.from('packers').select('id,name,category').eq('active', true),
       supabase.from('packer_assignments').select('packer_id,item_name'),
+      supabase.from('community_combinable_group_members').select('group_id,community_unique_id'),
     ]);
     // None of these are fatal to crash the whole run over — degrade
-    // gracefully (community/override/category/assignment data just comes
-    // up empty, same as if nothing were configured yet) but log so a
-    // persistent problem is actually visible in the function's logs.
-    [cpRes, kwRes, overrideRes, catalogRes, packerRes, assignRes].forEach(r => { if (r.error) console.error('Reference data fetch failed:', r.error.message); });
+    // gracefully (community/override/category/assignment/combinable-group
+    // data just comes up empty, same as if nothing were configured yet) but
+    // log so a persistent problem is actually visible in the function's logs.
+    [cpRes, kwRes, overrideRes, catalogRes, packerRes, assignRes, combMemberRes]
+      .forEach(r => { if (r.error) console.error('Reference data fetch failed:', r.error.message); });
     const cpRows = cpRes.data, kwRows = kwRes.data, overrideRows = overrideRes.data,
-          catalogRows = catalogRes.data, packerRows = packerRes.data, assignRows = assignRes.data;
+          catalogRows = catalogRes.data, packerRows = packerRes.data, assignRows = assignRes.data,
+          combMemberRows = combMemberRes.data;
 
     const priorities: CommunityPriority[] = (cpRows || []).map((c: any) => ({ ...c, keywords: [] as string[] }));
     const priorityById = new Map(priorities.map(p => [p.unique_id, p]));
     (kwRows || []).forEach((k: any) => { priorityById.get(k.community_unique_id)?.keywords.push(k.keyword); });
+
+    // Somya-curated "these communities can share a sequence" groups
+    // (Config → Combinable Groups). community_unique_id -> set of every
+    // OTHER community_unique_id sharing at least one group with it — the
+    // actual fix for the "unrelated communities got padded together" bug:
+    // tier 2 of pickNextCandidate now only pads from a group an admin
+    // explicitly built, not from whatever happens to sit at a nearby rank.
+    const combinablePartners = new Map<string, Set<string>>();
+    {
+      const membersByGroup = new Map<string, string[]>();
+      (combMemberRows || []).forEach((m: any) => {
+        if (!membersByGroup.has(m.group_id)) membersByGroup.set(m.group_id, []);
+        membersByGroup.get(m.group_id)!.push(m.community_unique_id);
+      });
+      for (const members of membersByGroup.values()) {
+        for (const id of members) {
+          if (!combinablePartners.has(id)) combinablePartners.set(id, new Set());
+          const set = combinablePartners.get(id)!;
+          for (const other of members) if (other !== id) set.add(other);
+        }
+      }
+    }
 
     const overrideByGroup = new Map<string, number>();
     (overrideRows || []).forEach((r: any) => overrideByGroup.set(r.group_name, r.sort_order));
@@ -358,6 +392,7 @@ Deno.serve(async (req) => {
         order: o,
         itemCount: items.length,
         groupName,
+        uniqueId: match?.unique_id ?? null,
         rank,
         override: overrideByGroup.has(groupName) ? overrideByGroup.get(groupName)! : null,
         tier0,
@@ -380,11 +415,11 @@ Deno.serve(async (req) => {
       const seq = [start];
       let runningCount = start.order.is_pickup ? 0 : start.itemCount;
       const dominantGroup = start.groupName;
-      const dominantRank = start.rank;
+      const dominantUniqueId = start.uniqueId;
 
       while (runningCount < SEQUENCE_TARGET && remaining.length) {
         const capacityLeft = SEQUENCE_HARD_CAP - runningCount;
-        const idx = pickNextCandidate(remaining, dominantGroup, dominantRank, recentGroups, capacityLeft);
+        const idx = pickNextCandidate(remaining, dominantGroup, dominantUniqueId, combinablePartners, recentGroups, capacityLeft);
         if (idx < 0) break; // nothing left fits under the cap right now
         const next = remaining.splice(idx, 1)[0];
         seq.push(next);
