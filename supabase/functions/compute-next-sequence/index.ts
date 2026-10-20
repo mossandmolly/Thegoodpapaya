@@ -513,7 +513,17 @@ Deno.serve(async (req) => {
       };
     }).filter(m => m.itemCount > 0); // nothing active left to pack — skip entirely
 
-    const newMetas = metas.filter(m => toNum(m.order.sequence_number) == null);
+    // Already-dispatched orders never get fresh placement, regardless of
+    // what sequence_number currently says — there's nothing left to pack
+    // for an order that's already out for delivery. This can't happen in
+    // normal operation (an order only gets dispatched_at after it already
+    // has a sequence_number, so it'd never show up here as "unsequenced"),
+    // but a manual reset that nulls sequence_number without touching real
+    // dispatch history creates exactly that combination — observed as
+    // already-delivered orders from across the whole day getting freshly
+    // reclustered with no regard for when they actually went out, since
+    // nothing was excluding them.
+    const newMetas = metas.filter(m => toNum(m.order.sequence_number) == null && !m.order.dispatched_at);
     const existingMetas = metas.filter(m => toNum(m.order.sequence_number) != null);
 
     // ── Existing sequences: their current communities, load, and whether
