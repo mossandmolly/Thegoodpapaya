@@ -508,6 +508,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
 .pk-done-time{font-weight:700;color:#3f7a34;font-variant-numeric:tabular-nums}
 .pk-cust{font-size:11px;color:#8a7a6a;margin-bottom:2px}
+.pk-entered-at{font-style:italic;opacity:0.8}
 .pk-line1{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:4px}
 .pk-item{font-size:14px;font-weight:600;color:#2b2320}
 .pk-item.dup-item{color:#b3261e;font-weight:700}
@@ -7299,7 +7300,9 @@ function packCardHtml(item,dupIds){
   const mismatch=qtyMismatchInfo(item);
   return '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+(mismatch?' qty-mismatch':'')+'" data-id="'+item.id+'">'+
       '<div class="pk-status-badge status-'+item.status+'">'+escH(ITEM_STATUS_LABEL[item.status]||item.status)+'</div>'+
-      '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+(packerCustomerMap[item.sales_order_id]?.is_pickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+'</div>'+
+      '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+(packerCustomerMap[item.sales_order_id]?.is_pickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
+        (packerCustomerMap[item.sales_order_id]?.created_at?' <span class="pk-entered-at">· entered '+escH(formatOrderTime(packerCustomerMap[item.sales_order_id].created_at))+'</span>':'')+
+      '</div>'+
       '<div class="pk-line1"><span class="pk-item'+(dupIds.has(item.id)?' dup-item':'')+'">'+
         (item.carried_forward?'<span class="cf-badge" title="Carried forward from a previous day">CF</span> ':'')+
         (dupIds.has(item.id)?'<span class="dup-badge">DUPLICATE</span> ':'')+
