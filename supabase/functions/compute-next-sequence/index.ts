@@ -20,12 +20,16 @@
 // dragging it directly in the Team tab's Sequences board — which this
 // function never re-touches, since it only ever processes orders whose
 // sequence_number is still null. Orders placed 11:00-13:00 IST are held
-// out entirely until after 15:30 IST. A sequence
-// doesn't linger on one society — once started, it prefers to fill from
-// the same/neighbouring-rank community, but a NEW sequence prefers a
-// society not in the last two sequences' societies (packer_sequence_state)
-// unless nothing else is eligible; a revisited society only pulls its
-// pre-11:00 orders that run.
+// out entirely until after 15:30 IST. A sequence fills from its own
+// starting community, then from a community Somya has explicitly marked
+// combinable with it (community_combinable_groups, Config-curated) — and
+// STOPS there if neither has anything left, even under the ~30 item
+// target, rather than padding with some other community that just
+// happened to be next in priority order (see pickNextCandidate's own
+// comment — this used to be the "Rohan/Meda/Purva get combined" bug). A
+// NEW sequence prefers a society not in the last two sequences' societies
+// (packer_sequence_state) unless nothing else is eligible; a revisited
+// society only pulls its pre-11:00 orders that run.
 //
 // Once a sequence's order set is fixed, its items are split fruit/veg
 // packer, defaulting to packer_assignments and then actively evening out
@@ -77,6 +81,9 @@ function istMinutesOfDay(d: Date): number {
 }
 function istMinutesOfDayFromIso(iso: string): number {
   return istMinutesOfDay(new Date(new Date(iso).getTime() + 330 * 60 * 1000));
+}
+function istDateStrFromIso(iso: string): string {
+  return istDateStr(new Date(new Date(iso).getTime() + 330 * 60 * 1000));
 }
 
 // deliver_by is stored as a plain "HH:MM" time-of-day string (meant as
@@ -182,20 +189,21 @@ function pickSequenceStart(remaining: OrderMeta[], recentGroups: string[]): numb
 // a lone timeline order's trip, or just keeps a society together; (2) a
 // community Somya has explicitly grouped with the dominant one as
 // "combinable" (community_combinable_groups, Config-curated — see
-// combinablePartners below); (3) next in overall priority order, skipping a
-// recently-used society unless nothing else fits; (4) same, allowing a
-// recently-used society rather than leaving a tiny sequence. Tier 2 used to
-// fall back to "nearest community_priority.rank" when no combinable group
-// existed, but that only measures how close two communities happen to sit
-// in Somya's priority LIST, not whether they're actually related places —
-// it was observed padding a sequence with four unrelated communities that
-// just happened to have adjacent ranks. Skipping straight to tier 3 when
-// there's no curated group is the deliberate fix: an unconfigured community
-// gets padded by priority order, not by a fabricated "neighbour".
-// Every tier is filtered to orders that actually fit under the remaining
-// capacity — an order that doesn't is left in `remaining` for a LATER
-// sequence instead of delaying this one (the "23-24 item order" case).
-function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, dominantUniqueId: string | null, combinablePartners: Map<string, Set<string>>, recentGroups: string[], capacityLeft: number): number {
+// combinablePartners below). There is deliberately no tier 3 "pad with
+// whatever's next in priority order" fallback any more — that used to fire
+// whenever a sequence's own community and its combinable partners both ran
+// out, bypassing the combinable groups entirely and mixing in communities
+// Somya had specifically NOT grouped together (observed combining Rohan,
+// Meda and Purva — three different, deliberately separate combinable
+// groups — because at the moment that particular sequence was built,
+// nothing else was in the pool yet). Per Somya: once a sequence's own
+// community and its combinable partners are exhausted, it ships smaller
+// than the ~30 item target rather than pad with an unrelated community —
+// this function returns -1 and the caller (below) closes the sequence
+// there. Both tiers are filtered to orders that actually fit under the
+// remaining capacity — an order that doesn't is left in `remaining` for a
+// LATER sequence instead of delaying this one (the "23-24 item order" case).
+function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, dominantUniqueId: string | null, combinablePartners: Map<string, Set<string>>, capacityLeft: number): number {
   let idx = remaining.findIndex(o => o.groupName === dominantGroup && o.itemCount <= capacityLeft);
   if (idx >= 0) return idx;
 
@@ -207,10 +215,7 @@ function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, domina
     }
   }
 
-  idx = remaining.findIndex(o => o.itemCount <= capacityLeft && !recentGroups.includes(o.groupName));
-  if (idx >= 0) return idx;
-
-  return remaining.findIndex(o => o.itemCount <= capacityLeft);
+  return -1;
 }
 
 // Splits one category's (fruit or veg) items across that category's active
@@ -392,7 +397,13 @@ Deno.serve(async (req) => {
       const deadlineMins = deadlineMinutesFromNow(o.deliver_by || match?.default_deliver_by || null, now);
       const tier0 = deadlineMins != null && deadlineMins <= TIMELINE_BUFFER_MIN;
       const createdMinsOfDay = istMinutesOfDayFromIso(o.created_at);
+      // Must have been placed TODAY, not just at some point whose time-of-day
+      // happens to fall in the window — an order from yesterday at, say,
+      // 11:24 IST (for a next-day delivery, hence today's sales_order_id
+      // prefix) was never "placed in today's 11-1 window" and shouldn't be
+      // held for one it was never in.
       const held = !tier0
+        && istDateStrFromIso(o.created_at) === today
         && createdMinsOfDay >= HOLD_WINDOW_START_MIN && createdMinsOfDay < HOLD_WINDOW_END_MIN
         && nowMinsOfDay < HOLD_RELEASE_MIN;
       return {
@@ -435,7 +446,7 @@ Deno.serve(async (req) => {
 
       while (runningCount < SEQUENCE_TARGET && remaining.length) {
         const capacityLeft = SEQUENCE_HARD_CAP - runningCount;
-        const idx = pickNextCandidate(remaining, dominantGroup, dominantUniqueId, combinablePartners, recentGroups, capacityLeft);
+        const idx = pickNextCandidate(remaining, dominantGroup, dominantUniqueId, combinablePartners, capacityLeft);
         if (idx < 0) break; // nothing left fits under the cap right now
         const next = remaining.splice(idx, 1)[0];
         seq.push(next);
