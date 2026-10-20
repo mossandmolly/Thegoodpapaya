@@ -65,6 +65,13 @@
 // because its combinable partners ran out) and a matching order arrives
 // later in the day.
 //
+// Every run also checks packer PACE, independent of whether anything new
+// got sequenced: within each category (fruit, veg), if the fastest packer
+// is more than one sequence-position ahead of a colleague, half of that
+// colleague's still-untouched ('open' only) items in the sequence she
+// hasn't started yet move to the fast packer — see the pace-rebalancing
+// block near the end, after the main write loop.
+//
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
 
@@ -514,11 +521,9 @@ Deno.serve(async (req) => {
     const tier0s = eligible.filter(m => m.tier0).sort((a, b) => a.deadlineMins - b.deadlineMins);
     const tier2s = eligible.filter(m => !m.tier0).sort(compareTier2);
     const priorityOrder = [...tier0s, ...tier2s]; // every new order this run will try to place, best first
-
-    if (!priorityOrder.length) {
-      return new Response(JSON.stringify({ sequences_created: 0, orders_sequenced: 0, orders_appended: 0, reason: 'nothing eligible this run (held or nothing unsequenced)' }),
-        { headers: { ...CORS, 'Content-Type': 'application/json' } });
-    }
+    // No early return when this is empty (held, or nothing unsequenced) —
+    // the pace-rebalancing step below is independent of whether there's
+    // anything new to sequence this run, and still needs to run.
 
     // ── Existing sequences: their current communities, load, and whether
     // they're still open to a new arrival ─────────────────────────────────
@@ -618,10 +623,8 @@ Deno.serve(async (req) => {
       while (recentGroups.length > RECENT_SOCIETY_WINDOW) recentGroups.shift();
     }
 
-    if (!appendsBySeq.size && !newSequences.length) {
-      return new Response(JSON.stringify({ sequences_created: 0, orders_sequenced: 0, orders_appended: 0, reason: 'nothing eligible this run (held or no match)' }),
-        { headers: { ...CORS, 'Content-Type': 'application/json' } });
-    }
+    // No early return here either (same reason as above) when nothing got
+    // appended or newly sequenced this run — pace-rebalancing still runs.
 
     // ── Rank each brand-new sequence into today's current lineup ──────────
     // Not just appended at the end: a new sequence is inserted via a
@@ -740,8 +743,76 @@ Deno.serve(async (req) => {
       .eq('id', 1);
     if (stateErr) console.error('Failed to update packer_sequence_state:', stateErr.message);
 
+    // ── Packer pace rebalancing ────────────────────────────────────────────
+    // Independent of whatever this run did above (runs even when nothing was
+    // newly sequenced/appended) — every tick checks each category (fruit,
+    // veg) for a packer who's pulled more than one sequence ahead of a
+    // same-category colleague, and offloads half of that colleague's still-
+    // untouched ('open' only — never packed/held/final/invoiced, so nothing
+    // already weighed ever moves) items in the sequence she hasn't started
+    // yet to the packer who's ahead. Per Somya: a fast packer shouldn't idle
+    // on her own next sequence while a colleague is the sole bottleneck on
+    // one she hasn't even begun. "Position" is 1-based rank among today's
+    // distinct sequence_numbers, not the raw (possibly fractional) value —
+    // a fractional gap of 2 to 2.5 is still "one sequence apart", not a tiny
+    // gap. A packer with nothing pending at all counts as caught up with
+    // everything — the most available to help, not excluded.
+    const distinctSeqNumbers = [...new Set(existingMetas.map(m => toNum(m.order.sequence_number)!))].sort((a, b) => a - b);
+    const positionOf = new Map<number, number>(distinctSeqNumbers.map((n, i) => [n, i + 1]));
+    const allTodayItems = existingMetas.flatMap(m => {
+      const seqNum = toNum(m.order.sequence_number)!;
+      return (itemsByOrder.get(m.order.sales_order_id) || []).map(it => ({ item: it, seqNum }));
+    });
+
+    let itemsRebalanced = 0;
+    if (distinctSeqNumbers.length) {
+      for (const packerIds of [fruitPackerIds, vegPackerIds]) {
+        if (packerIds.length < 2) continue;
+
+        const positionByPacker = new Map<string, number>();
+        for (const pid of packerIds) {
+          const pending = allTodayItems.filter(({ item }) =>
+            (item.status === 'open' || item.status === 'packed') &&
+            (item.assigned_packer_id || defaultPackerIdByItem.get(item.item_name)) === pid);
+          positionByPacker.set(pid, pending.length
+            ? (positionOf.get(Math.min(...pending.map(p => p.seqNum))) ?? distinctSeqNumbers.length + 1)
+            : distinctSeqNumbers.length + 1);
+        }
+
+        const fastestId = packerIds.reduce((a: string, b: string) => positionByPacker.get(a)! >= positionByPacker.get(b)! ? a : b);
+        const fastestPos = positionByPacker.get(fastestId)!;
+
+        for (const slowId of packerIds) {
+          if (slowId === fastestId) continue;
+          const slowPos = positionByPacker.get(slowId)!;
+          if (fastestPos - slowPos <= 1) continue; // not far enough behind to act on
+
+          const targetPos = slowPos + 1;
+          if (targetPos > distinctSeqNumbers.length) continue; // nothing after her current sequence yet
+          const targetSeq = distinctSeqNumbers[targetPos - 1];
+
+          const herOpenItemsThere = allTodayItems
+            .filter(({ item, seqNum }) => seqNum === targetSeq && item.status === 'open' &&
+              (item.assigned_packer_id || defaultPackerIdByItem.get(item.item_name)) === slowId)
+            .map(({ item }) => item)
+            .sort((a: ItemRow, b: ItemRow) => a.id.localeCompare(b.id)); // stable, deterministic split
+          if (!herOpenItemsThere.length) continue;
+
+          const keepForSlow = Math.floor(herOpenItemsThere.length / 2); // round down for her — she keeps the floor
+          const toReassign = herOpenItemsThere.slice(keepForSlow);
+          if (!toReassign.length) continue;
+
+          const { error: rebalErr } = await supabase.from('order_items')
+            .update({ assigned_packer_id: fastestId })
+            .in('id', toReassign.map(it => it.id));
+          if (rebalErr) { console.error(`Failed to rebalance ${toReassign.length} item(s) from packer ${slowId} to ${fastestId}:`, rebalErr.message); continue; }
+          itemsRebalanced += toReassign.length;
+        }
+      }
+    }
+
     return new Response(
-      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended }),
+      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended, items_rebalanced: itemsRebalanced }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
