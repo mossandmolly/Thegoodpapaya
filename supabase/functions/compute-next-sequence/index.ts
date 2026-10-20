@@ -516,34 +516,6 @@ Deno.serve(async (req) => {
     const newMetas = metas.filter(m => toNum(m.order.sequence_number) == null);
     const existingMetas = metas.filter(m => toNum(m.order.sequence_number) != null);
 
-    const nonHeld = newMetas.filter(m => !m.held);
-    const heldOrders = newMetas.filter(m => m.held);
-    // Early-release exception: if every non-held order today has already
-    // been sequenced, there's nothing else for a packer to work on before
-    // 15:30 — release what's on hold right now and run it through the
-    // exact same priority pipeline (timeline, then community rank) rather
-    // than leaving everyone idle until the clock strikes 3:30 for no
-    // operational reason. Per Somya: "if orders of lower community
-    // priority placed before 11 finish sooner than 3:30, system starts
-    // picking orders placed after 11 in the order of community priority/
-    // timeline" — same logic, just an earlier release trigger.
-    const eligible = nonHeld.length ? nonHeld : heldOrders;
-    // Group size = how many of this run's eligible NEW orders share a
-    // groupName — an approximation of sortGroupsByPriority's own "size"
-    // (which scopes to every active item today, not just today's new
-    // orders), close enough for a tiebreak and cheap to compute from data
-    // already in memory rather than a further query.
-    const groupSizeCounts = new Map<string, number>();
-    eligible.forEach(m => groupSizeCounts.set(m.groupName, (groupSizeCounts.get(m.groupName) || 0) + 1));
-    eligible.forEach(m => { m.groupSize = groupSizeCounts.get(m.groupName) || 1; });
-
-    const tier0s = eligible.filter(m => m.tier0).sort((a, b) => a.deadlineMins - b.deadlineMins);
-    const tier2s = eligible.filter(m => !m.tier0).sort(compareTier2);
-    const priorityOrder = [...tier0s, ...tier2s]; // every new order this run will try to place, best first
-    // No early return when this is empty (held, or nothing unsequenced) —
-    // the pace-rebalancing step below is independent of whether there's
-    // anything new to sequence this run, and still needs to run.
-
     // ── Existing sequences: their current communities, load, and whether
     // they're still open to a new arrival ─────────────────────────────────
     interface ExistingSeq {
@@ -588,6 +560,55 @@ Deno.serve(async (req) => {
       rec.isComplete = items.length > 0 && items.every(it => it.status !== 'open' && it.status !== 'packed');
     });
     const existingSeqAscending = () => [...existingSeqMap.values()].sort((a, b) => a.seq - b.seq);
+
+    // ── Orphan rescue: an order whose own sequence has already dispatched
+    // (a colleague's trip left) but which still has an 'open' or 'held'
+    // item of its own — something was missing, out of stock, whatever —
+    // never makes that trip. Left alone it would just sit forever pointing
+    // at a sequence that's done and gone. Instead it re-enters the exact
+    // same placement pipeline as a brand-new order below: try to join an
+    // existing open sequence of its own/a combinable community first, else
+    // fold into a brand-new one — "closest to the society or belong to
+    // that society itself," per Somya, same as any other order would. Its
+    // own hold-window classification is irrelevant here (that rule is only
+    // about when an order should FIRST get a sequence; this one already
+    // had one) — always eligible for rescue regardless of when it was
+    // originally placed.
+    const rescueMetas = existingMetas.filter(m => {
+      const rec = existingSeqMap.get(toNum(m.order.sequence_number)!);
+      if (!rec?.anyDispatched) return false;
+      const items = itemsByOrder.get(m.order.sales_order_id) || [];
+      return items.some(it => it.status === 'open' || it.status === 'held');
+    });
+    rescueMetas.forEach(m => { m.held = false; });
+
+    const nonHeld = [...newMetas.filter(m => !m.held), ...rescueMetas];
+    const heldOrders = newMetas.filter(m => m.held);
+    // Early-release exception: if every non-held order today has already
+    // been sequenced, there's nothing else for a packer to work on before
+    // 15:30 — release what's on hold right now and run it through the
+    // exact same priority pipeline (timeline, then community rank) rather
+    // than leaving everyone idle until the clock strikes 3:30 for no
+    // operational reason. Per Somya: "if orders of lower community
+    // priority placed before 11 finish sooner than 3:30, system starts
+    // picking orders placed after 11 in the order of community priority/
+    // timeline" — same logic, just an earlier release trigger.
+    const eligible = nonHeld.length ? nonHeld : heldOrders;
+    // Group size = how many of this run's eligible NEW orders share a
+    // groupName — an approximation of sortGroupsByPriority's own "size"
+    // (which scopes to every active item today, not just today's new
+    // orders), close enough for a tiebreak and cheap to compute from data
+    // already in memory rather than a further query.
+    const groupSizeCounts = new Map<string, number>();
+    eligible.forEach(m => groupSizeCounts.set(m.groupName, (groupSizeCounts.get(m.groupName) || 0) + 1));
+    eligible.forEach(m => { m.groupSize = groupSizeCounts.get(m.groupName) || 1; });
+
+    const tier0s = eligible.filter(m => m.tier0).sort((a, b) => a.deadlineMins - b.deadlineMins);
+    const tier2s = eligible.filter(m => !m.tier0).sort(compareTier2);
+    const priorityOrder = [...tier0s, ...tier2s]; // every new (or rescued) order this run will try to place, best first
+    // No early return when this is empty (held, or nothing unsequenced) —
+    // the pace-rebalancing step below is independent of whether there's
+    // anything new to sequence this run, and still needs to run.
 
     // ── Try to append each new order to an existing, still-open sequence —
     // same community first, then a combinable partner; whatever's left over
@@ -720,7 +741,13 @@ Deno.serve(async (req) => {
       // was already assigned.
       const existingSoids = existingSeqMap.get(seqNum)!.soids;
       const existingItems = existingSoids.flatMap(soid => itemsByOrder.get(soid) || []);
-      const newItems = soidsToAppend.flatMap(soid => itemsByOrder.get(soid) || []);
+      // Excludes already-final/invoiced items — matters for a rescued order
+      // (orphan-rescue above), which can carry some items that are already
+      // done alongside the one(s) that missed its old sequence's trip; a
+      // brand-new order has no final/invoiced items yet, so this is a no-op
+      // there.
+      const newItems = soidsToAppend.flatMap(soid => itemsByOrder.get(soid) || [])
+        .filter(it => it.status !== 'final' && it.status !== 'invoiced');
       const writes = new Map<string, string>([
         ...placeNewItems(
           newItems.filter(it => itemCategory(it.item_name) === 'fruit'),
@@ -751,8 +778,11 @@ Deno.serve(async (req) => {
       ordersSequenced += seqSoids.length;
 
       // Brand-new sequence — nothing pre-existing to preserve, so the full
-      // default-then-even-out balance applies, same as always.
-      const seqItems = seqSoids.flatMap(soid => itemsByOrder.get(soid) || []);
+      // default-then-even-out balance applies, same as always. Excludes
+      // already-final/invoiced items for the same reason as the append
+      // path above (a rescued order can carry some).
+      const seqItems = seqSoids.flatMap(soid => itemsByOrder.get(soid) || [])
+        .filter(it => it.status !== 'final' && it.status !== 'invoiced');
       const fruitItems = seqItems.filter(it => itemCategory(it.item_name) === 'fruit');
       const vegItems = seqItems.filter(it => itemCategory(it.item_name) === 'vegetable');
       const writes = new Map<string, string>([
