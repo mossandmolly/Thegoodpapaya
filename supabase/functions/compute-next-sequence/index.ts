@@ -528,6 +528,7 @@ Deno.serve(async (req) => {
       communities: Set<string>;
       uniqueIds: Set<string>;
       bestRank: number;
+      tier0MinDeadline: number; // Infinity unless this sequence still has a live timeline order
       nonPickupCount: number;
       isComplete: boolean;
     }
@@ -535,13 +536,14 @@ Deno.serve(async (req) => {
     existingMetas.forEach(m => {
       const seqNum = toNum(m.order.sequence_number)!;
       if (!existingSeqMap.has(seqNum)) {
-        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, nonPickupCount: 0, isComplete: true });
+        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, nonPickupCount: 0, isComplete: true });
       }
       const rec = existingSeqMap.get(seqNum)!;
       rec.soids.push(m.order.sales_order_id);
       rec.communities.add(m.groupName);
       if (m.uniqueId) rec.uniqueIds.add(m.uniqueId);
       if (m.rank < rec.bestRank) rec.bestRank = m.rank;
+      if (m.tier0 && m.deadlineMins < rec.tier0MinDeadline) rec.tier0MinDeadline = m.deadlineMins;
       if (!m.order.is_pickup) rec.nonPickupCount += m.itemCount;
     });
     // Complete = nothing left in it that's 'open' or 'packed' — the exact
@@ -582,6 +584,7 @@ Deno.serve(async (req) => {
         target.communities.add(m.groupName);
         if (m.uniqueId) target.uniqueIds.add(m.uniqueId);
         if (m.rank < target.bestRank) target.bestRank = m.rank;
+        if (m.tier0 && m.deadlineMins < target.tier0MinDeadline) target.tier0MinDeadline = m.deadlineMins;
         target.nonPickupCount += wouldAddCount;
         if (!appendsBySeq.has(target.seq)) appendsBySeq.set(target.seq, []);
         appendsBySeq.get(target.seq)!.push(m);
@@ -623,29 +626,39 @@ Deno.serve(async (req) => {
     // ── Rank each brand-new sequence into today's current lineup ──────────
     // Not just appended at the end: a new sequence is inserted via a
     // fractional sequence_number at the position its own precedence would
-    // put it, compared against every existing sequence's best (lowest)
-    // community rank — same as a manual drag's math (migration 122), so it
-    // can never collide with one. Timeline (tier0) sequences model as an
-    // artificially very-low rank (most negative = earliest deadline, built
-    // first) so they fall through the exact same ascending-rank insertion
-    // logic and land ahead of everything non-timeline, in deadline order.
-    const TIER0_RANK_BASE = -1_000_000;
-    let lineup = existingSeqAscending().map(r => ({ seqNumber: r.seq, bestRank: r.bestRank }));
+    // put it — same as a manual drag's math (migration 122), so it can
+    // never collide with one. The comparison key is an EFFECTIVE rank: a
+    // sequence with a live timeline order (tier0) always ranks below every
+    // plain community rank, soonest-deadline-first, including overdue (an
+    // order 90 minutes overdue outranks one due in 10) — and this applies
+    // identically to an EXISTING sequence re-evaluated this run, not just a
+    // brand-new one. Previously an existing sequence's timeline urgency was
+    // discarded the moment it was written (only its plain community rank
+    // got compared against later), so a fresh tier0 sequence could leapfrog
+    // an EARLIER, still-more-urgent tier0 sequence that had already been
+    // placed — observed as a since-delivered Palladian order (an earlier
+    // deadline) ending up ranked below a later-deadline Bren/Purva one.
+    function effectiveRank(bestRank: number, tier0MinDeadline: number): number {
+      return tier0MinDeadline !== Infinity ? (tier0MinDeadline - 1_000_000) : bestRank;
+    }
+    let lineup = existingSeqAscending().map(r => ({ seqNumber: r.seq, effRank: effectiveRank(r.bestRank, r.tier0MinDeadline) }));
     const seqNumberForNew = new Map<number, number>(); // index into newSequences -> assigned sequence_number
     newSequences.forEach((seq, i) => {
-      const isTier0Seq = seq.some(m => m.tier0);
-      const bestRank = isTier0Seq ? TIER0_RANK_BASE + i : Math.min(...seq.map(m => m.rank));
+      const bestRank = Math.min(...seq.map(m => m.rank));
+      const tier0Members = seq.filter(m => m.tier0);
+      const tier0MinDeadline = tier0Members.length ? Math.min(...tier0Members.map(m => m.deadlineMins)) : Infinity;
+      const effRank = effectiveRank(bestRank, tier0MinDeadline);
       let insertSeqNumber: number;
       if (!lineup.length) {
         insertSeqNumber = 1;
       } else {
-        const idx = lineup.findIndex(e => e.bestRank > bestRank);
+        const idx = lineup.findIndex(e => e.effRank > effRank);
         if (idx === -1) insertSeqNumber = lineup[lineup.length - 1].seqNumber + 1;
         else if (idx === 0) insertSeqNumber = lineup[0].seqNumber - 1;
         else insertSeqNumber = (lineup[idx - 1].seqNumber + lineup[idx].seqNumber) / 2;
       }
       seqNumberForNew.set(i, insertSeqNumber);
-      lineup.push({ seqNumber: insertSeqNumber, bestRank });
+      lineup.push({ seqNumber: insertSeqNumber, effRank });
       lineup.sort((a, b) => a.seqNumber - b.seqNumber);
     });
 
