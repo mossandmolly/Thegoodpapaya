@@ -13,8 +13,29 @@
 -- insertion can never collide with a later cron run, and the cron never
 -- touches an already-sequenced order (sequence_number is not null) in the
 -- first place, so a manual drag is never clobbered by the next tick either.
+-- order_customer_lookup's underlying rule depends on sequence_number's
+-- current type, so Postgres refuses to ALTER COLUMN TYPE while it exists
+-- (error 0A000) — same issue migration 120 hit swapping queue_id for this
+-- same column, fixed the same way: drop the view, change the column,
+-- recreate the view identically (its own grant along with it).
+drop view if exists public.order_customer_lookup;
+
 alter table public.orders
   alter column sequence_number type numeric using sequence_number::numeric;
+
+create view public.order_customer_lookup as
+select
+  sales_order_id, customer_name, phone, razorpay_url, invoice_status, status,
+  delivery_status, delivered_at, delivery_notes, delivery_photo_path, invoice_total,
+  payment_collected, payment_collected_method, payment_collected_at, delivery_photo_paths,
+  assigned_rider, deliver_by, admin_notes, delivered_by, trip_override, deliver_after,
+  invoice_downloaded_at, dispatched_at, is_pickup, qr_image_url,
+  admin_action_needed, admin_action_reason,
+  whatsapp_raw_text, whatsapp_group_name, society, created_at,
+  sequence_number, sequenced_at
+from public.orders;
+
+grant select on public.order_customer_lookup to anon, authenticated;
 
 -- The override tier this fed (packer_priority_override -> sortGroupsByPriority
 -- / orderItemsByQueuePriority's "override beats everything" check) is
