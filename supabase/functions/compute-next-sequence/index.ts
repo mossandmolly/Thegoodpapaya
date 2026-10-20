@@ -160,6 +160,7 @@ interface OrderRow {
   created_at: string;
   is_pickup: boolean;
   sequence_number: number | string | null; // numeric column — PostgREST may return it as a string
+  dispatched_at: string | null; // set by dispatch-order the moment a rider's trip actually leaves
 }
 interface ItemRow {
   id: string;
@@ -388,7 +389,7 @@ Deno.serve(async (req) => {
     // one instead of always starting a fresh sequence.
     const { data: orders, error: ordersErr } = await supabase
       .from('orders')
-      .select('sales_order_id,society,customer_name,deliver_by,created_at,is_pickup,status,sequence_number')
+      .select('sales_order_id,society,customer_name,deliver_by,created_at,is_pickup,status,sequence_number,dispatched_at')
       .like('sales_order_id', `${today}-%`)
       .neq('status', 'cancelled');
     if (ordersErr) throw new Error(ordersErr.message);
@@ -553,13 +554,14 @@ Deno.serve(async (req) => {
       bestRank: number;
       tier0MinDeadline: number; // Infinity unless this sequence still has a live timeline order
       nonPickupCount: number;
+      anyDispatched: boolean;
       isComplete: boolean;
     }
     const existingSeqMap = new Map<number, ExistingSeq>();
     existingMetas.forEach(m => {
       const seqNum = toNum(m.order.sequence_number)!;
       if (!existingSeqMap.has(seqNum)) {
-        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, nonPickupCount: 0, isComplete: true });
+        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, nonPickupCount: 0, anyDispatched: false, isComplete: true });
       }
       const rec = existingSeqMap.get(seqNum)!;
       rec.soids.push(m.order.sales_order_id);
@@ -568,13 +570,20 @@ Deno.serve(async (req) => {
       if (m.rank < rec.bestRank) rec.bestRank = m.rank;
       if (m.tier0 && m.deadlineMins < rec.tier0MinDeadline) rec.tier0MinDeadline = m.deadlineMins;
       if (!m.order.is_pickup) rec.nonPickupCount += m.itemCount;
+      if (m.order.dispatched_at) rec.anyDispatched = true;
     });
-    // Complete = nothing left in it that's 'open' or 'packed' — the exact
-    // same "pending" definition parser.html's computeMyCurrentSequence uses
-    // to decide a packer is done with a sequence, so this never reopens one
-    // a packer (or Somya, looking at the Sequences board) would already
-    // consider finished.
+    // Complete = either (a) a rider's trip for this sequence has actually
+    // left (any order in it has dispatched_at set — the real-world signal;
+    // once a trip is out, nothing can physically be added to it, no matter
+    // what any item's status still says in the system), or (b) nothing left
+    // in it is 'open'/'packed' — the exact same "pending" definition
+    // parser.html's computeMyCurrentSequence uses to decide a packer is
+    // done with a sequence. Item status alone isn't reliable for this: it
+    // was letting a sequence absorb new orders hours after its real
+    // dispatch, observed spanning created_at times from 9:20am to 5:07pm
+    // in one "done" sequence, which obviously never happened as one trip.
     existingSeqMap.forEach(rec => {
+      if (rec.anyDispatched) { rec.isComplete = true; return; }
       const items = rec.soids.flatMap(soid => itemsByOrder.get(soid) || []);
       rec.isComplete = items.length > 0 && items.every(it => it.status !== 'open' && it.status !== 'packed');
     });
