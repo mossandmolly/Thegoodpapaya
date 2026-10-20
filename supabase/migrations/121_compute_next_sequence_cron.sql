@@ -1,6 +1,8 @@
 -- Schedules compute-next-sequence to run every 3 minutes, so a packer never
 -- has to wait long for the next batch of work to appear — see that
--- function's own header comment for the full algorithm.
+-- function's own header comment for the full algorithm. Widened to every 5
+-- minutes by migration 124 — this file is kept as-is for history; run 124
+-- (or re-run this one with the interval changed) to apply the new schedule.
 --
 -- Before running this:
 --   1. Deploy compute-next-sequence (it needs the same x-cron-secret
