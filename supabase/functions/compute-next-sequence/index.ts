@@ -20,8 +20,12 @@
 // listing built from either agrees with what the cron actually did. There
 // is no manual override tier here (packer_priority_override, retired in
 // migration 122): Somya's manual control happens by dragging a sequence or
-// order directly in the Team tab's Sequences board. Orders placed
-// 11:00-13:00 IST are held out entirely until after 15:30 IST.
+// order directly in the Team tab's Sequences board. Any order placed at or
+// after 11:00 IST (open-ended, no upper bound) is held out entirely until
+// 15:30 IST — UNLESS every non-held order today has already been
+// sequenced, in which case held orders release early and run through the
+// same priority pipeline rather than leaving packers idle until 3:30 for
+// no reason (see the nonHeld/heldOrders split further down).
 //
 // IMPORTANT — this function DOES revisit already-sequenced orders, but only
 // to ADD to them, never to move, reorder, or re-balance anything already
@@ -133,8 +137,7 @@ function deadlineMinutesFromNow(deliverBy: string | null, now: Date): number | n
 }
 
 const TIMELINE_BUFFER_MIN = 90;
-const HOLD_WINDOW_START_MIN = 11 * 60;
-const HOLD_WINDOW_END_MIN = 13 * 60;
+const HOLD_WINDOW_START_MIN = 11 * 60; // open-ended — no upper bound, see classify()'s held check
 const HOLD_RELEASE_MIN = 15 * 60 + 30;
 const SEQUENCE_TARGET = 30;
 const SEQUENCE_HARD_CAP = 40;
@@ -482,14 +485,18 @@ Deno.serve(async (req) => {
       const deadlineMins = deadlineMinutesFromNow(o.deliver_by || match?.default_deliver_by || null, now);
       const tier0 = deadlineMins != null && deadlineMins <= TIMELINE_BUFFER_MIN;
       const createdMinsOfDay = istMinutesOfDayFromIso(o.created_at);
-      // Must have been placed TODAY, not just at some point whose time-of-day
-      // happens to fall in the window — an order from yesterday at, say,
-      // 11:24 IST (for a next-day delivery, hence today's sales_order_id
-      // prefix) was never "placed in today's 11-1 window" and shouldn't be
-      // held for one it was never in.
+      // Open-ended: ANY order placed at or after 11:00 IST is held until
+      // 15:30, not just ones placed in an 11:00-13:00 window — a 2pm order
+      // is held exactly the same as an 11:05 one. Must have been placed
+      // TODAY, not just at some point whose time-of-day happens to fall
+      // after 11:00 — an order from yesterday at, say, 11:24 IST (for a
+      // next-day delivery, hence today's sales_order_id prefix) was never
+      // "placed in today's post-11:00 window" and shouldn't be held for one
+      // it was never in. See the early-release exception further down
+      // (nonHeld.length check) for when this gets overridden before 15:30.
       const held = !tier0
         && istDateStrFromIso(o.created_at) === today
-        && createdMinsOfDay >= HOLD_WINDOW_START_MIN && createdMinsOfDay < HOLD_WINDOW_END_MIN
+        && createdMinsOfDay >= HOLD_WINDOW_START_MIN
         && nowMinsOfDay < HOLD_RELEASE_MIN;
       return {
         order: o,
@@ -508,7 +515,18 @@ Deno.serve(async (req) => {
     const newMetas = metas.filter(m => toNum(m.order.sequence_number) == null);
     const existingMetas = metas.filter(m => toNum(m.order.sequence_number) != null);
 
-    const eligible = newMetas.filter(m => !m.held);
+    const nonHeld = newMetas.filter(m => !m.held);
+    const heldOrders = newMetas.filter(m => m.held);
+    // Early-release exception: if every non-held order today has already
+    // been sequenced, there's nothing else for a packer to work on before
+    // 15:30 — release what's on hold right now and run it through the
+    // exact same priority pipeline (timeline, then community rank) rather
+    // than leaving everyone idle until the clock strikes 3:30 for no
+    // operational reason. Per Somya: "if orders of lower community
+    // priority placed before 11 finish sooner than 3:30, system starts
+    // picking orders placed after 11 in the order of community priority/
+    // timeline" — same logic, just an earlier release trigger.
+    const eligible = nonHeld.length ? nonHeld : heldOrders;
     // Group size = how many of this run's eligible NEW orders share a
     // groupName — an approximation of sortGroupsByPriority's own "size"
     // (which scopes to every active item today, not just today's new
