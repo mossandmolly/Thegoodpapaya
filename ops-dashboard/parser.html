@@ -3833,6 +3833,7 @@ function renderOrdersList(){
   // what's typed into search.
   todaysOrdersForLeftoverCheck=Object.values(currentOrdersById).filter(o=>o.orderStatus!=='cancelled');
   const tripInfo=computeTripNumbers(todaysOrdersForLeftoverCheck);
+  const sequencePositions=buildSequencePositions(Object.values(currentOrdersById).map(o=>o.sequenceNumber));
 
   renderOverviewSummaryPills(tripInfo);
   renderOverviewSortToggle();
@@ -3928,7 +3929,7 @@ function renderOrdersList(){
           ?' <span class="deliver-by-badge'+(deliverWindow.isDefault?' deliver-by-default':'')+'">⏰ '+escH(deliverWindow.label)+'</span>'
           :'';
         const statusBadges=(order.isPickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
-          (!cancelled&&order.sequenceNumber!=null?' <span class="queue-badge" title="Auto-sequenced for packing">Seq '+order.sequenceNumber+'</span>':'')+
+          (!cancelled&&order.sequenceNumber!=null?' <span class="queue-badge" title="Auto-sequenced for packing">Seq '+(sequencePositions.get(order.sequenceNumber)||order.sequenceNumber)+'</span>':'')+
           (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           deliverWindowBadge+
@@ -7401,7 +7402,8 @@ function renderPackerActiveQueue(){
   }
 
   const hasUnfinished=unfiltered.some(i=>i.status==='open');
-  document.getElementById('pk-rc').textContent='— Sequence '+seq+', '+allCards.length+' item'+(allCards.length!==1?'s':'');
+  const displaySeq=computeSequencePositions().get(seq)||seq;
+  document.getElementById('pk-rc').textContent='— Sequence '+displaySeq+', '+allCards.length+' item'+(allCards.length!==1?'s':'');
   grid.innerHTML=
     (hasUnfinished
       ?'<button class="btn-sec" style="grid-column:1/-1" onclick="finishSequenceDespiteGaps('+seq+')" title="Hold whatever is still unavailable and move on to your next sequence">✓ I\'m done with this sequence</button>'
@@ -7473,6 +7475,27 @@ function toggleSequenceExpanded(seq){
   renderPackerTeamView();
 }
 
+// orders.sequence_number is a fractional SORT KEY (migration 122 — a manual
+// drag or the cron's own priority-ranked insertion can land on 2.5 between
+// 2 and 3), never a count — nobody should ever see "Sequence 2.5". This
+// maps every distinct raw sequence_number given to a clean 1-based display
+// position in ascending order, purely cosmetic: every actual write/compare/
+// drag still uses the real (possibly fractional) value, only a label shown
+// to Somya/a packer goes through this. Two call sites, two shapes: the
+// Packer/Team tabs read packerCustomerMap's sequence_number (see
+// computeSequencePositions), Order Overview reads currentOrdersById's
+// camelCase sequenceNumber directly.
+function buildSequencePositions(rawValues){
+  const nums=new Set(rawValues.filter(n=>n!=null));
+  const sorted=[...nums].sort((a,b)=>a-b);
+  const positions=new Map();
+  sorted.forEach((n,i)=>positions.set(n,i+1));
+  return positions;
+}
+function computeSequencePositions(){
+  return buildSequencePositions(Object.values(packerCustomerMap).map(o=>o?.sequence_number));
+}
+
 // Groups every active item today by its order's sequence_number. Orders
 // without one yet (not swept up by the cron's last run) are counted but not
 // shown as a card — there's nothing to drag until the next run gives them
@@ -7512,8 +7535,9 @@ function renderSequenceBoard(){
   if(!isVegPerfAllowed)return '';
   const{sequences,unsequencedCount}=computeSequenceBoard();
   if(!sequences.length&&!unsequencedCount)return '';
+  const positions=computeSequencePositions();
   return '<div class="pk-order-stack">'+
-    '<div class="pk-order-stack-header">Sequences <span class="pk-order-stack-sub">— drag a sequence onto another to reorder it; drag a single order onto a different sequence to move it. The cron (every 3 min) only ever adds new orders as a new sequence at the end — it never touches one you\'ve already got a number here.</span></div>'+
+    '<div class="pk-order-stack-header">Sequences <span class="pk-order-stack-sub">— drag a sequence onto another to reorder it; drag a single order onto a different sequence to move it. The cron (every 3 min) never touches one you\'ve already got a number here — it only ever appends to a sequence that\'s not yet complete, or ranks a brand-new one into the current lineup by priority.</span></div>'+
     (unsequencedCount?'<div class="pk-order-detail pk-order-detail-sub">'+unsequencedCount+' item'+(unsequencedCount!==1?'s':'')+' not sequenced yet — waiting for the next cron run.</div>':'')+
     sequences.map(s=>{
       const expanded=expandedSequences.has(s.seq);
@@ -7522,7 +7546,7 @@ function renderSequenceBoard(){
         'ondragstart="sequenceDragStart(event,'+s.seq+')" ondragover="seqDragOver(event)" ondrop="sequenceDrop(event,'+s.seq+')" ondragend="seqDragEndAny(event)">'+
         '<div class="pk-order-card-row" onclick="toggleSequenceExpanded('+s.seq+')" style="cursor:pointer">'+
           '<span class="pk-order-handle" draggable="false" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">⠿</span>'+
-          '<span class="pk-order-name">Sequence '+s.seq+'</span>'+
+          '<span class="pk-order-name">Sequence '+(positions.get(s.seq)||s.seq)+'</span>'+
           '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>'+
           '<span class="pk-seq-bags">'+s.nonPickupTotal+' bag'+(s.nonPickupTotal!==1?'s':'')+'</span>'+
           '<span class="dv-expand-caret">'+(expanded?'▾':'▸')+'</span>'+
