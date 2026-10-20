@@ -3,11 +3,14 @@
 // Replaces manual push-to-queue (migration 119, now retired — see
 // migration 120) with an automated scheduler. Triggered every 3 minutes by
 // pg_cron (migration 121), same x-cron-secret pattern as sync-catalog/
-// auto-invoice-final-orders. Each run partitions today's still-unsequenced
-// orders into one or more numbered "sequences" (~30 items, 40 hard cap,
-// whole orders only) and stamps orders.sequence_number/sequenced_at —
-// the only thing the Packer tab's "My Sequence" view reads to decide what
-// a given packer sees right now (see parser.html's computeMyCurrentSequence).
+// auto-invoice-final-orders. Each run looks at EVERY one of today's orders,
+// sequenced or not, and does one of three things with each still-unsequenced
+// one: (1) appends it to an existing, still-open sequence that has room and
+// a matching community, (2) folds it into a brand-new sequence with other
+// newly-arrived orders, or (3) leaves it unsequenced (timeline/held rules
+// below). orders.sequence_number/sequenced_at is the only thing the Packer
+// tab's "My Sequence" view reads to decide what a given packer sees right
+// now (see parser.html's computeMyCurrentSequence).
 //
 // Precedence: a deliver_by within 90 minutes beats everything (soonest
 // first); otherwise Community Priority rank (community_priority.rank),
@@ -15,27 +18,52 @@
 // then created_at — the same four-tier order parser.html's
 // sortGroupsByPriority/orderItemsByQueuePriority use client-side, so a
 // listing built from either agrees with what the cron actually did. There
-// is no more manual override tier here (packer_priority_override, migration
-// 122): Somya's manual control now happens AFTER a sequence exists, by
-// dragging it directly in the Team tab's Sequences board — which this
-// function never re-touches, since it only ever processes orders whose
-// sequence_number is still null. Orders placed 11:00-13:00 IST are held
-// out entirely until after 15:30 IST. A sequence fills from its own
-// starting community, then from a community Somya has explicitly marked
-// combinable with it (community_combinable_groups, Config-curated) — and
-// STOPS there if neither has anything left, even under the ~30 item
-// target, rather than padding with some other community that just
-// happened to be next in priority order (see pickNextCandidate's own
-// comment — this used to be the "Rohan/Meda/Purva get combined" bug). A
-// NEW sequence prefers a society not in the last two sequences' societies
-// (packer_sequence_state) unless nothing else is eligible; a revisited
-// society only pulls its pre-11:00 orders that run.
+// is no manual override tier here (packer_priority_override, retired in
+// migration 122): Somya's manual control happens by dragging a sequence or
+// order directly in the Team tab's Sequences board. Orders placed
+// 11:00-13:00 IST are held out entirely until after 15:30 IST.
 //
-// Once a sequence's order set is fixed, its items are split fruit/veg
-// packer, defaulting to packer_assignments and then actively evening out
-// the load (moving items one at a time from the most- to least-loaded
-// same-category packer until the gap is at most 1) — see balanceCategory()
-// below.
+// IMPORTANT — this function DOES revisit already-sequenced orders, but only
+// to ADD to them, never to move, reorder, or re-balance anything already
+// placed there (manual or automatic) — so a drag Somya has already done is
+// never undone, and a packer already partway through a sequence never has
+// her own already-packed items reassigned out from under her. A new order
+// can only join an existing sequence that is (a) not yet COMPLETE — still
+// has at least one item that's 'open' or 'packed', the same "pending"
+// definition parser.html's computeMyCurrentSequence uses, so a sequence
+// only looks done here exactly when a packer's own view would also call it
+// done — and (b) still has room under the 40-item hard cap. A sequence
+// fills from its own community, then from a community Somya has explicitly
+// marked combinable with it (community_combinable_groups, Config-curated);
+// if neither has an existing OPEN sequence with room, the order falls
+// through to being grouped with other newly-arrived orders into a BRAND NEW
+// sequence (same community/combinable-group/target/cap rules as before,
+// see pickNextCandidate's own comment on why there's no "pad with whatever
+// is next" fallback any more), which then gets RANKED INTO today's current
+// lineup by the same precedence rule — not just appended at the end — so a
+// high-priority community that only just placed an order doesn't end up
+// stuck behind everything manually or automatically sequenced earlier.
+// Appending and ranking a new sequence in both use a fresh numeric
+// sequence_number (fractional, e.g. 2.5 between 2 and 3 — migration 122) so
+// neither operation ever needs to renumber anything else.
+//
+// Once a brand-new sequence's order set is fixed, its items are split
+// fruit/veg packer, defaulting to packer_assignments and then actively
+// evening out the load (moving items one at a time from the most- to
+// least-loaded same-category packer until the gap is at most 1) — see
+// balanceCategory() below. An APPENDED order's items only ever get placed
+// onto whichever packer currently has the least load in that category
+// within the target sequence — see placeNewItems() — deliberately never
+// touching an item that was already there.
+//
+// Agreed expectation: most sequences will have little to no vacancy to
+// append into, by design — they're already built up toward the ~30 item
+// target/40 cap when formed, so an appended order will often find nowhere
+// to fit and fall through to its own brand-new sequence instead. Appending
+// is for the real but narrower case of a sequence that's genuinely under
+// target (a small community with few orders, or one that stopped early
+// because its combinable partners ran out) and a matching order arrives
+// later in the day.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
@@ -121,12 +149,21 @@ interface OrderRow {
   deliver_by: string | null;
   created_at: string;
   is_pickup: boolean;
+  sequence_number: number | string | null; // numeric column — PostgREST may return it as a string
 }
 interface ItemRow {
   id: string;
   sales_order_id: string;
   item_name: string;
   assigned_packer_id: string | null;
+  status: string;
+}
+
+// PostgREST can return a `numeric` column as a string to avoid precision
+// loss — coerce explicitly wherever sequence_number is read as a number.
+function toNum(v: number | string | null): number | null {
+  if (v == null) return null;
+  return typeof v === 'string' ? Number(v) : v;
 }
 interface CommunityPriority {
   unique_id: string;
@@ -277,6 +314,44 @@ function balanceCategory(
   return writes;
 }
 
+// One category's current per-packer load within a sequence, from whatever
+// is ALREADY there — the baseline placeNewItems() places new arrivals
+// against, so appending never needs to touch an item that was already
+// assigned.
+function countsByPacker(items: ItemRow[], defaultPackerIdByItem: Map<string, string>, packerIds: string[]): Map<string, number> {
+  const counts = new Map<string, number>(packerIds.map(id => [id, 0]));
+  for (const it of items) {
+    const eff = it.assigned_packer_id || defaultPackerIdByItem.get(it.item_name);
+    if (eff && packerIds.includes(eff)) counts.set(eff, (counts.get(eff) || 0) + 1);
+  }
+  return counts;
+}
+
+// Places brand-new items (from an order just appended to an existing
+// sequence) onto whichever packer in this category currently has the least
+// load, starting from `existingCounts` (the sequence's real current state)
+// — unlike balanceCategory, this never moves or re-evaluates an item that
+// was already assigned before this call. Per Somya: "worry about load-
+// balancing newly added orders, not messing around with the assignment of
+// existing orders."
+function placeNewItems(
+  items: ItemRow[],
+  defaultPackerIdByItem: Map<string, string>,
+  packerIds: string[],
+  existingCounts: Map<string, number>,
+): Map<string, string> {
+  if (!packerIds.length || !items.length) return new Map();
+  const counts = new Map<string, number>(packerIds.map(id => [id, existingCounts.get(id) || 0]));
+  const writes = new Map<string, string>();
+  for (const it of items) {
+    const def = defaultPackerIdByItem.get(it.item_name);
+    const target = (def && packerIds.includes(def)) ? def : packerIds.reduce((a, b) => (counts.get(a)! <= counts.get(b)!) ? a : b);
+    writes.set(it.id, target);
+    counts.set(target, (counts.get(target) || 0) + 1);
+  }
+  return writes;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
@@ -296,16 +371,19 @@ Deno.serve(async (req) => {
       recentGroups = updatedDateStr === today ? (stateRow.recent_group_names || []) : [];
     }
 
-    // ── Load today's still-unsequenced orders + their items ──────────────
+    // ── Load EVERY one of today's orders, sequenced or not, + their items ──
+    // Sequenced orders are included now too (not just sequence_number is
+    // null) — needed to know each existing sequence's current community
+    // set, item count, and completeness, so a new order can be appended to
+    // one instead of always starting a fresh sequence.
     const { data: orders, error: ordersErr } = await supabase
       .from('orders')
-      .select('sales_order_id,society,customer_name,deliver_by,created_at,is_pickup,status')
+      .select('sales_order_id,society,customer_name,deliver_by,created_at,is_pickup,status,sequence_number')
       .like('sales_order_id', `${today}-%`)
-      .is('sequence_number', null)
       .neq('status', 'cancelled');
     if (ordersErr) throw new Error(ordersErr.message);
     if (!orders || !orders.length) {
-      return new Response(JSON.stringify({ sequences_created: 0, orders_sequenced: 0, reason: 'nothing unsequenced' }),
+      return new Response(JSON.stringify({ sequences_created: 0, orders_sequenced: 0, orders_appended: 0, reason: 'no orders today' }),
         { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
@@ -320,7 +398,7 @@ Deno.serve(async (req) => {
         .in('sales_order_id', chunk)
         .neq('status', 'cancelled');
       if (itemsErr) throw new Error(itemsErr.message);
-      (items || []).forEach((it: ItemRow & { status: string }) => {
+      (items || []).forEach((it: ItemRow) => {
         if (!itemsByOrder.has(it.sales_order_id)) itemsByOrder.set(it.sales_order_id, []);
         itemsByOrder.get(it.sales_order_id)!.push(it);
       });
@@ -420,23 +498,102 @@ Deno.serve(async (req) => {
       };
     }).filter(m => m.itemCount > 0); // nothing active left to pack — skip entirely
 
-    const eligible = metas.filter(m => !m.held);
-    // Group size = how many of this run's eligible orders share a groupName
-    // — an approximation of sortGroupsByPriority's own "size" (which scopes
-    // to every active item today, not just this run's unsequenced ones),
-    // close enough for a tiebreak and cheap to compute from data already in
-    // memory rather than a further query.
+    const newMetas = metas.filter(m => toNum(m.order.sequence_number) == null);
+    const existingMetas = metas.filter(m => toNum(m.order.sequence_number) != null);
+
+    const eligible = newMetas.filter(m => !m.held);
+    // Group size = how many of this run's eligible NEW orders share a
+    // groupName — an approximation of sortGroupsByPriority's own "size"
+    // (which scopes to every active item today, not just today's new
+    // orders), close enough for a tiebreak and cheap to compute from data
+    // already in memory rather than a further query.
     const groupSizeCounts = new Map<string, number>();
     eligible.forEach(m => groupSizeCounts.set(m.groupName, (groupSizeCounts.get(m.groupName) || 0) + 1));
     eligible.forEach(m => { m.groupSize = groupSizeCounts.get(m.groupName) || 1; });
 
     const tier0s = eligible.filter(m => m.tier0).sort((a, b) => a.deadlineMins - b.deadlineMins);
     const tier2s = eligible.filter(m => !m.tier0).sort(compareTier2);
-    let remaining = [...tier0s, ...tier2s];
+    const priorityOrder = [...tier0s, ...tier2s]; // every new order this run will try to place, best first
 
-    // ── Build sequences ────────────────────────────────────────────────────
-    const sequences: OrderMeta[][] = [];
-    while (remaining.length && sequences.length < MAX_SEQUENCES_PER_RUN) {
+    if (!priorityOrder.length) {
+      return new Response(JSON.stringify({ sequences_created: 0, orders_sequenced: 0, orders_appended: 0, reason: 'nothing eligible this run (held or nothing unsequenced)' }),
+        { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+
+    // ── Existing sequences: their current communities, load, and whether
+    // they're still open to a new arrival ─────────────────────────────────
+    interface ExistingSeq {
+      seq: number;
+      soids: string[];
+      communities: Set<string>;
+      uniqueIds: Set<string>;
+      bestRank: number;
+      nonPickupCount: number;
+      isComplete: boolean;
+    }
+    const existingSeqMap = new Map<number, ExistingSeq>();
+    existingMetas.forEach(m => {
+      const seqNum = toNum(m.order.sequence_number)!;
+      if (!existingSeqMap.has(seqNum)) {
+        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, nonPickupCount: 0, isComplete: true });
+      }
+      const rec = existingSeqMap.get(seqNum)!;
+      rec.soids.push(m.order.sales_order_id);
+      rec.communities.add(m.groupName);
+      if (m.uniqueId) rec.uniqueIds.add(m.uniqueId);
+      if (m.rank < rec.bestRank) rec.bestRank = m.rank;
+      if (!m.order.is_pickup) rec.nonPickupCount += m.itemCount;
+    });
+    // Complete = nothing left in it that's 'open' or 'packed' — the exact
+    // same "pending" definition parser.html's computeMyCurrentSequence uses
+    // to decide a packer is done with a sequence, so this never reopens one
+    // a packer (or Somya, looking at the Sequences board) would already
+    // consider finished.
+    existingSeqMap.forEach(rec => {
+      const items = rec.soids.flatMap(soid => itemsByOrder.get(soid) || []);
+      rec.isComplete = items.length > 0 && items.every(it => it.status !== 'open' && it.status !== 'packed');
+    });
+    const existingSeqAscending = () => [...existingSeqMap.values()].sort((a, b) => a.seq - b.seq);
+
+    // ── Try to append each new order to an existing, still-open sequence —
+    // same community first, then a combinable partner; whatever's left over
+    // goes into the brand-new-sequence builder below ─────────────────────
+    const appendsBySeq = new Map<number, OrderMeta[]>();
+    const homeless: OrderMeta[] = [];
+    for (const m of priorityOrder) {
+      const wouldAddCount = m.order.is_pickup ? 0 : m.itemCount;
+      let target: ExistingSeq | undefined;
+
+      for (const rec of existingSeqAscending()) {
+        if (rec.isComplete || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
+        if (rec.communities.has(m.groupName)) { target = rec; break; }
+      }
+      if (!target && m.uniqueId) {
+        const partners = combinablePartners.get(m.uniqueId);
+        if (partners && partners.size) {
+          for (const rec of existingSeqAscending()) {
+            if (rec.isComplete || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
+            if ([...rec.uniqueIds].some(id => partners.has(id))) { target = rec; break; }
+          }
+        }
+      }
+
+      if (target) {
+        target.communities.add(m.groupName);
+        if (m.uniqueId) target.uniqueIds.add(m.uniqueId);
+        if (m.rank < target.bestRank) target.bestRank = m.rank;
+        target.nonPickupCount += wouldAddCount;
+        if (!appendsBySeq.has(target.seq)) appendsBySeq.set(target.seq, []);
+        appendsBySeq.get(target.seq)!.push(m);
+      } else {
+        homeless.push(m);
+      }
+    }
+
+    // ── Build brand-new sequences from whatever couldn't be appended ──────
+    let remaining = homeless;
+    const newSequences: OrderMeta[][] = [];
+    while (remaining.length && newSequences.length < MAX_SEQUENCES_PER_RUN) {
       const startIdx = pickSequenceStart(remaining, recentGroups);
       const start = remaining.splice(startIdx, 1)[0];
       const seq = [start];
@@ -453,43 +610,94 @@ Deno.serve(async (req) => {
         runningCount += next.order.is_pickup ? 0 : next.itemCount;
       }
 
-      sequences.push(seq);
+      newSequences.push(seq);
       recentGroups.push(dominantGroup);
       while (recentGroups.length > RECENT_SOCIETY_WINDOW) recentGroups.shift();
     }
 
-    if (!sequences.length) {
-      return new Response(JSON.stringify({ sequences_created: 0, orders_sequenced: 0, reason: 'nothing eligible this run (held or no match)' }),
+    if (!appendsBySeq.size && !newSequences.length) {
+      return new Response(JSON.stringify({ sequences_created: 0, orders_sequenced: 0, orders_appended: 0, reason: 'nothing eligible this run (held or no match)' }),
         { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
-    // ── Find the next sequence number for today ───────────────────────────
-    // Always appends after whatever the HIGHEST current sequence_number is,
-    // manually reordered or not — sequence_number is numeric specifically so
-    // a manual drag (parser.html's reorderSequence) can insert a fraction
-    // between two existing values without this query ever needing to know
-    // about it. Appending here can never collide with or disturb a manual
-    // reorder, and a manual reorder can never collide with this, since each
-    // reads a fresh max() at the moment it runs.
-    const { data: maxRow } = await supabase
-      .from('orders').select('sequence_number')
-      .like('sales_order_id', `${today}-%`).not('sequence_number', 'is', null)
-      .order('sequence_number', { ascending: false }).limit(1).maybeSingle();
-    // PostgREST can return a numeric column as a string to avoid precision
-    // loss — coerce explicitly rather than silently string-concatenating.
-    let nextSeqNumber = (maxRow?.sequence_number != null ? Number(maxRow.sequence_number) : 0) + 1;
+    // ── Rank each brand-new sequence into today's current lineup ──────────
+    // Not just appended at the end: a new sequence is inserted via a
+    // fractional sequence_number at the position its own precedence would
+    // put it, compared against every existing sequence's best (lowest)
+    // community rank — same as a manual drag's math (migration 122), so it
+    // can never collide with one. Timeline (tier0) sequences model as an
+    // artificially very-low rank (most negative = earliest deadline, built
+    // first) so they fall through the exact same ascending-rank insertion
+    // logic and land ahead of everything non-timeline, in deadline order.
+    const TIER0_RANK_BASE = -1_000_000;
+    let lineup = existingSeqAscending().map(r => ({ seqNumber: r.seq, bestRank: r.bestRank }));
+    const seqNumberForNew = new Map<number, number>(); // index into newSequences -> assigned sequence_number
+    newSequences.forEach((seq, i) => {
+      const isTier0Seq = seq.some(m => m.tier0);
+      const bestRank = isTier0Seq ? TIER0_RANK_BASE + i : Math.min(...seq.map(m => m.rank));
+      let insertSeqNumber: number;
+      if (!lineup.length) {
+        insertSeqNumber = 1;
+      } else {
+        const idx = lineup.findIndex(e => e.bestRank > bestRank);
+        if (idx === -1) insertSeqNumber = lineup[lineup.length - 1].seqNumber + 1;
+        else if (idx === 0) insertSeqNumber = lineup[0].seqNumber - 1;
+        else insertSeqNumber = (lineup[idx - 1].seqNumber + lineup[idx].seqNumber) / 2;
+      }
+      seqNumberForNew.set(i, insertSeqNumber);
+      lineup.push({ seqNumber: insertSeqNumber, bestRank });
+      lineup.sort((a, b) => a.seqNumber - b.seqNumber);
+    });
 
-    let ordersSequenced = 0;
-    for (const seq of sequences) {
+    // ── Write everything ───────────────────────────────────────────────────
+    const nowIso = new Date().toISOString();
+    let ordersSequenced = 0, ordersAppended = 0;
+
+    for (const [seqNum, newMembers] of appendsBySeq) {
+      const soidsToAppend = newMembers.map(m => m.order.sales_order_id);
+      const { error: updErr } = await supabase.from('orders')
+        .update({ sequence_number: seqNum, sequenced_at: nowIso })
+        .in('sales_order_id', soidsToAppend);
+      if (updErr) throw new Error(`Failed to append to sequence ${seqNum}: ${updErr.message}`);
+      ordersAppended += soidsToAppend.length;
+
+      // Place the NEW items against the sequence's CURRENT load only — see
+      // placeNewItems' own comment on why this never touches an item that
+      // was already assigned.
+      const existingSoids = existingSeqMap.get(seqNum)!.soids;
+      const existingItems = existingSoids.flatMap(soid => itemsByOrder.get(soid) || []);
+      const newItems = soidsToAppend.flatMap(soid => itemsByOrder.get(soid) || []);
+      const writes = new Map<string, string>([
+        ...placeNewItems(
+          newItems.filter(it => itemCategory(it.item_name) === 'fruit'),
+          defaultPackerIdByItem, fruitPackerIds,
+          countsByPacker(existingItems.filter(it => itemCategory(it.item_name) === 'fruit'), defaultPackerIdByItem, fruitPackerIds),
+        ),
+        ...placeNewItems(
+          newItems.filter(it => itemCategory(it.item_name) === 'vegetable'),
+          defaultPackerIdByItem, vegPackerIds,
+          countsByPacker(existingItems.filter(it => itemCategory(it.item_name) === 'vegetable'), defaultPackerIdByItem, vegPackerIds),
+        ),
+      ]);
+      for (const [itemId, packerId] of writes) {
+        const { error: itemErr } = await supabase.from('order_items').update({ assigned_packer_id: packerId }).eq('id', itemId);
+        if (itemErr) console.error(`Failed to assign appended item ${itemId}:`, itemErr.message);
+      }
+    }
+
+    for (let i = 0; i < newSequences.length; i++) {
+      const seq = newSequences[i];
+      const seqNum = seqNumberForNew.get(i)!;
       const seqSoids = seq.map(m => m.order.sales_order_id);
       const { error: updErr } = await supabase
         .from('orders')
-        .update({ sequence_number: nextSeqNumber, sequenced_at: new Date().toISOString() })
+        .update({ sequence_number: seqNum, sequenced_at: nowIso })
         .in('sales_order_id', seqSoids);
-      if (updErr) throw new Error(`Failed to stamp sequence ${nextSeqNumber}: ${updErr.message}`);
+      if (updErr) throw new Error(`Failed to stamp new sequence ${seqNum}: ${updErr.message}`);
       ordersSequenced += seqSoids.length;
 
-      // Rebalance packer load within this sequence, fruit and veg separately.
+      // Brand-new sequence — nothing pre-existing to preserve, so the full
+      // default-then-even-out balance applies, same as always.
       const seqItems = seqSoids.flatMap(soid => itemsByOrder.get(soid) || []);
       const fruitItems = seqItems.filter(it => itemCategory(it.item_name) === 'fruit');
       const vegItems = seqItems.filter(it => itemCategory(it.item_name) === 'vegetable');
@@ -501,17 +709,15 @@ Deno.serve(async (req) => {
         const { error: itemErr } = await supabase.from('order_items').update({ assigned_packer_id: packerId }).eq('id', itemId);
         if (itemErr) console.error(`Failed to rebalance item ${itemId}:`, itemErr.message);
       }
-
-      nextSeqNumber++;
     }
 
     const { error: stateErr } = await supabase.from('packer_sequence_state')
-      .update({ recent_group_names: recentGroups, updated_at: new Date().toISOString() })
+      .update({ recent_group_names: recentGroups, updated_at: nowIso })
       .eq('id', 1);
     if (stateErr) console.error('Failed to update packer_sequence_state:', stateErr.message);
 
     return new Response(
-      JSON.stringify({ sequences_created: sequences.length, orders_sequenced: ordersSequenced }),
+      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
