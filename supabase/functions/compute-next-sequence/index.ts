@@ -627,38 +627,49 @@ Deno.serve(async (req) => {
     // Not just appended at the end: a new sequence is inserted via a
     // fractional sequence_number at the position its own precedence would
     // put it — same as a manual drag's math (migration 122), so it can
-    // never collide with one. The comparison key is an EFFECTIVE rank: a
-    // sequence with a live timeline order (tier0) always ranks below every
-    // plain community rank, soonest-deadline-first, including overdue (an
-    // order 90 minutes overdue outranks one due in 10) — and this applies
-    // identically to an EXISTING sequence re-evaluated this run, not just a
-    // brand-new one. Previously an existing sequence's timeline urgency was
-    // discarded the moment it was written (only its plain community rank
-    // got compared against later), so a fresh tier0 sequence could leapfrog
-    // an EARLIER, still-more-urgent tier0 sequence that had already been
-    // placed — observed as a since-delivered Palladian order (an earlier
-    // deadline) ending up ranked below a later-deadline Bren/Purva one.
-    function effectiveRank(bestRank: number, tier0MinDeadline: number): number {
-      return tier0MinDeadline !== Infinity ? (tier0MinDeadline - 1_000_000) : bestRank;
+    // never collide with one. Comparison is two-level, applied identically
+    // to an EXISTING sequence re-evaluated this run and a brand-new one:
+    // (1) a sequence with a live timeline order (tier0) always ranks below
+    // every plain-community-rank sequence, soonest-deadline-first,
+    // including overdue; (2) when two timeline sequences tie on deadline —
+    // a real case: two orders due at the exact same time — community rank
+    // breaks the tie, rather than falling back to whichever happened to be
+    // discovered/built first. That build-order fallback was the actual bug
+    // behind sequence 3 (Ferns/Bren/Purva, rank 16, deadline 13:00) landing
+    // ahead of sequence 4 (77degree/Palladian, rank 3, ALSO deadline 13:00)
+    // — both tier0 at the same instant, so only rank should have decided
+    // it, not which one the homeless-builder loop happened to pop first.
+    // Previously an existing sequence's timeline urgency was also discarded
+    // the moment it was written (only its plain community rank got
+    // compared against later), so a fresh tier0 sequence could leapfrog an
+    // EARLIER, still-more-urgent tier0 sequence that had already been
+    // placed — observed separately as a since-delivered Palladian order
+    // ending up ranked below a later-deadline Bren/Purva one.
+    interface LineupKey { tier0MinDeadline: number; bestRank: number }
+    function comparePriority(a: LineupKey, b: LineupKey): number {
+      const aTier0 = a.tier0MinDeadline !== Infinity, bTier0 = b.tier0MinDeadline !== Infinity;
+      if (aTier0 !== bTier0) return aTier0 ? -1 : 1;
+      if (aTier0 && a.tier0MinDeadline !== b.tier0MinDeadline) return a.tier0MinDeadline - b.tier0MinDeadline;
+      return a.bestRank - b.bestRank;
     }
-    let lineup = existingSeqAscending().map(r => ({ seqNumber: r.seq, effRank: effectiveRank(r.bestRank, r.tier0MinDeadline) }));
+    let lineup = existingSeqAscending().map(r => ({ seqNumber: r.seq, key: { tier0MinDeadline: r.tier0MinDeadline, bestRank: r.bestRank } }));
     const seqNumberForNew = new Map<number, number>(); // index into newSequences -> assigned sequence_number
     newSequences.forEach((seq, i) => {
       const bestRank = Math.min(...seq.map(m => m.rank));
       const tier0Members = seq.filter(m => m.tier0);
       const tier0MinDeadline = tier0Members.length ? Math.min(...tier0Members.map(m => m.deadlineMins)) : Infinity;
-      const effRank = effectiveRank(bestRank, tier0MinDeadline);
+      const key: LineupKey = { tier0MinDeadline, bestRank };
       let insertSeqNumber: number;
       if (!lineup.length) {
         insertSeqNumber = 1;
       } else {
-        const idx = lineup.findIndex(e => e.effRank > effRank);
+        const idx = lineup.findIndex(e => comparePriority(e.key, key) > 0);
         if (idx === -1) insertSeqNumber = lineup[lineup.length - 1].seqNumber + 1;
         else if (idx === 0) insertSeqNumber = lineup[0].seqNumber - 1;
         else insertSeqNumber = (lineup[idx - 1].seqNumber + lineup[idx].seqNumber) / 2;
       }
       seqNumberForNew.set(i, insertSeqNumber);
-      lineup.push({ seqNumber: insertSeqNumber, effRank });
+      lineup.push({ seqNumber: insertSeqNumber, key });
       lineup.sort((a, b) => a.seqNumber - b.seqNumber);
     });
 
