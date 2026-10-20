@@ -493,7 +493,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    room for both counts without squeezing the progress bar. */
 .pk-order-detail{font-size:10px;color:#8a7a6a;margin:4px 0 0 22px}
 .pk-order-detail-sub{margin-top:2px;font-style:italic}
-.pk-seq-bags{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 56px;text-align:right;font-variant-numeric:tabular-nums}
+.pk-seq-bags{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 auto;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
 .pk-order-detail-list{margin:4px 0 0 22px;border-top:1px dashed #eee0d0;padding-top:4px}
 .pk-seq-order-row{font-size:11px;color:#2b2320;padding:3px 4px;cursor:grab;border-radius:4px}
 .pk-seq-order-row:hover{background:#fdf8f3}
@@ -7536,8 +7536,13 @@ function computeSequenceBoard(){
       return{soid,customerName:o.customer_name||soid,
         itemCount:items.length,
         pendingCount:items.filter(i=>i.status==='open'||i.status==='packed').length,
-        nonPickupCount:o.is_pickup?0:items.length};
+        nonPickupCount:o.is_pickup?0:items.length,
+        enteredAt:o.created_at||null};
     });
+    // Last bag actually weighed in this sequence, across every packer —
+    // null until at least one item here has been packed.
+    const packedTimes=[...ordersMap.values()].flat().map(i=>i.packed_at).filter(Boolean);
+    const lastPackedAt=packedTimes.length?packedTimes.sort().slice(-1)[0]:null;
 
     // Societies + reason — same community match every other priority view
     // uses (matchCommunityPriority, falling back to deriveSociety).
@@ -7571,7 +7576,7 @@ function computeSequenceBoard(){
       .map(([name,c])=>({name,...c}))
       .sort((a,b)=>a.name==='Unassigned'?1:b.name==='Unassigned'?-1:a.name.localeCompare(b.name));
 
-    return{seq,orders,societies:[...societies],reason,packerBreakdown,
+    return{seq,orders,societies:[...societies],reason,packerBreakdown,lastPackedAt,
       nonPickupTotal:orders.reduce((s,o)=>s+o.nonPickupCount,0),
       pendingTotal:orders.reduce((s,o)=>s+o.pendingCount,0),
       itemTotal:orders.reduce((s,o)=>s+o.itemCount,0)};
@@ -7597,19 +7602,21 @@ function renderSequenceBoard(){
           '<span class="pk-order-handle" draggable="false" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">⠿</span>'+
           '<span class="pk-order-name">Sequence '+(positions.get(s.seq)||s.seq)+'</span>'+
           '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>'+
-          '<span class="pk-seq-bags">'+s.nonPickupTotal+' bag'+(s.nonPickupTotal!==1?'s':'')+'</span>'+
+          '<span class="pk-seq-bags">'+s.orders.length+' order'+(s.orders.length!==1?'s':'')+', '+s.nonPickupTotal+' bag'+(s.nonPickupTotal!==1?'s':'')+'</span>'+
           '<span class="dv-expand-caret">'+(expanded?'▾':'▸')+'</span>'+
         '</div>'+
         '<div class="pk-order-detail pk-seq-summary">'+
           '<span class="pk-seq-reason '+reasonClass+'" title="'+escH(s.reason.detail)+'">'+escH(s.reason.label)+'</span> · '+
           escH(s.societies.join(', '))+
+          (s.lastPackedAt?' · last bag packed '+escH(formatOrderTime(s.lastPackedAt)):'')+
         '</div>'+
         (expanded?
           '<div class="pk-order-detail-list">'+s.orders.map(o=>
             '<div class="pk-seq-order-row" draggable="true" data-soid="'+escH(o.soid)+'" '+
               'ondragstart="orderDragStart(event,\''+escH(o.soid)+'\','+s.seq+')" ondragend="seqDragEndAny(event)">'+
               '<span class="pk-order-handle" draggable="false">⠿</span> '+escH(o.customerName)+
-              ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+'</span>'+
+              ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+
+              (o.enteredAt?', entered '+escH(formatOrderTime(o.enteredAt)):'')+'</span>'+
             '</div>'
           ).join('')+'</div>'+
           '<div class="pk-seq-packer-breakdown">'+s.packerBreakdown.map(p=>
