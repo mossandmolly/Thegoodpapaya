@@ -499,6 +499,15 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-seq-order-row:hover{background:#fdf8f3}
 .pk-seq-order-row.pk-order-dragging{opacity:0.4}
 .pk-seq-end-drop{margin-top:4px;padding:8px;border:1px dashed #d8cbb8;border-radius:8px;font-size:10px;color:#8a7a6a;text-align:center}
+.pk-seq-summary{font-style:normal}
+.pk-seq-reason{font-weight:700;padding:1px 6px;border-radius:4px;font-size:9px;text-transform:uppercase;letter-spacing:.03em}
+.pk-seq-reason-timeline{background:#fbe9e7;color:#b3261e}
+.pk-seq-reason-priority{background:#eaf3ee;color:#2f6b4f}
+.pk-seq-packer-breakdown{margin:6px 0 0 22px;border-top:1px dashed #eee0d0;padding-top:4px}
+.pk-seq-packer-row{display:flex;justify-content:space-between;gap:8px;font-size:11px;padding:2px 0}
+.pk-seq-packer-name{color:#2b2320;font-weight:600}
+.pk-seq-packer-unassigned .pk-seq-packer-name{color:#b3261e}
+.pk-seq-packer-count{color:#8a7a6a;font-variant-numeric:tabular-nums}
 @media (max-width:600px){.pk-order-name{flex-basis:90px}}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
@@ -7499,7 +7508,13 @@ function computeSequencePositions(){
 // Groups every active item today by its order's sequence_number. Orders
 // without one yet (not swept up by the cron's last run) are counted but not
 // shown as a card — there's nothing to drag until the next run gives them
-// a number.
+// a number. Also derives, per sequence: which societies/communities are in
+// it, WHY it was likely formed (a deliver_by anywhere in it means the cron's
+// own tier0/timeline rule was almost certainly what started it — otherwise
+// it's community-priority rank; this is inferred client-side from the same
+// data the cron itself reads, not a stored field, so it's a best-effort
+// label, not an audit trail), and a per-packer breakdown (pending vs done)
+// for the expanded view.
 function computeSequenceBoard(){
   const active=packerItems.filter(i=>i.status!=='cancelled');
   const bySeq=new Map();
@@ -7523,7 +7538,40 @@ function computeSequenceBoard(){
         pendingCount:items.filter(i=>i.status==='open'||i.status==='packed').length,
         nonPickupCount:o.is_pickup?0:items.length};
     });
-    return{seq,orders,
+
+    // Societies + reason — same community match every other priority view
+    // uses (matchCommunityPriority, falling back to deriveSociety).
+    const societies=new Set();
+    let bestRank=Infinity,bestRankName=null,earliestDeliverBy=null;
+    [...ordersMap.keys()].forEach(soid=>{
+      const o=packerCustomerMap[soid]||{};
+      const community=matchCommunityPriority(o.society||o.customer_name);
+      societies.add(community?community.display_name:deriveSociety(o.customer_name));
+      if(community&&community.rank!=null&&community.rank<bestRank){bestRank=community.rank;bestRankName=community.display_name;}
+      if(o.deliver_by&&(!earliestDeliverBy||o.deliver_by<earliestDeliverBy))earliestDeliverBy=o.deliver_by;
+    });
+    const reason=earliestDeliverBy
+      ?{label:'Timeline',detail:'deliver by '+earliestDeliverBy}
+      :{label:'Community priority',detail:bestRankName?('rank '+bestRank+' — '+bestRankName):'unranked'};
+
+    // Per-packer breakdown — pending (open/packed, same definition the
+    // cron's own "is this sequence complete" check uses) vs done (held/
+    // final/invoiced). Unassigned bucket for anything with no default/
+    // override packer, same as Team view.
+    const packerCounts=new Map(); // name -> {total,pending,done}
+    [...ordersMap.values()].flat().forEach(item=>{
+      const pid=effectivePackerIdForItem(item);
+      const name=pid?(packersCache.find(p=>p.id===pid)?.name||'Unassigned'):'Unassigned';
+      if(!packerCounts.has(name))packerCounts.set(name,{total:0,pending:0,done:0});
+      const c=packerCounts.get(name);
+      c.total++;
+      if(item.status==='open'||item.status==='packed')c.pending++;else c.done++;
+    });
+    const packerBreakdown=[...packerCounts.entries()]
+      .map(([name,c])=>({name,...c}))
+      .sort((a,b)=>a.name==='Unassigned'?1:b.name==='Unassigned'?-1:a.name.localeCompare(b.name));
+
+    return{seq,orders,societies:[...societies],reason,packerBreakdown,
       nonPickupTotal:orders.reduce((s,o)=>s+o.nonPickupCount,0),
       pendingTotal:orders.reduce((s,o)=>s+o.pendingCount,0),
       itemTotal:orders.reduce((s,o)=>s+o.itemCount,0)};
@@ -7542,6 +7590,7 @@ function renderSequenceBoard(){
     sequences.map(s=>{
       const expanded=expandedSequences.has(s.seq);
       const pct=s.nonPickupTotal?Math.round((s.nonPickupTotal-s.pendingTotal)/s.nonPickupTotal*100):0;
+      const reasonClass=s.reason.label==='Timeline'?'pk-seq-reason-timeline':'pk-seq-reason-priority';
       return '<div class="pk-order-card" draggable="true" data-seq="'+s.seq+'" '+
         'ondragstart="sequenceDragStart(event,'+s.seq+')" ondragover="seqDragOver(event)" ondrop="sequenceDrop(event,'+s.seq+')" ondragend="seqDragEndAny(event)">'+
         '<div class="pk-order-card-row" onclick="toggleSequenceExpanded('+s.seq+')" style="cursor:pointer">'+
@@ -7551,13 +7600,25 @@ function renderSequenceBoard(){
           '<span class="pk-seq-bags">'+s.nonPickupTotal+' bag'+(s.nonPickupTotal!==1?'s':'')+'</span>'+
           '<span class="dv-expand-caret">'+(expanded?'▾':'▸')+'</span>'+
         '</div>'+
-        (expanded?'<div class="pk-order-detail-list">'+s.orders.map(o=>
-          '<div class="pk-seq-order-row" draggable="true" data-soid="'+escH(o.soid)+'" '+
-            'ondragstart="orderDragStart(event,\''+escH(o.soid)+'\','+s.seq+')" ondragend="seqDragEndAny(event)">'+
-            '<span class="pk-order-handle" draggable="false">⠿</span> '+escH(o.customerName)+
-            ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+'</span>'+
-          '</div>'
-        ).join('')+'</div>':'')+
+        '<div class="pk-order-detail pk-seq-summary">'+
+          '<span class="pk-seq-reason '+reasonClass+'" title="'+escH(s.reason.detail)+'">'+escH(s.reason.label)+'</span> · '+
+          escH(s.societies.join(', '))+
+        '</div>'+
+        (expanded?
+          '<div class="pk-order-detail-list">'+s.orders.map(o=>
+            '<div class="pk-seq-order-row" draggable="true" data-soid="'+escH(o.soid)+'" '+
+              'ondragstart="orderDragStart(event,\''+escH(o.soid)+'\','+s.seq+')" ondragend="seqDragEndAny(event)">'+
+              '<span class="pk-order-handle" draggable="false">⠿</span> '+escH(o.customerName)+
+              ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+'</span>'+
+            '</div>'
+          ).join('')+'</div>'+
+          '<div class="pk-seq-packer-breakdown">'+s.packerBreakdown.map(p=>
+            '<div class="pk-seq-packer-row'+(p.name==='Unassigned'?' pk-seq-packer-unassigned':'')+'">'+
+              '<span class="pk-seq-packer-name">'+escH(p.name)+'</span>'+
+              '<span class="pk-seq-packer-count">'+p.total+' item'+(p.total!==1?'s':'')+' — '+p.pending+' pending, '+p.done+' done</span>'+
+            '</div>'
+          ).join('')+'</div>'
+        :'')+
       '</div>';
     }).join('')+
     '<div class="pk-seq-end-drop" ondragover="seqDragOver(event)" ondrop="sequenceDropAtEnd(event)">Drop here to move to the end</div>'+
