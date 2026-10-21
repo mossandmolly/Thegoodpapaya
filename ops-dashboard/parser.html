@@ -6860,18 +6860,46 @@ function setPackerScope(scope){
 // all can just keep using Grid, same as always.
 let packerViewMode='grid'; // 'grid' | 'single'
 
+// Same core update savePackedQty does (status->packed, never final — that's
+// always a separate explicit tap), minus its own per-item reload, so
+// multiple pending cards can be saved in one batch without an earlier
+// save's reload wiping out a later one's still-untouched input.
+async function saveQtyWithoutReload(id,qty){
+  const item=packerItems.find(i=>i.id===id);
+  if(item)await invalidateOrderInvoiceIfNeeded(item.sales_order_id);
+  const{error}=await sb.from('order_items').update({final_quantity:qty,status:'packed'}).eq('id',id);
+  if(error){console.error('Auto-save failed for item '+id+':',error.message);return false;}
+  if(item){item.final_quantity=qty;item.status='packed';}
+  return true;
+}
+
+// Every pack card currently showing a typed-but-unconfirmed quantity (its
+// ✓ tick is enabled — packCardHtml always renders it disabled, oninput is
+// the only thing that turns it on, so "enabled" means genuinely unsaved
+// since the last render, not just "has a value").
+async function autoSaveUnsavedQuantities(){
+  const pending=[...document.querySelectorAll('.pk-qty')]
+    .filter(inp=>inp.nextElementSibling&&!inp.nextElementSibling.disabled)
+    .map(inp=>({id:inp.id.replace('pk-qty-',''),qty:parseFloat(inp.value)}))
+    .filter(p=>!isNaN(p.qty)&&p.qty>=0);
+  for(const p of pending)await saveQtyWithoutReload(p.id,p.qty);
+  return pending.length;
+}
+
 // Every 5 minutes (matching compute-next-sequence's own cron interval)
-// while a packer is on My Sequence, prompt her to save any in-progress
-// quantity entry and refresh — deliberately a hard confirm, not a silent
-// re-fetch: loadPackerView() replaces the whole grid, which would wipe out
-// a qty she's mid-typing into a card but hasn't hit the ✓ tick to save yet.
+// while a packer is on My Sequence, confirms before refreshing — a silent
+// re-fetch would otherwise wipe out a qty she's mid-typing into a card.
+// Confirming auto-saves any such pending quantity (as 'packed', same as
+// tapping the tick herself) before reloading, so nothing typed is lost.
 let mySequenceReminderTimer=null;
 function startMySequenceReminder(){
   stopMySequenceReminder();
   mySequenceReminderTimer=setInterval(async()=>{
     if(packerViewMode!=='single'||document.hidden)return;
-    const refresh=await uxConfirm('New sequence data may be ready. Save any quantity you\'re entering, then refresh to see it.');
-    if(refresh)loadPackerView();
+    const refresh=await uxConfirm('New sequence data may be ready. Any quantity you\'ve entered will be saved automatically. Refresh now?');
+    if(!refresh)return;
+    await autoSaveUnsavedQuantities();
+    loadPackerView();
   },5*60*1000);
 }
 function stopMySequenceReminder(){
