@@ -484,6 +484,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-order-stack{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;grid-column:1/-1}
 .pk-order-stack-header{font-size:12px;font-weight:700;color:#2b2320;margin-bottom:8px}
 .pk-order-stack-sub{font-size:10px;font-weight:400;color:#8a7a6a}
+.pk-seq-filter{display:block;font-size:11px;color:#5c5047;margin-bottom:8px;cursor:pointer}
+.pk-seq-filter input{margin-right:4px}
 .pk-order-card{padding:6px 4px;border-radius:8px;background:#ffffff;border:1px solid #eee0d0;margin-bottom:6px;cursor:grab}
 .pk-order-card:last-child{margin-bottom:0}
 .pk-order-card.pk-order-dragging{opacity:0.4}
@@ -7565,6 +7567,11 @@ function doneItemRowHtml(item){
 // from being overwritten by the next run, and a fresh run can never land in
 // the middle of a manually-reordered list.
 let expandedSequences=new Set();
+let seqBoardPendingOnly=false;
+function toggleSeqBoardPendingOnly(){
+  seqBoardPendingOnly=!seqBoardPendingOnly;
+  renderPackerTeamView();
+}
 function toggleSequenceExpanded(seq){
   if(expandedSequences.has(seq))expandedSequences.delete(seq);
   else expandedSequences.add(seq);
@@ -7677,12 +7684,15 @@ function computeSequenceBoard(){
 
 function renderSequenceBoard(){
   if(!isVegPerfAllowed)return '';
-  const{sequences,unsequencedCount}=computeSequenceBoard();
-  if(!sequences.length&&!unsequencedCount)return '';
+  const{sequences:allSequences,unsequencedCount}=computeSequenceBoard();
+  if(!allSequences.length&&!unsequencedCount)return '';
+  const sequences=seqBoardPendingOnly?allSequences.filter(s=>s.pendingTotal>0):allSequences;
   const positions=computeSequencePositions();
   return '<div class="pk-order-stack">'+
     '<div class="pk-order-stack-header">Sequences <span class="pk-order-stack-sub">— drag a sequence onto another to reorder it; drag a single order onto a different sequence to move it. The cron (every 3 min) never touches one you\'ve already got a number here — it only ever appends to a sequence that\'s not yet complete, or ranks a brand-new one into the current lineup by priority.</span></div>'+
+    '<label class="pk-seq-filter"><input type="checkbox" '+(seqBoardPendingOnly?'checked':'')+' onchange="toggleSeqBoardPendingOnly()"> Show only sequences with something pending</label>'+
     (unsequencedCount?'<div class="pk-order-detail pk-order-detail-sub">'+unsequencedCount+' item'+(unsequencedCount!==1?'s':'')+' not sequenced yet — waiting for the next cron run.</div>':'')+
+    (seqBoardPendingOnly&&!sequences.length?'<div class="pk-order-detail pk-order-detail-sub">Nothing pending — every sequence is done.</div>':'')+
     sequences.map(s=>{
       const expanded=expandedSequences.has(s.seq);
       const pct=s.nonPickupTotal?Math.round((s.nonPickupTotal-s.pendingTotal)/s.nonPickupTotal*100):0;
