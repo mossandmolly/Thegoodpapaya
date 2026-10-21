@@ -230,6 +230,7 @@ interface OrderMeta {
   createdAtMs: number;
   late: boolean;           // placed today at/after 11:00 IST — see classify()
   rescueFromSeq: number | null; // set only for a rescued order: its OWN sequence number before rescue, excluded as an append target so "move it down" can't just match it straight back into the sequence it's being rescued FROM
+  bypassCohort: boolean;   // true only for a rescued order — let it match EITHER cohort when searching for a target, not just its own. NOT implemented by forcing `late` to a fixed value: that's an equality check (rec.late !== m.late), so pinning `late` to false would only let it match pre-11 sequences specifically — actively blocking it from a late one, the opposite of neutral — which is exactly how a genuinely post-11 rescued order ended up sharing a sequence with a pre-11 order. `late` stays whatever it really was (it still matters for ranking if the order ends up needing a brand-new sequence); this flag is the actual bypass.
 }
 
 // Plain case-insensitive substring match, longest keyword wins on overlap —
@@ -308,21 +309,21 @@ function pickSequenceStart(remaining: OrderMeta[], recentGroups: string[]): numb
 // remaining capacity — an order that doesn't is left in `remaining` for a
 // LATER sequence instead of delaying this one (the "23-24 item order"
 // case) — and to orders in the SAME late/pre-11 cohort as the sequence's
-// dominant order (unless either side is tier0, which bypasses the cohort
-// split entirely) — otherwise a late order could pad its way into an
-// otherwise-pre-11 brand-new sequence, the same cross-cohort leak the
-// append loop guards against.
-function cohortOk(o: OrderMeta, dominantLate: boolean, dominantIsTier0: boolean): boolean {
-  return dominantIsTier0 || o.tier0 || o.late === dominantLate;
+// dominant order (unless either side is tier0 or a rescued order, which
+// bypasses the cohort split entirely) — otherwise a late order could pad
+// its way into an otherwise-pre-11 brand-new sequence, the same cross-
+// cohort leak the append loop guards against.
+function cohortOk(o: OrderMeta, dominantLate: boolean, dominantIsTier0: boolean, dominantBypassCohort: boolean): boolean {
+  return dominantIsTier0 || dominantBypassCohort || o.tier0 || o.bypassCohort || o.late === dominantLate;
 }
-function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, dominantUniqueId: string | null, dominantLate: boolean, dominantIsTier0: boolean, combinablePartners: Map<string, Set<string>>, capacityLeft: number): number {
-  let idx = remaining.findIndex(o => o.groupName === dominantGroup && o.itemCount <= capacityLeft && cohortOk(o, dominantLate, dominantIsTier0));
+function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, dominantUniqueId: string | null, dominantLate: boolean, dominantIsTier0: boolean, dominantBypassCohort: boolean, combinablePartners: Map<string, Set<string>>, capacityLeft: number): number {
+  let idx = remaining.findIndex(o => o.groupName === dominantGroup && o.itemCount <= capacityLeft && cohortOk(o, dominantLate, dominantIsTier0, dominantBypassCohort));
   if (idx >= 0) return idx;
 
   if (dominantUniqueId) {
     const partners = combinablePartners.get(dominantUniqueId);
     if (partners && partners.size) {
-      idx = remaining.findIndex(o => o.uniqueId != null && partners.has(o.uniqueId) && o.itemCount <= capacityLeft && cohortOk(o, dominantLate, dominantIsTier0));
+      idx = remaining.findIndex(o => o.uniqueId != null && partners.has(o.uniqueId) && o.itemCount <= capacityLeft && cohortOk(o, dominantLate, dominantIsTier0, dominantBypassCohort));
       if (idx >= 0) return idx;
     }
   }
@@ -574,6 +575,7 @@ Deno.serve(async (req) => {
         createdAtMs: new Date(o.created_at).getTime(),
         late,
         rescueFromSeq: null,
+        bypassCohort: false,
       };
     }).filter(m => m.itemCount > 0); // nothing active left to pack — skip entirely
 
@@ -829,7 +831,7 @@ Deno.serve(async (req) => {
       if (rec.packingComplete) return items.some(it => it.status === 'held');
       return false;
     });
-    rescueMetas.forEach(m => { m.late = false; m.rescueFromSeq = toNum(m.order.sequence_number); });
+    rescueMetas.forEach(m => { m.bypassCohort = true; m.rescueFromSeq = toNum(m.order.sequence_number); });
 
     // Every new or rescued order is processed THIS run, every run — nothing
     // is ever excluded or left waiting on a clock (see file header for why:
@@ -865,7 +867,9 @@ Deno.serve(async (req) => {
     // matches m.late) — otherwise a late order could slot into room inside
     // an already-ranked pre-11 sequence and get packed ahead of OTHER,
     // lower-priority pre-11 sequences that haven't been touched yet. Tier0
-    // bypasses this entirely, same as everywhere else. ────────────────────
+    // and a rescued order (bypassCohort) skip this check entirely, same as
+    // everywhere else — but note bypassCohort genuinely ignores the cohort
+    // (can match either), it does NOT pin the order to one side of it. ──
     const appendsBySeq = new Map<number, OrderMeta[]>();
     const homeless: OrderMeta[] = [];
     for (const m of priorityOrder) {
@@ -874,7 +878,7 @@ Deno.serve(async (req) => {
 
       for (const rec of existingSeqAscending()) {
         if (rec.isComplete || rec.seq === m.rescueFromSeq || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
-        if (!m.tier0 && rec.late !== m.late) continue;
+        if (!m.tier0 && !m.bypassCohort && rec.late !== m.late) continue;
         if (rec.communities.has(m.groupName)) { target = rec; break; }
       }
       if (!target && m.uniqueId) {
@@ -882,7 +886,7 @@ Deno.serve(async (req) => {
         if (partners && partners.size) {
           for (const rec of existingSeqAscending()) {
             if (rec.isComplete || rec.seq === m.rescueFromSeq || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
-            if (!m.tier0 && rec.late !== m.late) continue;
+            if (!m.tier0 && !m.bypassCohort && rec.late !== m.late) continue;
             if ([...rec.uniqueIds].some(id => partners.has(id))) { target = rec; break; }
           }
         }
@@ -914,10 +918,11 @@ Deno.serve(async (req) => {
       const dominantUniqueId = start.uniqueId;
       const dominantLate = start.late;
       const dominantIsTier0 = start.tier0;
+      const dominantBypassCohort = start.bypassCohort;
 
       while (runningCount < SEQUENCE_TARGET && remaining.length) {
         const capacityLeft = SEQUENCE_HARD_CAP - runningCount;
-        const idx = pickNextCandidate(remaining, dominantGroup, dominantUniqueId, dominantLate, dominantIsTier0, combinablePartners, capacityLeft);
+        const idx = pickNextCandidate(remaining, dominantGroup, dominantUniqueId, dominantLate, dominantIsTier0, dominantBypassCohort, combinablePartners, capacityLeft);
         if (idx < 0) break; // nothing left fits under the cap right now
         const next = remaining.splice(idx, 1)[0];
         seq.push(next);
