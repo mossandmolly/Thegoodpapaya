@@ -597,7 +597,7 @@ Deno.serve(async (req) => {
     existingMetas.forEach(m => {
       const seqNum = toNum(m.order.sequence_number)!;
       if (!existingSeqMap.has(seqNum)) {
-        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, late: true, nonPickupCount: 0, nonPickupOrderCount: 0, dispatchedNonPickupOrderCount: 0, isComplete: true });
+        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, late: true, nonPickupCount: 0, nonPickupOrderCount: 0, dispatchedNonPickupOrderCount: 0, isComplete: false });
       }
       const rec = existingSeqMap.get(seqNum)!;
       rec.soids.push(m.order.sales_order_id);
@@ -612,29 +612,34 @@ Deno.serve(async (req) => {
         if (m.order.dispatched_at) rec.dispatchedNonPickupOrderCount += 1;
       }
     });
-    // Complete = either (a) EVERY non-pickup order in the sequence has
-    // actually shipped (dispatched_at set on all of them), or (b) nothing
-    // left in it is 'open'/'packed' — the exact same "pending" definition
-    // parser.html's computeMyCurrentSequence uses to decide a packer is
-    // done with a sequence. Item status alone isn't reliable for this: it
-    // was letting a sequence absorb new orders hours after its real
-    // dispatch, observed spanning created_at times from 9:20am to 5:07pm in
-    // one "done" sequence, which obviously never happened as one trip. But
-    // dispatch itself isn't always one atomic trip either — orders within a
-    // sequence can and do go out separately, one rider at a time, as each
-    // is ready — so checking for ANY single dispatched order was marking
-    // the WHOLE sequence complete (and kicking off orphan-rescue below,
-    // which re-sequences every other still-pending order in it elsewhere)
-    // the moment just one order shipped early, blowing apart a sequence
-    // Somya had just arranged while most of it was still mid-pack. Requires
-    // ALL of them now.
+    // Complete = EVERY non-pickup order in the sequence has actually
+    // shipped (dispatched_at set on all of them) — the one unambiguous
+    // "nothing more can happen to this sequence" signal, and the ONLY
+    // thing that (a) stops a new order from being offered this sequence to
+    // append into, and (b) lets orphan-rescue below treat one of its
+    // orders as genuinely stranded and move it elsewhere. Capacity (the
+    // 40-item hard cap) is a completely separate, already-self-enforcing
+    // check done at the point of each append attempt — it was never part
+    // of this flag and doesn't need to be.
+    //
+    // Deliberately NOT "nothing left is open/packed" any more (an earlier
+    // version of this flag) — that treated a 'held' item as "done" (held
+    // is neither open nor packed), which let a sequence that was fully
+    // packed except for one still-unapproved held item get marked complete
+    // with no trip having left at all. Orphan-rescue then saw "complete,
+    // and this order still has a held item" and relocated that order
+    // EVERY run, for as long as the held item sat there — which both
+    // looked exactly like "my manually-arranged sequence keeps getting
+    // reset" (one order kept relocating for no visible reason) and, since
+    // a rescued order skips the late/cohort check entirely (see
+    // rescueMetas below), let an ordinary post-11 order leak across the
+    // pre-11/post-11 line it should never have crossed. Dispatch-only
+    // trades that away for a narrower, accepted gap: a sequence that's
+    // 100% packed but not yet actually dispatched stays technically
+    // appendable in the meantime — a much smaller window than the bug it
+    // replaces, since dispatch normally follows packing fairly closely.
     existingSeqMap.forEach(rec => {
-      if (rec.nonPickupOrderCount > 0 && rec.dispatchedNonPickupOrderCount >= rec.nonPickupOrderCount) {
-        rec.isComplete = true;
-        return;
-      }
-      const items = rec.soids.flatMap(soid => itemsByOrder.get(soid) || []);
-      rec.isComplete = items.length > 0 && items.every(it => it.status !== 'open' && it.status !== 'packed');
+      rec.isComplete = rec.nonPickupOrderCount > 0 && rec.dispatchedNonPickupOrderCount >= rec.nonPickupOrderCount;
     });
     const existingSeqAscending = () => [...existingSeqMap.values()].sort((a, b) => a.seq - b.seq);
     const existingMetaBySoid = new Map(existingMetas.map(m => [m.order.sales_order_id, m]));
