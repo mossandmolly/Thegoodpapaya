@@ -229,6 +229,7 @@ interface OrderMeta {
   deadlineMins: number;    // Infinity if not tier0
   createdAtMs: number;
   late: boolean;           // placed today at/after 11:00 IST — see classify()
+  rescueFromSeq: number | null; // set only for a rescued order: its OWN sequence number before rescue, excluded as an append target so "move it down" can't just match it straight back into the sequence it's being rescued FROM
 }
 
 // Plain case-insensitive substring match, longest keyword wins on overlap —
@@ -572,6 +573,7 @@ Deno.serve(async (req) => {
         deadlineMins: tier0 ? deadlineMins! : Infinity,
         createdAtMs: new Date(o.created_at).getTime(),
         late,
+        rescueFromSeq: null,
       };
     }).filter(m => m.itemCount > 0); // nothing active left to pack — skip entirely
 
@@ -592,12 +594,13 @@ Deno.serve(async (req) => {
       nonPickupOrderCount: number;          // # of non-pickup ORDERS (not items) in this sequence
       dispatchedNonPickupOrderCount: number; // # of those whose trip has actually left
       isComplete: boolean;
+      packingComplete: boolean; // nothing left in it is 'open'/'packed' — see its own comment below for what this is (and isn't) used for
     }
     const existingSeqMap = new Map<number, ExistingSeq>();
     existingMetas.forEach(m => {
       const seqNum = toNum(m.order.sequence_number)!;
       if (!existingSeqMap.has(seqNum)) {
-        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, late: true, nonPickupCount: 0, nonPickupOrderCount: 0, dispatchedNonPickupOrderCount: 0, isComplete: false });
+        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, late: true, nonPickupCount: 0, nonPickupOrderCount: 0, dispatchedNonPickupOrderCount: 0, isComplete: false, packingComplete: false });
       }
       const rec = existingSeqMap.get(seqNum)!;
       rec.soids.push(m.order.sales_order_id);
@@ -640,6 +643,21 @@ Deno.serve(async (req) => {
     // replaces, since dispatch normally follows packing fairly closely.
     existingSeqMap.forEach(rec => {
       rec.isComplete = rec.nonPickupOrderCount > 0 && rec.dispatchedNonPickupOrderCount >= rec.nonPickupOrderCount;
+      // packingComplete is a SEPARATE signal from isComplete and never
+      // feeds into it — it does NOT stop new orders from appending here,
+      // and does NOT by itself mean the sequence is "done" for any other
+      // purpose. Its only job: once a packer has worked through everything
+      // packable in this sequence (nothing left 'open'/'packed' — a held
+      // item doesn't count, that's the whole point), any order still
+      // sitting here with a held item is clearly not going anywhere soon —
+      // see the held-item cascade in rescueMetas below, which moves it
+      // forward to the next matching sequence instead of leaving it
+      // stranded in a sequence everyone else has already moved past. Per
+      // Somya: never hold it indefinitely — if it's still not ready by the
+      // time a packer reaches wherever it landed next, she hits "I'm done"
+      // again and it cascades forward again, same as any other append.
+      const items = rec.soids.flatMap(soid => itemsByOrder.get(soid) || []);
+      rec.packingComplete = items.length > 0 && items.every(it => it.status !== 'open' && it.status !== 'packed');
     });
     const existingSeqAscending = () => [...existingSeqMap.values()].sort((a, b) => a.seq - b.seq);
     const existingMetaBySoid = new Map(existingMetas.map(m => [m.order.sales_order_id, m]));
@@ -784,26 +802,34 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Orphan rescue: an order whose own sequence has already dispatched
-    // (a colleague's trip left) but which still has an 'open' or 'held'
-    // item of its own — something was missing, out of stock, whatever —
-    // never makes that trip. Left alone it would just sit forever pointing
-    // at a sequence that's done and gone. Instead it re-enters the exact
-    // same placement pipeline as a brand-new order below: try to join an
-    // existing open sequence of its own/a combinable community first, else
-    // fold into a brand-new one — "closest to the society or belong to
-    // that society itself," per Somya, same as any other order would. Its
-    // own "late" classification is irrelevant here (that only matters for
-    // where an order's FIRST sequence lands; this one already had one) —
-    // always eligible for rescue regardless of when it was originally
-    // placed, and never demoted behind pre-11 work for it.
+    // ── Rescue: an order sitting in a sequence that's moved on without it,
+    // still carrying an item that can't be packed right now — never leave
+    // it stranded. Two different ways a sequence "moves on without it":
+    // (a) dispatched — a colleague's trip has actually left (isComplete),
+    // so an 'open' OR 'held' item here missed that ride entirely; (b)
+    // packing-complete — nobody dispatched yet, but every packer has
+    // already finished everything ELSE in this sequence (packingComplete),
+    // so a 'held' item here isn't "waiting its turn", it's just stuck,
+    // indefinitely, while everyone else has moved on to later sequences.
+    // Per Somya: never hold a held item indefinitely — move it down to the
+    // next sequence of its own/a combinable community instead (same
+    // placement pipeline as a brand-new order: append if room exists, else
+    // a fresh sequence), and if it's STILL not ready by the time a packer
+    // reaches THAT one and taps "I'm done" again, it cascades forward
+    // again next run, same as this. Its own "late" classification is
+    // irrelevant either way (that only matters for where an order's FIRST
+    // sequence lands; this one already had one) — always eligible for
+    // rescue regardless of when it was originally placed, and never
+    // demoted behind pre-11 work for it.
     const rescueMetas = existingMetas.filter(m => {
       const rec = existingSeqMap.get(toNum(m.order.sequence_number)!);
-      if (!rec?.isComplete) return false;
+      if (!rec) return false;
       const items = itemsByOrder.get(m.order.sales_order_id) || [];
-      return items.some(it => it.status === 'open' || it.status === 'held');
+      if (rec.isComplete) return items.some(it => it.status === 'open' || it.status === 'held');
+      if (rec.packingComplete) return items.some(it => it.status === 'held');
+      return false;
     });
-    rescueMetas.forEach(m => { m.late = false; });
+    rescueMetas.forEach(m => { m.late = false; m.rescueFromSeq = toNum(m.order.sequence_number); });
 
     // Every new or rescued order is processed THIS run, every run — nothing
     // is ever excluded or left waiting on a clock (see file header for why:
@@ -847,7 +873,7 @@ Deno.serve(async (req) => {
       let target: ExistingSeq | undefined;
 
       for (const rec of existingSeqAscending()) {
-        if (rec.isComplete || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
+        if (rec.isComplete || rec.seq === m.rescueFromSeq || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
         if (!m.tier0 && rec.late !== m.late) continue;
         if (rec.communities.has(m.groupName)) { target = rec; break; }
       }
@@ -855,7 +881,7 @@ Deno.serve(async (req) => {
         const partners = combinablePartners.get(m.uniqueId);
         if (partners && partners.size) {
           for (const rec of existingSeqAscending()) {
-            if (rec.isComplete || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
+            if (rec.isComplete || rec.seq === m.rescueFromSeq || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
             if (!m.tier0 && rec.late !== m.late) continue;
             if ([...rec.uniqueIds].some(id => partners.has(id))) { target = rec; break; }
           }
