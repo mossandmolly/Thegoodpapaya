@@ -660,16 +660,24 @@ Deno.serve(async (req) => {
 
     const nonHeld = [...newMetas.filter(m => !m.held), ...rescueMetas];
     const heldOrders = newMetas.filter(m => m.held);
-    // Early-release exception: if every non-held order today has already
-    // been sequenced, there's nothing else for a packer to work on before
-    // 15:30 — release what's on hold right now and run it through the
-    // exact same priority pipeline (timeline, then community rank) rather
-    // than leaving everyone idle until the clock strikes 3:30 for no
-    // operational reason. Per Somya: "if orders of lower community
-    // priority placed before 11 finish sooner than 3:30, system starts
-    // picking orders placed after 11 in the order of community priority/
-    // timeline" — same logic, just an earlier release trigger.
-    const eligible = nonHeld.length ? nonHeld : heldOrders;
+    // Early-release exception: release what's on hold right now and run it
+    // through the exact same priority pipeline (timeline, then community
+    // rank) rather than leaving everyone idle until the clock strikes
+    // 15:30 for no operational reason — but ONLY once there's genuinely
+    // nothing left for a packer to work on from before 11:00: every
+    // pre-11 sequence already built today has actually finished (isComplete
+    // — not just "already got a sequence_number"), AND there's nothing new
+    // still waiting for its first sequence either. Per Somya: "if orders of
+    // lower community priority placed before 11 finish sooner than 3:30,
+    // system starts picking orders placed after 11" — "finish" means
+    // finish, not "got sequenced hours ago and is still mid-pack". Checking
+    // only nonHeld.length (no new orders left to sequence) was releasing a
+    // held order the instant nothing NEW showed up, even while a lower-
+    // priority morning sequence sat there still half-packed — a held order
+    // from 11:51 was jumping ahead of lower-priority pre-11 work that
+    // hadn't actually finished yet.
+    const allExistingSequencesDone = existingSeqAscending().every(r => r.isComplete);
+    const eligible = (nonHeld.length === 0 && allExistingSequencesDone) ? heldOrders : nonHeld;
     // Group size = how many of this run's eligible NEW orders share a
     // groupName — an approximation of sortGroupsByPriority's own "size"
     // (which scopes to every active item today, not just today's new
