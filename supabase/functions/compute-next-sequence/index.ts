@@ -4,13 +4,14 @@
 // migration 120) with an automated scheduler. Triggered every 3 minutes by
 // pg_cron (migration 121), same x-cron-secret pattern as sync-catalog/
 // auto-invoice-final-orders. Each run looks at EVERY one of today's orders,
-// sequenced or not, and does one of three things with each still-unsequenced
-// one: (1) appends it to an existing, still-open sequence that has room and
-// a matching community, (2) folds it into a brand-new sequence with other
-// newly-arrived orders, or (3) leaves it unsequenced (timeline/held rules
-// below). orders.sequence_number/sequenced_at is the only thing the Packer
-// tab's "My Sequence" view reads to decide what a given packer sees right
-// now (see parser.html's computeMyCurrentSequence).
+// sequenced or not, and either (1) appends each still-unsequenced one to an
+// existing, still-open sequence that has room and a matching community, or
+// (2) folds it into a brand-new sequence with other newly-arrived orders —
+// every order gets sequenced every run, none is ever left waiting (see the
+// "late" ranking rule below for how an 11am+ order is handled instead).
+// orders.sequence_number/sequenced_at is the only thing the Packer tab's
+// "My Sequence" view reads to decide what a given packer sees right now
+// (see parser.html's computeMyCurrentSequence).
 //
 // Precedence: a deliver_by within 90 minutes beats everything (soonest
 // first); otherwise Community Priority rank (community_priority.rank),
@@ -20,12 +21,27 @@
 // listing built from either agrees with what the cron actually did. There
 // is no manual override tier here (packer_priority_override, retired in
 // migration 122): Somya's manual control happens by dragging a sequence or
-// order directly in the Team tab's Sequences board. Any order placed at or
-// after 11:00 IST (open-ended, no upper bound) is held out entirely until
-// 15:30 IST — UNLESS every non-held order today has already been
-// sequenced, in which case held orders release early and run through the
-// same priority pipeline rather than leaving packers idle until 3:30 for
-// no reason (see the nonHeld/heldOrders split further down).
+// order directly in the Team tab's Sequences board.
+//
+// An order placed at or after 11:00 IST ("late") is NEVER excluded or left
+// unsequenced waiting for a clock to strike — it's sequenced immediately,
+// same run, same append-then-new-sequence pipeline as anything else. The
+// only difference is rank: a late order (or a brand-new sequence built
+// entirely from late orders) always sorts AFTER every one of today's
+// pre-11 sequences, no matter how good its own community rank is — it
+// can still freely APPEND into an already-open pre-11 sequence of its own
+// community if one has room (that doesn't change that sequence's
+// position), but if it needs a brand new sequence, that sequence lands
+// behind the whole pre-11 lineup. This replaces an earlier hold-then-
+// release-at-15:30 design that excluded late orders from every run until
+// some condition freed them — which both left them invisible until
+// release AND, once released, let them compete for lineup position on
+// raw rank against pre-11 orders, observed letting an 11:51am order
+// outrank lower-priority pre-11 work that hadn't even finished packing
+// yet. Ranking by "late" instead of excluding sidesteps both problems:
+// always sequenced (nothing sits in limbo or shows as held anywhere),
+// and never able to outrank pre-11 work regardless of its own community
+// priority.
 //
 // IMPORTANT — this function DOES revisit already-sequenced orders, but only
 // to (a) ADD to them, or (b) promote a whole sequence ahead of others if it
@@ -143,8 +159,7 @@ function deadlineMinutesFromNow(deliverBy: string | null, now: Date): number | n
 }
 
 const TIMELINE_BUFFER_MIN = 90;
-const HOLD_WINDOW_START_MIN = 11 * 60; // open-ended — no upper bound, see classify()'s held check
-const HOLD_RELEASE_MIN = 15 * 60 + 30;
+const LATE_CUTOFF_MIN = 11 * 60; // 11:00 IST — see classify()'s `late` check
 const SEQUENCE_TARGET = 30;
 const SEQUENCE_HARD_CAP = 40;
 const RECENT_SOCIETY_WINDOW = 2;
@@ -199,7 +214,7 @@ interface OrderMeta {
   tier0: boolean;
   deadlineMins: number;    // Infinity if not tier0
   createdAtMs: number;
-  held: boolean;
+  late: boolean;           // placed today at/after 11:00 IST — see classify()
 }
 
 // Plain case-insensitive substring match, longest keyword wins on overlap —
@@ -229,18 +244,23 @@ function compareTier2(a: OrderMeta, b: OrderMeta): number {
   return a.createdAtMs - b.createdAtMs;
 }
 
-// Two-level precedence used both to rank a brand-new sequence into today's
-// lineup and to promote an already-sequenced one that's become timeline-
-// urgent since it was built (see the promotion block below): a sequence
-// with a live timeline order (tier0) always ranks ahead of every plain-
-// community-rank sequence, soonest-deadline-first, including overdue; when
-// two timeline sequences tie on deadline, community rank breaks the tie
-// rather than falling back to build/placement order.
-interface LineupKey { tier0MinDeadline: number; bestRank: number }
+// Three-level precedence used both to rank a brand-new sequence into
+// today's lineup and to promote an already-sequenced one that's become
+// timeline-urgent since it was built (see the promotion block below): a
+// sequence with a live timeline order (tier0) always ranks ahead of every
+// plain-community-rank sequence, soonest-deadline-first, including
+// overdue; when two timeline sequences tie on deadline, "late" (see
+// classify()) breaks the tie before rank does, then community rank.
+// Outside tier0, a sequence built entirely from "late" orders always
+// ranks after every sequence that isn't — regardless of how good its own
+// community rank is — so an 11am+ order can never outrank pre-11 work
+// just because its community happens to be a priority one.
+interface LineupKey { tier0MinDeadline: number; late: boolean; bestRank: number }
 function comparePriority(a: LineupKey, b: LineupKey): number {
   const aTier0 = a.tier0MinDeadline !== Infinity, bTier0 = b.tier0MinDeadline !== Infinity;
   if (aTier0 !== bTier0) return aTier0 ? -1 : 1;
   if (aTier0 && a.tier0MinDeadline !== b.tier0MinDeadline) return a.tier0MinDeadline - b.tier0MinDeadline;
+  if (a.late !== b.late) return a.late ? 1 : -1;
   return a.bestRank - b.bestRank;
 }
 
@@ -393,7 +413,6 @@ Deno.serve(async (req) => {
 
     const now = istNow();
     const today = istDateStr(now);
-    const nowMinsOfDay = istMinutesOfDay(now);
 
     // ── Reset the rolling "recently sequenced societies" window on a new day ──
     const { data: stateRow } = await supabase.from('packer_sequence_state').select('*').eq('id', 1).maybeSingle();
@@ -507,19 +526,18 @@ Deno.serve(async (req) => {
       const deadlineMins = deadlineMinutesFromNow(o.deliver_by || match?.default_deliver_by || null, now);
       const tier0 = deadlineMins != null && deadlineMins <= TIMELINE_BUFFER_MIN;
       const createdMinsOfDay = istMinutesOfDayFromIso(o.created_at);
-      // Open-ended: ANY order placed at or after 11:00 IST is held until
-      // 15:30, not just ones placed in an 11:00-13:00 window — a 2pm order
-      // is held exactly the same as an 11:05 one. Must have been placed
-      // TODAY, not just at some point whose time-of-day happens to fall
-      // after 11:00 — an order from yesterday at, say, 11:24 IST (for a
-      // next-day delivery, hence today's sales_order_id prefix) was never
-      // "placed in today's post-11:00 window" and shouldn't be held for one
-      // it was never in. See the early-release exception further down
-      // (nonHeld.length check) for when this gets overridden before 15:30.
-      const held = !tier0
+      // Open-ended: ANY order placed at or after 11:00 IST is "late", not
+      // just ones placed in an 11:00-13:00 window — a 2pm order is late
+      // exactly the same as an 11:05 one. Must have been placed TODAY, not
+      // just at some point whose time-of-day happens to fall after
+      // 11:00 — an order from yesterday at, say, 11:24 IST (for a next-day
+      // delivery, hence today's sales_order_id prefix) was never "placed in
+      // today's post-11:00 window" and shouldn't be penalised for one it
+      // was never in. Late only ever affects RANKING (see comparePriority)
+      // — it never excludes an order from this run.
+      const late = !tier0
         && istDateStrFromIso(o.created_at) === today
-        && createdMinsOfDay >= HOLD_WINDOW_START_MIN
-        && nowMinsOfDay < HOLD_RELEASE_MIN;
+        && createdMinsOfDay >= LATE_CUTOFF_MIN;
       return {
         order: o,
         itemCount: items.length,
@@ -530,7 +548,7 @@ Deno.serve(async (req) => {
         tier0,
         deadlineMins: tier0 ? deadlineMins! : Infinity,
         createdAtMs: new Date(o.created_at).getTime(),
-        held,
+        late,
       };
     }).filter(m => m.itemCount > 0); // nothing active left to pack — skip entirely
 
@@ -546,6 +564,7 @@ Deno.serve(async (req) => {
       uniqueIds: Set<string>;
       bestRank: number;
       tier0MinDeadline: number; // Infinity unless this sequence still has a live timeline order
+      late: boolean; // true only if EVERY order in it was "late" (see classify()) — one pre-11 member is enough to count the whole sequence as not-late
       nonPickupCount: number;
       nonPickupOrderCount: number;          // # of non-pickup ORDERS (not items) in this sequence
       dispatchedNonPickupOrderCount: number; // # of those whose trip has actually left
@@ -555,7 +574,7 @@ Deno.serve(async (req) => {
     existingMetas.forEach(m => {
       const seqNum = toNum(m.order.sequence_number)!;
       if (!existingSeqMap.has(seqNum)) {
-        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, nonPickupCount: 0, nonPickupOrderCount: 0, dispatchedNonPickupOrderCount: 0, isComplete: true });
+        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, late: true, nonPickupCount: 0, nonPickupOrderCount: 0, dispatchedNonPickupOrderCount: 0, isComplete: true });
       }
       const rec = existingSeqMap.get(seqNum)!;
       rec.soids.push(m.order.sales_order_id);
@@ -563,6 +582,7 @@ Deno.serve(async (req) => {
       if (m.uniqueId) rec.uniqueIds.add(m.uniqueId);
       if (m.rank < rec.bestRank) rec.bestRank = m.rank;
       if (m.tier0 && m.deadlineMins < rec.tier0MinDeadline) rec.tier0MinDeadline = m.deadlineMins;
+      rec.late = rec.late && m.late;
       if (!m.order.is_pickup) {
         rec.nonPickupCount += m.itemCount;
         rec.nonPickupOrderCount += 1;
@@ -646,51 +666,42 @@ Deno.serve(async (req) => {
     // existing open sequence of its own/a combinable community first, else
     // fold into a brand-new one — "closest to the society or belong to
     // that society itself," per Somya, same as any other order would. Its
-    // own hold-window classification is irrelevant here (that rule is only
-    // about when an order should FIRST get a sequence; this one already
-    // had one) — always eligible for rescue regardless of when it was
-    // originally placed.
+    // own "late" classification is irrelevant here (that only matters for
+    // where an order's FIRST sequence lands; this one already had one) —
+    // always eligible for rescue regardless of when it was originally
+    // placed, and never demoted behind pre-11 work for it.
     const rescueMetas = existingMetas.filter(m => {
       const rec = existingSeqMap.get(toNum(m.order.sequence_number)!);
       if (!rec?.isComplete) return false;
       const items = itemsByOrder.get(m.order.sales_order_id) || [];
       return items.some(it => it.status === 'open' || it.status === 'held');
     });
-    rescueMetas.forEach(m => { m.held = false; });
+    rescueMetas.forEach(m => { m.late = false; });
 
-    const nonHeld = [...newMetas.filter(m => !m.held), ...rescueMetas];
-    const heldOrders = newMetas.filter(m => m.held);
-    // Early-release exception: release what's on hold right now and run it
-    // through the exact same priority pipeline (timeline, then community
-    // rank) rather than leaving everyone idle until the clock strikes
-    // 15:30 for no operational reason — but ONLY once there's genuinely
-    // nothing left for a packer to work on from before 11:00: every
-    // pre-11 sequence already built today has actually finished (isComplete
-    // — not just "already got a sequence_number"), AND there's nothing new
-    // still waiting for its first sequence either. Per Somya: "if orders of
-    // lower community priority placed before 11 finish sooner than 3:30,
-    // system starts picking orders placed after 11" — "finish" means
-    // finish, not "got sequenced hours ago and is still mid-pack". Checking
-    // only nonHeld.length (no new orders left to sequence) was releasing a
-    // held order the instant nothing NEW showed up, even while a lower-
-    // priority morning sequence sat there still half-packed — a held order
-    // from 11:51 was jumping ahead of lower-priority pre-11 work that
-    // hadn't actually finished yet.
-    const allExistingSequencesDone = existingSeqAscending().every(r => r.isComplete);
-    const eligible = (nonHeld.length === 0 && allExistingSequencesDone) ? heldOrders : nonHeld;
-    // Group size = how many of this run's eligible NEW orders share a
-    // groupName — an approximation of sortGroupsByPriority's own "size"
-    // (which scopes to every active item today, not just today's new
-    // orders), close enough for a tiebreak and cheap to compute from data
-    // already in memory rather than a further query.
+    // Every new or rescued order is processed THIS run, every run — nothing
+    // is ever excluded or left waiting on a clock (see file header for why:
+    // excluding late orders used to let them show up nowhere until some
+    // release condition fired, and that condition itself had a bug letting
+    // them jump ahead of unfinished pre-11 work once released). A late
+    // order's only penalty is rank (comparePriority, above) — it still
+    // tries to append into an existing open sequence exactly like anything
+    // else, and only a brand-new sequence built for it gets pushed behind
+    // today's whole pre-11 lineup.
+    const allNew = [...newMetas, ...rescueMetas];
+    // Group size = how many of this run's orders share a groupName — an
+    // approximation of sortGroupsByPriority's own "size" (which scopes to
+    // every active item today, not just today's new orders), close enough
+    // for a tiebreak and cheap to compute from data already in memory
+    // rather than a further query.
     const groupSizeCounts = new Map<string, number>();
-    eligible.forEach(m => groupSizeCounts.set(m.groupName, (groupSizeCounts.get(m.groupName) || 0) + 1));
-    eligible.forEach(m => { m.groupSize = groupSizeCounts.get(m.groupName) || 1; });
+    allNew.forEach(m => groupSizeCounts.set(m.groupName, (groupSizeCounts.get(m.groupName) || 0) + 1));
+    allNew.forEach(m => { m.groupSize = groupSizeCounts.get(m.groupName) || 1; });
 
-    const tier0s = eligible.filter(m => m.tier0).sort((a, b) => a.deadlineMins - b.deadlineMins);
-    const tier2s = eligible.filter(m => !m.tier0).sort(compareTier2);
-    const priorityOrder = [...tier0s, ...tier2s]; // every new (or rescued) order this run will try to place, best first
-    // No early return when this is empty (held, or nothing unsequenced) —
+    const tier0s = allNew.filter(m => m.tier0).sort((a, b) => a.deadlineMins - b.deadlineMins);
+    const tier2Early = allNew.filter(m => !m.tier0 && !m.late).sort(compareTier2);
+    const tier2Late = allNew.filter(m => !m.tier0 && m.late).sort(compareTier2);
+    const priorityOrder = [...tier0s, ...tier2Early, ...tier2Late]; // every new (or rescued) order this run will try to place, best first
+    // No early return when this is empty (nothing unsequenced this run) —
     // the pace-rebalancing step below is independent of whether there's
     // anything new to sequence this run, and still needs to run.
 
@@ -780,13 +791,14 @@ Deno.serve(async (req) => {
     // EARLIER, still-more-urgent tier0 sequence that had already been
     // placed — observed separately as a since-delivered Palladian order
     // ending up ranked below a later-deadline Bren/Purva one.
-    let lineup = existingSeqAscending().map(r => ({ seqNumber: r.seq, key: { tier0MinDeadline: r.tier0MinDeadline, bestRank: r.bestRank } }));
+    let lineup = existingSeqAscending().map(r => ({ seqNumber: r.seq, key: { tier0MinDeadline: r.tier0MinDeadline, late: r.late, bestRank: r.bestRank } }));
     const seqNumberForNew = new Map<number, number>(); // index into newSequences -> assigned sequence_number
     newSequences.forEach((seq, i) => {
       const bestRank = Math.min(...seq.map(m => m.rank));
       const tier0Members = seq.filter(m => m.tier0);
       const tier0MinDeadline = tier0Members.length ? Math.min(...tier0Members.map(m => m.deadlineMins)) : Infinity;
-      const key: LineupKey = { tier0MinDeadline, bestRank };
+      const late = seq.every(m => m.late); // one pre-11 member is enough to not demote the whole sequence
+      const key: LineupKey = { tier0MinDeadline, late, bestRank };
       let insertSeqNumber: number;
       if (!lineup.length) {
         insertSeqNumber = 1;
