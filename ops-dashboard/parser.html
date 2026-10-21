@@ -499,10 +499,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-seq-reason-timeline{background:#fbe9e7;color:#b3261e}
 .pk-seq-reason-priority{background:#eaf3ee;color:#2f6b4f}
 .pk-seq-packer-breakdown{margin:6px 0 0 22px;border-top:1px dashed #eee0d0;padding-top:4px}
-.pk-seq-packer-row{display:flex;justify-content:space-between;gap:8px;font-size:11px;padding:2px 0}
+.pk-seq-packer-row{padding:3px 0}
+.pk-seq-packer-head{display:flex;justify-content:space-between;gap:8px;font-size:11px}
 .pk-seq-packer-name{color:#2b2320;font-weight:600}
+.pk-seq-packer-cat{color:#8a7a6a;font-weight:400;text-transform:lowercase}
 .pk-seq-packer-unassigned .pk-seq-packer-name{color:#b3261e}
 .pk-seq-packer-count{color:#8a7a6a;font-variant-numeric:tabular-nums}
+.pk-seq-packer-pending{font-size:10.5px;color:#8a7a6a;font-style:italic;margin-top:1px}
 @media (max-width:600px){.pk-order-name{flex-basis:90px}}
 .pk-done-log{margin-top:6px;border-top:1px dashed #eee0d0;padding-top:6px}
 .pk-done-row{font-size:11px;color:#8a7a6a;padding:3px 4px}
@@ -7570,16 +7573,20 @@ function computeSequenceBoard(){
 
     // Per-packer breakdown — pending (open/packed, same definition the
     // cron's own "is this sequence complete" check uses) vs done (held/
-    // final/invoiced). Unassigned bucket for anything with no default/
-    // override packer, same as Team view.
-    const packerCounts=new Map(); // name -> {total,pending,done}
+    // final/invoiced), plus the actual pending item names (for a quick
+    // "what's left for her" glance without opening each card) and her
+    // fruit/vegetable category (Config-set, packers.category — explicit,
+    // not derived from what she happens to be carrying). Unassigned bucket
+    // for anything with no default/override packer, same as Team view.
+    const packerCounts=new Map(); // name -> {total,pending,done,pendingItems:[],category}
     [...ordersMap.values()].flat().forEach(item=>{
       const pid=effectivePackerIdForItem(item);
-      const name=pid?(packersCache.find(p=>p.id===pid)?.name||'Unassigned'):'Unassigned';
-      if(!packerCounts.has(name))packerCounts.set(name,{total:0,pending:0,done:0});
+      const packer=pid?packersCache.find(p=>p.id===pid):null;
+      const name=packer?.name||'Unassigned';
+      if(!packerCounts.has(name))packerCounts.set(name,{total:0,pending:0,done:0,pendingItems:[],category:packer?.category||null});
       const c=packerCounts.get(name);
       c.total++;
-      if(item.status==='open'||item.status==='packed')c.pending++;else c.done++;
+      if(item.status==='open'||item.status==='packed'){c.pending++;c.pendingItems.push(item.item_name);}else c.done++;
     });
     const packerBreakdown=[...packerCounts.entries()]
       .map(([name,c])=>({name,...c}))
@@ -7630,8 +7637,11 @@ function renderSequenceBoard(){
           ).join('')+'</div>'+
           '<div class="pk-seq-packer-breakdown">'+s.packerBreakdown.map(p=>
             '<div class="pk-seq-packer-row'+(p.name==='Unassigned'?' pk-seq-packer-unassigned':'')+'">'+
-              '<span class="pk-seq-packer-name">'+escH(p.name)+'</span>'+
-              '<span class="pk-seq-packer-count">'+p.total+' item'+(p.total!==1?'s':'')+' — '+p.pending+' pending, '+p.done+' done</span>'+
+              '<div class="pk-seq-packer-head">'+
+                '<span class="pk-seq-packer-name">'+escH(p.name)+(p.category?' <span class="pk-seq-packer-cat">('+escH(p.category)+')</span>':'')+'</span>'+
+                '<span class="pk-seq-packer-count">'+p.total+' item'+(p.total!==1?'s':'')+' — '+p.pending+' pending, '+p.done+' done</span>'+
+              '</div>'+
+              (p.pendingItems.length?'<div class="pk-seq-packer-pending">'+escH(p.pendingItems.join(', '))+'</div>':'')+
             '</div>'
           ).join('')+'</div>'
         :'')+
