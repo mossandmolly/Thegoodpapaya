@@ -6996,6 +6996,29 @@ function orderItemsByQueuePriority(items){
   return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
 }
 
+// Team tab's per-packer card columns need to show items in the actual
+// order a packer will reach them — today's real sequence_number, same as
+// her own "My Sequence" view and the Sequences board — not the older
+// client-recomputed priority sort above (orderItemsByQueuePriority predates
+// the auto-sequencer entirely and never looks at sequence_number, which is
+// why dragging a sequence never visibly reordered these cards). An
+// unsequenced order (sequence_number still null — hasn't had its first
+// cron run yet) sorts last, not first; created_at breaks a tie between two
+// orders that land in the exact same sequence.
+function orderItemsBySequence(items){
+  const bySoid={};
+  items.forEach(i=>(bySoid[i.sales_order_id]=bySoid[i.sales_order_id]||[]).push(i));
+  const orderMeta=Object.keys(bySoid).map(soid=>{
+    const o=packerCustomerMap[soid]||{};
+    const seq=o.sequence_number;
+    return{soid,items:bySoid[soid],
+      seq:seq==null?Infinity:Number(seq),
+      createdAt:o.created_at?new Date(o.created_at).getTime():Infinity};
+  });
+  orderMeta.sort((a,b)=>a.seq!==b.seq?a.seq-b.seq:a.createdAt-b.createdAt);
+  return orderMeta.flatMap(m=>m.items.sort((x,y)=>x.item_name.localeCompare(y.item_name)));
+}
+
 // This packer's current sequence: the lowest orders.sequence_number among
 // her own items (effectivePackerIdForItem) that still has something she
 // hasn't finished. 'held' deliberately does NOT count as pending — that's
@@ -7051,7 +7074,7 @@ function computeMyCurrentSequence(packerName){
 function computePackerTimeline(packerName){
   const packer=packersCache.find(p=>p.name===packerName);
   if(!packer)return{done:[],pending:[]};
-  const pending=orderItemsByQueuePriority(packerItems.filter(i=>i.status!=='cancelled'&&!i.packed_at&&effectivePackerIdForItem(i)===packer.id));
+  const pending=orderItemsBySequence(packerItems.filter(i=>i.status!=='cancelled'&&!i.packed_at&&effectivePackerIdForItem(i)===packer.id));
   const done=packerItems.filter(i=>i.status!=='cancelled'&&i.packed_at&&i.packed_by===packerName).sort((a,b)=>new Date(a.packed_at)-new Date(b.packed_at));
   return{done,pending};
 }
@@ -7090,7 +7113,7 @@ function formatPackRate(seconds){
 // to nobody" — once something's packed_by is set, it belongs in that
 // packer's own column regardless of assignment.
 function computeUnassignedTimeline(){
-  const pending=orderItemsByQueuePriority(packerItems.filter(i=>i.status!=='cancelled'&&!i.packed_at&&effectivePackerIdForItem(i)===null));
+  const pending=orderItemsBySequence(packerItems.filter(i=>i.status!=='cancelled'&&!i.packed_at&&effectivePackerIdForItem(i)===null));
   const done=packerItems.filter(i=>i.status!=='cancelled'&&i.packed_at&&!i.packed_by).sort((a,b)=>new Date(a.packed_at)-new Date(b.packed_at));
   return{done,pending};
 }
