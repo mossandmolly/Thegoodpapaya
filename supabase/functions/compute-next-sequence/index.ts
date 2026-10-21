@@ -26,34 +26,48 @@
 // An order placed at or after 11:00 IST ("late") is NEVER excluded or left
 // unsequenced waiting for a clock to strike — it's sequenced immediately,
 // same run, same append-then-new-sequence pipeline as anything else. The
-// only difference is rank: a late order (or a brand-new sequence built
-// entirely from late orders) always sorts AFTER every one of today's
-// pre-11 sequences, no matter how good its own community rank is — it
-// can still freely APPEND into an already-open pre-11 sequence of its own
-// community if one has room (that doesn't change that sequence's
-// position), but if it needs a brand new sequence, that sequence lands
-// behind the whole pre-11 lineup. This replaces an earlier hold-then-
-// release-at-15:30 design that excluded late orders from every run until
-// some condition freed them — which both left them invisible until
-// release AND, once released, let them compete for lineup position on
-// raw rank against pre-11 orders, observed letting an 11:51am order
-// outrank lower-priority pre-11 work that hadn't even finished packing
-// yet. Ranking by "late" instead of excluding sidesteps both problems:
-// always sequenced (nothing sits in limbo or shows as held anywhere),
-// and never able to outrank pre-11 work regardless of its own community
-// priority.
+// only difference is rank: EVERY one of today's pre-11 sequences must be
+// exhausted (across every community) before a late-only sequence is ever
+// picked up. Two things enforce this, deliberately, in two different
+// places: (1) appending — a late order can ONLY append into an existing
+// sequence that is itself late (built entirely from late orders); it can
+// never slot into a pre-11 sequence just because that sequence still has
+// room, since doing so would get it packed ahead of OTHER, lower-priority
+// pre-11 sequences that haven't been touched yet — that was the actual bug
+// behind a 12:45pm Villa order (Villa being high community priority)
+// repeatedly jumping ahead of lower-priority pre-11 work; (2) ranking — a
+// brand-new sequence built entirely from late orders always sorts after
+// every pre-11 sequence (see comparePriority's `late` tier), no matter how
+// good its own community rank is. Timeline (tier0) bypasses this cohort
+// split entirely in both places — see below. This replaces an earlier
+// hold-then-release-at-15:30 design that excluded late orders from every
+// run until some condition freed them, which left them invisible until
+// release AND let them compete for lineup position on raw rank once
+// released; ranking by "late" instead of excluding sidesteps both: always
+// sequenced (nothing sits in limbo or shows as held anywhere), and never
+// able to outrank pre-11 work regardless of its own community priority.
 //
-// IMPORTANT — this function DOES revisit already-sequenced orders, but only
-// to (a) ADD to them, or (b) promote a whole sequence ahead of others if it
-// has become timeline-urgent since it was built (see the promotion block
-// below) — it never re-balances anything already placed, moves an order
-// between sequences on its own, or touches packer assignment on anything
-// already there, so a packer already partway through a sequence never has
-// her own already-packed items reassigned out from under her. A manual drag
-// Somya has done stays exactly as placed UNLESS a live deadline (within 90
-// minutes) means it has to jump ahead — that's the one case "deliver_by
-// beats everything" was always meant to apply in real time, not just at the
-// moment a sequence was first built. A new order
+// IMPORTANT — this function DOES revisit already-sequenced orders. Three
+// things can happen to one, every single run, independent of whether
+// anything new showed up: (a) a new order ADDS to it (append, above); (b)
+// if one of its orders newly has a deliver_by within 90 minutes (tier0),
+// that ONE order first tries to merge into an EARLIER (better-ranked),
+// still-open sequence of its own community or a combinable partner —
+// ignoring the late/cohort split entirely, since timeline overrides it —
+// and only if nothing earlier can absorb it does the sequence's whole
+// position get promoted ahead of other not-yet-reached sequences (see the
+// tier0-upgrade and promotion blocks below); (c) otherwise it is NEVER
+// reordered, re-balanced, or has its packer assignments touched — so a
+// packer already partway through a sequence never has her own already-
+// packed items reassigned out from under her, and a manual drag Somya has
+// done stays exactly as placed unless a live deadline forces it to jump —
+// that's the one case "deliver_by beats everything" was always meant to
+// apply in real time, not just at the moment a sequence was first built.
+// Promotion (b) never reorders the CURRENT lowest-positioned, not-yet-
+// complete sequence out of its slot — packers are actively converging on
+// it right now, so bumping anything ahead of it would split it into two
+// half-done sequences instead of letting it finish; everything after it is
+// fair game. A new order
 // can only join an existing sequence that is (a) not yet COMPLETE — still
 // has at least one item that's 'open' or 'packed', the same "pending"
 // definition parser.html's computeMyCurrentSequence uses, so a sequence
@@ -291,15 +305,23 @@ function pickSequenceStart(remaining: OrderMeta[], recentGroups: string[]): numb
 // this function returns -1 and the caller (below) closes the sequence
 // there. Both tiers are filtered to orders that actually fit under the
 // remaining capacity — an order that doesn't is left in `remaining` for a
-// LATER sequence instead of delaying this one (the "23-24 item order" case).
-function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, dominantUniqueId: string | null, combinablePartners: Map<string, Set<string>>, capacityLeft: number): number {
-  let idx = remaining.findIndex(o => o.groupName === dominantGroup && o.itemCount <= capacityLeft);
+// LATER sequence instead of delaying this one (the "23-24 item order"
+// case) — and to orders in the SAME late/pre-11 cohort as the sequence's
+// dominant order (unless either side is tier0, which bypasses the cohort
+// split entirely) — otherwise a late order could pad its way into an
+// otherwise-pre-11 brand-new sequence, the same cross-cohort leak the
+// append loop guards against.
+function cohortOk(o: OrderMeta, dominantLate: boolean, dominantIsTier0: boolean): boolean {
+  return dominantIsTier0 || o.tier0 || o.late === dominantLate;
+}
+function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, dominantUniqueId: string | null, dominantLate: boolean, dominantIsTier0: boolean, combinablePartners: Map<string, Set<string>>, capacityLeft: number): number {
+  let idx = remaining.findIndex(o => o.groupName === dominantGroup && o.itemCount <= capacityLeft && cohortOk(o, dominantLate, dominantIsTier0));
   if (idx >= 0) return idx;
 
   if (dominantUniqueId) {
     const partners = combinablePartners.get(dominantUniqueId);
     if (partners && partners.size) {
-      idx = remaining.findIndex(o => o.uniqueId != null && partners.has(o.uniqueId) && o.itemCount <= capacityLeft);
+      idx = remaining.findIndex(o => o.uniqueId != null && partners.has(o.uniqueId) && o.itemCount <= capacityLeft && cohortOk(o, dominantLate, dominantIsTier0));
       if (idx >= 0) return idx;
     }
   }
@@ -413,6 +435,7 @@ Deno.serve(async (req) => {
 
     const now = istNow();
     const today = istDateStr(now);
+    const nowIso = new Date().toISOString();
 
     // ── Reset the rolling "recently sequenced societies" window on a new day ──
     const { data: stateRow } = await supabase.from('packer_sequence_state').select('*').eq('id', 1).maybeSingle();
@@ -614,32 +637,131 @@ Deno.serve(async (req) => {
       rec.isComplete = items.length > 0 && items.every(it => it.status !== 'open' && it.status !== 'packed');
     });
     const existingSeqAscending = () => [...existingSeqMap.values()].sort((a, b) => a.seq - b.seq);
+    const existingMetaBySoid = new Map(existingMetas.map(m => [m.order.sales_order_id, m]));
+
+    // ── Tier0 upgrade: an order in an EXISTING sequence that has become
+    // timeline-urgent (newly tier0) THIS run ───────────────────────────────
+    // First try to merge just that ONE order into an earlier (better-
+    // ranked), still-open sequence of its own community or a combinable
+    // partner — ignoring the late/cohort split entirely, since timeline
+    // overrides it. Only if nothing earlier can absorb it does the whole-
+    // sequence promotion below take over. Per Somya: "try to fit the order
+    // with timeline in a higher sequence of combinable group, if none
+    // exists, push the whole sequence up." Merging into an already-active
+    // sequence (even the one currently being packed) is fine here — it
+    // only ADDS to that batch, same as any append, so it never "stops" or
+    // splits anything.
+    let ordersUrgentMoved = 0;
+    for (const m of existingMetas.filter(x => x.tier0)) {
+      const curSeq = toNum(m.order.sequence_number)!;
+      const curRec = existingSeqMap.get(curSeq);
+      if (!curRec) continue;
+      const wouldAddCount = m.order.is_pickup ? 0 : m.itemCount;
+      let target: ExistingSeq | undefined;
+      for (const rec of existingSeqAscending()) {
+        if (rec.seq >= curSeq) break; // only an earlier (better-ranked) sequence counts as an upgrade
+        if (rec.isComplete || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
+        if (rec.communities.has(m.groupName)) { target = rec; break; }
+      }
+      if (!target && m.uniqueId) {
+        const partners = combinablePartners.get(m.uniqueId);
+        if (partners && partners.size) {
+          for (const rec of existingSeqAscending()) {
+            if (rec.seq >= curSeq) break;
+            if (rec.isComplete || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
+            if ([...rec.uniqueIds].some(id => partners.has(id))) { target = rec; break; }
+          }
+        }
+      }
+      if (!target) continue; // nothing earlier can absorb it — whole-sequence promotion (below) handles this instead
+
+      const { error: moveErr } = await supabase.from('orders')
+        .update({ sequence_number: target.seq, sequenced_at: nowIso })
+        .eq('sales_order_id', m.order.sales_order_id);
+      if (moveErr) { console.error(`Failed to move urgent order ${m.order.sales_order_id} to sequence ${target.seq}:`, moveErr.message); continue; }
+
+      // Place its (non-final/invoiced) items against target's CURRENT load
+      // only — same rule an append uses, never touching an item already there.
+      const movedItems = (itemsByOrder.get(m.order.sales_order_id) || [])
+        .filter(it => it.status !== 'final' && it.status !== 'invoiced');
+      const targetExistingItems = target.soids.flatMap(soid => itemsByOrder.get(soid) || []);
+      const itemWrites = new Map<string, string>([
+        ...placeNewItems(
+          movedItems.filter(it => itemCategory(it.item_name) === 'fruit'),
+          defaultPackerIdByItem, fruitPackerIds,
+          countsByPacker(targetExistingItems.filter(it => itemCategory(it.item_name) === 'fruit'), defaultPackerIdByItem, fruitPackerIds),
+        ),
+        ...placeNewItems(
+          movedItems.filter(it => itemCategory(it.item_name) === 'vegetable'),
+          defaultPackerIdByItem, vegPackerIds,
+          countsByPacker(targetExistingItems.filter(it => itemCategory(it.item_name) === 'vegetable'), defaultPackerIdByItem, vegPackerIds),
+        ),
+      ]);
+      for (const [itemId, packerId] of itemWrites) {
+        const { error: itemErr } = await supabase.from('order_items').update({ assigned_packer_id: packerId }).eq('id', itemId);
+        if (itemErr) console.error(`Failed to assign urgent-moved item ${itemId}:`, itemErr.message);
+      }
+      // Keep the in-memory item cache consistent too — these ItemRow
+      // objects are the same ones itemsByOrder hands out everywhere else
+      // this run (append matching, the write loop, pace-rebalancing), so a
+      // later step touching this same sequence sees the real current load
+      // instead of each item's pre-move assignment.
+      movedItems.forEach(it => { if (itemWrites.has(it.id)) it.assigned_packer_id = itemWrites.get(it.id)!; });
+      ordersUrgentMoved++;
+
+      // Keep in-memory state consistent for the rest of THIS run (the
+      // promotion block right below, lineup ranking, pace-rebalancing).
+      curRec.soids = curRec.soids.filter(s => s !== m.order.sales_order_id);
+      curRec.nonPickupCount -= wouldAddCount;
+      if (!m.order.is_pickup) curRec.nonPickupOrderCount -= 1;
+      curRec.tier0MinDeadline = Math.min(
+        Infinity,
+        ...curRec.soids.map(soid => existingMetaBySoid.get(soid)).filter((em): em is OrderMeta => !!em && em.tier0).map(em => em.deadlineMins),
+      );
+      curRec.late = curRec.soids.length ? curRec.soids.every(soid => existingMetaBySoid.get(soid)!.late) : true;
+
+      target.soids.push(m.order.sales_order_id);
+      target.communities.add(m.groupName);
+      if (m.uniqueId) target.uniqueIds.add(m.uniqueId);
+      if (m.rank < target.bestRank) target.bestRank = m.rank;
+      target.tier0MinDeadline = Math.min(target.tier0MinDeadline, m.deadlineMins);
+      target.late = target.late && m.late;
+      target.nonPickupCount += wouldAddCount;
+      if (!m.order.is_pickup) target.nonPickupOrderCount += 1;
+
+      m.order.sequence_number = target.seq;
+    }
 
     // ── Promote an already-sequenced, still-OPEN sequence that has become
-    // timeline-urgent since it was built ───────────────────────────────────
+    // timeline-urgent since it was built (and couldn't be solved by moving
+    // just the one order above) ────────────────────────────────────────────
     // "deliver_by within 90 minutes beats everything" (see file header) was
     // only ever being applied at the moment a sequence was first formed —
     // an order due at 1pm sitting in a sequence built at 9am (when it was
     // still 4 hours out, plain community-priority territory) stayed buried
     // there all the way to 1pm, because nothing ever re-ranked an existing
-    // sequence once placed. This re-sorts ONLY the still-open sequences
-    // (anything complete/dispatched is left exactly where it is — nothing
-    // to promote there) using the same comparePriority rule: every sequence
-    // that's currently tier0 (soonest deadline first, rank as tiebreak)
-    // moves ahead of every sequence that isn't. Non-tier0 sequences keep
-    // their CURRENT relative order exactly as-is, including anything Somya
-    // dragged by hand — this only ever pulls an urgent sequence FORWARD, it
-    // never reshuffles the rest. It reassigns which of today's already-in-
-    // use sequence_number VALUES each sequence sits at (the same slot
-    // values just swap owners), so it can never collide with or move a
-    // completed sequence's number, and only writes for a sequence whose
-    // position actually changed.
+    // sequence once placed. This re-sorts the still-open sequences (anything
+    // complete/dispatched is left exactly where it is — nothing to promote
+    // there) using the same comparePriority rule: every sequence that's
+    // currently tier0 (soonest deadline first, rank as tiebreak) moves ahead
+    // of every sequence that isn't. Non-tier0 sequences keep their CURRENT
+    // relative order exactly as-is, including anything Somya dragged by
+    // hand — this only ever pulls an urgent sequence FORWARD, it never
+    // reshuffles the rest. The CURRENT lowest-positioned, not-yet-complete
+    // sequence is never part of this reshuffle at all — packers are
+    // actively converging on it right now, so bumping anything ahead of it
+    // would split it into two half-done sequences instead of letting it
+    // finish; only sequences after it are reordered. It reassigns which of
+    // today's already-in-use sequence_number VALUES each sequence sits at
+    // (the same slot values just swap owners, excluding the locked current
+    // one), so it can never collide with or move a completed sequence's
+    // number, and only writes for a sequence whose position actually changed.
     {
-      const existingMetaBySoid = new Map(existingMetas.map(m => [m.order.sales_order_id, m]));
       const incomplete = existingSeqAscending().filter(r => !r.isComplete);
-      const slots = incomplete.map(r => r.seq);
-      const tier0Among = incomplete.filter(r => r.tier0MinDeadline !== Infinity).sort(comparePriority);
-      const nonTier0Among = incomplete.filter(r => r.tier0MinDeadline === Infinity);
+      const rest = incomplete.slice(1); // index 0 is the current in-progress sequence — locked, never reordered
+      const slots = rest.map(r => r.seq);
+      const tier0Among = rest.filter(r => r.tier0MinDeadline !== Infinity).sort(comparePriority);
+      const nonTier0Among = rest.filter(r => r.tier0MinDeadline === Infinity);
       const targetOrder = [...tier0Among, ...nonTier0Among];
 
       for (let i = 0; i < targetOrder.length; i++) {
@@ -707,7 +829,12 @@ Deno.serve(async (req) => {
 
     // ── Try to append each new order to an existing, still-open sequence —
     // same community first, then a combinable partner; whatever's left over
-    // goes into the brand-new-sequence builder below ─────────────────────
+    // goes into the brand-new-sequence builder below. A non-tier0 order can
+    // only append into a sequence in its OWN late/pre-11 cohort (rec.late
+    // matches m.late) — otherwise a late order could slot into room inside
+    // an already-ranked pre-11 sequence and get packed ahead of OTHER,
+    // lower-priority pre-11 sequences that haven't been touched yet. Tier0
+    // bypasses this entirely, same as everywhere else. ────────────────────
     const appendsBySeq = new Map<number, OrderMeta[]>();
     const homeless: OrderMeta[] = [];
     for (const m of priorityOrder) {
@@ -716,6 +843,7 @@ Deno.serve(async (req) => {
 
       for (const rec of existingSeqAscending()) {
         if (rec.isComplete || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
+        if (!m.tier0 && rec.late !== m.late) continue;
         if (rec.communities.has(m.groupName)) { target = rec; break; }
       }
       if (!target && m.uniqueId) {
@@ -723,6 +851,7 @@ Deno.serve(async (req) => {
         if (partners && partners.size) {
           for (const rec of existingSeqAscending()) {
             if (rec.isComplete || rec.nonPickupCount + wouldAddCount > SEQUENCE_HARD_CAP) continue;
+            if (!m.tier0 && rec.late !== m.late) continue;
             if ([...rec.uniqueIds].some(id => partners.has(id))) { target = rec; break; }
           }
         }
@@ -733,6 +862,7 @@ Deno.serve(async (req) => {
         if (m.uniqueId) target.uniqueIds.add(m.uniqueId);
         if (m.rank < target.bestRank) target.bestRank = m.rank;
         if (m.tier0 && m.deadlineMins < target.tier0MinDeadline) target.tier0MinDeadline = m.deadlineMins;
+        target.late = target.late && m.late;
         target.nonPickupCount += wouldAddCount;
         if (!appendsBySeq.has(target.seq)) appendsBySeq.set(target.seq, []);
         appendsBySeq.get(target.seq)!.push(m);
@@ -751,10 +881,12 @@ Deno.serve(async (req) => {
       let runningCount = start.order.is_pickup ? 0 : start.itemCount;
       const dominantGroup = start.groupName;
       const dominantUniqueId = start.uniqueId;
+      const dominantLate = start.late;
+      const dominantIsTier0 = start.tier0;
 
       while (runningCount < SEQUENCE_TARGET && remaining.length) {
         const capacityLeft = SEQUENCE_HARD_CAP - runningCount;
-        const idx = pickNextCandidate(remaining, dominantGroup, dominantUniqueId, combinablePartners, capacityLeft);
+        const idx = pickNextCandidate(remaining, dominantGroup, dominantUniqueId, dominantLate, dominantIsTier0, combinablePartners, capacityLeft);
         if (idx < 0) break; // nothing left fits under the cap right now
         const next = remaining.splice(idx, 1)[0];
         seq.push(next);
@@ -814,7 +946,6 @@ Deno.serve(async (req) => {
     });
 
     // ── Write everything ───────────────────────────────────────────────────
-    const nowIso = new Date().toISOString();
     let ordersSequenced = 0, ordersAppended = 0;
 
     for (const [seqNum, newMembers] of appendsBySeq) {
@@ -958,7 +1089,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended, items_rebalanced: itemsRebalanced }),
+      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended, orders_urgent_moved: ordersUrgentMoved, items_rebalanced: itemsRebalanced }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
