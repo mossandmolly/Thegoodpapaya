@@ -3004,40 +3004,25 @@ async function pushRows(rows,salesOrderIdFor){
   if(!createOrderRes.ok)throw new Error('orders: '+(createOrderData.error||'failed'));
 
   // 2. Line items — held if (sales_order_id, item_name, requested_quantity)
-  // was ALSO just seen in this exact push, or already exists in the DB from
-  // a push in the last DUP_WINDOW_MS — catching the real target (an
-  // operator double-clicking push, or the same image/message getting
-  // parsed and pushed twice within a couple minutes of each other) without
-  // also catching a customer's genuinely separate second order later the
-  // same day that happens to repeat an earlier item+quantity — sales_order_id
-  // is per customer PER DAY (see salesOrderIdFor above), so two real orders
-  // hours apart share one soid and were being wrongly collapsed into one
-  // 'held' line before this had a time check at all. Used to check +
-  // insert one row at a time in a loop — 145 rows meant 290 sequential
-  // round trips (a SELECT then an INSERT, each awaited before the next
-  // started), which is what made a 145-row push take ~2 minutes. Now it's
-  // one dedup-check query covering every sales_order_id in this push
-  // (chunked, same pattern as fetchCustomerMap), plus one bulk insert — a
-  // handful of round trips total regardless of row count.
-  const DUP_WINDOW_MS=15*60*1000;
-  const nowMs=Date.now();
+  // already exists. Used to check + insert one row at a time in a loop —
+  // 145 rows meant 290 sequential round trips (a SELECT then an INSERT,
+  // each awaited before the next started), which is what made a 145-row
+  // push take ~2 minutes. Now it's one dedup-check query covering every
+  // sales_order_id in this push (chunked, same pattern as
+  // fetchCustomerMap), plus one bulk insert — a handful of round trips
+  // total regardless of row count.
   const soids=[...new Set(rows.map(r=>salesOrderIdFor(r)))];
-  const recentExistingKeys=new Set();
+  const existingKeys=new Set();
   const DEDUP_CHUNK=200;
   for(let i=0;i<soids.length;i+=DEDUP_CHUNK){
     const{data,error}=await sb.from('order_items')
-      .select('sales_order_id,item_name,requested_quantity,created_at')
+      .select('sales_order_id,item_name,requested_quantity')
       .in('sales_order_id',soids.slice(i,i+DEDUP_CHUNK));
     if(error)throw new Error('check: '+error.message);
-    (data||[]).forEach(o=>{
-      if(nowMs-new Date(o.created_at).getTime()<=DUP_WINDOW_MS){
-        recentExistingKeys.add(o.sales_order_id+'|'+o.item_name+'|'+o.requested_quantity);
-      }
-    });
+    (data||[]).forEach(o=>existingKeys.add(o.sales_order_id+'|'+o.item_name+'|'+o.requested_quantity));
   }
 
   let opened=0,held=0;
-  const seenThisPush=new Set(); // a repeat within THIS SAME push is always the same message/paste re-sent — always held, no time check needed
   const toInsert=rows.map(r=>{
     const soid=salesOrderIdFor(r);
     const qty=parseFloat(r.quantity)||0;
@@ -3046,8 +3031,14 @@ async function pushRows(rows,salesOrderIdFor){
     // Order's own pickup path uses, so order_items.item_name is never null.
     const itemName=r.item_name||'Pickup';
     const key=soid+'|'+itemName+'|'+qty;
-    const status=(recentExistingKeys.has(key)||seenThisPush.has(key))?'held':'open';
-    seenThisPush.add(key);
+    // A duplicate of an earlier row within this SAME push (not just
+    // against what's already in the DB) needs to be caught too — add
+    // each key as it's assigned so a repeat later in the same batch also
+    // resolves to 'held', matching what the old row-by-row check did
+    // (the first occurrence would already be in the DB by the time the
+    // second one's SELECT ran).
+    const status=existingKeys.has(key)?'held':'open';
+    existingKeys.add(key);
     status==='held'?held++:opened++;
     // Standing instructions (Config → Customer Instructions) are merged in
     // by a database trigger on order_items (migration 050) — enforced at
