@@ -28,10 +28,16 @@
 // no reason (see the nonHeld/heldOrders split further down).
 //
 // IMPORTANT — this function DOES revisit already-sequenced orders, but only
-// to ADD to them, never to move, reorder, or re-balance anything already
-// placed there (manual or automatic) — so a drag Somya has already done is
-// never undone, and a packer already partway through a sequence never has
-// her own already-packed items reassigned out from under her. A new order
+// to (a) ADD to them, or (b) promote a whole sequence ahead of others if it
+// has become timeline-urgent since it was built (see the promotion block
+// below) — it never re-balances anything already placed, moves an order
+// between sequences on its own, or touches packer assignment on anything
+// already there, so a packer already partway through a sequence never has
+// her own already-packed items reassigned out from under her. A manual drag
+// Somya has done stays exactly as placed UNLESS a live deadline (within 90
+// minutes) means it has to jump ahead — that's the one case "deliver_by
+// beats everything" was always meant to apply in real time, not just at the
+// moment a sequence was first built. A new order
 // can only join an existing sequence that is (a) not yet COMPLETE — still
 // has at least one item that's 'open' or 'packed', the same "pending"
 // definition parser.html's computeMyCurrentSequence uses, so a sequence
@@ -221,6 +227,21 @@ function compareTier2(a: OrderMeta, b: OrderMeta): number {
   if (a.groupSize !== b.groupSize) return a.groupSize - b.groupSize;
   if (a.groupName !== b.groupName) return a.groupName.localeCompare(b.groupName);
   return a.createdAtMs - b.createdAtMs;
+}
+
+// Two-level precedence used both to rank a brand-new sequence into today's
+// lineup and to promote an already-sequenced one that's become timeline-
+// urgent since it was built (see the promotion block below): a sequence
+// with a live timeline order (tier0) always ranks ahead of every plain-
+// community-rank sequence, soonest-deadline-first, including overdue; when
+// two timeline sequences tie on deadline, community rank breaks the tie
+// rather than falling back to build/placement order.
+interface LineupKey { tier0MinDeadline: number; bestRank: number }
+function comparePriority(a: LineupKey, b: LineupKey): number {
+  const aTier0 = a.tier0MinDeadline !== Infinity, bTier0 = b.tier0MinDeadline !== Infinity;
+  if (aTier0 !== bTier0) return aTier0 ? -1 : 1;
+  if (aTier0 && a.tier0MinDeadline !== b.tier0MinDeadline) return a.tier0MinDeadline - b.tier0MinDeadline;
+  return a.bestRank - b.bestRank;
 }
 
 // Picks which remaining order starts a brand new sequence: prefers one NOT
@@ -526,14 +547,15 @@ Deno.serve(async (req) => {
       bestRank: number;
       tier0MinDeadline: number; // Infinity unless this sequence still has a live timeline order
       nonPickupCount: number;
-      anyDispatched: boolean;
+      nonPickupOrderCount: number;          // # of non-pickup ORDERS (not items) in this sequence
+      dispatchedNonPickupOrderCount: number; // # of those whose trip has actually left
       isComplete: boolean;
     }
     const existingSeqMap = new Map<number, ExistingSeq>();
     existingMetas.forEach(m => {
       const seqNum = toNum(m.order.sequence_number)!;
       if (!existingSeqMap.has(seqNum)) {
-        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, nonPickupCount: 0, anyDispatched: false, isComplete: true });
+        existingSeqMap.set(seqNum, { seq: seqNum, soids: [], communities: new Set(), uniqueIds: new Set(), bestRank: Infinity, tier0MinDeadline: Infinity, nonPickupCount: 0, nonPickupOrderCount: 0, dispatchedNonPickupOrderCount: 0, isComplete: true });
       }
       const rec = existingSeqMap.get(seqNum)!;
       rec.soids.push(m.order.sales_order_id);
@@ -541,25 +563,79 @@ Deno.serve(async (req) => {
       if (m.uniqueId) rec.uniqueIds.add(m.uniqueId);
       if (m.rank < rec.bestRank) rec.bestRank = m.rank;
       if (m.tier0 && m.deadlineMins < rec.tier0MinDeadline) rec.tier0MinDeadline = m.deadlineMins;
-      if (!m.order.is_pickup) rec.nonPickupCount += m.itemCount;
-      if (m.order.dispatched_at) rec.anyDispatched = true;
+      if (!m.order.is_pickup) {
+        rec.nonPickupCount += m.itemCount;
+        rec.nonPickupOrderCount += 1;
+        if (m.order.dispatched_at) rec.dispatchedNonPickupOrderCount += 1;
+      }
     });
-    // Complete = either (a) a rider's trip for this sequence has actually
-    // left (any order in it has dispatched_at set — the real-world signal;
-    // once a trip is out, nothing can physically be added to it, no matter
-    // what any item's status still says in the system), or (b) nothing left
-    // in it is 'open'/'packed' — the exact same "pending" definition
+    // Complete = either (a) EVERY non-pickup order in the sequence has
+    // actually shipped (dispatched_at set on all of them), or (b) nothing
+    // left in it is 'open'/'packed' — the exact same "pending" definition
     // parser.html's computeMyCurrentSequence uses to decide a packer is
     // done with a sequence. Item status alone isn't reliable for this: it
     // was letting a sequence absorb new orders hours after its real
-    // dispatch, observed spanning created_at times from 9:20am to 5:07pm
-    // in one "done" sequence, which obviously never happened as one trip.
+    // dispatch, observed spanning created_at times from 9:20am to 5:07pm in
+    // one "done" sequence, which obviously never happened as one trip. But
+    // dispatch itself isn't always one atomic trip either — orders within a
+    // sequence can and do go out separately, one rider at a time, as each
+    // is ready — so checking for ANY single dispatched order was marking
+    // the WHOLE sequence complete (and kicking off orphan-rescue below,
+    // which re-sequences every other still-pending order in it elsewhere)
+    // the moment just one order shipped early, blowing apart a sequence
+    // Somya had just arranged while most of it was still mid-pack. Requires
+    // ALL of them now.
     existingSeqMap.forEach(rec => {
-      if (rec.anyDispatched) { rec.isComplete = true; return; }
+      if (rec.nonPickupOrderCount > 0 && rec.dispatchedNonPickupOrderCount >= rec.nonPickupOrderCount) {
+        rec.isComplete = true;
+        return;
+      }
       const items = rec.soids.flatMap(soid => itemsByOrder.get(soid) || []);
       rec.isComplete = items.length > 0 && items.every(it => it.status !== 'open' && it.status !== 'packed');
     });
     const existingSeqAscending = () => [...existingSeqMap.values()].sort((a, b) => a.seq - b.seq);
+
+    // ── Promote an already-sequenced, still-OPEN sequence that has become
+    // timeline-urgent since it was built ───────────────────────────────────
+    // "deliver_by within 90 minutes beats everything" (see file header) was
+    // only ever being applied at the moment a sequence was first formed —
+    // an order due at 1pm sitting in a sequence built at 9am (when it was
+    // still 4 hours out, plain community-priority territory) stayed buried
+    // there all the way to 1pm, because nothing ever re-ranked an existing
+    // sequence once placed. This re-sorts ONLY the still-open sequences
+    // (anything complete/dispatched is left exactly where it is — nothing
+    // to promote there) using the same comparePriority rule: every sequence
+    // that's currently tier0 (soonest deadline first, rank as tiebreak)
+    // moves ahead of every sequence that isn't. Non-tier0 sequences keep
+    // their CURRENT relative order exactly as-is, including anything Somya
+    // dragged by hand — this only ever pulls an urgent sequence FORWARD, it
+    // never reshuffles the rest. It reassigns which of today's already-in-
+    // use sequence_number VALUES each sequence sits at (the same slot
+    // values just swap owners), so it can never collide with or move a
+    // completed sequence's number, and only writes for a sequence whose
+    // position actually changed.
+    {
+      const existingMetaBySoid = new Map(existingMetas.map(m => [m.order.sales_order_id, m]));
+      const incomplete = existingSeqAscending().filter(r => !r.isComplete);
+      const slots = incomplete.map(r => r.seq);
+      const tier0Among = incomplete.filter(r => r.tier0MinDeadline !== Infinity).sort(comparePriority);
+      const nonTier0Among = incomplete.filter(r => r.tier0MinDeadline === Infinity);
+      const targetOrder = [...tier0Among, ...nonTier0Among];
+
+      for (let i = 0; i < targetOrder.length; i++) {
+        const rec = targetOrder[i];
+        const newSeq = slots[i];
+        if (rec.seq === newSeq) continue;
+        const { error: promErr } = await supabase.from('orders')
+          .update({ sequence_number: newSeq })
+          .in('sales_order_id', rec.soids);
+        if (promErr) { console.error(`Failed to promote sequence ${rec.seq} to ${newSeq}:`, promErr.message); continue; }
+        existingSeqMap.delete(rec.seq);
+        rec.seq = newSeq;
+        existingSeqMap.set(newSeq, rec);
+        for (const soid of rec.soids) { const em = existingMetaBySoid.get(soid); if (em) em.order.sequence_number = newSeq; }
+      }
+    }
 
     // ── Orphan rescue: an order whose own sequence has already dispatched
     // (a colleague's trip left) but which still has an 'open' or 'held'
@@ -576,7 +652,7 @@ Deno.serve(async (req) => {
     // originally placed.
     const rescueMetas = existingMetas.filter(m => {
       const rec = existingSeqMap.get(toNum(m.order.sequence_number)!);
-      if (!rec?.anyDispatched) return false;
+      if (!rec?.isComplete) return false;
       const items = itemsByOrder.get(m.order.sales_order_id) || [];
       return items.some(it => it.status === 'open' || it.status === 'held');
     });
@@ -696,13 +772,6 @@ Deno.serve(async (req) => {
     // EARLIER, still-more-urgent tier0 sequence that had already been
     // placed — observed separately as a since-delivered Palladian order
     // ending up ranked below a later-deadline Bren/Purva one.
-    interface LineupKey { tier0MinDeadline: number; bestRank: number }
-    function comparePriority(a: LineupKey, b: LineupKey): number {
-      const aTier0 = a.tier0MinDeadline !== Infinity, bTier0 = b.tier0MinDeadline !== Infinity;
-      if (aTier0 !== bTier0) return aTier0 ? -1 : 1;
-      if (aTier0 && a.tier0MinDeadline !== b.tier0MinDeadline) return a.tier0MinDeadline - b.tier0MinDeadline;
-      return a.bestRank - b.bestRank;
-    }
     let lineup = existingSeqAscending().map(r => ({ seqNumber: r.seq, key: { tier0MinDeadline: r.tier0MinDeadline, bestRank: r.bestRank } }));
     const seqNumberForNew = new Map<number, number>(); // index into newSequences -> assigned sequence_number
     newSequences.forEach((seq, i) => {
