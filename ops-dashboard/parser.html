@@ -1711,6 +1711,7 @@ function switchTab(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.id==='tab-'+name));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
+  if(name!=='packer')stopMySequenceReminder(); // only relevant while actually looking at My Sequence
   if(name==='config')renderConfig();
   if(name==='live')loadLiveView();
   if(name==='today')loadTodaysOrders();
@@ -6859,6 +6860,24 @@ function setPackerScope(scope){
 // all can just keep using Grid, same as always.
 let packerViewMode='grid'; // 'grid' | 'single'
 
+// Every 5 minutes (matching compute-next-sequence's own cron interval)
+// while a packer is on My Sequence, prompt her to save any in-progress
+// quantity entry and refresh — deliberately a hard confirm, not a silent
+// re-fetch: loadPackerView() replaces the whole grid, which would wipe out
+// a qty she's mid-typing into a card but hasn't hit the ✓ tick to save yet.
+let mySequenceReminderTimer=null;
+function startMySequenceReminder(){
+  stopMySequenceReminder();
+  mySequenceReminderTimer=setInterval(async()=>{
+    if(packerViewMode!=='single'||document.hidden)return;
+    const refresh=await uxConfirm('New sequence data may be ready. Save any quantity you\'re entering, then refresh to see it.');
+    if(refresh)loadPackerView();
+  },5*60*1000);
+}
+function stopMySequenceReminder(){
+  if(mySequenceReminderTimer){clearInterval(mySequenceReminderTimer);mySequenceReminderTimer=null;}
+}
+
 // The owner's rule is exactly "packing must start now to make T-120" — a
 // separate constant from PACK_TO_DELIVERY_BUFFER_MIN/ESCALATE_LEAD_MIN
 // above, which power Trip view's own, different escalation display.
@@ -7086,6 +7105,7 @@ async function setPackerViewMode(mode){
   document.getElementById('pk-search').style.display=team?'none':'';
   if(single)await ensurePackerIdentityForQueue();
   renderPackerGrid();
+  if(single)startMySequenceReminder();else stopMySequenceReminder();
 }
 
 const pkIdentityModal=document.getElementById('pk-identity-modal'),pkIdentitySelect=document.getElementById('pk-identity-select');
