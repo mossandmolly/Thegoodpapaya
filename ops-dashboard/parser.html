@@ -467,6 +467,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-team-overall-row .pk-team-bar-label{color:#2b2320;font-weight:700}
 .pk-team-bar-rate{font-size:10px;color:#8a7a6a;margin:-3px 0 6px 128px}
 @media (max-width:600px){.pk-team-bar-rate{margin-left:88px}}
+.pk-cat-toggle-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;grid-column:1/-1}
+.pk-cat-toggle{display:flex;align-items:center;gap:6px;padding:5px 8px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;font-size:11px}
+.pk-cat-toggle-name{font-weight:600;color:#2b2320}
+.pk-cat-toggle-btns{display:flex;gap:3px}
+.pk-cat-btn{padding:3px 8px;border:1px solid #d8cbb8;border-radius:5px;background:#fff;color:#8a7a6a;font-size:10px;cursor:pointer}
+.pk-cat-btn.active{background:#2f6b4f;border-color:#2f6b4f;color:#fff}
+
 /* Somya's drag/arrow-reorderable "Current Order" stack — completion bar
    reuses packProgressColor's existing red/amber/green convention. */
 .pk-order-stack{margin-bottom:14px;padding:10px 12px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;grid-column:1/-1}
@@ -2411,6 +2418,32 @@ async function setPackerCategory(id,category){
   if(error){uxAlert('Failed to save: '+error.message);return;}
   const p=packersCache.find(p=>p.id===id);
   if(p)p.category=category||null;
+}
+
+// Same write as Config's own category dropdown (setPackerCategory) — just
+// surfaced at the top of the Team tab too, since switching someone's
+// category is exactly the kind of mid-day call Somya makes while already
+// looking at today's sequences, not something that should require a trip
+// to Config. compute-next-sequence's pace-rebalancing picks up the change
+// on its own within a few ticks — nothing else to trigger here.
+async function setPackerCategoryAndRerender(id,category){
+  await setPackerCategory(id,category);
+  renderPackerTeamView();
+}
+
+function renderPackerCategoryToggles(){
+  if(!isVegPerfAllowed||!packersCache.length)return '';
+  return '<div class="pk-cat-toggle-row">'+
+    packersCache.map(p=>
+      '<div class="pk-cat-toggle">'+
+        '<span class="pk-cat-toggle-name">'+escH(p.name)+'</span>'+
+        '<span class="pk-cat-toggle-btns">'+
+          '<button class="pk-cat-btn'+(p.category==='fruit'?' active':'')+'" onclick="setPackerCategoryAndRerender('+escH(JSON.stringify(p.id))+',\'fruit\')">Fruit</button>'+
+          '<button class="pk-cat-btn'+(p.category==='vegetable'?' active':'')+'" onclick="setPackerCategoryAndRerender('+escH(JSON.stringify(p.id))+',\'vegetable\')">Veg</button>'+
+        '</span>'+
+      '</div>'
+    ).join('')+
+  '</div>';
 }
 
 // One row per FRUITS entry, one dropdown each — exactly one packer (or
@@ -7834,6 +7867,7 @@ function renderPackerTeamView(){
     :perPacker.filter(r=>r.packer.name===teamPackerFilter);
 
   grid.innerHTML=
+    renderPackerCategoryToggles()+
     renderSequenceBoard()+
     renderPackerTeamSummary(summaryRows)+
     renderTeamPackerFilterPills(hasUnassigned)+
