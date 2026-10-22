@@ -488,10 +488,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-cat-toggle{display:flex;align-items:center;gap:6px;padding:5px 8px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;font-size:11px}
 .pk-cat-toggle.pk-cat-toggle-inactive{opacity:0.5}
 .pk-cat-toggle-name{font-weight:600;color:#2b2320}
-/* Workload flag — red if clearly overloaded, green if clearly free,
-   relative to every other active packer (see renderPackerCategoryToggles). */
-.pk-cat-toggle-name.pk-cat-toggle-overloaded{color:#c0392b}
-.pk-cat-toggle-name.pk-cat-toggle-free{color:#1b8a3e}
+/* Workload flag — red background if clearly overloaded, green if clearly
+   free, relative to every other active packer (see
+   renderPackerCategoryToggles). On the whole card, not just the name. */
+.pk-cat-toggle.pk-cat-toggle-overloaded{background:#fbdcd7;border-color:#e0978c}
+.pk-cat-toggle.pk-cat-toggle-free{background:#dcf5e3;border-color:#9ed6ae}
 .pk-cat-toggle-btns{display:flex;gap:3px}
 .pk-cat-btn{padding:3px 8px;border:1px solid #d8cbb8;border-radius:5px;background:#fff;color:#8a7a6a;font-size:10px;cursor:pointer}
 .pk-cat-btn.active{background:#2f6b4f;border-color:#2f6b4f;color:#fff}
@@ -2532,8 +2533,8 @@ function renderPackerCategoryToggles(){
   }
   return '<div class="pk-cat-toggle-row">'+
     packersCache.map(p=>
-      '<div class="pk-cat-toggle'+(p.active?'':' pk-cat-toggle-inactive')+'">'+
-        '<span class="pk-cat-toggle-name'+workloadClass(p)+'" title="'+(p.active?pendingCountById.get(p.id)+' item(s) pending today':'Excluded from assignment')+'">'+escH(p.name)+'</span>'+
+      '<div class="pk-cat-toggle'+(p.active?'':' pk-cat-toggle-inactive')+workloadClass(p)+'">'+
+        '<span class="pk-cat-toggle-name" title="'+(p.active?pendingCountById.get(p.id)+' item(s) pending today':'Excluded from assignment')+'">'+escH(p.name)+'</span>'+
         '<span class="pk-cat-toggle-btns">'+
           '<button class="pk-cat-btn'+(p.category==='fruit'?' active':'')+'" onclick="setPackerCategoryAndRerender('+escH(JSON.stringify(p.id))+',\'fruit\')">Fruit</button>'+
           '<button class="pk-cat-btn'+(p.category==='vegetable'?' active':'')+'" onclick="setPackerCategoryAndRerender('+escH(JSON.stringify(p.id))+',\'vegetable\')">Veg</button>'+
