@@ -1168,13 +1168,31 @@ Deno.serve(async (req) => {
     // precision available to bisect into again before the next one. Only
     // writes for a sequence whose value isn't already its target integer, so
     // once things settle this is a no-op most runs.
-    // existingMetas alone misses any sequence built fresh THIS run (homeless
-    // orders placed into newSequences above) — those were never re-synced
-    // back into existingMetas, so a brand-new sequence's fractional insert
-    // (line ~1006) would otherwise be left out of this sweep entirely.
+    // existingMetas is NOT a complete picture of today's sequence_numbers:
+    // (1) classify() (line ~580) drops any order with zero active items
+    // ("nothing left to pack — skip entirely") before existingMetas is even
+    // built, so an order that's fully invoiced/dispatched, or whose one
+    // item got individually cancelled, keeps a real sequence_number in the
+    // database but is invisible to anything built only from existingMetas;
+    // (2) a sequence built fresh THIS run (newSequences) or an order
+    // appended into an already-open one THIS run (appendsBySeq) never gets
+    // synced back into an OrderMeta's `order` object either. So the sweep
+    // starts from the plain `orders` array instead — the actual full
+    // fetch, every non-cancelled order today regardless of item status —
+    // which tier0-upgrade and whole-sequence promotion already keep
+    // current (they mutate `m.order` in place, and `order` IS this same
+    // array's element, same object reference), then overlays this run's
+    // append/new-sequence writes on top, since those two don't mutate
+    // `order` in memory at all.
     let sequencesDefragmented = 0;
     const soidToSeqFinal = new Map<string, number>();
-    for (const m of existingMetas) soidToSeqFinal.set(m.order.sales_order_id, toNum(m.order.sequence_number)!);
+    for (const o of orders) {
+      const n = toNum(o.sequence_number);
+      if (n != null) soidToSeqFinal.set(o.sales_order_id, n);
+    }
+    for (const [seqNum, newMembers] of appendsBySeq) {
+      for (const m of newMembers) soidToSeqFinal.set(m.order.sales_order_id, seqNum);
+    }
     newSequences.forEach((seq, i) => {
       const seqNum = seqNumberForNew.get(i)!;
       for (const m of seq) soidToSeqFinal.set(m.order.sales_order_id, seqNum);
