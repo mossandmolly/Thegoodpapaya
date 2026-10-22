@@ -8365,9 +8365,10 @@ let revealPhoneTimers=new Map(); // soid -> auto-hide timeout id
 let dvEditingNotes=null;
 let deliveryCatalogByItem={};
 let deliveryScope='all'; // 'all' | 'mine'
-let dvSeqFilter=null; // sequence_number, or null for no filter — set by clicking a swatch in the colour legend
-function toggleDvSeqFilter(seq){
-  dvSeqFilter=(dvSeqFilter===seq)?null:seq;
+let dvSeqFilter=null; // array of sequence_numbers (one colour group), or null for no filter — set by clicking a swatch in the colour legend
+function toggleDvSeqFilter(members){
+  const same=dvSeqFilter&&dvSeqFilter.length===members.length&&members.every(m=>dvSeqFilter.includes(m));
+  dvSeqFilter=same?null:members;
   renderDeliveryList();
 }
 let deliveryStatusFilter='pending'; // 'all' | 'pending' | 'delivered' | 'cancelled' — 'pending' covers both not_dispatched and ofd (not yet delivered, not cancelled)
@@ -8859,31 +8860,70 @@ function renderDeliveryList(){
     .filter(order=>deliveryScope==='all'||order.assignedRider===riderName);
   renderDeliverySummaryPills(scoped);
 
-  // One blinking colour per distinct sequence among orders still worth
-  // highlighting (ready to go, not already out for delivery) — so orders
-  // that need to go out together are visually obvious at a glance, no
-  // matter which society header they land under.
-  const readyBySeq=new Map();
+  // One blinking colour per GROUP of sequences that can ship together —
+  // not just the exact same sequence, but any other sequence sharing a
+  // community, or communities in the same Config-curated combinable group
+  // (the same rule the Packer tab's merge-up arrow uses) — since those
+  // are exactly the orders worth loading into one trip. Union-find over
+  // today's still-ready sequences: two sequences merge into one group the
+  // moment any community of one matches or is combinable with any
+  // community of the other.
+  const readyOrdersBySeq=new Map();
   scoped
     .filter(o=>o.sequenceNumber!=null&&o.deliveryStatus!=='ofd'&&o.deliveryStatus!=='delivered'&&o.deliveryStatus!=='partially_delivered')
-    .forEach(o=>readyBySeq.set(o.sequenceNumber,(readyBySeq.get(o.sequenceNumber)||0)+1));
+    .forEach(o=>{
+      if(!readyOrdersBySeq.has(o.sequenceNumber))readyOrdersBySeq.set(o.sequenceNumber,[]);
+      readyOrdersBySeq.get(o.sequenceNumber).push(o);
+    });
+  const seqParent=new Map([...readyOrdersBySeq.keys()].map(s=>[s,s]));
+  function seqFind(s){ while(seqParent.get(s)!==s)s=seqParent.get(s); return s; }
+  function seqUnion(a,b){ const ra=seqFind(a),rb=seqFind(b); if(ra!==rb)seqParent.set(ra,rb); }
+  const seqsByCommunity=new Map(); // community unique_id -> Set of seq numbers containing it
+  readyOrdersBySeq.forEach((orders,seq)=>{
+    orders.forEach(o=>{
+      const community=matchCommunityPriority(o.society||o.customer);
+      if(!community)return;
+      if(!seqsByCommunity.has(community.unique_id))seqsByCommunity.set(community.unique_id,new Set());
+      seqsByCommunity.get(community.unique_id).add(seq);
+    });
+  });
+  seqsByCommunity.forEach(seqSet=>{ // same community, different sequences
+    const arr=[...seqSet];
+    for(let k=1;k<arr.length;k++)seqUnion(arr[0],arr[k]);
+  });
+  seqsByCommunity.forEach((seqSet,uniqueId)=>{ // combinable-partner communities
+    communityCombinablePartners(uniqueId).forEach(partnerId=>{
+      const partnerSeqs=seqsByCommunity.get(partnerId);
+      if(!partnerSeqs)return;
+      seqSet.forEach(s1=>partnerSeqs.forEach(s2=>seqUnion(s1,s2)));
+    });
+  });
+  const readySeqNumbersSorted=[...readyOrdersBySeq.keys()].sort((a,b)=>a-b);
+  const membersByRoot=new Map();
+  readySeqNumbersSorted.forEach(seq=>{
+    const root=seqFind(seq);
+    if(!membersByRoot.has(root))membersByRoot.set(root,[]);
+    membersByRoot.get(root).push(seq);
+  });
   const seqColorMap=new Map();
-  const readySeqNumbersSorted=[...readyBySeq.keys()].sort((a,b)=>a-b);
-  readySeqNumbersSorted.forEach((seq,i)=>seqColorMap.set(seq,DV_SEQ_PALETTE[i%DV_SEQ_PALETTE.length]));
+  const rootColor=new Map();
+  [...membersByRoot.keys()].sort((a,b)=>a-b).forEach((root,i)=>rootColor.set(root,DV_SEQ_PALETTE[i%DV_SEQ_PALETTE.length]));
+  readySeqNumbersSorted.forEach(seq=>seqColorMap.set(seq,rootColor.get(seqFind(seq))));
   // Same clean 1/2/3... numbering the Packer tab's Sequences board shows,
   // not the raw (possibly fractional) sequence_number — computed from
   // every sequence with any non-cancelled order today, not just the
   // subset currently visible, so the number stays stable as filters change.
   const deliveryPositions=buildSequencePositions(Object.keys(deliverySeqStats).map(Number));
   // Legend doubles as a filter — click a swatch to narrow the list down to
-  // just that sequence, click again (or the same swatch) to clear it.
-  document.getElementById('dv-seq-legend').innerHTML=readySeqNumbersSorted.length
-    ?readySeqNumbersSorted.map(seq=>{
-      const color=seqColorMap.get(seq);
-      const pos=deliveryPositions.get(seq)||seq;
-      const selected=dvSeqFilter===seq;
-      return '<span class="dv-seq-legend-item'+(selected?' dv-seq-legend-selected':'')+'" style="--dv-seq-color:'+color[0]+'" onclick="toggleDvSeqFilter('+JSON.stringify(seq)+')">'+
-        'Seq '+pos+' ('+readyBySeq.get(seq)+' ready)'+
+  // just that group's sequences, click again (or the same swatch) to clear it.
+  document.getElementById('dv-seq-legend').innerHTML=membersByRoot.size
+    ?[...membersByRoot.entries()].sort((a,b)=>a[0]-b[0]).map(([root,members])=>{
+      const color=rootColor.get(root);
+      const totalReady=members.reduce((s,m)=>s+readyOrdersBySeq.get(m).length,0);
+      const label=members.map(m=>deliveryPositions.get(m)||m).sort((a,b)=>a-b).join(', ');
+      const selected=!!(dvSeqFilter&&dvSeqFilter.length===members.length&&members.every(m=>dvSeqFilter.includes(m)));
+      return '<span class="dv-seq-legend-item'+(selected?' dv-seq-legend-selected':'')+'" style="--dv-seq-color:'+color[0]+'" onclick="toggleDvSeqFilter('+JSON.stringify(members)+')">'+
+        'Seq '+label+' ('+totalReady+' ready)'+
       '</span>';
     }).join('')
     :'';
@@ -8897,7 +8937,7 @@ function renderDeliveryList(){
 
   const bySociety={};
   scoped.forEach(order=>{
-    if(dvSeqFilter!=null&&order.sequenceNumber!==dvSeqFilter)return;
+    if(dvSeqFilter!=null&&!dvSeqFilter.includes(order.sequenceNumber))return;
     if(search&&!order.customer.toLowerCase().includes(search))return;
     if(!deliveryOrderMatchesStatusFilter(order))return;
     const soc=deriveGroupKey(order);
