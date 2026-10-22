@@ -501,7 +501,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-order-status{font-weight:600}
 .pk-order-status-dispatched{color:#1b5e32}
 .pk-order-status-ready{color:#8a7a6a}
-.pk-order-status-waiting{color:#b6531c}
+.pk-order-status-waiting{color:#c0392b;font-weight:700;font-style:normal}
+.pk-order-status-held{color:#c0392b;font-weight:700;font-style:normal;animation:pk-urgent-blink 1s infinite}
 .pk-order-card-row{display:flex;align-items:center;gap:8px}
 .pk-order-handle{color:#c8bdae;font-size:14px;flex-shrink:0}
 .pk-order-name{font-size:12px;color:#2b2320;flex:0 0 130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -7678,12 +7679,17 @@ function computeSequenceBoard(){
         });
         waitingGroups=[...byPacker.entries()].map(([name,itemNames])=>({name,itemNames}));
       }else statusKind='ready';
+      // A held item doesn't block "ready" (nothing left for a PACKER to
+      // do), but it's still NOT actually dispatchable until someone
+      // approves it — flag it separately so it doesn't quietly get
+      // treated as the same as a genuinely clean, ready-to-go order.
+      const heldCount=items.filter(i=>i.status==='held').length;
       return{soid,customerName:o.customer_name||soid,
         itemCount:items.length,
         pendingCount:pending.length,
         nonPickupCount:o.is_pickup?0:items.length,
         enteredAt:o.created_at||null,
-        statusKind,dispatchedAt:o.dispatched_at||null,waitingGroups};
+        statusKind,dispatchedAt:o.dispatched_at||null,waitingGroups,heldCount};
     });
     // Last bag actually weighed in this sequence, across every packer —
     // null until at least one item here has been packed.
@@ -7788,7 +7794,8 @@ function orderStatusLineHtml(o){
     return '<span class="pk-order-status pk-order-status-dispatched">✓ Dispatched'+(o.dispatchedAt?' · '+escH(formatOrderTime(o.dispatchedAt)):'')+'</span>';
   }
   if(o.statusKind==='ready'){
-    return '<span class="pk-order-status pk-order-status-ready">Ready for dispatch</span>';
+    return '<span class="pk-order-status pk-order-status-ready">Ready for dispatch</span>'+
+      (o.heldCount?' <span class="pk-order-status pk-order-status-held">'+o.heldCount+' item'+(o.heldCount!==1?'s':'')+' held</span>':'');
   }
   return '<span class="pk-order-status pk-order-status-waiting">'+
     o.waitingGroups.map(g=>'Waiting on '+escH(g.name)+' ('+escH(g.itemNames.join(', '))+')').join(' · ')+
@@ -7799,7 +7806,11 @@ function renderSequenceBoard(){
   if(!isVegPerfAllowed)return '';
   const{sequences:allSequences,unsequencedCount}=computeSequenceBoard();
   if(!allSequences.length&&!unsequencedCount)return '';
-  const sequences=seqBoardPendingOnly?allSequences.filter(s=>s.pendingTotal>0):allSequences;
+  // "Something pending" now also covers a sequence that's fully packed
+  // but hasn't actually shipped yet (not allDispatched) — not just one
+  // with open/packed work left. Only a genuinely finished (every order
+  // dispatched) sequence gets hidden by this filter.
+  const sequences=seqBoardPendingOnly?allSequences.filter(s=>!s.allDispatched):allSequences;
   const positions=computeSequencePositions();
   return '<div class="pk-order-stack">'+
     '<div class="pk-order-stack-header">Sequences <span class="pk-order-stack-sub">— drag a sequence onto another to reorder it; drag a single order onto a different sequence to move it. The cron (every 3 min) never touches one you\'ve already got a number here — it only ever appends to a sequence that\'s not yet complete, or ranks a brand-new one into the current lineup by priority.</span></div>'+
