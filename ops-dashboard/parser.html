@@ -415,7 +415,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .delivery-status-pills .filter-pill{padding:3px 9px;font-size:10px;border-color:#e5ddd0;color:#a89b8a}
 .delivery-status-pills .filter-pill.active{background:#a89b8a;border-color:#a89b8a;color:#ffffff;font-weight:600}
 .pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:10px}
-.pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:13px}
+.pack-card{background:#fdf8f3;border:1px solid #eee0d0;border-radius:10px;padding:13px;position:relative}
 .pack-card.pickup-order{background:#f6effc;border-color:#c9a3ec}
 .pk-status-badge{align-self:flex-start;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px}
 .pk-status-badge.status-open{background:#fff3b0;color:#8a6d00}
@@ -484,6 +484,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-order-card{padding:6px 4px;border-radius:8px;background:#ffffff;border:1px solid #eee0d0;margin-bottom:6px;cursor:grab}
 .pk-order-card:last-child{margin-bottom:0}
 .pk-order-card.pk-order-dragging{opacity:0.4}
+.pk-order-card.pk-seq-all-dispatched{background:#eafaf0;border-color:#b7e4c7}
+.pk-seq-dispatched-badge{flex:1;text-align:center;font-size:11px;font-weight:700;letter-spacing:0.05em;color:#1b5e32;background:#dcf5e3;border-radius:4px;padding:4px 0}
+/* Blinking red dot — flags one of the 3 soonest sequences with anything
+   still waiting on a packer, both on the sequence card itself and on any
+   of its still-pending item cards wherever they show up. */
+@keyframes pk-urgent-blink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.25;transform:scale(0.85)}}
+.pk-urgent-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#e23b3b;box-shadow:0 0 0 3px rgba(226,59,59,0.25);animation:pk-urgent-blink 1s infinite;flex-shrink:0}
+.pack-card>.pk-urgent-dot{position:absolute;top:8px;right:8px}
+.pk-order-status{font-weight:600}
+.pk-order-status-dispatched{color:#1b5e32}
+.pk-order-status-ready{color:#8a7a6a}
+.pk-order-status-waiting{color:#b6531c}
 .pk-order-card-row{display:flex;align-items:center;gap:8px}
 .pk-order-handle{color:#c8bdae;font-size:14px;flex-shrink:0}
 .pk-order-name{font-size:12px;color:#2b2320;flex:0 0 130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -3614,7 +3626,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at,sequence_number,sequenced_at')
+      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at,sequence_number,sequenced_at,dispatched_at')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -7396,8 +7408,15 @@ function assignedPackerDisplay(item){
   return name?{name,isOverride:false}:null;
 }
 
-function packCardHtml(item,dupIds){
+function packCardHtml(item,dupIds,urgentSeqSet){
   if(!dupIds)dupIds=computeDuplicateItemIds(packerItems);
+  if(!urgentSeqSet)urgentSeqSet=computeUrgentSequences();
+  // Blink only a card that's actually still actionable (open/packed) AND
+  // sits in one of the 3 soonest sequences with anything waiting on a
+  // packer — a done/held item, or one several sequences out, doesn't need
+  // to shout for attention.
+  const itemSeq=packerCustomerMap[item.sales_order_id]?.sequence_number;
+  const isUrgent=(item.status==='open'||item.status==='packed')&&itemSeq!=null&&urgentSeqSet.has(itemSeq);
   // Only Somya (isVegPerfAllowed — same single-email gate as P&L/VegPerf)
   // can click through to reassign an item's packer one-off from here.
   const assigned=assignedPackerDisplay(item);
@@ -7408,6 +7427,7 @@ function packCardHtml(item,dupIds){
     :(isVegPerfAllowed?'<div class="pk-assigned-to pk-assigned-editable pk-unassigned" onclick="openReassignPacker(\''+item.id+'\')">👤 Unassigned ✎</div>':'');
   const mismatch=qtyMismatchInfo(item);
   return '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+(mismatch?' qty-mismatch':'')+'" data-id="'+item.id+'">'+
+      (isUrgent?'<span class="pk-urgent-dot" title="One of the next sequences up — needs attention now"></span>':'')+
       '<div class="pk-status-badge status-'+item.status+'">'+escH(ITEM_STATUS_LABEL[item.status]||item.status)+'</div>'+
       '<div class="pk-cust">'+escH(packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id)+(packerCustomerMap[item.sales_order_id]?.is_pickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
         (packerCustomerMap[item.sales_order_id]?.created_at?' <span class="pk-entered-at">· entered '+escH(formatOrderTime(packerCustomerMap[item.sales_order_id].created_at))+'</span>':'')+
@@ -7580,6 +7600,26 @@ function computeSequencePositions(){
   return buildSequencePositions(Object.values(packerCustomerMap).map(o=>o?.sequence_number));
 }
 
+// The 3 earliest (lowest-position) sequences, in order, that still have
+// anything waiting on a packer (open/packed) — these are the ones a
+// packer should be acting on RIGHT NOW. Used to put a blinking red dot on
+// both the sequence card itself and any of its still-pending item cards
+// wherever they show up (Grid/My Sequence/Team), so attention lands on
+// exactly what's actually next, not just "something somewhere is open".
+// Cheap enough (one pass over today's items) to recompute on every
+// render rather than cache/invalidate.
+function computeUrgentSequences(){
+  const pendingBySeq=new Map();
+  packerItems.forEach(item=>{
+    if(item.status!=='open'&&item.status!=='packed')return;
+    const seq=packerCustomerMap[item.sales_order_id]?.sequence_number;
+    if(seq==null)return;
+    pendingBySeq.set(seq,(pendingBySeq.get(seq)||0)+1);
+  });
+  const seqNumbers=[...pendingBySeq.keys()].sort((a,b)=>a-b);
+  return new Set(seqNumbers.slice(0,3));
+}
+
 // Groups every active item today by its order's sequence_number. Orders
 // without one yet (not swept up by the cron's last run) are counted but not
 // shown as a card — there's nothing to drag until the next run gives them
@@ -7604,15 +7644,39 @@ function computeSequenceBoard(){
     ordersMap.get(item.sales_order_id).push(item);
   });
   const seqNumbers=[...bySeq.keys()].sort((a,b)=>a-b);
+  const urgentSeqSet=computeUrgentSequences();
   const sequences=seqNumbers.map(seq=>{
     const ordersMap=bySeq.get(seq);
     const orders=[...ordersMap.entries()].map(([soid,items])=>{
       const o=packerCustomerMap[soid]||{};
+      const pending=items.filter(i=>i.status==='open'||i.status==='packed');
+      // Three mutually-exclusive per-order states Somya actually cares
+      // about: already shipped (dispatched_at — the real-world signal, same
+      // one compute-next-sequence itself trusts), nothing left for a
+      // packer to do (every item final/invoiced, or only held ones
+      // remaining — held needs approval, not packing, so it doesn't block
+      // "ready"), or still has something a packer needs to act on, broken
+      // down by who.
+      let statusKind,waitingGroups=null;
+      if(o.dispatched_at)statusKind='dispatched';
+      else if(pending.length){
+        statusKind='waiting';
+        const byPacker=new Map();
+        pending.forEach(item=>{
+          const pid=effectivePackerIdForItem(item);
+          const packer=pid?packersCache.find(p=>p.id===pid):null;
+          const name=packer?.name||'Unassigned';
+          if(!byPacker.has(name))byPacker.set(name,[]);
+          byPacker.get(name).push(item.item_name);
+        });
+        waitingGroups=[...byPacker.entries()].map(([name,itemNames])=>({name,itemNames}));
+      }else statusKind='ready';
       return{soid,customerName:o.customer_name||soid,
         itemCount:items.length,
-        pendingCount:items.filter(i=>i.status==='open'||i.status==='packed').length,
+        pendingCount:pending.length,
         nonPickupCount:o.is_pickup?0:items.length,
-        enteredAt:o.created_at||null};
+        enteredAt:o.created_at||null,
+        statusKind,dispatchedAt:o.dispatched_at||null,waitingGroups};
     });
     // Last bag actually weighed in this sequence, across every packer —
     // null until at least one item here has been packed.
@@ -7656,11 +7720,30 @@ function computeSequenceBoard(){
       .sort((a,b)=>a.name==='Unassigned'?1:b.name==='Unassigned'?-1:a.name.localeCompare(b.name));
 
     return{seq,orders,societies:[...societies],reason,packerBreakdown,lastPackedAt,
+      allDispatched:orders.length>0&&orders.every(o=>o.statusKind==='dispatched'),
+      isUrgent:urgentSeqSet.has(seq),
       nonPickupTotal:orders.reduce((s,o)=>s+o.nonPickupCount,0),
       pendingTotal:orders.reduce((s,o)=>s+o.pendingCount,0),
       itemTotal:orders.reduce((s,o)=>s+o.itemCount,0)};
   });
   return{sequences,unsequencedCount};
+}
+
+// One of the 3 mutually-exclusive per-order states computeSequenceBoard
+// derives (see its own comment) — dispatched (shipped, with when),
+// ready for dispatch (nothing left for any packer to do), or waiting on
+// whichever packer(s) still have open/packed items here, each with their
+// item names so it's clear what's actually holding things up.
+function orderStatusLineHtml(o){
+  if(o.statusKind==='dispatched'){
+    return '<span class="pk-order-status pk-order-status-dispatched">✓ Dispatched'+(o.dispatchedAt?' · '+escH(formatOrderTime(o.dispatchedAt)):'')+'</span>';
+  }
+  if(o.statusKind==='ready'){
+    return '<span class="pk-order-status pk-order-status-ready">Ready for dispatch</span>';
+  }
+  return '<span class="pk-order-status pk-order-status-waiting">'+
+    o.waitingGroups.map(g=>'Waiting on '+escH(g.name)+' ('+escH(g.itemNames.join(', '))+')').join(' · ')+
+  '</span>';
 }
 
 function renderSequenceBoard(){
@@ -7678,12 +7761,14 @@ function renderSequenceBoard(){
       const expanded=expandedSequences.has(s.seq);
       const pct=s.nonPickupTotal?Math.round((s.nonPickupTotal-s.pendingTotal)/s.nonPickupTotal*100):0;
       const reasonClass=s.reason.label==='Timeline'?'pk-seq-reason-timeline':'pk-seq-reason-priority';
-      return '<div class="pk-order-card" draggable="true" data-seq="'+s.seq+'" '+
+      return '<div class="pk-order-card'+(s.allDispatched?' pk-seq-all-dispatched':'')+'" draggable="true" data-seq="'+s.seq+'" '+
         'ondragstart="sequenceDragStart(event,'+s.seq+')" ondragover="seqDragOver(event)" ondrop="sequenceDrop(event,'+s.seq+')" ondragend="seqDragEndAny(event)">'+
         '<div class="pk-order-card-row" onclick="toggleSequenceExpanded('+s.seq+')" style="cursor:pointer">'+
           '<span class="pk-order-handle" draggable="false" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">⠿</span>'+
+          (s.isUrgent?'<span class="pk-urgent-dot" title="One of the next sequences up — needs attention now"></span>':'')+
           '<span class="pk-order-name">Sequence '+(positions.get(s.seq)||s.seq)+'</span>'+
-          '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>'+
+          (s.allDispatched?'<span class="pk-seq-dispatched-badge">ALL DISPATCHED</span>':
+            '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>')+
           '<span class="pk-seq-bags">'+s.orders.length+' order'+(s.orders.length!==1?'s':'')+', '+s.nonPickupTotal+' bag'+(s.nonPickupTotal!==1?'s':'')+'</span>'+
           '<span class="dv-expand-caret">'+(expanded?'▾':'▸')+'</span>'+
         '</div>'+
@@ -7699,6 +7784,7 @@ function renderSequenceBoard(){
               '<span class="pk-order-handle" draggable="false">⠿</span> '+escH(o.customerName)+
               ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+
               (o.enteredAt?', entered '+escH(formatOrderTime(o.enteredAt)):'')+'</span>'+
+              '<div class="pk-order-detail-sub">'+orderStatusLineHtml(o)+'</div>'+
             '</div>'
           ).join('')+'</div>'+
           '<div class="pk-seq-packer-breakdown">'+s.packerBreakdown.map(p=>
