@@ -1151,8 +1151,39 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Sequence-number defragmentation ─────────────────────────────────────
+    // A manual drag inserts a value strictly between two neighbours (their
+    // midpoint) — repeated drags landing near the same spot over time keep
+    // halving that gap, and JS double-precision floats eventually run out of
+    // room to represent a distinct midpoint (seen in production: consecutive
+    // sequence_numbers only ~1e-10 apart). Past that point `(a+b)/2` rounds
+    // back to `a` or `b`, so the drag silently writes a value that isn't
+    // actually different from its neighbour — the client's optimistic render
+    // shows it moving, but the next reload re-fetches the real (unchanged)
+    // order and it looks like the drag "reset". Fixing this permanently (not
+    // just detecting it) means every tick re-flattens today's distinct
+    // sequence_numbers back to clean, evenly spaced integers, preserving
+    // whatever relative order they're currently in — including any manual
+    // drag since the last tick — so there's always a full range of
+    // precision available to bisect into again before the next one. Only
+    // writes for a sequence whose value isn't already its target integer, so
+    // once things settle this is a no-op most runs.
+    let sequencesDefragmented = 0;
+    const distinctSeqNumbersFinal = [...new Set(existingMetas.map(m => toNum(m.order.sequence_number)!))].sort((a, b) => a - b);
+    for (let i = 0; i < distinctSeqNumbersFinal.length; i++) {
+      const oldSeq = distinctSeqNumbersFinal[i];
+      const newSeq = i + 1;
+      if (oldSeq === newSeq) continue;
+      const soidsHere = existingMetas.filter(m => toNum(m.order.sequence_number) === oldSeq).map(m => m.order.sales_order_id);
+      const { error: renumberErr } = await supabase.from('orders')
+        .update({ sequence_number: newSeq })
+        .in('sales_order_id', soidsHere);
+      if (renumberErr) { console.error(`Failed to defragment sequence ${oldSeq} -> ${newSeq}:`, renumberErr.message); continue; }
+      sequencesDefragmented++;
+    }
+
     return new Response(
-      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended, orders_urgent_moved: ordersUrgentMoved, items_rebalanced: itemsRebalanced }),
+      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended, orders_urgent_moved: ordersUrgentMoved, items_rebalanced: itemsRebalanced, sequences_defragmented: sequencesDefragmented }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
