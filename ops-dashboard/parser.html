@@ -84,6 +84,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-expand-caret{color:#8a7a6a;font-size:22px;font-weight:700;line-height:1;flex-shrink:0;padding:2px 6px;cursor:pointer}
 .dv-collapsed-card{padding:12px 14px}
 .dv-collapsed-card .dv-card-header{margin-bottom:0}
+/* Colour-coded "these orders go out together" highlight — one blinking
+   colour per sequence, same colour wherever its orders land regardless of
+   which society header groups them. */
+@keyframes dv-seq-blink{0%,100%{background-color:var(--dv-seq-color)}50%{background-color:var(--dv-seq-color-dim)}}
+.dv-seq-highlight{animation:dv-seq-blink 1.4s infinite;border-color:var(--dv-seq-color)}
+.dv-seq-badge{display:inline-block;border-radius:10px;padding:2px 9px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#2b2320;background:rgba(255,255,255,0.65);border:1px solid rgba(0,0,0,0.12)}
+.dv-seq-wait{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;color:#c0392b;vertical-align:middle;animation:pk-urgent-blink 1s infinite}
 .pay-missing{font-size:11px;font-weight:700;color:#b3261e}
 .pay-link{font-size:11px;color:#3f7a34;text-decoration:none}
 .pay-link:hover{text-decoration:underline}
@@ -8266,6 +8273,22 @@ async function markFinal(id){
 // to a rider who might already be en route, same as Today's Orders shows a
 // cancelled order rather than just hiding it.
 let deliveryOrders={};
+// sequence_number -> {total, missing} across ALL of today's non-cancelled
+// orders in that sequence (not just the invoiced ones deliveryOrders keeps)
+// — lets the delivery list say "wait for packers to give N more orders in
+// this sequence" for a sequence that's only partly through invoicing.
+let deliverySeqStats={};
+// [full-opacity colour, dim colour] pairs the blink animation alternates
+// between — cycles if more distinct sequences are visible at once than
+// there are colours.
+const DV_SEQ_PALETTE=[
+  ['#cfe8ff','#eef7ff'],
+  ['#ffe0c2','#fff5e8'],
+  ['#d7f5d0','#eefcea'],
+  ['#f3d1f7','#fbeefc'],
+  ['#fff3b0','#fffbe0'],
+  ['#ffd0d8','#fff0f3'],
+];
 let revealedPhones=new Set();
 let revealPhoneTimers=new Map(); // soid -> auto-hide timeout id
 let dvEditingNotes=null;
@@ -8532,10 +8555,23 @@ async function loadDeliveryView(silent){
         deliverAfter:          o?.deliver_after||null,
         tripOverride:          o?.trip_override||null,
         isPickup:              !!o?.is_pickup,
+        sequenceNumber:        o?.sequence_number??null,
+        dispatchedAt:          o?.dispatched_at||null,
         items:[],
       };
     }
     bySalesOrder[key].items.push(item);
+  });
+
+  // Snapshot per-sequence totals BEFORE the invoiced-only filter below
+  // removes anything still being packed — that's exactly what "N more
+  // orders still coming" needs to count.
+  deliverySeqStats={};
+  Object.values(bySalesOrder).forEach(order=>{
+    if(order.orderStatus==='cancelled'||order.sequenceNumber==null)return;
+    if(!deliverySeqStats[order.sequenceNumber])deliverySeqStats[order.sequenceNumber]={total:0,missing:0};
+    deliverySeqStats[order.sequenceNumber].total++;
+    if(!isFullyInvoiced(order))deliverySeqStats[order.sequenceNumber].missing++;
   });
 
   Object.keys(bySalesOrder).forEach(soid=>{
@@ -8746,6 +8782,22 @@ function renderDeliveryList(){
     .map(([soid,order])=>({soid,...order}))
     .filter(order=>deliveryScope==='all'||order.assignedRider===riderName);
   renderDeliverySummaryPills(scoped);
+
+  // One blinking colour per distinct sequence among orders still worth
+  // highlighting (ready to go, not already out for delivery) — so orders
+  // that need to go out together are visually obvious at a glance, no
+  // matter which society header they land under.
+  const seqColorMap=new Map();
+  [...new Set(scoped
+    .filter(o=>o.sequenceNumber!=null&&o.deliveryStatus!=='ofd'&&o.deliveryStatus!=='delivered'&&o.deliveryStatus!=='partially_delivered')
+    .map(o=>o.sequenceNumber))]
+    .sort((a,b)=>a-b)
+    .forEach((seq,i)=>seqColorMap.set(seq,DV_SEQ_PALETTE[i%DV_SEQ_PALETTE.length]));
+  // Same clean 1/2/3... numbering the Packer tab's Sequences board shows,
+  // not the raw (possibly fractional) sequence_number — computed from
+  // every sequence with any non-cancelled order today, not just the
+  // subset currently visible, so the number stays stable as filters change.
+  const deliveryPositions=buildSequencePositions(Object.keys(deliverySeqStats).map(Number));
   document.getElementById('dv-collapse-btn').textContent=expandedDeliveryOrders.size?'▾ Collapse All':'▸ Expand All';
 
   // Full unfiltered picture, not just what scope/search/status narrows
@@ -8800,7 +8852,7 @@ function renderDeliveryList(){
       ?'<input type="checkbox" class="inv-select" '+(assignableSoids.every(soid=>selectedDeliveryOrders.has(soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(assignableSoids))+',this.checked)" title="Select all assignable orders in this society"> '
       :'';
     return '<div class="society-header">'+selectAllCb+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+tripPendingBadgeHtml(tripInfo,orders[0])+'</div>'+
-      orders.map(order=>renderDeliveryCard(order,selectionMode)).join('');
+      orders.map(order=>renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions)).join('');
   }).join('');
 
   renderDeliveryPhotos(socNames.flatMap(soc=>bySociety[soc]));
@@ -8902,7 +8954,7 @@ async function dispatchOrder(soid){
   }
 }
 
-function renderDeliveryCard(order,selectionMode){
+function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions){
   const cancelled=order.orderStatus==='cancelled';
 
   // A whole-order cancellation (customer refused everything, admin
@@ -8927,6 +8979,20 @@ function renderDeliveryCard(order,selectionMode){
   // partiallyDelivered gets its own distinct badge text further down, but
   // otherwise behaves exactly like a full delivery everywhere else on the card.
   const delivered=order.deliveryStatus==='delivered'||partiallyDelivered;
+  // Blinking colour-coded "these go together" highlight — only while it's
+  // still actually useful, i.e. before the trip has left. seqStats comes
+  // from the full (not just invoiced) picture, so "N more orders" counts
+  // ones still being packed that haven't even reached this list yet.
+  const seqColor=(!ofd&&!delivered&&order.sequenceNumber!=null)?seqColorMap?.get(order.sequenceNumber):null;
+  const seqStats=order.sequenceNumber!=null?deliverySeqStats[order.sequenceNumber]:null;
+  const seqHighlightAttr=seqColor?' style="--dv-seq-color:'+seqColor[0]+';--dv-seq-color-dim:'+seqColor[1]+'"':'';
+  const seqHighlightClass=seqColor?' dv-seq-highlight':'';
+  const seqBadge=(order.sequenceNumber!=null&&!ofd&&!delivered)
+    ?'<span class="dv-seq-badge">Seq '+(deliveryPositions?.get(order.sequenceNumber)||order.sequenceNumber)+'</span>'+
+      (seqStats&&seqStats.missing>0
+        ?'<span class="dv-seq-wait">Wait for packers to give '+seqStats.missing+' more order'+(seqStats.missing!==1?'s':'')+' in this sequence</span>'
+        :'')
+    :'';
   const items=activeItems(order);
   const collectedCount=items.filter(i=>i.collected).length;
   const revealed=revealedPhones.has(order.soid);
@@ -9074,7 +9140,7 @@ function renderDeliveryCard(order,selectionMode){
   // block for orders they're not working on right now. Tap to expand.
   const expanded=expandedDeliveryOrders.has(order.soid);
   if(!expanded){
-    return '<div class="order-row'+(order.isPickup?' pickup-order':'')+(isLeftoverOrder(order)?' leftover-order':'')+' dv-collapsed-card">'+
+    return '<div class="order-row'+(order.isPickup?' pickup-order':'')+(isLeftoverOrder(order)?' leftover-order':'')+' dv-collapsed-card'+seqHighlightClass+'"'+seqHighlightAttr+'>'+
       '<div class="dv-card-header" onclick="toggleDeliveryOrderExpanded(\''+order.soid+'\')">'+
         '<span class="or-cust">'+
           '<span onclick="event.stopPropagation()">'+selectCheckbox+'</span>'+
@@ -9084,13 +9150,14 @@ function renderDeliveryCard(order,selectionMode){
           adminActionBadgeHtml(order)+
           paymentBadge+
           deliverByTag+
+          seqBadge+
         '</span>'+
         '<span class="dv-expand-caret">▸</span>'+
       '</div>'+
     '</div>';
   }
 
-  return '<div class="order-row'+(delivered?' dv-delivered':'')+(order.isPickup?' pickup-order':'')+(isLeftoverOrder(order)?' leftover-order':'')+'">'+
+  return '<div class="order-row'+(delivered?' dv-delivered':'')+(order.isPickup?' pickup-order':'')+(isLeftoverOrder(order)?' leftover-order':'')+seqHighlightClass+'"'+seqHighlightAttr+'>'+
     '<div class="dv-card-header" onclick="toggleDeliveryOrderExpanded(\''+order.soid+'\')"><span class="or-cust">'+
       '<span onclick="event.stopPropagation()">'+selectCheckbox+'</span>'+
       escH(order.customer)+
@@ -9098,6 +9165,7 @@ function renderDeliveryCard(order,selectionMode){
       deliveryStatusBadge+
       adminActionBadgeHtml(order)+
       paymentBadge+assignedTag+deliverByTag+
+      seqBadge+
     '</span>'+
     '<span class="dv-expand-caret">▾</span>'+
     '</div>'+
