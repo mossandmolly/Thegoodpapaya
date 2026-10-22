@@ -1588,11 +1588,16 @@ let isBuyerRole=false;
 // Veg Performance tab — visible only to this one email, not a general role.
 const VEGPERF_ALLOWED_EMAIL='somya@thegoodpapaya.com';
 let isVegPerfAllowed=false;
-// Team tab (Sequences board) is also shown to this shared staff login —
-// everything ELSE isVegPerfAllowed gates (VegPerf, P&L, reassign-packer,
+// Team tab (Sequences board) is also shown to these shared/extra staff
+// logins — everything ELSE isVegPerfAllowed gates (VegPerf, P&L,
 // category toggles) stays Somya-only; this is deliberately narrower.
-const TEAM_VIEW_EXTRA_ALLOWED_EMAILS=new Set(['user@thegoodpapaya.com']);
+const TEAM_VIEW_EXTRA_ALLOWED_EMAILS=new Set(['user@thegoodpapaya.com','rohith@thegoodpapaya.com']);
 let isTeamViewAllowed=false;
+// Packer reassignment (openReassignPacker) — same as isTeamViewAllowed's
+// set, minus the generic 'user' login, plus Somya. rohith@ gets this on
+// top of everything user@ has; user@ itself does not.
+const PACKER_REASSIGN_EXTRA_ALLOWED_EMAILS=new Set(['rohith@thegoodpapaya.com']);
+let isPackerReassignAllowed=false;
 
 // Neither the delivery login nor the shared packer/admin login distinguish
 // individual people — there's no per-person auth for either role, so
@@ -1669,6 +1674,7 @@ async function initAppAfterLogin(){
   isBuyerRole=session?.user?.user_metadata?.role==='buyer';
   isVegPerfAllowed=(session?.user?.email||'').toLowerCase()===VEGPERF_ALLOWED_EMAIL;
   isTeamViewAllowed=isVegPerfAllowed||TEAM_VIEW_EXTRA_ALLOWED_EMAILS.has((session?.user?.email||'').toLowerCase());
+  isPackerReassignAllowed=isVegPerfAllowed||PACKER_REASSIGN_EXTRA_ALLOWED_EMAILS.has((session?.user?.email||'').toLowerCase());
   applyRoleRestrictions();
   await ensureRiderName();
   syncViewDatePickers();
@@ -7501,14 +7507,15 @@ function packCardHtml(item,dupIds,urgentSeqSet){
   // to shout for attention.
   const itemSeq=packerCustomerMap[item.sales_order_id]?.sequence_number;
   const isUrgent=(item.status==='open'||item.status==='packed')&&itemSeq!=null&&urgentSeqSet.has(itemSeq);
-  // Only Somya (isVegPerfAllowed — same single-email gate as P&L/VegPerf)
-  // can click through to reassign an item's packer one-off from here.
+  // Somya (isVegPerfAllowed) plus whoever's in
+  // PACKER_REASSIGN_EXTRA_ALLOWED_EMAILS can click through to reassign an
+  // item's packer one-off from here.
   const assigned=assignedPackerDisplay(item);
   const assignedLine=assigned
-    ?'<div class="pk-assigned-to'+(isVegPerfAllowed?' pk-assigned-editable':'')+'"'+(isVegPerfAllowed?' onclick="openReassignPacker(\''+item.id+'\')"':'')+'>'+
-      (assigned.isOverride?'↩ Reassigned to ':'👤 Assigned to ')+escH(assigned.name)+(isVegPerfAllowed?' ✎':'')+
+    ?'<div class="pk-assigned-to'+(isPackerReassignAllowed?' pk-assigned-editable':'')+'"'+(isPackerReassignAllowed?' onclick="openReassignPacker(\''+item.id+'\')"':'')+'>'+
+      (assigned.isOverride?'↩ Reassigned to ':'👤 Assigned to ')+escH(assigned.name)+(isPackerReassignAllowed?' ✎':'')+
      '</div>'
-    :(isVegPerfAllowed?'<div class="pk-assigned-to pk-assigned-editable pk-unassigned" onclick="openReassignPacker(\''+item.id+'\')">👤 Unassigned ✎</div>':'');
+    :(isPackerReassignAllowed?'<div class="pk-assigned-to pk-assigned-editable pk-unassigned" onclick="openReassignPacker(\''+item.id+'\')">👤 Unassigned ✎</div>':'');
   const mismatch=qtyMismatchInfo(item);
   return '<div class="pack-card status-'+item.status+(packerCustomerMap[item.sales_order_id]?.is_pickup?' pickup-order':'')+(isLeftoverOrder(packerOrderLike(item))?' leftover-order':'')+(mismatch?' qty-mismatch':'')+'" data-id="'+item.id+'">'+
       (isUrgent?'<span class="pk-urgent-dot" title="One of the next sequences up — needs attention now"></span>':'')+
