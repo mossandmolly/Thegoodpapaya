@@ -7696,7 +7696,7 @@ function computeSequenceBoard(){
         pendingCount:pending.length,
         nonPickupCount:o.is_pickup?0:items.length,
         enteredAt:o.created_at||null,
-        statusKind,dispatchedAt:o.dispatched_at||null,waitingGroups,heldCount};
+        statusKind,dispatchedAt:o.dispatched_at||null,assignedRider:o.assigned_rider||null,waitingGroups,heldCount};
     });
     // Last bag actually weighed in this sequence, across every packer —
     // null until at least one item here has been packed.
@@ -7798,7 +7798,7 @@ function communityCombinablePartners(uniqueId){
 // item names so it's clear what's actually holding things up.
 function orderStatusLineHtml(o){
   if(o.statusKind==='dispatched'){
-    return '<span class="pk-order-status pk-order-status-dispatched">✓ Dispatched'+(o.dispatchedAt?' · '+escH(formatOrderTime(o.dispatchedAt)):'')+'</span>';
+    return '<span class="pk-order-status pk-order-status-dispatched">✓ Dispatched'+(o.dispatchedAt?' · '+escH(formatOrderTime(o.dispatchedAt)):'')+(o.assignedRider?' · 🛵 '+escH(o.assignedRider):'')+'</span>';
   }
   if(o.statusKind==='ready'){
     return '<span class="pk-order-status pk-order-status-ready">Ready for dispatch</span>'+
