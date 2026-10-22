@@ -8649,14 +8649,19 @@ async function loadDeliveryView(silent){
   });
 
   // Snapshot per-sequence totals BEFORE the invoiced-only filter below
-  // removes anything still being packed — that's exactly what "N more
-  // orders still coming" needs to count.
+  // removes anything still being packed — that's exactly what "orders
+  // still coming" needs to name. missingCustomers names them by customer
+  // (same identifier Delivery/Packer already show everywhere else), not
+  // the full dated sales_order_id.
   deliverySeqStats={};
   Object.values(bySalesOrder).forEach(order=>{
     if(order.orderStatus==='cancelled'||order.sequenceNumber==null)return;
-    if(!deliverySeqStats[order.sequenceNumber])deliverySeqStats[order.sequenceNumber]={total:0,missing:0};
+    if(!deliverySeqStats[order.sequenceNumber])deliverySeqStats[order.sequenceNumber]={total:0,missing:0,missingCustomers:[]};
     deliverySeqStats[order.sequenceNumber].total++;
-    if(!isFullyInvoiced(order))deliverySeqStats[order.sequenceNumber].missing++;
+    if(!isFullyInvoiced(order)){
+      deliverySeqStats[order.sequenceNumber].missing++;
+      deliverySeqStats[order.sequenceNumber].missingCustomers.push(order.customer);
+    }
   });
 
   Object.keys(bySalesOrder).forEach(soid=>{
@@ -9128,7 +9133,7 @@ function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions){
   const seqBadge=(order.sequenceNumber!=null&&!ofd&&!delivered)
     ?'<span class="dv-seq-badge">Seq '+(deliveryPositions?.get(order.sequenceNumber)||order.sequenceNumber)+'</span>'+
       (seqStats&&seqStats.missing>0
-        ?'<span class="dv-seq-wait">Wait for packers to give '+seqStats.missing+' more order'+(seqStats.missing!==1?'s':'')+' in this sequence</span>'
+        ?'<span class="dv-seq-wait">Wait for order'+(seqStats.missing!==1?'s':'')+' '+escH(seqStats.missingCustomers.join(', '))+'</span>'
         :'')
     :'';
   const items=activeItems(order);
