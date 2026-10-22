@@ -476,10 +476,24 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 @media (max-width:600px){.pk-team-bar-rate{margin-left:88px}}
 .pk-cat-toggle-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;grid-column:1/-1}
 .pk-cat-toggle{display:flex;align-items:center;gap:6px;padding:5px 8px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:8px;font-size:11px}
+.pk-cat-toggle.pk-cat-toggle-inactive{opacity:0.5}
 .pk-cat-toggle-name{font-weight:600;color:#2b2320}
+/* Workload flag — red if clearly overloaded, green if clearly free,
+   relative to every other active packer (see renderPackerCategoryToggles). */
+.pk-cat-toggle-name.pk-cat-toggle-overloaded{color:#c0392b}
+.pk-cat-toggle-name.pk-cat-toggle-free{color:#1b8a3e}
 .pk-cat-toggle-btns{display:flex;gap:3px}
 .pk-cat-btn{padding:3px 8px;border:1px solid #d8cbb8;border-radius:5px;background:#fff;color:#8a7a6a;font-size:10px;cursor:pointer}
 .pk-cat-btn.active{background:#2f6b4f;border-color:#2f6b4f;color:#fff}
+/* Include/exclude from assignment — a plain checkbox styled as a small
+   on/off slider rather than a bare checkbox, to read as a toggle at a
+   glance next to the Fruit/Veg buttons. */
+.pk-cat-active-toggle{position:relative;display:inline-block;width:30px;height:16px;flex-shrink:0;cursor:pointer}
+.pk-cat-active-toggle input{opacity:0;width:0;height:0;position:absolute}
+.pk-cat-active-slider{position:absolute;inset:0;background:#d8cbb8;border-radius:16px;transition:background 0.15s}
+.pk-cat-active-slider::before{content:'';position:absolute;width:12px;height:12px;left:2px;top:2px;background:#fff;border-radius:50%;transition:transform 0.15s}
+.pk-cat-active-toggle input:checked+.pk-cat-active-slider{background:#2f6b4f}
+.pk-cat-active-toggle input:checked+.pk-cat-active-slider::before{transform:translateX(14px)}
 
 /* Somya's drag/arrow-reorderable "Current Order" stack — completion bar
    reuses packProgressColor's existing red/amber/green convention. */
@@ -2399,7 +2413,7 @@ function delAlias(k){delete ALIASES[k];renderConfig();}
 let packersCache=[];
 async function loadPackersConfig(){
   const[{data:packers,error:pErr},{data:assignments,error:aErr}]=await Promise.all([
-    sb.from('packers').select('id,name,category').order('name'),
+    sb.from('packers').select('id,name,category,active').order('name'),
     sb.from('packer_assignments').select('packer_id,item_name'),
   ]);
   if(pErr||aErr){console.error(pErr||aErr);return;}
@@ -2407,7 +2421,7 @@ async function loadPackersConfig(){
   (assignments||[]).forEach(a=>{
     (fruitsByPacker[a.packer_id]=fruitsByPacker[a.packer_id]||[]).push(a.item_name);
   });
-  packersCache=(packers||[]).map(p=>({id:p.id,name:p.name,category:p.category||null,assigned_fruits:fruitsByPacker[p.id]||[]}));
+  packersCache=(packers||[]).map(p=>({id:p.id,name:p.name,category:p.category||null,active:p.active!==false,assigned_fruits:fruitsByPacker[p.id]||[]}));
   const list=document.getElementById('packer-list');
   if(list)list.innerHTML=packersCache.map(p=>
     // JSON.stringify(p.id) alone produces "abc-123" — nested double-quotes
@@ -2466,16 +2480,53 @@ async function setPackerCategoryAndRerender(id,category){
   renderPackerTeamView();
 }
 
+// Same active flag compute-next-sequence's own packer query already
+// filters on (.eq('active', true) for fruitPackerIds/vegPackerIds) — this
+// toggle doesn't need any server-side change, it's already respected for
+// every FUTURE assignment decision the cron makes. Doesn't touch anything
+// already assigned to her today, only whether she's offered new work.
+async function setPackerActiveAndRerender(id,active){
+  const{error}=await sb.from('packers').update({active}).eq('id',id);
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  const p=packersCache.find(p=>p.id===id);
+  if(p)p.active=active;
+  renderPackerTeamView();
+}
+
 function renderPackerCategoryToggles(){
   if(!isVegPerfAllowed||!packersCache.length)return '';
+  // Workload flag — red if clearly overloaded, green if clearly free,
+  // relative to EVERY other active packer regardless of category. Only
+  // the two extremes get coloured; anyone in between stays neutral,
+  // including the rare case where a wide 3-way spread would otherwise
+  // satisfy both conditions for the same packer.
+  const activePackers=packersCache.filter(p=>p.active);
+  const pendingCountById=new Map(activePackers.map(p=>[p.id,computePackerTimeline(p.name).pending.length]));
+  const counts=[...pendingCountById.values()];
+  const minPending=counts.length?Math.min(...counts):0;
+  const maxPending=counts.length?Math.max(...counts):0;
+  const WORKLOAD_GAP=8;
+  function workloadClass(p){
+    if(!p.active)return '';
+    const n=pendingCountById.get(p.id)??0;
+    const overloaded=n-minPending>WORKLOAD_GAP;
+    const free=maxPending-n>WORKLOAD_GAP;
+    if(overloaded&&!free)return ' pk-cat-toggle-overloaded';
+    if(free&&!overloaded)return ' pk-cat-toggle-free';
+    return '';
+  }
   return '<div class="pk-cat-toggle-row">'+
     packersCache.map(p=>
-      '<div class="pk-cat-toggle">'+
-        '<span class="pk-cat-toggle-name">'+escH(p.name)+'</span>'+
+      '<div class="pk-cat-toggle'+(p.active?'':' pk-cat-toggle-inactive')+'">'+
+        '<span class="pk-cat-toggle-name'+workloadClass(p)+'" title="'+(p.active?pendingCountById.get(p.id)+' item(s) pending today':'Excluded from assignment')+'">'+escH(p.name)+'</span>'+
         '<span class="pk-cat-toggle-btns">'+
           '<button class="pk-cat-btn'+(p.category==='fruit'?' active':'')+'" onclick="setPackerCategoryAndRerender('+escH(JSON.stringify(p.id))+',\'fruit\')">Fruit</button>'+
           '<button class="pk-cat-btn'+(p.category==='vegetable'?' active':'')+'" onclick="setPackerCategoryAndRerender('+escH(JSON.stringify(p.id))+',\'vegetable\')">Veg</button>'+
         '</span>'+
+        '<label class="pk-cat-active-toggle" title="'+(p.active?'Included in assignment — click to exclude':'Excluded from assignment — click to include')+'">'+
+          '<input type="checkbox" '+(p.active?'checked ':'')+'onchange="setPackerActiveAndRerender('+escH(JSON.stringify(p.id))+',this.checked)">'+
+          '<span class="pk-cat-active-slider"></span>'+
+        '</label>'+
       '</div>'
     ).join('')+
   '</div>';
