@@ -1168,13 +1168,23 @@ Deno.serve(async (req) => {
     // precision available to bisect into again before the next one. Only
     // writes for a sequence whose value isn't already its target integer, so
     // once things settle this is a no-op most runs.
+    // existingMetas alone misses any sequence built fresh THIS run (homeless
+    // orders placed into newSequences above) — those were never re-synced
+    // back into existingMetas, so a brand-new sequence's fractional insert
+    // (line ~1006) would otherwise be left out of this sweep entirely.
     let sequencesDefragmented = 0;
-    const distinctSeqNumbersFinal = [...new Set(existingMetas.map(m => toNum(m.order.sequence_number)!))].sort((a, b) => a - b);
+    const soidToSeqFinal = new Map<string, number>();
+    for (const m of existingMetas) soidToSeqFinal.set(m.order.sales_order_id, toNum(m.order.sequence_number)!);
+    newSequences.forEach((seq, i) => {
+      const seqNum = seqNumberForNew.get(i)!;
+      for (const m of seq) soidToSeqFinal.set(m.order.sales_order_id, seqNum);
+    });
+    const distinctSeqNumbersFinal = [...new Set(soidToSeqFinal.values())].sort((a, b) => a - b);
     for (let i = 0; i < distinctSeqNumbersFinal.length; i++) {
       const oldSeq = distinctSeqNumbersFinal[i];
       const newSeq = i + 1;
       if (oldSeq === newSeq) continue;
-      const soidsHere = existingMetas.filter(m => toNum(m.order.sequence_number) === oldSeq).map(m => m.order.sales_order_id);
+      const soidsHere = [...soidToSeqFinal.entries()].filter(([, s]) => s === oldSeq).map(([soid]) => soid);
       const { error: renumberErr } = await supabase.from('orders')
         .update({ sequence_number: newSeq })
         .in('sales_order_id', soidsHere);
