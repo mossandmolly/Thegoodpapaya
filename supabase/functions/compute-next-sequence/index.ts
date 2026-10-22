@@ -971,10 +971,37 @@ Deno.serve(async (req) => {
       if (!lineup.length) {
         insertSeqNumber = 1;
       } else {
-        const idx = lineup.findIndex(e => comparePriority(e.key, key) > 0);
-        if (idx === -1) insertSeqNumber = lineup[lineup.length - 1].seqNumber + 1;
-        else if (idx === 0) insertSeqNumber = lineup[0].seqNumber - 1;
-        else insertSeqNumber = (lineup[idx - 1].seqNumber + lineup[idx].seqNumber) / 2;
+        // Find the boundary by PRIORITY, not by raw position in the
+        // lineup array. A manual drag can legitimately leave the lineup
+        // numerically out of priority order (e.g. a late, non-urgent
+        // sequence manually placed ahead of pre-11 ones — exactly what a
+        // manual drag is FOR, and nothing here should ever contest that).
+        // The old position-based findIndex stopped scanning the moment it
+        // hit the FIRST entry that looked "worse," even if that entry was
+        // really just a manually-placed one sitting out of its "natural"
+        // spot — miscomputing where a brand-new sequence should land
+        // whenever one happened to need inserting near it. Comparing
+        // every entry independently instead of trusting positional order
+        // fixes that: insert right after the best-placed entry that's
+        // genuinely better-or-equal, and before the worst-placed one that
+        // isn't — never in between two entries whose OWN relative order
+        // a manual drag has already decided to invert.
+        const betterOrEqual = lineup.filter(e => comparePriority(e.key, key) <= 0);
+        const worse = lineup.filter(e => comparePriority(e.key, key) > 0);
+        const afterSeq = betterOrEqual.length ? Math.max(...betterOrEqual.map(e => e.seqNumber)) : null;
+        const beforeSeq = worse.length ? Math.min(...worse.map(e => e.seqNumber)) : null;
+        if (afterSeq == null) insertSeqNumber = beforeSeq! - 1;
+        else if (beforeSeq == null) insertSeqNumber = afterSeq + 1;
+        else if (beforeSeq > afterSeq) insertSeqNumber = (afterSeq + beforeSeq) / 2;
+        else {
+          // beforeSeq <= afterSeq — a manual drag has inverted their
+          // relative order, so no clean "number strictly between them"
+          // exists. Land right after the best-ranked entry instead of
+          // risking a value that lands before something that outranks it
+          // numerically; nudge past any exact collision.
+          insertSeqNumber = afterSeq + 1;
+          while (lineup.some(e => e.seqNumber === insertSeqNumber)) insertSeqNumber += 1;
+        }
       }
       seqNumberForNew.set(i, insertSeqNumber);
       lineup.push({ seqNumber: insertSeqNumber, key });
