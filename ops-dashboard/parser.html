@@ -492,6 +492,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 @keyframes pk-urgent-blink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.25;transform:scale(0.85)}}
 .pk-urgent-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#e23b3b;box-shadow:0 0 0 3px rgba(226,59,59,0.25);animation:pk-urgent-blink 1s infinite;flex-shrink:0}
 .pack-card>.pk-urgent-dot{position:absolute;top:8px;right:8px}
+/* Blinking upward arrow — this sequence shares a community (or a
+   Config-curated combinable group) with an earlier sequence that still
+   has room under the 40-item cap, a manual-merge opportunity the cron
+   itself never retroactively creates. */
+@keyframes pk-combine-blink{0%,100%{opacity:1}50%{opacity:0.2}}
+.pk-combine-up-arrow{display:inline-block;color:#2f6b4f;font-size:13px;font-weight:700;animation:pk-combine-blink 1s infinite;flex-shrink:0;cursor:help}
 .pk-order-status{font-weight:600}
 .pk-order-status-dispatched{color:#1b5e32}
 .pk-order-status-ready{color:#8a7a6a}
@@ -7264,6 +7270,7 @@ async function loadPackerView(){
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
     loadPackersConfig(),
     loadCommunityPriorityConfig().catch(e=>console.error('Could not load community priority config',e)),
+    loadCombinableGroupsConfig().catch(e=>console.error('Could not load combinable groups config',e)),
   ]);
   packerCustomerMap=map||{};
   packerUnitByItem={};
@@ -7686,11 +7693,13 @@ function computeSequenceBoard(){
     // Societies + reason — same community match every other priority view
     // uses (matchCommunityPriority, falling back to deriveSociety).
     const societies=new Set();
+    const commUniqueIds=new Set(); // matched community unique_ids in this sequence — for the combinable-group "can merge up" hint below
     let bestRank=Infinity,bestRankName=null,earliestDeliverBy=null;
     [...ordersMap.keys()].forEach(soid=>{
       const o=packerCustomerMap[soid]||{};
       const community=matchCommunityPriority(o.society||o.customer_name);
       societies.add(community?community.display_name:deriveSociety(o.customer_name));
+      if(community)commUniqueIds.add(community.unique_id);
       if(community&&community.rank!=null&&community.rank<bestRank){bestRank=community.rank;bestRankName=community.display_name;}
       if(o.deliver_by&&(!earliestDeliverBy||o.deliver_by<earliestDeliverBy))earliestDeliverBy=o.deliver_by;
     });
@@ -7719,7 +7728,7 @@ function computeSequenceBoard(){
       .map(([name,c])=>({name,...c}))
       .sort((a,b)=>a.name==='Unassigned'?1:b.name==='Unassigned'?-1:a.name.localeCompare(b.name));
 
-    return{seq,orders,societies:[...societies],reason,packerBreakdown,lastPackedAt,
+    return{seq,orders,societies:[...societies],commUniqueIds,reason,packerBreakdown,lastPackedAt,
       allDispatched:orders.length>0&&orders.every(o=>o.statusKind==='dispatched'),
       readyForDispatchCount:orders.filter(o=>o.statusKind==='ready').length,
       isUrgent:urgentSeqSet.has(seq),
@@ -7727,7 +7736,46 @@ function computeSequenceBoard(){
       pendingTotal:orders.reduce((s,o)=>s+o.pendingCount,0),
       itemTotal:orders.reduce((s,o)=>s+o.itemCount,0)};
   });
+  // Combinable-merge hint: a sequence that still has room under the
+  // 40-item hard cap (the same cap compute-next-sequence builds toward)
+  // is a candidate "parent" for any LATER (lower-order, higher seq)
+  // sequence sharing its community or an explicitly-configured combinable
+  // partner (Config → Combinable Groups) whose own size would actually
+  // fit in that remaining room — a manual-merge opportunity the cron
+  // itself won't ever retroactively create (it only appends NEW orders
+  // into an existing open sequence, never moves one already-built
+  // sequence into another). Flags the LOWER sequence with an upward
+  // arrow pointing at the best (earliest) such parent it found.
+  sequences.forEach((b,j)=>{
+    if(b.allDispatched)return;
+    for(let i=0;i<j;i++){
+      const a=sequences[i];
+      if(a.allDispatched||a.nonPickupTotal>=SEQ_HARD_CAP_CLIENT)continue;
+      if(a.nonPickupTotal+b.nonPickupTotal>SEQ_HARD_CAP_CLIENT)continue;
+      const sameCommunity=[...b.commUniqueIds].some(id=>a.commUniqueIds.has(id));
+      const combinable=!sameCommunity&&[...b.commUniqueIds].some(id=>communityCombinablePartners(id).size&&[...communityCombinablePartners(id)].some(p=>a.commUniqueIds.has(p)));
+      if(sameCommunity||combinable){ b.combineUpTargetSeq=a.seq; break; }
+    }
+  });
   return{sequences,unsequencedCount};
+}
+
+// Same 40-item cap compute-next-sequence itself builds toward (SEQUENCE_HARD_CAP there).
+const SEQ_HARD_CAP_CLIENT=40;
+
+// community_unique_id -> set of every OTHER unique_id sharing a Config-
+// curated combinable group with it — same derivation compute-next-
+// sequence's own combinablePartners map uses server-side, just built
+// from combinableGroupsCache (loadCombinableGroupsConfig) instead of a
+// fresh query.
+function communityCombinablePartners(uniqueId){
+  const partners=new Set();
+  Object.values(combinableGroupsCache).forEach(g=>{
+    if(g.members.includes(uniqueId)){
+      g.members.forEach(m=>{if(m!==uniqueId)partners.add(m);});
+    }
+  });
+  return partners;
 }
 
 // One of the 3 mutually-exclusive per-order states computeSequenceBoard
@@ -7767,6 +7815,7 @@ function renderSequenceBoard(){
         '<div class="pk-order-card-row" onclick="toggleSequenceExpanded('+s.seq+')" style="cursor:pointer">'+
           '<span class="pk-order-handle" draggable="false" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">⠿</span>'+
           (s.isUrgent?'<span class="pk-urgent-dot" title="One of the next sequences up — needs attention now"></span>':'')+
+          (s.combineUpTargetSeq!=null?'<span class="pk-combine-up-arrow" title="Same/combinable community as Sequence '+(positions.get(s.combineUpTargetSeq)||s.combineUpTargetSeq)+', which still has room — consider dragging this one up to merge">▲</span>':'')+
           '<span class="pk-order-name">Sequence '+(positions.get(s.seq)||s.seq)+'</span>'+
           (s.allDispatched?'<span class="pk-seq-dispatched-badge">ALL DISPATCHED</span>':
             '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>')+
