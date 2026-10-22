@@ -7763,6 +7763,7 @@ function computeSequenceBoard(){
 
     return{seq,orders,societies:[...societies],reason,packerBreakdown,lastPackedAt,
       allDispatched:orders.length>0&&orders.every(o=>o.statusKind==='dispatched'),
+      readyForDispatchCount:orders.filter(o=>o.statusKind==='ready').length,
       isUrgent:urgentSeqSet.has(seq),
       nonPickupTotal:orders.reduce((s,o)=>s+o.nonPickupCount,0),
       pendingTotal:orders.reduce((s,o)=>s+o.pendingCount,0),
@@ -7817,6 +7818,7 @@ function renderSequenceBoard(){
         '<div class="pk-order-detail pk-seq-summary">'+
           '<span class="pk-seq-reason '+reasonClass+'" title="'+escH(s.reason.detail)+'">'+escH(s.reason.label)+'</span> · '+
           escH(s.societies.join(', '))+
+          (s.readyForDispatchCount?' · <span class="pk-order-status pk-order-status-ready">'+s.readyForDispatchCount+' ready for dispatch</span>':'')+
           (s.lastPackedAt?' · last bag packed '+escH(formatOrderTime(s.lastPackedAt)):'')+
         '</div>'+
         (expanded?
