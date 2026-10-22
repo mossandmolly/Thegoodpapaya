@@ -510,6 +510,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    itself never retroactively creates. */
 @keyframes pk-combine-blink{0%,100%{opacity:1}50%{opacity:0.2}}
 .pk-combine-up-arrow{display:inline-block;color:#2f6b4f;font-size:13px;font-weight:700;animation:pk-combine-blink 1s infinite;flex-shrink:0;cursor:help}
+.pk-combine-up-caption{font-size:10px;font-weight:700;color:#2f6b4f;flex-shrink:0;white-space:nowrap}
 .pk-order-status{font-weight:600}
 .pk-order-status-dispatched{color:#1b5e32}
 .pk-order-status-ready{color:#8a7a6a}
@@ -7795,18 +7796,19 @@ function computeSequenceBoard(){
   // 40-item hard cap (the same cap compute-next-sequence builds toward)
   // is a candidate "parent" for any LATER (lower-order, higher seq)
   // sequence sharing its community or an explicitly-configured combinable
-  // partner (Config → Combinable Groups) whose own size would actually
-  // fit in that remaining room — a manual-merge opportunity the cron
-  // itself won't ever retroactively create (it only appends NEW orders
-  // into an existing open sequence, never moves one already-built
-  // sequence into another). Flags the LOWER sequence with an upward
-  // arrow pointing at the best (earliest) such parent it found.
+  // partner (Config → Combinable Groups) — a manual-merge opportunity the
+  // cron itself won't ever retroactively create (it only appends NEW
+  // orders into an existing open sequence, never moves one already-built
+  // sequence into another). Doesn't require the WHOLE lower sequence to
+  // fit in A's remaining room — even moving some of it up is worth
+  // flagging, so this only checks that A has any room at all, not how
+  // much. Flags the LOWER sequence with an upward arrow pointing at the
+  // best (earliest) such parent it found.
   sequences.forEach((b,j)=>{
     if(b.allDispatched)return;
     for(let i=0;i<j;i++){
       const a=sequences[i];
       if(a.allDispatched||a.nonPickupTotal>=SEQ_HARD_CAP_CLIENT)continue;
-      if(a.nonPickupTotal+b.nonPickupTotal>SEQ_HARD_CAP_CLIENT)continue;
       const sameCommunity=[...b.commUniqueIds].some(id=>a.commUniqueIds.has(id));
       const combinable=!sameCommunity&&[...b.commUniqueIds].some(id=>communityCombinablePartners(id).size&&[...communityCombinablePartners(id)].some(p=>a.commUniqueIds.has(p)));
       if(sameCommunity||combinable){ b.combineUpTargetSeq=a.seq; break; }
@@ -7875,7 +7877,9 @@ function renderSequenceBoard(){
         '<div class="pk-order-card-row" onclick="toggleSequenceExpanded('+s.seq+')" style="cursor:pointer">'+
           '<span class="pk-order-handle" draggable="false" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">⠿</span>'+
           (s.isUrgent?'<span class="pk-urgent-dot" title="One of the next sequences up — needs attention now"></span>':'')+
-          (s.combineUpTargetSeq!=null?'<span class="pk-combine-up-arrow" title="Same/combinable community as Sequence '+(positions.get(s.combineUpTargetSeq)||s.combineUpTargetSeq)+', which still has room — consider dragging this one up to merge">▲</span>':'')+
+          (s.combineUpTargetSeq!=null?'<span class="pk-combine-up-arrow" title="Same/combinable community as Sequence '+(positions.get(s.combineUpTargetSeq)||s.combineUpTargetSeq)+', which still has room — consider dragging some or all of this one up to merge">▲</span>'+
+            '<span class="pk-combine-up-caption">Merge with Sequence '+(positions.get(s.combineUpTargetSeq)||s.combineUpTargetSeq)+'</span>'
+          :'')+
           '<span class="pk-order-name">Sequence '+(positions.get(s.seq)||s.seq)+'</span>'+
           (s.allDispatched?'<span class="pk-seq-dispatched-badge">ALL DISPATCHED</span>':
             '<div class="pk-order-progress-track"><div class="pk-order-progress-fill" style="width:'+pct+'%;background:'+packProgressColor(pct)+'"></div></div>')+
