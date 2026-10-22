@@ -90,7 +90,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 @keyframes dv-seq-blink{0%,100%{background-color:var(--dv-seq-color)}50%{background-color:var(--dv-seq-color-dim)}}
 .dv-seq-highlight{animation:dv-seq-blink 1.4s infinite;border-color:var(--dv-seq-color)}
 .dv-seq-badge{display:inline-block;border-radius:10px;padding:2px 9px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#2b2320;background:rgba(255,255,255,0.65);border:1px solid rgba(0,0,0,0.12)}
-.dv-seq-wait{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;color:#c0392b;vertical-align:middle;animation:pk-urgent-blink 1s infinite}
+.dv-seq-wait{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;color:#c0392b;vertical-align:middle;animation:pk-text-blink 1s infinite}
+/* Colour legend, doubling as a filter — click a swatch to narrow the list
+   to just that sequence (see toggleDvSeqFilter). */
+.dv-seq-legend{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.dv-seq-legend-item{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600;color:#2b2320;background:var(--dv-seq-color);border:2px solid transparent;cursor:pointer}
+.dv-seq-legend-item.dv-seq-legend-selected{border-color:#2b2320}
 .pay-missing{font-size:11px;font-weight:700;color:#b3261e}
 .pay-link{font-size:11px;color:#3f7a34;text-decoration:none}
 .pay-link:hover{text-decoration:underline}
@@ -516,6 +521,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    still waiting on a packer, both on the sequence card itself and on any
    of its still-pending item cards wherever they show up. */
 @keyframes pk-urgent-blink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.25;transform:scale(0.85)}}
+/* Plain opacity fade — for text labels, where the dot's scale+opacity
+   combo reads as a weird shrink/grow rather than a clean blink. */
+@keyframes pk-text-blink{0%,100%{opacity:1}50%{opacity:0.3}}
 .pk-urgent-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#e23b3b;box-shadow:0 0 0 3px rgba(226,59,59,0.25);animation:pk-urgent-blink 1s infinite;flex-shrink:0}
 .pack-card>.pk-urgent-dot{position:absolute;top:8px;right:8px}
 /* Blinking upward arrow — this sequence shares a community (or a
@@ -529,7 +537,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-order-status-dispatched{color:#1b5e32}
 .pk-order-status-ready{color:#8a7a6a}
 .pk-order-status-waiting{color:#c0392b;font-weight:700;font-style:normal}
-.pk-order-status-held{color:#c0392b;font-weight:700;font-style:normal;animation:pk-urgent-blink 1s infinite}
+.pk-order-status-held{color:#c0392b;font-weight:700;font-style:normal;animation:pk-text-blink 1s infinite}
 .pk-order-card-row{display:flex;align-items:center;gap:8px}
 .pk-order-handle{color:#c8bdae;font-size:14px;flex-shrink:0}
 .pk-order-name{font-size:12px;color:#2b2320;flex:0 0 130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -774,6 +782,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="dv-scope-btn" id="dv-scope-mine" onclick="setDeliveryScope('mine')">My orders</button>
   </div>
   <div id="dv-summary-pills" class="filter-pills status-pills"></div>
+  <div id="dv-seq-legend" class="dv-seq-legend"></div>
   <input type="text" class="pk-search" id="dv-search" placeholder="🔍 Search society or customer...">
   <div class="push-row bulk-actions-row hidden" id="dv-assign-row" style="margin-bottom:12px">
     <button class="btn-push" id="dv-assign-me" disabled>🙋 Assign to me (0)</button>
@@ -8356,6 +8365,11 @@ let revealPhoneTimers=new Map(); // soid -> auto-hide timeout id
 let dvEditingNotes=null;
 let deliveryCatalogByItem={};
 let deliveryScope='all'; // 'all' | 'mine'
+let dvSeqFilter=null; // sequence_number, or null for no filter — set by clicking a swatch in the colour legend
+function toggleDvSeqFilter(seq){
+  dvSeqFilter=(dvSeqFilter===seq)?null:seq;
+  renderDeliveryList();
+}
 let deliveryStatusFilter='pending'; // 'all' | 'pending' | 'delivered' | 'cancelled' — 'pending' covers both not_dispatched and ofd (not yet delivered, not cancelled)
 let selectedDeliveryOrders=new Set();
 // Per-order card collapse — tracks which orders are EXPANDED (empty by
@@ -8849,17 +8863,30 @@ function renderDeliveryList(){
   // highlighting (ready to go, not already out for delivery) — so orders
   // that need to go out together are visually obvious at a glance, no
   // matter which society header they land under.
-  const seqColorMap=new Map();
-  [...new Set(scoped
+  const readyBySeq=new Map();
+  scoped
     .filter(o=>o.sequenceNumber!=null&&o.deliveryStatus!=='ofd'&&o.deliveryStatus!=='delivered'&&o.deliveryStatus!=='partially_delivered')
-    .map(o=>o.sequenceNumber))]
-    .sort((a,b)=>a-b)
-    .forEach((seq,i)=>seqColorMap.set(seq,DV_SEQ_PALETTE[i%DV_SEQ_PALETTE.length]));
+    .forEach(o=>readyBySeq.set(o.sequenceNumber,(readyBySeq.get(o.sequenceNumber)||0)+1));
+  const seqColorMap=new Map();
+  const readySeqNumbersSorted=[...readyBySeq.keys()].sort((a,b)=>a-b);
+  readySeqNumbersSorted.forEach((seq,i)=>seqColorMap.set(seq,DV_SEQ_PALETTE[i%DV_SEQ_PALETTE.length]));
   // Same clean 1/2/3... numbering the Packer tab's Sequences board shows,
   // not the raw (possibly fractional) sequence_number — computed from
   // every sequence with any non-cancelled order today, not just the
   // subset currently visible, so the number stays stable as filters change.
   const deliveryPositions=buildSequencePositions(Object.keys(deliverySeqStats).map(Number));
+  // Legend doubles as a filter — click a swatch to narrow the list down to
+  // just that sequence, click again (or the same swatch) to clear it.
+  document.getElementById('dv-seq-legend').innerHTML=readySeqNumbersSorted.length
+    ?readySeqNumbersSorted.map(seq=>{
+      const color=seqColorMap.get(seq);
+      const pos=deliveryPositions.get(seq)||seq;
+      const selected=dvSeqFilter===seq;
+      return '<span class="dv-seq-legend-item'+(selected?' dv-seq-legend-selected':'')+'" style="--dv-seq-color:'+color[0]+'" onclick="toggleDvSeqFilter('+JSON.stringify(seq)+')">'+
+        'Seq '+pos+' ('+readyBySeq.get(seq)+' ready)'+
+      '</span>';
+    }).join('')
+    :'';
   document.getElementById('dv-collapse-btn').textContent=expandedDeliveryOrders.size?'▾ Collapse All':'▸ Expand All';
 
   // Full unfiltered picture, not just what scope/search/status narrows
@@ -8870,6 +8897,7 @@ function renderDeliveryList(){
 
   const bySociety={};
   scoped.forEach(order=>{
+    if(dvSeqFilter!=null&&order.sequenceNumber!==dvSeqFilter)return;
     if(search&&!order.customer.toLowerCase().includes(search))return;
     if(!deliveryOrderMatchesStatusFilter(order))return;
     const soc=deriveGroupKey(order);
