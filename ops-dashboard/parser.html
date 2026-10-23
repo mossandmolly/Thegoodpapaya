@@ -87,8 +87,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 /* Colour-coded "these orders go out together" highlight — one blinking
    colour per sequence, same colour wherever its orders land regardless of
    which society header groups them. */
-@keyframes dv-seq-blink{0%,100%{background-color:var(--dv-seq-color)}50%{background-color:var(--dv-seq-color-dim)}}
-.dv-seq-highlight{animation:dv-seq-blink 1.4s infinite;border-color:var(--dv-seq-color)}
+.dv-seq-highlight{background-color:var(--dv-seq-color);border-color:var(--dv-seq-color)}
 .dv-seq-badge{display:inline-block;border-radius:10px;padding:2px 9px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#2b2320;background:rgba(255,255,255,0.65);border:1px solid rgba(0,0,0,0.12)}
 .dv-seq-wait{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;color:#c0392b;vertical-align:middle;animation:pk-text-blink 1s infinite}
 /* Colour legend, doubling as a filter — click a swatch to narrow the list
