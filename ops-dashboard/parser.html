@@ -7782,13 +7782,15 @@ function computeSequenceBoard(){
       // do), but it's still NOT actually dispatchable until someone
       // approves it — flag it separately so it doesn't quietly get
       // treated as the same as a genuinely clean, ready-to-go order.
-      const heldCount=items.filter(i=>i.status==='held').length;
+      const heldItems=items.filter(i=>i.status==='held');
+      const heldCount=heldItems.length;
+      const heldItemNames=heldItems.map(i=>i.item_name);
       return{soid,customerName:o.customer_name||soid,
         itemCount:items.length,
         pendingCount:pending.length,
         nonPickupCount:o.is_pickup?0:items.length,
         enteredAt:o.created_at||null,
-        statusKind,dispatchedAt:o.dispatched_at||null,assignedRider:o.assigned_rider||null,waitingGroups,heldCount};
+        statusKind,dispatchedAt:o.dispatched_at||null,assignedRider:o.assigned_rider||null,waitingGroups,heldCount,heldItemNames};
     });
     // Last bag actually weighed in this sequence, across every packer —
     // null until at least one item here has been packed.
@@ -7894,13 +7896,13 @@ function orderStatusLineHtml(o){
   if(o.statusKind==='dispatched'){
     return '<span class="pk-order-status pk-order-status-dispatched">✓ Dispatched'+(o.dispatchedAt?' · '+escH(formatOrderTime(o.dispatchedAt)):'')+(o.assignedRider?' · 🛵 '+escH(o.assignedRider):'')+'</span>';
   }
+  const heldBadge=o.heldCount?' <span class="pk-order-status pk-order-status-held">'+o.heldCount+' item'+(o.heldCount!==1?'s':'')+' held ('+escH(o.heldItemNames.join(', '))+')</span>':'';
   if(o.statusKind==='ready'){
-    return '<span class="pk-order-status pk-order-status-ready">Ready for dispatch</span>'+
-      (o.heldCount?' <span class="pk-order-status pk-order-status-held">'+o.heldCount+' item'+(o.heldCount!==1?'s':'')+' held</span>':'');
+    return '<span class="pk-order-status pk-order-status-ready">Ready for dispatch</span>'+heldBadge;
   }
   return '<span class="pk-order-status pk-order-status-waiting">'+
     o.waitingGroups.map(g=>'Waiting on '+escH(g.name)+' ('+escH(g.itemNames.join(', '))+')').join(' · ')+
-  '</span>';
+  '</span>'+heldBadge;
 }
 
 function renderSequenceBoard(){
