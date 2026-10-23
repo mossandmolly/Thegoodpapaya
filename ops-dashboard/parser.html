@@ -9038,12 +9038,13 @@ function renderDeliveryList(){
       seqSet.forEach(s1=>partnerSeqs.forEach(s2=>waitUnion(s1,s2)));
     });
   });
-  // Per-group (root) outstanding items — still being packed (deliverySeqStats'
-  // per-sequence "missing", snapshotted before the invoiced-only filter, so
-  // it counts ones that haven't even reached this list yet) OR already
-  // invoiced but not yet ofd/delivered/partially_delivered (sitting here,
-  // not yet picked up by any rider). Keeps {soid,customer} pairs, not just
-  // names, so a card can exclude its OWN order from its own "wait for" list.
+  // Per-group (root) outstanding items — ONLY orders still being packed
+  // (deliverySeqStats' per-sequence "missing", snapshotted before the
+  // invoiced-only filter, so it counts ones that haven't even reached this
+  // list yet — not invoiced, not even visible in the panel). Per Somya,
+  // an order that's already invoiced and just sitting here pending in
+  // Delivery does NOT count — she can already see that one for herself;
+  // this badge is specifically for what's invisible to her right now.
   const groupMissingByRoot=new Map();
   allOrdersBySeq.forEach((orders,seq)=>{
     const root=waitFind(seq);
@@ -9053,11 +9054,6 @@ function renderDeliveryList(){
     if(stillPacking&&stillPacking.missing>0){
       stillPacking.missingCustomers.forEach(name=>items.push({soid:null,customer:name}));
     }
-    orders.forEach(o=>{
-      if(o.deliveryStatus!=='ofd'&&o.deliveryStatus!=='delivered'&&o.deliveryStatus!=='partially_delivered'){
-        items.push({soid:o.soid,customer:o.customer});
-      }
-    });
   });
   const groupMissingBySeq=new Map();
   allOrdersBySeq.forEach((_,seq)=>groupMissingBySeq.set(seq,groupMissingByRoot.get(waitFind(seq))));
