@@ -8088,7 +8088,11 @@ async function reorderSequence(fromSeq,beforeSeq){
 
 async function writeSequenceNumber(soids,value){
   if(!soids.length)return;
-  const{error}=await sb.from('orders').update({sequence_number:value}).in('sales_order_id',soids);
+  // orders has no direct client UPDATE access (by design — see migration
+  // 126) — same reason every other order mutation in this app goes
+  // through an RPC or edge function rather than a raw table write. This
+  // RPC only ever touches sequence_number, nothing else on the row.
+  const{error}=await sb.rpc('move_orders_to_sequence',{p_sales_order_ids:soids,p_sequence_number:value});
   if(error){uxAlert('Failed to reorder: '+error.message);return;}
   soids.forEach(soid=>{const o=packerCustomerMap[soid];if(o)o.sequence_number=value;});
   renderPackerTeamView();
