@@ -786,6 +786,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button class="dv-scope-btn" id="dv-scope-mine" onclick="setDeliveryScope('mine')">My orders</button>
   </div>
   <div id="dv-summary-pills" class="filter-pills status-pills"></div>
+  <div id="dv-group-toggle" class="filter-pills status-pills"></div>
   <div id="dv-seq-legend" class="dv-seq-legend"></div>
   <input type="text" class="pk-search" id="dv-search" placeholder="🔍 Search society or customer...">
   <div class="push-row bulk-actions-row hidden" id="dv-assign-row" style="margin-bottom:12px">
@@ -8426,6 +8427,24 @@ let dvEditingNotes=null;
 let deliveryCatalogByItem={};
 let deliveryScope='all'; // 'all' | 'mine'
 let dvSeqFilter=null; // array of sequence_numbers (one colour group), or null for no filter — set by clicking a swatch in the colour legend
+
+// Groups the list by sequence (same numbering as the Team tab's Sequences
+// board) by default, instead of by society — riders/dispatch load by
+// sequence, so that's the more useful default read here. Flat (society/
+// trip, shared viewGrouping) stays one tap away.
+let deliveryGroupMode='sequence'; // 'alpha' | 'sequence'
+function setDeliveryGroupMode(mode){
+  deliveryGroupMode=mode;
+  renderDeliveryGroupToggle();
+  renderDeliveryList();
+}
+function renderDeliveryGroupToggle(){
+  const el=document.getElementById('dv-group-toggle');
+  if(!el)return;
+  el.innerHTML=
+    '<span class="filter-pill'+(deliveryGroupMode==='sequence'?' active':'')+'" onclick="setDeliveryGroupMode(\'sequence\')">Sequence</span>'+
+    '<span class="filter-pill'+(deliveryGroupMode==='alpha'?' active':'')+'" onclick="setDeliveryGroupMode(\'alpha\')">Flat</span>';
+}
 function toggleDvSeqFilter(members){
   const same=dvSeqFilter&&dvSeqFilter.length===members.length&&members.every(m=>dvSeqFilter.includes(m));
   dvSeqFilter=same?null:members;
@@ -8915,6 +8934,7 @@ function renderDeliveryList(){
   const list=document.getElementById('dv-list');
   const search=document.getElementById('dv-search').value.trim().toLowerCase();
   const selectionMode=deliverySelectionModeActive();
+  renderDeliveryGroupToggle();
 
   // Scope (All/My) narrows the pool the summary pills count over; the
   // status pill (Total/Delivered/Pending/Cancelled) then narrows further
@@ -9000,17 +9020,33 @@ function renderDeliveryList(){
     .map(([soid,order])=>({soid,...order}))
     .filter(o=>o.orderStatus!=='cancelled');
 
+  // Sequence grouping is the default here (deliveryGroupMode) — riders
+  // load by sequence, not by society, so that's the more useful default
+  // read; Flat (society/trip, same as Order Overview/Packer) stays
+  // available via the toggle for whoever wants it.
+  const deliverySequenceMode=deliveryGroupMode==='sequence';
   const bySociety={};
   scoped.forEach(order=>{
     if(dvSeqFilter!=null&&!dvSeqFilter.includes(order.sequenceNumber))return;
     if(search&&!order.customer.toLowerCase().includes(search))return;
     if(!deliveryOrderMatchesStatusFilter(order))return;
-    const soc=deriveGroupKey(order);
+    const soc=deliverySequenceMode
+      ?(order.sequenceNumber!=null?'Sequence '+(deliveryPositions.get(order.sequenceNumber)||order.sequenceNumber):'Not yet sequenced')
+      :deriveGroupKey(order);
     if(!bySociety[soc])bySociety[soc]=[];
     bySociety[soc].push(order);
   });
 
-  const socNames=viewGrouping==='trip'
+  const socNames=deliverySequenceMode
+    ?Object.keys(bySociety).sort((a,b)=>{
+      const posOf=name=>{
+        if(name==='Not yet sequenced')return Infinity;
+        const seq=bySociety[name][0].sequenceNumber;
+        return seq!=null?(deliveryPositions.get(seq)??Infinity):Infinity;
+      };
+      return posOf(a)-posOf(b);
+    })
+    :viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
     // Case-insensitive — group names can come from either a Community
     // Priority display_name (whatever case it was typed in) or deriveSociety's
