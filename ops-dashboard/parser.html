@@ -7974,6 +7974,13 @@ function renderSequenceBoard(){
               '<span class="pk-order-handle" draggable="false">⠿</span> '+escH(o.customerName)+
               ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+
               (o.enteredAt?', entered '+escH(formatOrderTime(o.enteredAt)):'')+'</span>'+
+              // Drag-and-drop needs the browser's native HTML5 DnD support,
+              // which phone/tablet browsers often don't fire reliably — this
+              // tap alternative calls the exact same move, so it works
+              // regardless of device.
+              '<button class="btn-sec pk-seq-move-btn" draggable="false" style="padding:2px 7px;font-size:11px;margin-left:6px" '+
+                'onclick="event.stopPropagation();promptMoveOrderToSequence(\''+escH(o.soid)+'\','+escH(JSON.stringify(o.customerName))+')" '+
+                'onmousedown="event.stopPropagation()">Move…</button>'+
               '<div class="pk-order-detail-sub">'+orderStatusLineHtml(o)+'</div>'+
             '</div>'
           ).join('')+'</div>'+
@@ -8042,6 +8049,26 @@ async function sequenceDropAtEnd(e){
 // number, no fractional math needed.
 async function moveOrderToSequence(soid,targetSeq){
   await writeSequenceNumber([soid],targetSeq);
+}
+
+// Tap alternative to dragging an order onto a sequence — same move, same
+// writeSequenceNumber call, just triggered by a button instead of native
+// HTML5 drag-and-drop (which phone/tablet browsers frequently never fire
+// at all, silently no-opping the drag with no error shown). Accepts the
+// sequence NUMBER as shown on screen (its position, e.g. "Sequence 4"),
+// not the raw possibly-fractional sequence_number, since that's what
+// Somya actually sees and types.
+async function promptMoveOrderToSequence(soid,customerName){
+  const positions=computeSequencePositions();
+  const posToSeq=new Map([...positions.entries()].map(([seq,pos])=>[pos,seq]));
+  const input=await uxPrompt('Move '+customerName+' to which sequence number? (as shown on screen)','');
+  if(input==null||input.trim()==='')return;
+  const pos=Number(input.trim());
+  if(!Number.isFinite(pos)||!posToSeq.has(pos)){
+    await uxAlert('No sequence numbered "'+input+'" — check the number shown on screen and try again.');
+    return;
+  }
+  await moveOrderToSequence(soid,posToSeq.get(pos));
 }
 
 // Moves every order currently in `fromSeq` to sit just before `beforeSeq`:
