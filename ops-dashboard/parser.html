@@ -8999,6 +8999,68 @@ function renderDeliveryList(){
   // every sequence with any non-cancelled order today, not just the
   // subset currently visible, so the number stays stable as filters change.
   const deliveryPositions=buildSequencePositions(Object.keys(deliverySeqStats).map(Number));
+
+  // "Wait for order X" needs to keep working after an order ships (OFD) —
+  // per Somya, a rider who's already out with part of a combinable group
+  // should still be told something else in that group hasn't gone yet. The
+  // colour grouping above is deliberately scoped to still-"ready" sequences
+  // only (untouched, still drives the legend/filter exactly as before) — an
+  // already-OFD sequence would fall out of THAT grouping and lose track of
+  // its combinable partners, so this is a separate, broader union-find over
+  // every sequence with any order today (not just ready ones), used only to
+  // compute per-group outstanding counts/names, never the colour itself.
+  const allOrdersBySeq=new Map();
+  Object.entries(deliveryOrders).forEach(([soid,order])=>{
+    if(order.sequenceNumber==null||order.orderStatus==='cancelled')return;
+    if(!allOrdersBySeq.has(order.sequenceNumber))allOrdersBySeq.set(order.sequenceNumber,[]);
+    allOrdersBySeq.get(order.sequenceNumber).push({soid,...order});
+  });
+  const waitParent=new Map([...allOrdersBySeq.keys()].map(s=>[s,s]));
+  function waitFind(s){ while(waitParent.get(s)!==s)s=waitParent.get(s); return s; }
+  function waitUnion(a,b){ const ra=waitFind(a),rb=waitFind(b); if(ra!==rb)waitParent.set(ra,rb); }
+  const waitSeqsByCommunity=new Map();
+  allOrdersBySeq.forEach((orders,seq)=>{
+    orders.forEach(o=>{
+      const community=matchCommunityPriority(o.society||o.customer);
+      if(!community)return;
+      if(!waitSeqsByCommunity.has(community.unique_id))waitSeqsByCommunity.set(community.unique_id,new Set());
+      waitSeqsByCommunity.get(community.unique_id).add(seq);
+    });
+  });
+  waitSeqsByCommunity.forEach(seqSet=>{
+    const arr=[...seqSet];
+    for(let k=1;k<arr.length;k++)waitUnion(arr[0],arr[k]);
+  });
+  waitSeqsByCommunity.forEach((seqSet,uniqueId)=>{
+    communityCombinablePartners(uniqueId).forEach(partnerId=>{
+      const partnerSeqs=waitSeqsByCommunity.get(partnerId);
+      if(!partnerSeqs)return;
+      seqSet.forEach(s1=>partnerSeqs.forEach(s2=>waitUnion(s1,s2)));
+    });
+  });
+  // Per-group (root) outstanding items — still being packed (deliverySeqStats'
+  // per-sequence "missing", snapshotted before the invoiced-only filter, so
+  // it counts ones that haven't even reached this list yet) OR already
+  // invoiced but not yet ofd/delivered/partially_delivered (sitting here,
+  // not yet picked up by any rider). Keeps {soid,customer} pairs, not just
+  // names, so a card can exclude its OWN order from its own "wait for" list.
+  const groupMissingByRoot=new Map();
+  allOrdersBySeq.forEach((orders,seq)=>{
+    const root=waitFind(seq);
+    if(!groupMissingByRoot.has(root))groupMissingByRoot.set(root,[]);
+    const items=groupMissingByRoot.get(root);
+    const stillPacking=deliverySeqStats[seq];
+    if(stillPacking&&stillPacking.missing>0){
+      stillPacking.missingCustomers.forEach(name=>items.push({soid:null,customer:name}));
+    }
+    orders.forEach(o=>{
+      if(o.deliveryStatus!=='ofd'&&o.deliveryStatus!=='delivered'&&o.deliveryStatus!=='partially_delivered'){
+        items.push({soid:o.soid,customer:o.customer});
+      }
+    });
+  });
+  const groupMissingBySeq=new Map();
+  allOrdersBySeq.forEach((_,seq)=>groupMissingBySeq.set(seq,groupMissingByRoot.get(waitFind(seq))));
   // Legend doubles as a filter — click a swatch to narrow the list down to
   // just that group's sequences, click again (or the same swatch) to clear it.
   document.getElementById('dv-seq-legend').innerHTML=membersByRoot.size
@@ -9083,7 +9145,7 @@ function renderDeliveryList(){
       ?'<input type="checkbox" class="inv-select" '+(assignableSoids.every(soid=>selectedDeliveryOrders.has(soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(assignableSoids))+',this.checked)" title="Select all assignable orders in this society"> '
       :'';
     return '<div class="society-header">'+selectAllCb+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+tripPendingBadgeHtml(tripInfo,orders[0])+'</div>'+
-      orders.map(order=>renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions)).join('');
+      orders.map(order=>renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions,groupMissingBySeq)).join('');
   }).join('');
 
   renderDeliveryPhotos(socNames.flatMap(soc=>bySociety[soc]));
@@ -9185,7 +9247,7 @@ async function dispatchOrder(soid){
   }
 }
 
-function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions){
+function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions,groupMissingBySeq){
   const cancelled=order.orderStatus==='cancelled';
 
   // A whole-order cancellation (customer refused everything, admin
@@ -9210,18 +9272,26 @@ function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions){
   // partiallyDelivered gets its own distinct badge text further down, but
   // otherwise behaves exactly like a full delivery everywhere else on the card.
   const delivered=order.deliveryStatus==='delivered'||partiallyDelivered;
-  // Blinking colour-coded "these go together" highlight — only while it's
-  // still actually useful, i.e. before the trip has left. seqStats comes
-  // from the full (not just invoiced) picture, so "N more orders" counts
-  // ones still being packed that haven't even reached this list yet.
+  // Colour-coded "these go together" highlight — only while it's still
+  // actually useful, i.e. before the trip has left. Per Somya, this
+  // colour-group filter/legend stays exactly as-is — only the "Wait for
+  // order X" text below needed to keep working past OFD.
   const seqColor=(!ofd&&!delivered&&order.sequenceNumber!=null)?seqColorMap?.get(order.sequenceNumber):null;
-  const seqStats=order.sequenceNumber!=null?deliverySeqStats[order.sequenceNumber]:null;
   const seqHighlightAttr=seqColor?' style="--dv-seq-color:'+seqColor[0]+';--dv-seq-color-dim:'+seqColor[1]+'"':'';
   const seqHighlightClass=seqColor?' dv-seq-highlight':'';
-  const seqBadge=(order.sequenceNumber!=null&&!ofd&&!delivered)
+  // "Wait for order X" — unlike the colour highlight above, this stays
+  // visible through OFD: a rider already out with part of a combinable
+  // group still needs to know something else in that same group (any
+  // sequence sharing a community or combinable partner, not just this
+  // exact sequence) hasn't shipped yet. groupMissingBySeq already covers
+  // the whole group, not just this order's own sequence; excludes this
+  // order's own soid so a card never tells itself to "wait for" itself.
+  const groupMissing=order.sequenceNumber!=null?(groupMissingBySeq?.get(order.sequenceNumber)||[]):[];
+  const missingHere=groupMissing.filter(it=>it.soid!==order.soid);
+  const seqBadge=(order.sequenceNumber!=null&&!delivered)
     ?'<span class="dv-seq-badge">Seq '+(deliveryPositions?.get(order.sequenceNumber)||order.sequenceNumber)+'</span>'+
-      (seqStats&&seqStats.missing>0
-        ?'<span class="dv-seq-wait">Wait for order'+(seqStats.missing!==1?'s':'')+' '+escH(seqStats.missingCustomers.join(', '))+'</span>'
+      (missingHere.length
+        ?'<span class="dv-seq-wait">Wait for order'+(missingHere.length!==1?'s':'')+' '+escH(missingHere.map(it=>it.customer).join(', '))+'</span>'
         :'')
     :'';
   const items=activeItems(order);
