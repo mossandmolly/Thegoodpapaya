@@ -522,6 +522,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 @keyframes pk-text-blink{0%,100%{opacity:1}50%{opacity:0.3}}
 .pk-urgent-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#e23b3b;box-shadow:0 0 0 3px rgba(226,59,59,0.25);animation:pk-urgent-blink 1s infinite;flex-shrink:0}
 .pack-card>.pk-urgent-dot{position:absolute;top:8px;right:8px}
+/* Distinct amber (not red, so it's never confused with the urgent dot —
+   a sequence can be both urgent AND have a held item at once) blinking
+   dot for a sequence with at least one held item somewhere in it. */
+.pk-held-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#e2963b;box-shadow:0 0 0 3px rgba(226,150,59,0.25);animation:pk-urgent-blink 1s infinite;flex-shrink:0}
 /* Blinking upward arrow — this sequence shares a community (or a
    Config-curated combinable group) with an earlier sequence that still
    has room under the 40-item cap, a manual-merge opportunity the cron
@@ -5960,10 +5964,16 @@ function orderHasVegetable(order){
 }
 let overviewVegetableOnly=false;
 
+function orderHasHeldItem(order){
+  return activeItems(order).some(i=>i.status==='held');
+}
+let overviewHeldOnly=false;
+
 function orderMatchesOverviewFilter(order){
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
   if(overviewPendingReviewOnly&&!orderHasPendingReview(order))return false;
   if(overviewVegetableOnly&&!orderHasVegetable(order))return false;
+  if(overviewHeldOnly&&!orderHasHeldItem(order))return false;
   if(overviewDeliveryFilter!=='all'){
     const ds=order.deliveryStatus||'not_dispatched';
     if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
@@ -6014,6 +6024,11 @@ function toggleOverviewVegetableFilter(){
   renderOrdersList();
 }
 
+function toggleOverviewHeldFilter(){
+  overviewHeldOnly=!overviewHeldOnly;
+  renderOrdersList();
+}
+
 function renderOverviewSummaryPills(tripInfo){
   const orders=Object.values(currentOrdersById);
   // Pickup and replacement-only orders don't count toward "real" order
@@ -6028,6 +6043,7 @@ function renderOverviewSummaryPills(tripInfo){
   const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
   const pendingReview=orders.filter(orderHasPendingReview).length;
   const withVegetable=orders.filter(orderHasVegetable).length;
+  const withHeld=active.filter(orderHasHeldItem).length;
   const pills=[
     {key:'all',label:'All',count:total},
     {key:'inprogress',label:'Open/Packed',count:inprogress},
@@ -6040,7 +6056,8 @@ function renderOverviewSummaryPills(tripInfo){
   ).join('')+
   '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>'+
   (pendingReview?'<span class="filter-pill'+(overviewPendingReviewOnly?' active':'')+'" style="color:#8a5a00" onclick="toggleOverviewPendingReviewFilter()">💬 Pending review ('+pendingReview+')</span>':'')+
-  (withVegetable?'<span class="filter-pill'+(overviewVegetableOnly?' active':'')+'" style="color:#2d6b2d" onclick="toggleOverviewVegetableFilter()">🥦 Has vegetable ('+withVegetable+')</span>':'');
+  (withVegetable?'<span class="filter-pill'+(overviewVegetableOnly?' active':'')+'" style="color:#2d6b2d" onclick="toggleOverviewVegetableFilter()">🥦 Has vegetable ('+withVegetable+')</span>':'')+
+  (withHeld?'<span class="filter-pill'+(overviewHeldOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewHeldFilter()">⏸ Held ('+withHeld+')</span>':'');
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
   const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;
@@ -7820,6 +7837,7 @@ function computeSequenceBoard(){
     return{seq,orders,societies:[...societies],commUniqueIds,reason,packerBreakdown,lastPackedAt,
       allDispatched:orders.length>0&&orders.every(o=>o.statusKind==='dispatched'),
       readyForDispatchCount:orders.filter(o=>o.statusKind==='ready').length,
+      heldCount:orders.reduce((s,o)=>s+o.heldCount,0),
       isUrgent:urgentSeqSet.has(seq),
       nonPickupTotal:orders.reduce((s,o)=>s+o.nonPickupCount,0),
       pendingTotal:orders.reduce((s,o)=>s+o.pendingCount,0),
@@ -7910,6 +7928,7 @@ function renderSequenceBoard(){
         '<div class="pk-order-card-row" onclick="toggleSequenceExpanded('+s.seq+')" style="cursor:pointer">'+
           '<span class="pk-order-handle" draggable="false" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">⠿</span>'+
           (s.isUrgent?'<span class="pk-urgent-dot" title="One of the next sequences up — needs attention now"></span>':'')+
+          (s.heldCount?'<span class="pk-held-dot" title="'+s.heldCount+' held item'+(s.heldCount!==1?'s':'')+' in this sequence — needs attention"></span>':'')+
           (s.combineUpTargetSeq!=null?'<span class="pk-combine-up-arrow" title="Same/combinable community as Sequence '+(positions.get(s.combineUpTargetSeq)||s.combineUpTargetSeq)+', which still has room — consider dragging some or all of this one up to merge">▲</span>'+
             '<span class="pk-combine-up-caption">Merge with Sequence '+(positions.get(s.combineUpTargetSeq)||s.combineUpTargetSeq)+'</span>'
           :'')+
