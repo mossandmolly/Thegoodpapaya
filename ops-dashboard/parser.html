@@ -3990,15 +3990,23 @@ function renderOrdersList(){
   renderOverviewSummaryPills(tripInfo);
   renderOverviewSortToggle();
 
-  // Group orders by society (default) or by trip (viewGrouping==='trip') —
-  // same underlying list, just a different grouping key. Search matches
-  // society/trip name, customer name, or any item's fruit name — an order
-  // survives the filter if any one of those three matches.
+  // Group orders by society (default), by trip (viewGrouping==='trip'), or
+  // by sequence (overviewSortMode==='sequence' — the auto-sequencer's own
+  // batches, same numbering the Team tab's Sequences board shows, so
+  // Overview can be read in the exact order packers are actually working
+  // through today). Sequence grouping takes over the grouping KEY itself,
+  // not just the sort, and overrides By Trip when both are somehow active
+  // — grouping by trip and by sequence at once isn't a coherent view.
+  // Search matches society/trip/sequence label, customer name, or any
+  // item's fruit name — an order survives the filter if any one matches.
   const search=document.getElementById('to-search').value.trim().toLowerCase();
+  const sequenceViewActive=overviewSortMode==='sequence';
   const bySociety={};
   Object.entries(currentOrdersById).forEach(([soid,order])=>{
     if(!orderMatchesOverviewFilter(order))return;
-    const soc=deriveGroupKey(order);
+    const soc=sequenceViewActive
+      ?(order.sequenceNumber!=null?'Sequence '+(sequencePositions.get(order.sequenceNumber)||order.sequenceNumber):'Not yet sequenced')
+      :deriveGroupKey(order);
     if(search){
       const matches=soc.toLowerCase().includes(search)||
         order.customer.toLowerCase().includes(search)||
@@ -4009,27 +4017,34 @@ function renderOrdersList(){
     bySociety[soc].push({soid,...order});
   });
 
-  // By Trip view / Time Sensitive view — still-pending orders (not yet
-  // packed/invoiced, or not yet delivered) sort above ones with nothing
-  // left to do, so what actually needs attention under a group header
-  // isn't buried beneath orders that are already done. Stable sort keeps
-  // each tier's original relative order.
-  if(viewGrouping==='trip'||overviewSortMode==='priority'){
+  // By Trip view — still-pending orders (not yet packed/invoiced, or not
+  // yet delivered) sort above ones with nothing left to do, so what
+  // actually needs attention under a group header isn't buried beneath
+  // orders that are already done. Stable sort keeps each tier's original
+  // relative order. Sequence view and Flat view both stay alphabetical by
+  // customer within each group — a sequence's own internal order isn't
+  // meaningful here the way it is on the Team tab's board (no drag, no
+  // packer breakdown), so alphabetical is just the easiest to scan.
+  if(viewGrouping==='trip'&&!sequenceViewActive){
     Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>overviewOrderPendingRank(a)-overviewOrderPendingRank(b)));
   }else{
-    // Flat (society) view — alphabetical by customer name within each
-    // society, not chronological by when the order was placed.
     Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>a.customer.localeCompare(b.customer)));
   }
 
-  const socNames=viewGrouping==='trip'
+  const socNames=sequenceViewActive
+    // Ascending by sequence position, "Not yet sequenced" always last —
+    // position is the same 1-based rank buildSequencePositions gives the
+    // Team tab, not the raw (possibly fractional) sequence_number.
+    ?Object.keys(bySociety).sort((a,b)=>{
+      const posOf=name=>{
+        if(name==='Not yet sequenced')return Infinity;
+        const seq=bySociety[name][0].sequenceNumber;
+        return seq!=null?(sequencePositions.get(seq)??Infinity):Infinity;
+      };
+      return posOf(a)-posOf(b);
+    })
+    :viewGrouping==='trip'
     ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
-    :overviewSortMode==='priority'
-    // Time Sensitive — community-priority-rank + a hard time-sensitive
-    // override, applied at group level. No longer anything to do with the
-    // Packer tab's My Sequence (that's auto-sequenced server-side now) —
-    // this is purely Order Overview's own Flat/Time Sensitive display ordering.
-    ?sortGroupsByPriority(Object.keys(bySociety),name=>bySociety[name])
     // Flat — case-insensitive since group names can come from either a
     // Community Priority display_name (whatever case it was typed in) or
     // deriveSociety's own casing, and a plain case-sensitive sort ranks
@@ -5011,19 +5026,21 @@ function setViewGrouping(mode){
   if(document.getElementById('panel-delivery').classList.contains('active'))renderDeliveryList();
 }
 
-// Order Overview's own Flat/Time Sensitive toggle — separate from
-// viewGrouping above (that one's shared with Packer/Delivery and is about
-// Flat vs the old Trip view, now unreachable). "Time Sensitive" here sorts
-// groups by sortGroupsByPriority — community-priority-rank + a hard
-// time-sensitive override — instead of plain alphabetical. Purely an Order
-// Overview display ordering now; it doesn't drive the Packer tab's My
-// Sequence (auto-sequenced server-side — see compute-next-sequence).
-let overviewSortMode='alpha'; // 'alpha' | 'priority'
+// Order Overview's own Flat/Sequence toggle — separate from viewGrouping
+// above (that one's shared with Packer/Delivery and is about Flat vs the
+// old Trip view, now unreachable). "Sequence" groups orders by the
+// auto-sequencer's own batch numbers (same ones the Team tab's Sequences
+// board shows) instead of by society — see renderOrdersList's grouping
+// block. Replaces the old "Time Sensitive" mode (sortGroupsByPriority,
+// still used by the Packer tab's own grouped view — not deleted) per
+// Somya: sequence order is the more useful read here now that sequencing
+// is automatic.
+let overviewSortMode='alpha'; // 'alpha' | 'sequence'
 
 function renderOverviewSortToggle(){
   document.getElementById('to-sort-toggle').innerHTML=
     '<span class="filter-pill'+(overviewSortMode==='alpha'?' active':'')+'" onclick="setOverviewSortMode(\'alpha\')">Flat</span>'+
-    '<span class="filter-pill'+(overviewSortMode==='priority'?' active':'')+'" onclick="setOverviewSortMode(\'priority\')">Time Sensitive</span>';
+    '<span class="filter-pill'+(overviewSortMode==='sequence'?' active':'')+'" onclick="setOverviewSortMode(\'sequence\')">Sequence</span>';
 }
 
 function setOverviewSortMode(mode){
@@ -5961,14 +5978,6 @@ function orderOverallStatus(order){
 
 // ── Order overview summary pills (top-level status filter) ──────────────
 let toOverviewFilter='all'; // 'all' | 'invoiced' | 'final' | 'inprogress' | 'cancelled'
-// Independent of the status filter above (an order can be both "Final" and
-// have a timeline constraint) — ANDed on top of whichever status bucket is
-// active, not one more mutually-exclusive bucket of its own. Reuses
-// orders.deliver_by/deliver_after, set either by the AI parser reading the
-// message directly, or the deliver-by/deliver-after time pickers in Quick
-// Order Entry and the order notes modal — no free-text scanning involved.
-// Matches if EITHER bound is set.
-let overviewDeadlineOnly=false;
 
 // A separate axis from toOverviewFilter above — invoice status and
 // delivery status track different things (an order can be "Final" and
@@ -6011,7 +6020,6 @@ function orderHasHeldItem(order){
 let overviewHeldOnly=false;
 
 function orderMatchesOverviewFilter(order){
-  if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
   if(overviewPendingReviewOnly&&!orderHasPendingReview(order))return false;
   if(overviewVegetableOnly&&!orderHasVegetable(order))return false;
   if(overviewHeldOnly&&!orderHasHeldItem(order))return false;
@@ -6037,11 +6045,6 @@ function orderMatchesOverviewFilter(order){
 
 function setOverviewFilter(key){
   toOverviewFilter=key;
-  renderOrdersList();
-}
-
-function toggleOverviewDeadlineFilter(){
-  overviewDeadlineOnly=!overviewDeadlineOnly;
   renderOrdersList();
 }
 
@@ -6081,7 +6084,6 @@ function renderOverviewSummaryPills(tripInfo){
   const invoiced=active.filter(isFullyInvoiced).length;
   const final=active.filter(o=>!isFullyInvoiced(o)&&isReadyToInvoice(o)).length;
   const inprogress=active.length-invoiced-final;
-  const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
   const pendingReview=orders.filter(orderHasPendingReview).length;
   const withVegetable=orders.filter(orderHasVegetable).length;
   const withHeld=active.filter(orderHasHeldItem).length;
@@ -6095,7 +6097,6 @@ function renderOverviewSummaryPills(tripInfo){
   document.getElementById('to-summary-pills').innerHTML=pills.map(p=>
     '<span class="filter-pill'+(toOverviewFilter===p.key?' active':'')+'" onclick="setOverviewFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
-  '<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>'+
   (pendingReview?'<span class="filter-pill'+(overviewPendingReviewOnly?' active':'')+'" style="color:#8a5a00" onclick="toggleOverviewPendingReviewFilter()">💬 Pending review ('+pendingReview+')</span>':'')+
   (withVegetable?'<span class="filter-pill'+(overviewVegetableOnly?' active':'')+'" style="color:#2d6b2d" onclick="toggleOverviewVegetableFilter()">🥦 Has vegetable ('+withVegetable+')</span>':'')+
   (withHeld?'<span class="filter-pill'+(overviewHeldOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewHeldFilter()">⏸ Held ('+withHeld+')</span>':'');
