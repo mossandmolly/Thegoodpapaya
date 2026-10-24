@@ -324,6 +324,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .stock-wastage{display:inline-flex;flex-direction:column;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;line-height:1.6}
 .stock-wastage.stock-wastage-loss{background:#fbe9e7;color:#b3261e}
 .stock-wastage.stock-wastage-none{background:#e3f3e3;color:#2d6b2d}
+/* Available D-1 and today's Opening are both frozen once set — Write off
+   (the gap between them) is just as static, so it's plain red text, not
+   an editable/live-looking value. */
+.stock-writeoff{color:#b3261e;font-weight:700}
 .del-btn{background:none;border:none;color:#b3261e;cursor:pointer;font-size:14px;padding:0 4px}
 .edit-btn{background:none;border:none;color:#2f6690;cursor:pointer;font-size:14px;padding:0 4px}
 .bc-box{background:#fffdf9;border:1px solid #f0dfc8;border-radius:8px;padding:14px;margin-bottom:14px}
@@ -815,7 +819,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div class="stock-fruit-pills" id="stock-fruit-pills"></div>
   <div class="stock-table-wrap">
     <table class="community-table" id="stock-table"><thead><tr>
-      <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th class="vp-sortable" onclick="sortStockRows('packed')">Packed/Invoiced<span id="stock-sort-packed" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('pending')">Pending orders<span id="stock-sort-pending" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('available')">Available<span id="stock-sort-available" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('status')">Status<span id="stock-sort-status" class="vp-sort-ind"></span></th><th>Closing stock</th><th>Wastage</th>
+      <th>Fruit</th><th>Opening stock</th><th>Available D-1</th><th>Write off</th><th>Purchased</th><th class="vp-sortable" onclick="sortStockRows('packed')">Packed/Invoiced<span id="stock-sort-packed" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('pending')">Pending orders<span id="stock-sort-pending" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('available')">Available<span id="stock-sort-available" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('status')">Status<span id="stock-sort-status" class="vp-sort-ind"></span></th><th>Closing stock</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
   </div>
   <div id="stock-buy-list"></div>
@@ -9968,6 +9972,13 @@ let stockClosingMap={};        // item_name -> closing_qty
 let stockPurchasesMap={};      // item_name -> [{id,qty,source,created_at}]
 let stockPackedMap={};         // item_name -> qty already packed/final/invoiced today (physically off the shelf)
 let stockPendingMap={};        // item_name -> qty still open/held (an order exists, but nothing pulled yet)
+// Previous day's equivalents — only feed Available D-1 / Write off, see
+// stockStatusFor. stockOpeningMapD1 missing an item entirely (vs. 0) is
+// what drives the "—" (no D-1 data at all) display.
+let stockOpeningMapD1={};
+let stockPurchasesMapD1={};
+let stockPackedMapD1={};
+let stockPendingMapD1={};
 let stockPackingStarted=false; // true once any item has reached 'packed' or beyond for the viewed date
 let stockStatusFilter='all';   // 'all' | 'need' | 'trending' | 'ok'
 let stockTypeFilter='all';     // 'all' | 'veggie' | 'fruit' — VEGETABLE_ITEM_NAMES already exists (Order Overview's vegetable-order filter)
@@ -10488,7 +10499,7 @@ async function loadVegPerfView(){
     : '<tr><td colspan="4" class="to-empty">No vegetable orders in this range</td></tr>';
 }
 
-const STOCK_COLSPAN=9;
+const STOCK_COLSPAN=10;
 
 async function loadStockView(){
   const tbody=document.getElementById('stock-tbody');
@@ -10501,7 +10512,8 @@ async function loadStockView(){
   stockPendingFruitPicks=new Set();
   renderStockFruitPills();
 
-  const[catalog,trackedRes,openingRes,closingRes,purchaseRes,itemsRes,historyRes]=await Promise.all([
+  const prevDate=addDays(viewDate,-1);
+  const[catalog,trackedRes,openingRes,closingRes,purchaseRes,itemsRes,historyRes,openingD1Res,purchaseD1Res,itemsD1Res]=await Promise.all([
     ensureCatalogItems().catch(e=>{console.error(e);return[];}),
     sb.from('stock_tracked_fruits').select('item_name'),
     sb.from('stock_opening').select('item_name,opening_qty').eq('date',viewDate),
@@ -10509,8 +10521,13 @@ async function loadStockView(){
     sb.from('stock_purchases').select('id,item_name,qty,source,created_at').eq('date',viewDate).order('created_at'),
     fetchAllOrderItems(q=>q.like('sales_order_id',viewDate+'-%')),
     sb.from('stock_opening_history').select('item_name,old_qty,new_qty,changed_by,changed_at').eq('date',viewDate).order('changed_at',{ascending:false}),
+    // Previous day's own pool — used only to show "Available D-1" and the
+    // frozen Write off column (available D-1 minus today's opening).
+    sb.from('stock_opening').select('item_name,opening_qty').eq('date',prevDate),
+    sb.from('stock_purchases').select('item_name,qty').eq('date',prevDate),
+    fetchAllOrderItems(q=>q.like('sales_order_id',prevDate+'-%')),
   ]);
-  const firstErr=trackedRes.error||openingRes.error||closingRes.error||purchaseRes.error||itemsRes.error||historyRes.error;
+  const firstErr=trackedRes.error||openingRes.error||closingRes.error||purchaseRes.error||itemsRes.error||historyRes.error||openingD1Res.error||purchaseD1Res.error||itemsD1Res.error;
   if(firstErr){tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">'+escH(firstErr.message)+'</td></tr>';return;}
 
   stockCatalog=catalog||[];
@@ -10545,6 +10562,22 @@ async function loadStockView(){
   });
 
   stockPackingStarted=(itemsRes.data||[]).some(i=>i.status!=='cancelled'&&ITEM_STATUS_RANK[i.status]>=ITEM_STATUS_RANK.packed);
+
+  // Previous day's pool, same shape as today's — only to compute Available
+  // D-1 and Write off (see stockStatusFor). stockOpeningMapD1 tracks which
+  // fruits actually had an opening entry logged D-1, so a fruit with no
+  // D-1 data at all shows "—" rather than a misleading 0-based number.
+  stockOpeningMapD1={};
+  (openingD1Res.data||[]).forEach(r=>{stockOpeningMapD1[r.item_name]=r.opening_qty;});
+  stockPurchasesMapD1={};
+  (purchaseD1Res.data||[]).forEach(r=>{stockPurchasesMapD1[r.item_name]=(stockPurchasesMapD1[r.item_name]||0)+r.qty;});
+  stockPackedMapD1={};
+  stockPendingMapD1={};
+  (itemsD1Res.data||[]).filter(i=>i.status!=='cancelled').forEach(i=>{
+    const qty=i.final_quantity??i.requested_quantity;
+    const map=ITEM_STATUS_RANK[i.status]>=ITEM_STATUS_RANK.packed?stockPackedMapD1:stockPendingMapD1;
+    map[i.item_name]=(map[i.item_name]||0)+qty;
+  });
 
   stockOpeningHistoryMap={};
   (historyRes.data||[]).forEach(r=>{
@@ -10608,9 +10641,20 @@ function stockStatusFor(itemName){
   // false "need to order" from a 0/0 fruit nobody's touched today.
   const pct=pool>0?(available/pool*100):((packed+pending)>0?0:100);
   const status=pct<20?'need':(pct<35?'trending':'ok');
-  const closing=stockClosingMap[itemName];
-  const wastageQty=closing!=null?(available-closing):null;
-  return{opening,purchased,packed,pending,pool,available,pct,status,closing,wastageQty};
+  // Available D-1 — same formula, one day back (opening+purchased-packed,
+  // pending from a now-closed-out day is normally 0 but still subtracted
+  // for consistency). null (shows "—") only when D-1 never had an opening
+  // entry logged at all, rather than a misleading 0-based number.
+  const availableD1=stockOpeningMapD1[itemName]==null?null
+    :(stockOpeningMapD1[itemName]+(stockPurchasesMapD1[itemName]||0)-(stockPackedMapD1[itemName]||0)-(stockPendingMapD1[itemName]||0));
+  // Write off for the day — both availableD1 and today's opening are
+  // frozen/static once entered, so this is too: whatever of D-1's
+  // available stock didn't make it into today's opening count is written
+  // off, floored at 0 (a LARGER opening than D-1's available means
+  // today's count found more than expected — not a negative write-off).
+  const writeOff=(availableD1==null||stockOpeningMap[itemName]==null)?null
+    :Math.max(0,availableD1-opening);
+  return{opening,purchased,packed,pending,pool,available,pct,status,availableD1,writeOff};
 }
 
 const STOCK_STATUS_BADGE={
@@ -10838,17 +10882,20 @@ function renderStockTable(){
         '<span class="stock-lock-note">🔒 locked (packing started)</span>'
       :'<input type="number" class="stock-qty-input" step="0.01" min="0" value="'+(stockOpeningMap[c.item_name]??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
         '<button class="pk-tick" disabled onclick="saveStockOpening(this.previousElementSibling,'+escH(JSON.stringify(c.item_name))+')" title="Save opening stock">✓</button>';
-    const wastageHtml=s.wastageQty==null
-      ?'—'
-      :'<span class="stock-wastage '+(s.wastageQty>0?'stock-wastage-loss':'stock-wastage-none')+'">'+
-          s.wastageQty.toFixed(2)+' '+escH(unit)+'<span>₹'+(s.wastageQty*(c.unit_price||0)).toFixed(0)+'</span>'+
-        '</span>';
     const stopTrackingLink=stockTrackedFruits.has(c.item_name)
       ?'<div><a class="or-link" style="color:#b3261e" onclick="stopTrackingStockFruit('+escH(JSON.stringify(c.item_name))+')">stop tracking</a></div>'
       :'';
+    // Both frozen once the day closes out — availableD1 is yesterday's
+    // own locked-in number, and today's opening doesn't change after
+    // packing starts (openingControl above) — so write off is just as
+    // static, shown plainly in red rather than as a live/editable value.
+    const availableD1Html=s.availableD1==null?'—':s.availableD1.toFixed(2)+' '+escH(unit);
+    const writeOffHtml=s.writeOff==null?'—':'<span class="stock-writeoff">'+s.writeOff.toFixed(2)+' '+escH(unit)+'</span>';
     return '<tr>'+
       '<td>'+escH(c.item_name)+historyHtml+stopTrackingLink+'</td>'+
       '<td>'+openingControl+'</td>'+
+      '<td>'+availableD1Html+'</td>'+
+      '<td>'+writeOffHtml+'</td>'+
       '<td>'+s.purchased.toFixed(2)+' '+escH(unit)+' <a class="or-link" onclick="openStockPurchaseModal('+escH(JSON.stringify(c.item_name))+')">manage</a></td>'+
       '<td>'+s.packed.toFixed(2)+' '+escH(unit)+'</td>'+
       '<td>'+s.pending.toFixed(2)+' '+escH(unit)+'</td>'+
@@ -10856,7 +10903,6 @@ function renderStockTable(){
       '<td>'+STOCK_STATUS_BADGE[s.status]+'</td>'+
       '<td><input type="number" class="stock-qty-input" step="0.01" min="0" value="'+(stockClosingMap[c.item_name]??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
         '<button class="pk-tick" disabled onclick="saveStockClosing(this.previousElementSibling,'+escH(JSON.stringify(c.item_name))+')" title="Save closing stock">✓</button></td>'+
-      '<td>'+wastageHtml+'</td>'+
     '</tr>';
   }).join('');
 }
