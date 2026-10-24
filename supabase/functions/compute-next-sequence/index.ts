@@ -485,7 +485,9 @@ Deno.serve(async (req) => {
       supabase.from('community_priority').select('unique_id,display_name,rank,default_deliver_by'),
       supabase.from('community_priority_keywords').select('community_unique_id,keyword'),
       supabase.from('catalog').select('item_name,category'),
-      supabase.from('packers').select('id,name,category').eq('active', true),
+      // Every packer, not just active ones — the reassign-off-inactive sweep
+      // below needs to know who's inactive, not just who's active.
+      supabase.from('packers').select('id,name,category,active'),
       supabase.from('packer_assignments').select('packer_id,item_name'),
       supabase.from('community_combinable_group_members').select('group_id,community_unique_id'),
     ]);
@@ -533,10 +535,47 @@ Deno.serve(async (req) => {
       return VEGETABLE_ITEM_NAMES.has(itemName.toLowerCase()) ? 'vegetable' : 'fruit';
     }
 
-    const fruitPackerIds = (packerRows || []).filter((p: any) => p.category === 'fruit').map((p: any) => p.id);
-    const vegPackerIds = (packerRows || []).filter((p: any) => p.category === 'vegetable').map((p: any) => p.id);
+    // active!==false (not active===true) so a packer whose row predates the
+    // column, or has it null, still counts as active by default — same
+    // convention the dashboard itself uses (parser.html's packersCache).
+    const fruitPackerIds = (packerRows || []).filter((p: any) => p.category === 'fruit' && p.active !== false).map((p: any) => p.id);
+    const vegPackerIds = (packerRows || []).filter((p: any) => p.category === 'vegetable' && p.active !== false).map((p: any) => p.id);
     const defaultPackerIdByItem = new Map<string, string>();
     (assignRows || []).forEach((a: any) => defaultPackerIdByItem.set(a.item_name, a.packer_id));
+
+    // ── Reassign items stuck on a now-inactive packer ──────────────────────
+    // packers.active has only ever gated NEW placements (placeNewItems/
+    // balanceCategory already only choose among active packerIds above) —
+    // nothing revisited an item assigned (explicitly, or via
+    // packer_assignments' default) back when its packer was still active.
+    // Per Somya: toggling a packer off should move her whole still-pending
+    // backlog to the rest of her category, checked every run, not just stop
+    // giving her anything new going forward. Scoped to 'open'/'held' —
+    // anything packed/final/invoiced is already physically done, nothing
+    // left to reassign.
+    let itemsReassignedFromInactive = 0;
+    {
+      const inactiveIds = new Set((packerRows || []).filter((p: any) => p.active === false).map((p: any) => p.id));
+      if (inactiveIds.size) {
+        const allItemsToday = [...itemsByOrder.values()].flat();
+        for (const [packerIds, category] of [[fruitPackerIds, 'fruit'], [vegPackerIds, 'vegetable']] as const) {
+          const stuckItems = allItemsToday.filter(it =>
+            (it.status === 'open' || it.status === 'held') &&
+            itemCategory(it.item_name) === category &&
+            inactiveIds.has(it.assigned_packer_id || defaultPackerIdByItem.get(it.item_name) || ''),
+          );
+          if (!stuckItems.length) continue;
+          const writes = balanceCategory(stuckItems, defaultPackerIdByItem, packerIds);
+          for (const [itemId, newPackerId] of writes) {
+            const { error: reassignErr } = await supabase.from('order_items').update({ assigned_packer_id: newPackerId }).eq('id', itemId);
+            if (reassignErr) { console.error(`Failed to reassign item ${itemId} off inactive packer:`, reassignErr.message); continue; }
+            const it = allItemsToday.find(i => i.id === itemId);
+            if (it) it.assigned_packer_id = newPackerId; // keep itemsByOrder's shared objects consistent for the rest of this run
+            itemsReassignedFromInactive++;
+          }
+        }
+      }
+    }
 
     // ── Classify every order ──────────────────────────────────────────────
     const metas: OrderMeta[] = orders.map((o: OrderRow) => {
@@ -1211,7 +1250,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended, orders_urgent_moved: ordersUrgentMoved, items_rebalanced: itemsRebalanced, sequences_defragmented: sequencesDefragmented }),
+      JSON.stringify({ sequences_created: newSequences.length, orders_sequenced: ordersSequenced, orders_appended: ordersAppended, orders_urgent_moved: ordersUrgentMoved, items_rebalanced: itemsRebalanced, sequences_defragmented: sequencesDefragmented, items_reassigned_from_inactive_packer: itemsReassignedFromInactive }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
