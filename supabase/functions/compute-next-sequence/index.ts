@@ -1210,6 +1210,16 @@ Deno.serve(async (req) => {
         if (mine.length) currentSeqByPacker.set(pid, Math.min(...mine.map(m => m.seq)));
       }
 
+      const pendingCountAt = (seq: number, pid: string) => pendingItems.filter(({ item, seq: s }) => s === seq && effectivePacker(item) === pid).length;
+      const openItemsAt = (seq: number, pid: string) => allItemsEver
+        .filter(({ item, seq: s }) => s === seq && item.status === 'open' && effectivePacker(item) === pid)
+        .map(({ item }) => item);
+      const pickReceiver = (candidates: string[], atSeq: number) => candidates.reduce((a, b) => {
+        const ra = availabilityRank(a), rb = availabilityRank(b);
+        if (ra !== rb) return ra < rb ? a : b;
+        return pendingCountAt(atSeq, a) <= pendingCountAt(atSeq, b) ? a : b;
+      });
+
       // Guard against ever looping forever — at most one pass per
       // currently-pending item, same bound the old code used.
       const guardLimit = pendingItems.length;
@@ -1217,63 +1227,20 @@ Deno.serve(async (req) => {
         const pendingSeqs = [...currentSeqByPacker.values()];
         if (!pendingSeqs.length) break; // nobody has anything pending at all today — done
         const S = Math.min(...pendingSeqs);
-
-        const pendingCountAt = (pid: string) => pendingItems.filter(({ item, seq }) => seq === S && effectivePacker(item) === pid).length;
-        const openItemsAt = (pid: string) => allItemsEver
-          .filter(({ item, seq }) => seq === S && item.status === 'open' && effectivePacker(item) === pid)
-          .map(({ item }) => item);
-        const pickReceiver = (candidates: string[]) => candidates.reduce((a, b) => {
-          const ra = availabilityRank(a), rb = availabilityRank(b);
-          if (ra !== rb) return ra < rb ? a : b;
-          return pendingCountAt(a) <= pendingCountAt(b) ? a : b;
-        });
-
         const stuckAtS = allPackerIds.filter(pid => currentSeqByPacker.get(pid) === S);
-        // Hasn't touched ANY of her own items here yet — every one of
-        // them still 'open', none packed/held. This (not "has anyone
-        // moved further ahead") is the actual trigger for the
-        // unconditional takeover below: in the 4/3/2/0 example, the three
-        // packers still holding items had all already started working S
-        // same as everyone else, so that case is rule B (gap) only, never
-        // rule A — rule A is specifically "someone else hasn't even begun."
-        const untouchedAtS = stuckAtS.filter(pid =>
-          !allItemsEver.some(({ item, seq }) => seq === S && effectivePacker(item) === pid && item.status !== 'open'));
 
         let movedThisRound = false;
 
-        // Rule A: unconditional, no threshold — whoever has nothing of her
-        // own left pending here fully absorbs an untouched straggler's
-        // open items, least-loaded/idle-preferred among receivers so it
-        // doesn't all dump on one person.
-        if (untouchedAtS.length) {
-          const receivers = allPackerIds.filter(pid => !stuckAtS.includes(pid));
-          if (receivers.length) {
-            for (const giverId of untouchedAtS) {
-              for (const it of openItemsAt(giverId)) {
-                const targets = candidateTargets(it).filter(pid => receivers.includes(pid));
-                if (!targets.length) continue; // e.g. a leafy item with no same-category receiver — leave it, nothing safe to do
-                const target = pickReceiver(targets);
-                const { error } = await supabase.from('order_items').update({ assigned_packer_id: target }).eq('id', it.id);
-                if (error) { console.error(`Failed to rebalance item ${it.id}:`, error.message); continue; }
-                it.assigned_packer_id = target;
-                itemsRebalanced++;
-                movedThisRound = true;
-              }
-            }
-          }
-        }
-
-        // Rule B: the gap check always applies too, on top of whatever
-        // rule A just did — not an either/or. Keeps the spread ≤2 among
-        // whoever still has (or might receive) pending work here, one
-        // item at a time.
-        const atS = allPackerIds.filter(pid => stuckAtS.includes(pid) || pendingCountAt(pid) === 0);
+        // Rule B — the shared/current sequence everyone's actually ON
+        // (S): always gap-only, however small the leftover, never a full
+        // drain. Keeps the spread ≤2 among whoever's here (or free to
+        // receive), one item at a time.
+        const atS = allPackerIds.filter(pid => stuckAtS.includes(pid) || pendingCountAt(S, pid) === 0);
         if (atS.length >= 2) {
-          const most = atS.reduce((a, b) => pendingCountAt(a) >= pendingCountAt(b) ? a : b);
-          const least = pickReceiver(atS.filter(pid => pid !== most));
-          if (pendingCountAt(most) - pendingCountAt(least) > 2) {
-            const openHere = openItemsAt(most);
-            const movable = openHere.find(it => candidateTargets(it).includes(least));
+          const most = atS.reduce((a, b) => pendingCountAt(S, a) >= pendingCountAt(S, b) ? a : b);
+          const least = pickReceiver(atS.filter(pid => pid !== most), S);
+          if (pendingCountAt(S, most) - pendingCountAt(S, least) > 2) {
+            const movable = openItemsAt(S, most).find(it => candidateTargets(it).includes(least));
             if (movable) {
               const { error } = await supabase.from('order_items').update({ assigned_packer_id: least }).eq('id', movable.id);
               if (error) { console.error(`Failed to rebalance item ${movable.id}:`, error.message); }
@@ -1282,6 +1249,40 @@ Deno.serve(async (req) => {
             // else: everything movable from `most` is leafy with no
             // same-category recipient at `least` — nothing safe to move
             // this round.
+          }
+        }
+
+        // Rule A — the NEXT sequence (S+1), never S itself: per Somya,
+        // taking over a colleague's leftover only ever applies to the
+        // sequence being walked INTO, not the one being shared/left (that's
+        // always rule B, above). A giver here is someone still stuck at S
+        // (hasn't even reached S+1 yet) whose own S+1 share sits 100%
+        // untouched; a receiver is anyone who's already cleared S (0
+        // pending there) and ready to move on. Unconditional — no gap
+        // threshold — but only ONE straggler's full share is absorbed per
+        // round, not every straggler at once; any others wait for the next
+        // round (same tick or the next completion event).
+        if (!movedThisRound) {
+          const S_next = S + 1;
+          const readyForNext = allPackerIds.filter(pid => pendingCountAt(S, pid) === 0);
+          if (readyForNext.length) {
+            const untouchedAtNext = allPackerIds.filter(pid =>
+              currentSeqByPacker.get(pid) === S && // genuinely still stuck at S, hasn't reached S+1 at all
+              allItemsEver.some(({ item, seq }) => seq === S_next && effectivePacker(item) === pid) &&
+              !allItemsEver.some(({ item, seq }) => seq === S_next && effectivePacker(item) === pid && item.status !== 'open'));
+            if (untouchedAtNext.length) {
+              const giverId = untouchedAtNext[0]; // one straggler at a time
+              for (const it of openItemsAt(S_next, giverId)) {
+                const targets = candidateTargets(it).filter(pid => readyForNext.includes(pid) && pid !== giverId);
+                if (!targets.length) continue; // e.g. a leafy item with no same-category receiver — leave it, nothing safe to do
+                const target = pickReceiver(targets, S_next);
+                const { error } = await supabase.from('order_items').update({ assigned_packer_id: target }).eq('id', it.id);
+                if (error) { console.error(`Failed to rebalance item ${it.id}:`, error.message); continue; }
+                it.assigned_packer_id = target;
+                itemsRebalanced++;
+                movedThisRound = true;
+              }
+            }
           }
         }
 
