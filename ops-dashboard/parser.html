@@ -545,6 +545,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-order-status-dispatched{color:#1b5e32}
 .pk-order-status-ready{color:#8a7a6a}
 .pk-order-status-waiting{color:#2b2320;font-weight:700;font-style:normal}
+.pk-seq-packer-name-inline{color:#c0392b}
 .pk-order-status-held{color:#c0392b;font-weight:700;font-style:normal;animation:pk-text-blink 1s infinite}
 .pk-order-card-row{display:flex;align-items:center;gap:8px}
 .pk-order-handle{color:#c8bdae;font-size:14px;flex-shrink:0}
@@ -7968,7 +7969,7 @@ function orderStatusLineHtml(o){
     return '<span class="pk-order-status pk-order-status-ready">Ready for dispatch</span>'+heldBadge;
   }
   return '<span class="pk-order-status pk-order-status-waiting">'+
-    o.waitingGroups.map(g=>'Waiting on '+escH(g.name)+' ('+escH(g.itemNames.join(', '))+')').join(' · ')+
+    o.waitingGroups.map(g=>'Waiting on <span class="pk-seq-packer-name-inline">'+escH(g.name)+'</span> ('+escH(g.itemNames.join(', '))+')').join(' · ')+
   '</span>'+heldBadge;
 }
 
