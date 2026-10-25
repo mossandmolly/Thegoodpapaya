@@ -185,7 +185,12 @@ const MAX_SEQUENCES_PER_RUN = 20;
 // (migration 087) is the primary source; this is only a gap-filler for any
 // item that table hasn't been back-filled for (e.g. added to Zoho after
 // that one-time backfill ran — sync-catalog doesn't set category).
-const VEGETABLE_ITEM_NAMES = new Set(["cauliflower","cabbage","capsicum green","capsicum yellow","capsicum red","carrot","tomato","ginger","beans","lady's finger","cucumber","coriander","chilli green","potato","onion","ridge gourd","bitter gourd","bottle gourd","brinjal bottle","broccoli","banana leaves","spinach","amaranthus","fenugreek","mangalore cucumber","drumstick","chilli bhajji","coccinia","mint","lettuce","beetroot","zucchini green","zucchini yellow","red cabbage","mushroom","garlic"]);
+const VEGETABLE_ITEM_NAMES = new Set(["cauliflower","cabbage","capsicum green","capsicum yellow","capsicum red","carrot","tomato","ginger","beans","lady's finger","cucumber","coriander","chilli green","potato","onion","ridge gourd","bitter gourd","bottle gourd","brinjal bottle","broccoli","banana leaves","spinach","amaranthus","fenugreek","mangalore cucumber","drumstick","chilli bhajji","coccinia","mint","lettuce","beetroot","zucchini green","zucchini yellow","red cabbage","mushroom","garlic","spring onion"]);
+// Never reassigned across a fruit<->vegetable category line during
+// workload rebalancing (see below) — too delicate/unfamiliar to hand to
+// the other category's packer, even for a tiny top-up. Within the same
+// category they move freely like anything else.
+const LEAFY_ITEM_NAMES = new Set(["spinach", "fenugreek", "spring onion", "amaranthus", "coriander"]);
 
 interface OrderRow {
   sales_order_id: string;
@@ -329,65 +334,6 @@ function pickNextCandidate(remaining: OrderMeta[], dominantGroup: string, domina
   }
 
   return -1;
-}
-
-// Splits one category's (fruit or veg) items across that category's active
-// packers: defaults to packer_assignments, places anything unassigned on
-// the least-loaded packer, then actively evens out the load — moving one
-// item at a time from the most- to least-loaded packer until the gap is at
-// most 1 — rather than only intervening once some ratio threshold is
-// crossed. Per Somya: "fruit or vegetable assignment is purely a guideline,
-// not to be tightly held" — a fixed item→packer default shouldn't leave one
-// packer sitting on meaningfully more work than a same-category colleague
-// just because the day's mix of items happened to default that way.
-// Returns only the item IDs that actually need a DB write (i.e. differ from
-// their current effective packer) — items staying on their default need no
-// override row at all.
-function balanceCategory(
-  items: ItemRow[],
-  defaultPackerIdByItem: Map<string, string>,
-  packerIds: string[],
-): Map<string, string> {
-  if (!packerIds.length || !items.length) return new Map();
-
-  const counts = new Map<string, number>(packerIds.map(id => [id, 0]));
-  const assignment = new Map<string, string>();
-  const unassigned: ItemRow[] = [];
-
-  for (const it of items) {
-    const def = defaultPackerIdByItem.get(it.item_name);
-    if (def && packerIds.includes(def)) {
-      assignment.set(it.id, def);
-      counts.set(def, (counts.get(def) || 0) + 1);
-    } else {
-      unassigned.push(it);
-    }
-  }
-
-  for (const it of unassigned) {
-    const target = packerIds.reduce((a, b) => (counts.get(a)! <= counts.get(b)!) ? a : b);
-    assignment.set(it.id, target);
-    counts.set(target, counts.get(target)! + 1);
-  }
-
-  for (let guard = 0; guard < items.length; guard++) { // bounded — at most one move per item, ever
-    const mostLoaded = packerIds.reduce((a, b) => counts.get(a)! >= counts.get(b)! ? a : b);
-    const leastLoaded = packerIds.reduce((a, b) => counts.get(a)! <= counts.get(b)! ? a : b);
-    if (counts.get(mostLoaded)! - counts.get(leastLoaded)! <= 1) break; // already as even as a whole-item move can make it
-    const itemToMove = items.find(it => assignment.get(it.id) === mostLoaded);
-    if (!itemToMove) break;
-    assignment.set(itemToMove.id, leastLoaded);
-    counts.set(mostLoaded, counts.get(mostLoaded)! - 1);
-    counts.set(leastLoaded, counts.get(leastLoaded)! + 1);
-  }
-
-  const writes = new Map<string, string>();
-  for (const it of items) {
-    const finalId = assignment.get(it.id);
-    const currentEffective = it.assigned_packer_id || defaultPackerIdByItem.get(it.item_name) || null;
-    if (finalId && finalId !== currentEffective) writes.set(it.id, finalId);
-  }
-  return writes;
 }
 
 // One category's current per-packer load within a sequence, from whatever
@@ -544,15 +490,15 @@ Deno.serve(async (req) => {
     (assignRows || []).forEach((a: any) => defaultPackerIdByItem.set(a.item_name, a.packer_id));
 
     // ── Reassign items stuck on a now-inactive packer ──────────────────────
-    // packers.active has only ever gated NEW placements (placeNewItems/
-    // balanceCategory already only choose among active packerIds above) —
-    // nothing revisited an item assigned (explicitly, or via
-    // packer_assignments' default) back when its packer was still active.
-    // Per Somya: toggling a packer off should move her whole still-pending
-    // backlog to the rest of her category, checked every run, not just stop
-    // giving her anything new going forward. Scoped to 'open'/'held' —
-    // anything packed/final/invoiced is already physically done, nothing
-    // left to reassign.
+    // packers.active has only ever gated NEW placements (placeNewItems
+    // already only chooses among active packerIds above) — nothing
+    // revisited an item assigned (explicitly, or via packer_assignments'
+    // default) back when its packer was still active. Per Somya: toggling
+    // a packer off should move her whole still-pending backlog to the
+    // rest of her category, checked every run, not just stop giving her
+    // anything new going forward. Scoped to 'open'/'held' — anything
+    // packed/final/invoiced is already physically done, nothing left to
+    // reassign.
     let itemsReassignedFromInactive = 0;
     {
       const inactiveIds = new Set((packerRows || []).filter((p: any) => p.active === false).map((p: any) => p.id));
@@ -565,7 +511,13 @@ Deno.serve(async (req) => {
             inactiveIds.has(it.assigned_packer_id || defaultPackerIdByItem.get(it.item_name) || ''),
           );
           if (!stuckItems.length) continue;
-          const writes = balanceCategory(stuckItems, defaultPackerIdByItem, packerIds);
+          // Real current load (not just the stuck batch alone) as the
+          // baseline, so this lands on whoever's actually least-loaded.
+          const existingCounts = new Map<string, number>(packerIds.map((pid: string) => [pid,
+            allItemsToday.filter(it => (it.status === 'open' || it.status === 'packed') &&
+              (it.assigned_packer_id || defaultPackerIdByItem.get(it.item_name)) === pid).length,
+          ]));
+          const writes = placeNewItems(stuckItems, defaultPackerIdByItem, packerIds, existingCounts);
           for (const [itemId, newPackerId] of writes) {
             const { error: reassignErr } = await supabase.from('order_items').update({ assigned_packer_id: newPackerId }).eq('id', itemId);
             if (reassignErr) { console.error(`Failed to reassign item ${itemId} off inactive packer:`, reassignErr.message); continue; }
@@ -1099,17 +1051,20 @@ Deno.serve(async (req) => {
       if (updErr) throw new Error(`Failed to stamp new sequence ${seqNum}: ${updErr.message}`);
       ordersSequenced += seqSoids.length;
 
-      // Brand-new sequence — nothing pre-existing to preserve, so the full
-      // default-then-even-out balance applies, same as always. Excludes
-      // already-final/invoiced items for the same reason as the append
-      // path above (a rescued order can carry some).
+      // Brand-new sequence — nothing pre-existing to preserve, so this is
+      // just placeNewItems against an empty baseline (default-if-active,
+      // else least-loaded). No separate one-time "even out" pass any more
+      // — the workload-rebalancing sweep below now owns ALL evening-out,
+      // continuously, for new and old sequences alike. Excludes already-
+      // final/invoiced items for the same reason as the append path above
+      // (a rescued order can carry some).
       const seqItems = seqSoids.flatMap(soid => itemsByOrder.get(soid) || [])
         .filter(it => it.status !== 'final' && it.status !== 'invoiced');
       const fruitItems = seqItems.filter(it => itemCategory(it.item_name) === 'fruit');
       const vegItems = seqItems.filter(it => itemCategory(it.item_name) === 'vegetable');
       const writes = new Map<string, string>([
-        ...balanceCategory(fruitItems, defaultPackerIdByItem, fruitPackerIds),
-        ...balanceCategory(vegItems, defaultPackerIdByItem, vegPackerIds),
+        ...placeNewItems(fruitItems, defaultPackerIdByItem, fruitPackerIds, new Map()),
+        ...placeNewItems(vegItems, defaultPackerIdByItem, vegPackerIds, new Map()),
       ]);
       for (const [itemId, packerId] of writes) {
         const { error: itemErr } = await supabase.from('order_items').update({ assigned_packer_id: packerId }).eq('id', itemId);
@@ -1121,74 +1076,6 @@ Deno.serve(async (req) => {
       .update({ recent_group_names: recentGroups, updated_at: nowIso })
       .eq('id', 1);
     if (stateErr) console.error('Failed to update packer_sequence_state:', stateErr.message);
-
-    // ── Packer pace rebalancing ────────────────────────────────────────────
-    // Independent of whatever this run did above (runs even when nothing was
-    // newly sequenced/appended) — every tick checks each category (fruit,
-    // veg) for a packer who's pulled more than one sequence ahead of a
-    // same-category colleague, and offloads half of that colleague's still-
-    // untouched ('open' only — never packed/held/final/invoiced, so nothing
-    // already weighed ever moves) items in the sequence she hasn't started
-    // yet to the packer who's ahead. Per Somya: a fast packer shouldn't idle
-    // on her own next sequence while a colleague is the sole bottleneck on
-    // one she hasn't even begun. "Position" is 1-based rank among today's
-    // distinct sequence_numbers, not the raw (possibly fractional) value —
-    // a fractional gap of 2 to 2.5 is still "one sequence apart", not a tiny
-    // gap. A packer with nothing pending at all counts as caught up with
-    // everything — the most available to help, not excluded.
-    const distinctSeqNumbers = [...new Set(existingMetas.map(m => toNum(m.order.sequence_number)!))].sort((a, b) => a - b);
-    const positionOf = new Map<number, number>(distinctSeqNumbers.map((n, i) => [n, i + 1]));
-    const allTodayItems = existingMetas.flatMap(m => {
-      const seqNum = toNum(m.order.sequence_number)!;
-      return (itemsByOrder.get(m.order.sales_order_id) || []).map(it => ({ item: it, seqNum }));
-    });
-
-    let itemsRebalanced = 0;
-    if (distinctSeqNumbers.length) {
-      for (const packerIds of [fruitPackerIds, vegPackerIds]) {
-        if (packerIds.length < 2) continue;
-
-        const positionByPacker = new Map<string, number>();
-        for (const pid of packerIds) {
-          const pending = allTodayItems.filter(({ item }) =>
-            (item.status === 'open' || item.status === 'packed') &&
-            (item.assigned_packer_id || defaultPackerIdByItem.get(item.item_name)) === pid);
-          positionByPacker.set(pid, pending.length
-            ? (positionOf.get(Math.min(...pending.map(p => p.seqNum))) ?? distinctSeqNumbers.length + 1)
-            : distinctSeqNumbers.length + 1);
-        }
-
-        const fastestId = packerIds.reduce((a: string, b: string) => positionByPacker.get(a)! >= positionByPacker.get(b)! ? a : b);
-        const fastestPos = positionByPacker.get(fastestId)!;
-
-        for (const slowId of packerIds) {
-          if (slowId === fastestId) continue;
-          const slowPos = positionByPacker.get(slowId)!;
-          if (fastestPos - slowPos <= 1) continue; // not far enough behind to act on
-
-          const targetPos = slowPos + 1;
-          if (targetPos > distinctSeqNumbers.length) continue; // nothing after her current sequence yet
-          const targetSeq = distinctSeqNumbers[targetPos - 1];
-
-          const herOpenItemsThere = allTodayItems
-            .filter(({ item, seqNum }) => seqNum === targetSeq && item.status === 'open' &&
-              (item.assigned_packer_id || defaultPackerIdByItem.get(item.item_name)) === slowId)
-            .map(({ item }) => item)
-            .sort((a: ItemRow, b: ItemRow) => a.id.localeCompare(b.id)); // stable, deterministic split
-          if (!herOpenItemsThere.length) continue;
-
-          const keepForSlow = Math.floor(herOpenItemsThere.length / 2); // round down for her — she keeps the floor
-          const toReassign = herOpenItemsThere.slice(keepForSlow);
-          if (!toReassign.length) continue;
-
-          const { error: rebalErr } = await supabase.from('order_items')
-            .update({ assigned_packer_id: fastestId })
-            .in('id', toReassign.map(it => it.id));
-          if (rebalErr) { console.error(`Failed to rebalance ${toReassign.length} item(s) from packer ${slowId} to ${fastestId}:`, rebalErr.message); continue; }
-          itemsRebalanced += toReassign.length;
-        }
-      }
-    }
 
     // ── Sequence-number defragmentation ─────────────────────────────────────
     // A manual drag inserts a value strictly between two neighbours (their
@@ -1247,6 +1134,151 @@ Deno.serve(async (req) => {
         .in('sales_order_id', soidsHere);
       if (renumberErr) { console.error(`Failed to defragment sequence ${oldSeq} -> ${newSeq}:`, renumberErr.message); continue; }
       sequencesDefragmented++;
+    }
+
+    // ── Packer workload rebalancing (category-agnostic) ────────────────────
+    // Replaces both the old one-time "even out a brand-new sequence" pass
+    // and the old category-split pace rebalancer. Per Somya: a packer can
+    // never move past the EARLIEST sequence that still has anyone's pending
+    // work in it while either of these is true —
+    //   (A) someone else is still fully stuck there while she's already
+    //       cleared a LATER sequence too (not just this one) — she "took
+    //       the lead" and must go back and fully absorb the straggler's
+    //       remaining OPEN items there first, however few (no threshold —
+    //       "even if there are 2 or less items");
+    //   (B) nobody's genuinely ahead like that, but the spread of still-
+    //       pending work among whoever IS at that sequence (working it,
+    //       just inherited items, or idle/available) is more than 2 items —
+    //       one-item-at-a-time moves until the gap is ≤2.
+    // Re-run on every cron tick AND the instant a packer finishes/skips a
+    // sequence (the dashboard calls this function directly then — see
+    // parser.html — not just waiting for the next tick). "Splitting the
+    // debt" when a third packer later becomes available isn't a separate
+    // rule: it falls straight out of re-running (A)/(B) against the
+    // now-larger pool next time this fires. Category only ever decided who
+    // got an item by default; this moves freely across fruit/veg lines,
+    // except leafy items (LEAFY_ITEM_NAMES — always stay within their own
+    // category's packers) and anything not 'open' (packed/held/final/
+    // invoiced never move — nothing already touched is ever undone).
+    let itemsRebalanced = 0;
+    {
+      const allPackerIds = [...fruitPackerIds, ...vegPackerIds];
+      // Only this run's clean, final sequence positions (soidToSeqFinal/
+      // distinctSeqNumbersFinal, just built above) — not the raw possibly-
+      // fractional sequence_number — so "the earliest sequence" and "a
+      // later one" mean the same thing a human reads off the Team tab.
+      const cleanRankByOld = new Map<number, number>(distinctSeqNumbersFinal.map((n, i) => [n, i + 1]));
+      const cleanSeqBySoid = new Map<string, number>();
+      for (const [soid, old] of soidToSeqFinal) cleanSeqBySoid.set(soid, cleanRankByOld.get(old)!);
+
+      // Everything with a real position today, excluding cancelled —
+      // final/invoiced are excluded from the PENDING views below but kept
+      // here (via allItemsEver) so "has she genuinely worked beyond S"
+      // still sees a sequence she's already fully finished, not just one
+      // she still has open work in.
+      const allItemsEver: { item: ItemRow; seq: number }[] = [];
+      for (const [soid, items] of itemsByOrder) {
+        const seq = cleanSeqBySoid.get(soid);
+        if (seq == null) continue;
+        for (const it of items) if (it.status !== 'cancelled') allItemsEver.push({ item: it, seq });
+      }
+      const pendingItems = allItemsEver.filter(({ item }) => item.status === 'open' || item.status === 'packed');
+
+      function effectivePacker(it: ItemRow): string | null {
+        return it.assigned_packer_id || defaultPackerIdByItem.get(it.item_name) || null;
+      }
+      // A leafy item never crosses a fruit<->vegetable line — candidate
+      // targets narrow to the mover's own category for one of these.
+      function candidateTargets(it: ItemRow): string[] {
+        if (!LEAFY_ITEM_NAMES.has(it.item_name.toLowerCase())) return allPackerIds;
+        return itemCategory(it.item_name) === 'fruit' ? fruitPackerIds : vegPackerIds;
+      }
+
+      const currentSeqByPacker = new Map<string, number>(); // lowest pending seq, if any
+      const maxSeqEverByPacker = new Map<string, number>(); // highest seq she's EVER had anything in (any status) — "genuinely ahead" signal
+      for (const pid of allPackerIds) {
+        const mine = pendingItems.filter(({ item }) => effectivePacker(item) === pid);
+        if (mine.length) currentSeqByPacker.set(pid, Math.min(...mine.map(m => m.seq)));
+        const everMine = allItemsEver.filter(({ item }) => effectivePacker(item) === pid);
+        if (everMine.length) maxSeqEverByPacker.set(pid, Math.max(...everMine.map(m => m.seq)));
+      }
+
+      // Guard against ever looping forever — at most one pass per
+      // currently-pending item, same bound the old code used.
+      const guardLimit = pendingItems.length;
+      for (let guard = 0; guard < guardLimit; guard++) {
+        const pendingSeqs = [...currentSeqByPacker.values()];
+        if (!pendingSeqs.length) break; // nobody has anything pending at all today — done
+        const S = Math.min(...pendingSeqs);
+
+        const pendingCountAt = (pid: string) => pendingItems.filter(({ item, seq }) => seq === S && effectivePacker(item) === pid).length;
+        const openItemsAt = (pid: string) => allItemsEver
+          .filter(({ item, seq }) => seq === S && item.status === 'open' && effectivePacker(item) === pid)
+          .map(({ item }) => item);
+
+        // "Genuinely ahead" — has real presence (pending OR already
+        // finished) in a sequence LATER than S, not just "idle with
+        // nothing assigned at all" (an idle packer still helps, but her
+        // mere existence doesn't trigger a full takeover — see example in
+        // the comment above: a packer with nothing queued up yet gets the
+        // gentle (B) treatment, not a forced drain).
+        const genuinelyAhead = allPackerIds.filter(pid => (maxSeqEverByPacker.get(pid) ?? -Infinity) > S);
+        const stuckAtS = allPackerIds.filter(pid => currentSeqByPacker.get(pid) === S);
+
+        let movedThisRound = false;
+
+        if (genuinelyAhead.length) {
+          // Rule A: fully drain every stuck packer's OPEN items at S onto
+          // whoever's ahead/idle (never onto another still-stuck packer —
+          // she hasn't earned being handed MORE while behind), least-
+          // loaded-at-S-first so it doesn't all dump on one person.
+          const receivers = allPackerIds.filter(pid => !stuckAtS.includes(pid));
+          for (const giverId of stuckAtS) {
+            for (const it of openItemsAt(giverId)) {
+              const targets = candidateTargets(it).filter(pid => receivers.includes(pid));
+              if (!targets.length) continue; // e.g. a leafy item with no same-category receiver — leave it, nothing safe to do
+              const target = targets.reduce((a, b) => pendingCountAt(a) <= pendingCountAt(b) ? a : b);
+              const { error } = await supabase.from('order_items').update({ assigned_packer_id: target }).eq('id', it.id);
+              if (error) { console.error(`Failed to rebalance item ${it.id}:`, error.message); continue; }
+              it.assigned_packer_id = target;
+              itemsRebalanced++;
+              movedThisRound = true;
+            }
+          }
+        } else {
+          // Rule B: nobody's lapped this sequence — just keep the spread
+          // ≤2 among whoever has anything pending here, one item at a time.
+          const atS = allPackerIds.filter(pid => stuckAtS.includes(pid) || pendingCountAt(pid) === 0);
+          if (atS.length >= 2) {
+            const most = atS.reduce((a, b) => pendingCountAt(a) >= pendingCountAt(b) ? a : b);
+            const least = atS.reduce((a, b) => pendingCountAt(a) <= pendingCountAt(b) ? a : b);
+            if (pendingCountAt(most) - pendingCountAt(least) > 2) {
+              const openHere = openItemsAt(most);
+              const movable = openHere.find(it => candidateTargets(it).includes(least));
+              if (movable) {
+                const { error } = await supabase.from('order_items').update({ assigned_packer_id: least }).eq('id', movable.id);
+                if (error) { console.error(`Failed to rebalance item ${movable.id}:`, error.message); }
+                else { movable.assigned_packer_id = least; itemsRebalanced++; movedThisRound = true; }
+              }
+              // else: everything movable from `most` is leafy with no
+              // same-category recipient at `least` — nothing safe to move
+              // this round; breaking out below avoids spinning forever on
+              // the same unsolvable pair.
+            }
+          }
+        }
+
+        // Recompute currentSeqByPacker for anyone this round touched —
+        // cheap enough (today's packer count is small) and simplest way
+        // to keep it correct across iterations without hand-tracking every
+        // delta.
+        for (const pid of allPackerIds) {
+          const mine = pendingItems.filter(({ item }) => effectivePacker(item) === pid);
+          if (mine.length) currentSeqByPacker.set(pid, Math.min(...mine.map(m => m.seq)));
+          else currentSeqByPacker.delete(pid);
+        }
+        if (!movedThisRound) break; // nothing left this sweep can safely do — stop rather than spin
+      }
     }
 
     return new Response(
