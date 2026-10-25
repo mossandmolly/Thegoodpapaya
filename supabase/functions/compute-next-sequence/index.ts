@@ -1193,6 +1193,17 @@ Deno.serve(async (req) => {
         if (!LEAFY_ITEM_NAMES.has(it.item_name.toLowerCase())) return allPackerIds;
         return itemCategory(it.item_name) === 'fruit' ? fruitPackerIds : vegPackerIds;
       }
+      // Tie-break for picking a receiver: someone with NO pending work
+      // anywhere right now (never touched today, or already finished
+      // everything) ranks ahead of someone who merely has 0 at THIS
+      // sequence but has real pending work of her own further along.
+      // Without this, two candidates tied at 0-here were picked in
+      // whatever order they happened to sit in the packers list — which
+      // looked arbitrary, and in practice kept pulling a busy packer off
+      // her own later sequence instead of using a genuinely idle one.
+      function availabilityRank(pid: string): number {
+        return currentSeqByPacker.has(pid) ? 1 : 0;
+      }
 
       const currentSeqByPacker = new Map<string, number>(); // lowest pending seq, if any
       const maxSeqEverByPacker = new Map<string, number>(); // highest seq she's EVER had anything in (any status) — "genuinely ahead" signal
@@ -1215,6 +1226,11 @@ Deno.serve(async (req) => {
         const openItemsAt = (pid: string) => allItemsEver
           .filter(({ item, seq }) => seq === S && item.status === 'open' && effectivePacker(item) === pid)
           .map(({ item }) => item);
+        const pickReceiver = (candidates: string[]) => candidates.reduce((a, b) => {
+          const ra = availabilityRank(a), rb = availabilityRank(b);
+          if (ra !== rb) return ra < rb ? a : b;
+          return pendingCountAt(a) <= pendingCountAt(b) ? a : b;
+        });
 
         // "Genuinely ahead" — has real presence (pending OR already
         // finished) in a sequence LATER than S, not just "idle with
@@ -1237,7 +1253,7 @@ Deno.serve(async (req) => {
             for (const it of openItemsAt(giverId)) {
               const targets = candidateTargets(it).filter(pid => receivers.includes(pid));
               if (!targets.length) continue; // e.g. a leafy item with no same-category receiver — leave it, nothing safe to do
-              const target = targets.reduce((a, b) => pendingCountAt(a) <= pendingCountAt(b) ? a : b);
+              const target = pickReceiver(targets);
               const { error } = await supabase.from('order_items').update({ assigned_packer_id: target }).eq('id', it.id);
               if (error) { console.error(`Failed to rebalance item ${it.id}:`, error.message); continue; }
               it.assigned_packer_id = target;
@@ -1251,7 +1267,7 @@ Deno.serve(async (req) => {
           const atS = allPackerIds.filter(pid => stuckAtS.includes(pid) || pendingCountAt(pid) === 0);
           if (atS.length >= 2) {
             const most = atS.reduce((a, b) => pendingCountAt(a) >= pendingCountAt(b) ? a : b);
-            const least = atS.reduce((a, b) => pendingCountAt(a) <= pendingCountAt(b) ? a : b);
+            const least = pickReceiver(atS);
             if (pendingCountAt(most) - pendingCountAt(least) > 2) {
               const openHere = openItemsAt(most);
               const movable = openHere.find(it => candidateTargets(it).includes(least));
