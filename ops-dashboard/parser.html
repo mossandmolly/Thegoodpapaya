@@ -556,8 +556,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pk-order-detail-sub{margin-top:2px;font-style:italic}
 .pk-seq-bags{font-size:11px;font-weight:700;color:#8a7a6a;flex:0 0 auto;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
 .pk-order-detail-list{margin:4px 0 0 22px;border-top:1px dashed #eee0d0;padding-top:4px}
-.pk-seq-order-row{font-size:11px;color:#2b2320;padding:3px 4px;cursor:grab;border-radius:4px}
+.pk-seq-order-row{font-size:11px;color:#2b2320;padding:3px 4px;cursor:grab;border-radius:4px;display:flex;align-items:baseline;gap:8px;flex-wrap:nowrap}
 .pk-seq-order-row:hover{background:#fdf8f3}
+/* Name/meta on the far left, truncating rather than wrapping — it can
+   never push Move or the status off the row. Move stays a fixed size in
+   the middle; status is pinned to the right end via margin-left:auto. */
+.pk-seq-order-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pk-seq-move-btn{flex-shrink:0;padding:2px 7px;font-size:11px}
+.pk-seq-order-status{flex-shrink:0;margin-left:auto;text-align:right;white-space:nowrap}
 .pk-seq-order-row.pk-order-dragging{opacity:0.4}
 .pk-seq-end-drop{margin-top:4px;padding:8px;border:1px dashed #d8cbb8;border-radius:8px;font-size:10px;color:#8a7a6a;text-align:center}
 .pk-seq-summary{font-style:normal}
@@ -7955,17 +7961,25 @@ function renderSequenceBoard(){
           '<div class="pk-order-detail-list">'+s.orders.map(o=>
             '<div class="pk-seq-order-row" draggable="true" data-soid="'+escH(o.soid)+'" '+
               'ondragstart="orderDragStart(event,\''+escH(o.soid)+'\','+s.seq+')" ondragend="seqDragEndAny(event)">'+
-              '<span class="pk-order-handle" draggable="false">⠿</span> '+escH(o.customerName)+
-              ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+
-              (o.enteredAt?', entered '+escH(formatOrderTime(o.enteredAt)):'')+'</span>'+
+              // One row per house: name/meta on the far left (truncates
+              // rather than wrapping, so it can never push Move or the
+              // status off the end), Move fixed in the middle, status
+              // anchored to the right end — previously these three pieces
+              // just wrapped onto separate lines with nothing tying a
+              // status back to its own house, per Somya's report.
+              '<span class="pk-seq-order-name">'+
+                '<span class="pk-order-handle" draggable="false">⠿</span> '+escH(o.customerName)+
+                ' <span class="pk-order-detail-sub">— '+o.itemCount+' item'+(o.itemCount!==1?'s':'')+(o.pendingCount?', '+o.pendingCount+' pending':', done')+
+                (o.enteredAt?', entered '+escH(formatOrderTime(o.enteredAt)):'')+'</span>'+
+              '</span>'+
               // Drag-and-drop needs the browser's native HTML5 DnD support,
               // which phone/tablet browsers often don't fire reliably — this
               // tap alternative calls the exact same move, so it works
               // regardless of device.
-              '<button class="btn-sec pk-seq-move-btn" draggable="false" style="padding:2px 7px;font-size:11px;margin-left:6px" '+
+              '<button class="btn-sec pk-seq-move-btn" draggable="false" '+
                 'onclick="event.stopPropagation();promptMoveOrderToSequence(\''+escH(o.soid)+'\','+escH(JSON.stringify(o.customerName))+')" '+
                 'onmousedown="event.stopPropagation()">Move…</button>'+
-              '<div class="pk-order-detail-sub">'+orderStatusLineHtml(o)+'</div>'+
+              '<span class="pk-seq-order-status">'+orderStatusLineHtml(o)+'</span>'+
             '</div>'
           ).join('')+'</div>'+
           '<div class="pk-seq-packer-breakdown">'+s.packerBreakdown.map(p=>
