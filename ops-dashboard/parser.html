@@ -6033,7 +6033,7 @@ let overviewPendingReviewOnly=false;
 // Hardcoded, not catalog-driven — there's no vegetable/fruit category field
 // anywhere in the catalog table today. Keep in sync with FRUITS (parser.html
 // + whatsapp-listener/index.js) whenever a new vegetable gets added there.
-const VEGETABLE_ITEM_NAMES=new Set(["Cauliflower","Cabbage","Capsicum green","Capsicum yellow","Capsicum red","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus","Fenugreek","Mangalore cucumber","Drumstick","Chilli bhajji","Coccinia","Mint","Lettuce","Beetroot","Zucchini green","Zucchini yellow","Red cabbage","Mushroom","Garlic"].map(n=>n.toLowerCase()));
+const VEGETABLE_ITEM_NAMES=new Set(["Cauliflower","Cabbage","Capsicum green","Capsicum yellow","Capsicum red","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus","Fenugreek","Mangalore cucumber","Drumstick","Chilli bhajji","Coccinia","Mint","Lettuce","Beetroot","Zucchini green","Zucchini yellow","Red cabbage","Mushroom","Garlic","Spring onion"].map(n=>n.toLowerCase()));
 function orderHasVegetable(order){
   return activeItems(order).some(i=>VEGETABLE_ITEM_NAMES.has((i.item_name||'').toLowerCase()));
 }
@@ -7643,6 +7643,18 @@ function renderPackerActiveQueue(){
   }
 
   const{seq,items:unfiltered}=computeMyCurrentSequence(riderName);
+  // The single point where this packer's own "current sequence" is
+  // computed for her view — catches every way it can clear (actually
+  // finishing the last item, or tapping "I'm done" to hold what's left)
+  // without duplicating this check at each call site. A real transition
+  // (not the first render) fires the real-time rebalance check instead of
+  // waiting for the next 5-min cron tick — see triggerRebalanceNow.
+  if(pkLastRenderedSeq!==undefined&&pkLastRenderedSeq!==seq&&!pkRebalanceInFlight){
+    pkLastRenderedSeq=seq;
+    triggerRebalanceNow();
+  }else{
+    pkLastRenderedSeq=seq;
+  }
   if(seq==null){
     // Distinguishes "nothing's been sequenced for her today at all" from
     // "everything sequenced for her is actually done" — otherwise both
@@ -7694,6 +7706,34 @@ function renderPackerActiveQueue(){
 // rather than being silently swept aside. No new status/column — `held`
 // already exists (Grid/Team already understand it; it surfaces there for
 // Somya/anyone to resolve — restock, reassign, whatever).
+// Which sequence renderPackerActiveQueue last showed this packer — used
+// only to detect a real transition (see there) so we don't fire on the
+// very first render of the day. pkRebalanceInFlight guards against the
+// re-render this function's own loadPackerView() call triggers being
+// mistaken for a second, independent transition.
+let pkLastRenderedSeq=undefined;
+let pkRebalanceInFlight=false;
+// Calls compute-next-sequence immediately instead of waiting for its next
+// scheduled tick (every 5 min), per Somya: the rebalance gate has to apply
+// before she'd otherwise see her next sequence, not minutes later. Fails
+// quietly (logged, not alerted) — the 5-min cron is still the backstop if
+// this one call doesn't land.
+async function triggerRebalanceNow(){
+  if(pkRebalanceInFlight)return;
+  pkRebalanceInFlight=true;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/compute-next-sequence',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+    });
+    if(!res.ok){const data=await res.json().catch(()=>({}));console.error('Rebalance trigger failed:',data.error||res.status);}
+  }catch(e){
+    console.error('Rebalance trigger failed:',e.message);
+  }
+  await loadPackerView();
+  pkRebalanceInFlight=false;
+}
+
 async function finishSequenceDespiteGaps(seq){
   const packer=packersCache.find(p=>p.name===riderName);
   if(!packer)return;
