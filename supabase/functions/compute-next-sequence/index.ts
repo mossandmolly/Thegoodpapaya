@@ -1171,11 +1171,10 @@ Deno.serve(async (req) => {
       const cleanSeqBySoid = new Map<string, number>();
       for (const [soid, old] of soidToSeqFinal) cleanSeqBySoid.set(soid, cleanRankByOld.get(old)!);
 
-      // Everything with a real position today, excluding cancelled —
-      // final/invoiced are excluded from the PENDING views below but kept
-      // here (via allItemsEver) so "has she genuinely worked beyond S"
-      // still sees a sequence she's already fully finished, not just one
-      // she still has open work in.
+      // Everything with a real position today, excluding cancelled — kept
+      // separate from pendingItems below because untouchedAtS needs to see
+      // a packer's packed/held items too (to know she HAS made progress),
+      // not just her still-open ones.
       const allItemsEver: { item: ItemRow; seq: number }[] = [];
       for (const [soid, items] of itemsByOrder) {
         const seq = cleanSeqBySoid.get(soid);
@@ -1206,12 +1205,9 @@ Deno.serve(async (req) => {
       }
 
       const currentSeqByPacker = new Map<string, number>(); // lowest pending seq, if any
-      const maxSeqEverByPacker = new Map<string, number>(); // highest seq she's EVER had anything in (any status) — "genuinely ahead" signal
       for (const pid of allPackerIds) {
         const mine = pendingItems.filter(({ item }) => effectivePacker(item) === pid);
         if (mine.length) currentSeqByPacker.set(pid, Math.min(...mine.map(m => m.seq)));
-        const everMine = allItemsEver.filter(({ item }) => effectivePacker(item) === pid);
-        if (everMine.length) maxSeqEverByPacker.set(pid, Math.max(...everMine.map(m => m.seq)));
       }
 
       // Guard against ever looping forever — at most one pass per
@@ -1232,55 +1228,60 @@ Deno.serve(async (req) => {
           return pendingCountAt(a) <= pendingCountAt(b) ? a : b;
         });
 
-        // "Genuinely ahead" — has real presence (pending OR already
-        // finished) in a sequence LATER than S, not just "idle with
-        // nothing assigned at all" (an idle packer still helps, but her
-        // mere existence doesn't trigger a full takeover — see example in
-        // the comment above: a packer with nothing queued up yet gets the
-        // gentle (B) treatment, not a forced drain).
-        const genuinelyAhead = allPackerIds.filter(pid => (maxSeqEverByPacker.get(pid) ?? -Infinity) > S);
         const stuckAtS = allPackerIds.filter(pid => currentSeqByPacker.get(pid) === S);
+        // Hasn't touched ANY of her own items here yet — every one of
+        // them still 'open', none packed/held. This (not "has anyone
+        // moved further ahead") is the actual trigger for the
+        // unconditional takeover below: in the 4/3/2/0 example, the three
+        // packers still holding items had all already started working S
+        // same as everyone else, so that case is rule B (gap) only, never
+        // rule A — rule A is specifically "someone else hasn't even begun."
+        const untouchedAtS = stuckAtS.filter(pid =>
+          !allItemsEver.some(({ item, seq }) => seq === S && effectivePacker(item) === pid && item.status !== 'open'));
 
         let movedThisRound = false;
 
-        if (genuinelyAhead.length) {
-          // Rule A: fully drain every stuck packer's OPEN items at S onto
-          // whoever's ahead/idle (never onto another still-stuck packer —
-          // she hasn't earned being handed MORE while behind), least-
-          // loaded-at-S-first so it doesn't all dump on one person.
+        // Rule A: unconditional, no threshold — whoever has nothing of her
+        // own left pending here fully absorbs an untouched straggler's
+        // open items, least-loaded/idle-preferred among receivers so it
+        // doesn't all dump on one person.
+        if (untouchedAtS.length) {
           const receivers = allPackerIds.filter(pid => !stuckAtS.includes(pid));
-          for (const giverId of stuckAtS) {
-            for (const it of openItemsAt(giverId)) {
-              const targets = candidateTargets(it).filter(pid => receivers.includes(pid));
-              if (!targets.length) continue; // e.g. a leafy item with no same-category receiver — leave it, nothing safe to do
-              const target = pickReceiver(targets);
-              const { error } = await supabase.from('order_items').update({ assigned_packer_id: target }).eq('id', it.id);
-              if (error) { console.error(`Failed to rebalance item ${it.id}:`, error.message); continue; }
-              it.assigned_packer_id = target;
-              itemsRebalanced++;
-              movedThisRound = true;
+          if (receivers.length) {
+            for (const giverId of untouchedAtS) {
+              for (const it of openItemsAt(giverId)) {
+                const targets = candidateTargets(it).filter(pid => receivers.includes(pid));
+                if (!targets.length) continue; // e.g. a leafy item with no same-category receiver — leave it, nothing safe to do
+                const target = pickReceiver(targets);
+                const { error } = await supabase.from('order_items').update({ assigned_packer_id: target }).eq('id', it.id);
+                if (error) { console.error(`Failed to rebalance item ${it.id}:`, error.message); continue; }
+                it.assigned_packer_id = target;
+                itemsRebalanced++;
+                movedThisRound = true;
+              }
             }
           }
-        } else {
-          // Rule B: nobody's lapped this sequence — just keep the spread
-          // ≤2 among whoever has anything pending here, one item at a time.
-          const atS = allPackerIds.filter(pid => stuckAtS.includes(pid) || pendingCountAt(pid) === 0);
-          if (atS.length >= 2) {
-            const most = atS.reduce((a, b) => pendingCountAt(a) >= pendingCountAt(b) ? a : b);
-            const least = pickReceiver(atS);
-            if (pendingCountAt(most) - pendingCountAt(least) > 2) {
-              const openHere = openItemsAt(most);
-              const movable = openHere.find(it => candidateTargets(it).includes(least));
-              if (movable) {
-                const { error } = await supabase.from('order_items').update({ assigned_packer_id: least }).eq('id', movable.id);
-                if (error) { console.error(`Failed to rebalance item ${movable.id}:`, error.message); }
-                else { movable.assigned_packer_id = least; itemsRebalanced++; movedThisRound = true; }
-              }
-              // else: everything movable from `most` is leafy with no
-              // same-category recipient at `least` — nothing safe to move
-              // this round; breaking out below avoids spinning forever on
-              // the same unsolvable pair.
+        }
+
+        // Rule B: the gap check always applies too, on top of whatever
+        // rule A just did — not an either/or. Keeps the spread ≤2 among
+        // whoever still has (or might receive) pending work here, one
+        // item at a time.
+        const atS = allPackerIds.filter(pid => stuckAtS.includes(pid) || pendingCountAt(pid) === 0);
+        if (atS.length >= 2) {
+          const most = atS.reduce((a, b) => pendingCountAt(a) >= pendingCountAt(b) ? a : b);
+          const least = pickReceiver(atS.filter(pid => pid !== most));
+          if (pendingCountAt(most) - pendingCountAt(least) > 2) {
+            const openHere = openItemsAt(most);
+            const movable = openHere.find(it => candidateTargets(it).includes(least));
+            if (movable) {
+              const { error } = await supabase.from('order_items').update({ assigned_packer_id: least }).eq('id', movable.id);
+              if (error) { console.error(`Failed to rebalance item ${movable.id}:`, error.message); }
+              else { movable.assigned_packer_id = least; itemsRebalanced++; movedThisRound = true; }
             }
+            // else: everything movable from `most` is leafy with no
+            // same-category recipient at `least` — nothing safe to move
+            // this round.
           }
         }
 
