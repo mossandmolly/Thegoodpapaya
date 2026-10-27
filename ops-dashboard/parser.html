@@ -11216,15 +11216,21 @@ async function submitStockBulkPurchase(){
   const toInsert=[];
   const unmatched=[];
   const badQty=[];
+  // Total ₹ value of EVERY pasted line's cost field, including lines that
+  // get skipped below — this is "what you pasted said, in total," so it can
+  // be checked against what actually lands in the table even when a line
+  // didn't make it in.
+  let pastedTotal=0;
   lines.forEach((line,i)=>{
     const parts=line.split(',').map(p=>p.trim());
+    const lineCost=parts[2]!==undefined&&parts[2]!==''?parseFloat(parts[2]):null;
+    if(lineCost!=null&&!isNaN(lineCost))pastedTotal+=lineCost;
     const rawName=parts[0]||'';
     const matched=catalogByLower.get(rawName.toLowerCase());
     if(!matched){unmatched.push({line:i+1,text:line});return;}
     const qty=parseFloat(parts[1]);
     if(!qty||qty<=0){badQty.push({line:i+1,text:line});return;}
-    const cost=parts[2]!==undefined&&parts[2]!==''?parseFloat(parts[2]):null;
-    toInsert.push({item_name:matched,date:viewDate,qty,cost:(cost!=null&&!isNaN(cost))?cost:null});
+    toInsert.push({item_name:matched,date:viewDate,qty,cost:(lineCost!=null&&!isNaN(lineCost))?lineCost:null});
   });
 
   // Snapshot what's already logged today BEFORE this paste's insert, so a
@@ -11251,8 +11257,20 @@ async function submitStockBulkPurchase(){
     return{name,all};
   }).filter(c=>c.all.length>1);
 
+  // Total ₹ actually added by this paste — compared against pastedTotal
+  // (every line's cost field, skipped or not) so a line that silently
+  // failed to match/qty-parse shows up as a mismatch here too, not just as
+  // a separate skipped-line note below.
+  const addedTotal=inserted.reduce((s,r)=>s+(r.cost||0),0);
+  const totalsMatch=Math.abs(pastedTotal-addedTotal)<0.01;
+
   const parts=[];
   if(inserted.length)parts.push('<div>✓ Added '+inserted.length+' purchase'+(inserted.length===1?'':'s')+'.</div>');
+  if(pastedTotal>0){
+    parts.push(totalsMatch
+      ?'<div>✓ Pasted total ₹'+pastedTotal.toLocaleString('en-IN',{maximumFractionDigits:2})+' matches amount added.</div>'
+      :'<div class="stock-writeoff">⚠ Pasted total ₹'+pastedTotal.toLocaleString('en-IN',{maximumFractionDigits:2})+' does not match amount added (₹'+addedTotal.toLocaleString('en-IN',{maximumFractionDigits:2})+') — see skipped lines below.</div>');
+  }
   if(conflicts.length)parts.push(conflicts.map(c=>
     '<div class="stock-writeoff">⚠ '+escH(c.name)+' now has multiple entries today — '+
       c.all.map((p,i)=>'entry '+(i+1)+' '+(p.cost!=null?'₹'+p.cost:'—')).join(', ')+
