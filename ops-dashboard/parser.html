@@ -328,6 +328,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
    (the gap between them) is just as static, so it's plain red text, not
    an editable/live-looking value. */
 .stock-writeoff{color:#b3261e;font-weight:700}
+.stock-multi-purchase{color:#b3261e;font-weight:700;font-size:10px;margin-top:2px}
 .del-btn{background:none;border:none;color:#b3261e;cursor:pointer;font-size:14px;padding:0 4px}
 .edit-btn{background:none;border:none;color:#2f6690;cursor:pointer;font-size:14px;padding:0 4px}
 .bc-box{background:#fffdf9;border:1px solid #f0dfc8;border-radius:8px;padding:14px;margin-bottom:14px}
@@ -10958,12 +10959,25 @@ function renderStockTable(){
     // static, shown plainly in red rather than as a live/editable value.
     const availableD1Html=s.availableD1==null?'—':s.availableD1.toFixed(2)+' '+escH(unit);
     const writeOffHtml=s.writeOff==null?'—':'<span class="stock-writeoff">'+s.writeOff.toFixed(2)+' '+escH(unit)+'</span>';
+    // More than one purchase tranche logged today for this fruit — not
+    // necessarily wrong (a real second trip to the market is normal), but
+    // worth a flag so a genuine duplicate entry (the same bill read twice,
+    // an OCR/text-parse double-count) doesn't just silently inflate the
+    // pool. Named "entry N" in the order logged, ₹ from each tranche's own
+    // cost (— when a tranche has no cost logged yet).
+    const purchaseTranches=stockPurchasesMap[c.item_name]||[];
+    const multiPurchaseHtml=purchaseTranches.length>1
+      ?'<div class="stock-multi-purchase">'+
+          purchaseTranches.map((p,i)=>'entry '+(i+1)+' '+(p.cost!=null?'₹'+p.cost:'—')).join(', ')+
+          ', total ₹'+purchaseTranches.reduce((s,p)=>s+(p.cost||0),0)+
+        '</div>'
+      :'';
     return '<tr>'+
       '<td>'+escH(c.item_name)+historyHtml+stopTrackingLink+'</td>'+
       '<td>'+openingControl+'</td>'+
       '<td>'+availableD1Html+'</td>'+
       '<td>'+writeOffHtml+'</td>'+
-      '<td>'+s.purchased.toFixed(2)+' '+escH(unit)+' <a class="or-link" onclick="openStockPurchaseModal('+escH(JSON.stringify(c.item_name))+')">manage</a></td>'+
+      '<td>'+s.purchased.toFixed(2)+' '+escH(unit)+' <a class="or-link" onclick="openStockPurchaseModal('+escH(JSON.stringify(c.item_name))+')">manage</a>'+multiPurchaseHtml+'</td>'+
       '<td>'+s.packed.toFixed(2)+' '+escH(unit)+'</td>'+
       '<td>'+s.pending.toFixed(2)+' '+escH(unit)+'</td>'+
       '<td>'+s.available.toFixed(2)+' '+escH(unit)+' ('+Math.round(s.pct)+'%)</td>'+
