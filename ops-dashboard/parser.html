@@ -946,6 +946,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   </div>
   <button class="btn-sec" onclick="openBuyerCompareModal()" style="margin-bottom:12px">🔍 Compare with buyer text</button>
   <div id="buyer-compare-results"></div>
+
+  <button type="button" class="btn-sec" onclick="toggleStockBulkPurchase()" id="stock-bulk-toggle" style="margin-bottom:12px">+ Log a list of purchases</button>
+  <div id="stock-bulk-box" class="hidden" style="margin-bottom:12px;padding:10px;border:1px solid #eee0d0;border-radius:8px">
+    <div class="to-empty" style="padding:0 0 6px 0;text-align:left">One per line — "Fruit, quantity, cost" (cost optional). Logged against <b id="stock-bulk-date"></b>.</div>
+    <textarea id="stock-bulk-input" rows="6" style="width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid #eee0d0;border-radius:6px" placeholder="Mango, 20, 1200
+Banana, 15, 450"></textarea>
+    <div class="push-row" style="margin:8px 0 0 0">
+      <button type="button" class="btn-parse" style="width:auto;margin-bottom:0" onclick="submitStockBulkPurchase()">Add All</button>
+    </div>
+    <div id="stock-bulk-result"></div>
+  </div>
+
   <div id="purchase-source-totals" class="ps-total-row"></div>
   <div id="purchases-sort-toggle" class="filter-pills status-pills"></div>
   <input type="text" class="pk-search" id="purchases-search" placeholder="🔍 Search fruit..." oninput="renderPurchasesTable()">
@@ -11217,6 +11229,62 @@ async function loadPurchasesView(){
   purchasesRows=data||[];
   renderPurchasesTable();
   loadExpensesView();
+}
+
+function toggleStockBulkPurchase(){
+  const box=document.getElementById('stock-bulk-box');
+  const opening=box.classList.contains('hidden');
+  box.classList.toggle('hidden');
+  if(opening){
+    document.getElementById('stock-bulk-date').textContent=viewDate;
+    document.getElementById('stock-bulk-result').innerHTML='';
+  }
+}
+
+// Paste format: one purchase per line, "item name, qty" or "item name, qty, cost".
+// For logging a fresh list of purchases straight into stock_purchases — NOT
+// the buyer-text compare flow above, which only diffs against what's
+// already logged. Item names are matched against the catalog
+// case-insensitively; unmatched lines or bad quantities are skipped and
+// called out in the result summary rather than silently dropped.
+async function submitStockBulkPurchase(){
+  const raw=document.getElementById('stock-bulk-input').value;
+  const lines=raw.split('\n').map(l=>l.trim()).filter(Boolean);
+  const resultEl=document.getElementById('stock-bulk-result');
+  if(!lines.length){resultEl.innerHTML='<div class="to-empty">Nothing pasted</div>';return;}
+
+  const catalog=await ensureCatalogItems().catch(()=>[]);
+  const catalogByLower=new Map(catalog.map(c=>[c.item_name.toLowerCase(),c.item_name]));
+  const toInsert=[];
+  const unmatched=[];
+  const badQty=[];
+  lines.forEach((line,i)=>{
+    const parts=line.split(',').map(p=>p.trim());
+    const rawName=parts[0]||'';
+    const matched=catalogByLower.get(rawName.toLowerCase());
+    if(!matched){unmatched.push({line:i+1,text:line});return;}
+    const qty=parseFloat(parts[1]);
+    if(!qty||qty<=0){badQty.push({line:i+1,text:line});return;}
+    const cost=parts[2]!==undefined&&parts[2]!==''?parseFloat(parts[2]):null;
+    toInsert.push({item_name:matched,date:viewDate,qty,cost:(cost!=null&&!isNaN(cost))?cost:null});
+  });
+
+  let inserted=[];
+  if(toInsert.length){
+    const{data,error}=await sb.from('stock_purchases').insert(toInsert).select();
+    if(error){resultEl.innerHTML='<div class="to-empty">Failed to save: '+escH(error.message)+'</div>';return;}
+    inserted=data||[];
+  }
+
+  const parts=[];
+  if(inserted.length)parts.push('<div>✓ Added '+inserted.length+' purchase'+(inserted.length===1?'':'s')+'.</div>');
+  if(badQty.length)parts.push('<div class="stock-writeoff">⚠ Line'+(badQty.length===1?'':'s')+' '+badQty.map(b=>b.line).join(', ')+' — missing/invalid quantity, skipped: '+badQty.map(b=>escH(b.text)).join(' · ')+'</div>');
+  if(unmatched.length)parts.push('<div class="stock-writeoff">⚠ Line'+(unmatched.length===1?'':'s')+' '+unmatched.map(u=>u.line).join(', ')+' — item name not recognized, skipped: '+unmatched.map(u=>escH(u.text)).join(' · ')+'</div>');
+  resultEl.innerHTML=parts.join('');
+  if(inserted.length){
+    document.getElementById('stock-bulk-input').value='';
+    await loadPurchasesView();
+  }
 }
 
 // Which mandi/market a purchase came from — a plain radio pick per row
