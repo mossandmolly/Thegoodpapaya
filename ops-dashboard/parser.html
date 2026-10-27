@@ -838,18 +838,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button type="button" id="stock-add-fruit-btn" disabled onclick="commitStockFruitPicks()">+ Add (0)</button>
   </div>
   <div class="stock-fruit-pills" id="stock-fruit-pills"></div>
-  <div class="push-row" style="margin-bottom:0">
-    <button type="button" class="header-btn" onclick="toggleStockBulkPurchase()" id="stock-bulk-toggle">+ Bulk add purchases</button>
-  </div>
-  <div id="stock-bulk-box" class="hidden" style="margin:8px 0;padding:10px;border:1px solid #eee0d0;border-radius:8px">
-    <div class="to-empty" style="padding:0 0 6px 0;text-align:left">One per line — "Fruit, quantity, cost" (cost optional). Pasted onto today's date (<span id="stock-bulk-date"></span>).</div>
-    <textarea id="stock-bulk-input" rows="6" style="width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid #eee0d0;border-radius:6px" placeholder="Mango, 20, 1200
-Banana, 15, 450"></textarea>
-    <div class="push-row" style="margin:8px 0 0 0">
-      <button type="button" class="btn-sec" style="width:auto" onclick="submitStockBulkPurchase()">Add All</button>
-    </div>
-    <div id="stock-bulk-result"></div>
-  </div>
   <div class="stock-table-wrap">
     <table class="community-table" id="stock-table"><thead><tr>
       <th>Fruit</th><th>Opening stock</th><th>Available D-1</th><th>Write off</th><th>Purchased</th><th class="vp-sortable" onclick="sortStockRows('packed')">Packed/Invoiced<span id="stock-sort-packed" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('pending')">Pending orders<span id="stock-sort-pending" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('available')">Available<span id="stock-sort-available" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('status')">Status<span id="stock-sort-status" class="vp-sort-ind"></span></th><th>Closing stock</th>
@@ -10889,62 +10877,6 @@ async function stopTrackingStockFruit(name){
   if(error){uxAlert('Failed: '+error.message);return;}
   stockTrackedFruits.delete(name);
   renderStockTable();
-}
-
-function toggleStockBulkPurchase(){
-  const box=document.getElementById('stock-bulk-box');
-  const opening=box.classList.contains('hidden');
-  box.classList.toggle('hidden');
-  if(opening){
-    document.getElementById('stock-bulk-date').textContent=viewDate;
-    document.getElementById('stock-bulk-result').innerHTML='';
-  }
-}
-
-// Paste format: one purchase per line, "item name, qty" or "item name, qty, cost".
-// Item names are matched against stockCatalog case-insensitively — unmatched
-// lines are skipped and called out in the result summary rather than
-// silently dropped, so nothing pasted ever vanishes without a trace.
-async function submitStockBulkPurchase(){
-  const raw=document.getElementById('stock-bulk-input').value;
-  const lines=raw.split('\n').map(l=>l.trim()).filter(Boolean);
-  const resultEl=document.getElementById('stock-bulk-result');
-  if(!lines.length){resultEl.innerHTML='<div class="to-empty">Nothing pasted</div>';return;}
-
-  const catalogByLower=new Map(stockCatalog.map(c=>[c.item_name.toLowerCase(),c.item_name]));
-  const toInsert=[];
-  const unmatched=[];
-  const badQty=[];
-  lines.forEach((line,i)=>{
-    const parts=line.split(',').map(p=>p.trim());
-    const rawName=parts[0]||'';
-    const matched=catalogByLower.get(rawName.toLowerCase());
-    if(!matched){unmatched.push({line:i+1,text:line});return;}
-    const qty=parseFloat(parts[1]);
-    if(!qty||qty<=0){badQty.push({line:i+1,text:line});return;}
-    const cost=parts[2]!==undefined&&parts[2]!==''?parseFloat(parts[2]):null;
-    toInsert.push({item_name:matched,date:viewDate,qty,cost:(cost!=null&&!isNaN(cost))?cost:null,lineNo:i+1});
-  });
-
-  let inserted=[];
-  if(toInsert.length){
-    const{data,error}=await sb.from('stock_purchases')
-      .insert(toInsert.map(({item_name,date,qty,cost})=>({item_name,date,qty,cost})))
-      .select();
-    if(error){resultEl.innerHTML='<div class="to-empty">Failed to save: '+escH(error.message)+'</div>';return;}
-    inserted=data||[];
-    inserted.forEach(r=>{(stockPurchasesMap[r.item_name]=stockPurchasesMap[r.item_name]||[]).push(r);});
-  }
-
-  const parts=[];
-  if(inserted.length)parts.push('<div>✓ Added '+inserted.length+' purchase'+(inserted.length===1?'':'s')+'.</div>');
-  if(badQty.length)parts.push('<div class="stock-writeoff">⚠ Line'+(badQty.length===1?'':'s')+' '+badQty.map(b=>b.line).join(', ')+' — missing/invalid quantity, skipped: '+badQty.map(b=>escH(b.text)).join(' · ')+'</div>');
-  if(unmatched.length)parts.push('<div class="stock-writeoff">⚠ Line'+(unmatched.length===1?'':'s')+' '+unmatched.map(u=>u.line).join(', ')+' — item name not recognized, skipped: '+unmatched.map(u=>escH(u.text)).join(' · ')+'</div>');
-  resultEl.innerHTML=parts.join('');
-  if(inserted.length){
-    document.getElementById('stock-bulk-input').value='';
-    renderStockTable();
-  }
 }
 
 // Status ranked by urgency (need-to-order first) rather than alphabetically
