@@ -11227,6 +11227,12 @@ async function submitStockBulkPurchase(){
     toInsert.push({item_name:matched,date:viewDate,qty,cost:(cost!=null&&!isNaN(cost))?cost:null});
   });
 
+  // Snapshot what's already logged today BEFORE this paste's insert, so a
+  // conflict check below compares against the pre-existing state, not the
+  // post-insert one.
+  const existingByItem={};
+  purchasesRows.forEach(r=>{(existingByItem[r.item_name]=existingByItem[r.item_name]||[]).push(r);});
+
   let inserted=[];
   if(toInsert.length){
     const{data,error}=await sb.from('stock_purchases').insert(toInsert).select();
@@ -11234,8 +11240,24 @@ async function submitStockBulkPurchase(){
     inserted=data||[];
   }
 
+  // Flag any item that now has more than one entry for the date — either
+  // because it was already logged before this paste, or because the same
+  // item appeared more than once in the pasted list itself. Either way
+  // it's a competing/conflicting entry she needs to see, not a silent add.
+  const insertedByItem={};
+  inserted.forEach(r=>{(insertedByItem[r.item_name]=insertedByItem[r.item_name]||[]).push(r);});
+  const conflicts=Object.keys(insertedByItem).map(name=>{
+    const all=[...(existingByItem[name]||[]),...insertedByItem[name]];
+    return{name,all};
+  }).filter(c=>c.all.length>1);
+
   const parts=[];
   if(inserted.length)parts.push('<div>✓ Added '+inserted.length+' purchase'+(inserted.length===1?'':'s')+'.</div>');
+  if(conflicts.length)parts.push(conflicts.map(c=>
+    '<div class="stock-writeoff">⚠ '+escH(c.name)+' now has multiple entries today — '+
+      c.all.map((p,i)=>'entry '+(i+1)+' '+(p.cost!=null?'₹'+p.cost:'—')).join(', ')+
+      ', total ₹'+c.all.reduce((s,p)=>s+(p.cost||0),0)+'</div>'
+  ).join(''));
   if(badQty.length)parts.push('<div class="stock-writeoff">⚠ Line'+(badQty.length===1?'':'s')+' '+badQty.map(b=>b.line).join(', ')+' — missing/invalid quantity, skipped: '+badQty.map(b=>escH(b.text)).join(' · ')+'</div>');
   if(unmatched.length)parts.push('<div class="stock-writeoff">⚠ Line'+(unmatched.length===1?'':'s')+' '+unmatched.map(u=>u.line).join(', ')+' — item name not recognized, skipped: '+unmatched.map(u=>escH(u.text)).join(' · ')+'</div>');
   resultEl.innerHTML=parts.join('');
