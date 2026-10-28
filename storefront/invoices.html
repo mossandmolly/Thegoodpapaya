@@ -13,13 +13,20 @@
 </header>
 
 <main>
-  <div class="form-field">
-    <label>Your phone number</label>
-    <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
+  <div id="phone-screen">
+    <h2 style="margin-top:0">View your invoices</h2>
+    <div class="form-field">
+      <label>Your phone number</label>
+      <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
+    </div>
+    <button class="btn-primary" id="lookup-btn" onclick="lookup()">View My Invoices</button>
   </div>
-  <button class="btn-primary" id="lookup-btn" onclick="lookup()">View My Invoices</button>
-  <div style="height:20px"></div>
-  <div id="results"></div>
+
+  <div id="results-screen" class="hidden">
+    <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;">← use a different number</a>
+    <div style="height:14px"></div>
+    <div id="results"></div>
+  </div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -47,12 +54,27 @@ function statusClass(s) {
 
 let hasLookedUp = false; // guards the auto-refresh below — never fires before a real lookup has happened
 
+// Two distinct screens, never both visible at once — "enter your phone
+// number" and "here are your invoices" are never the same view, so there's
+// no ambiguity about whether a number was actually submitted or just sitting
+// in the box.
+function showPhoneScreen() {
+  document.getElementById('phone-screen').classList.remove('hidden');
+  document.getElementById('results-screen').classList.add('hidden');
+  document.getElementById('phone').value = '';
+  document.getElementById('phone').focus();
+}
+
 async function lookup() {
   const phoneInput = document.getElementById('phone').value.trim();
   if (!/^\d{10}$/.test(phoneInput)) {
     document.getElementById('results').innerHTML = '<div class="err-box show">Please enter a valid 10-digit phone number.</div>';
+    document.getElementById('phone-screen').classList.add('hidden');
+    document.getElementById('results-screen').classList.remove('hidden');
     return;
   }
+  document.getElementById('phone-screen').classList.add('hidden');
+  document.getElementById('results-screen').classList.remove('hidden');
   hasLookedUp = true;
   const btn = document.getElementById('lookup-btn');
   btn.disabled = true;

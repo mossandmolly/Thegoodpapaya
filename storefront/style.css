@@ -11,6 +11,7 @@ header.gp-header nav a{font-size:13px;color:#8a7a6a;font-weight:600}
 .cart-link{position:relative;font-size:22px}
 #cart-badge{position:absolute;top:-6px;right:-10px;background:#2d6b2d;color:#fff;font-size:10px;font-weight:700;border-radius:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 4px}
 #cart-badge.hidden{display:none}
+.hidden{display:none}
 
 main{max-width:640px;margin:0 auto;padding:16px}
 
