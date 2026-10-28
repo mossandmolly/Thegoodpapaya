@@ -1195,6 +1195,7 @@ Banana, 15, 450"></textarea>
   <div class="modal-box">
     <h3 id="mt-title">Move to tomorrow</h3>
     <label class="modal-label">Select items to move</label>
+    <div class="push-row" style="margin:0 0 6px 0"><a class="or-link" id="mt-select-all-toggle" onclick="toggleMtSelectAll()">Deselect all</a></div>
     <div id="mt-items"></div>
     <div class="modal-actions">
       <button class="btn-sec" id="mt-cancel" style="margin-bottom:0">Cancel</button>
@@ -4240,18 +4241,18 @@ function renderOrdersList(){
                 ?'<a class="or-link" onclick="setOrderPickup(\''+order.soid+'\',false)" title="Treat this order as a normal delivery instead">↩️ remove pickup tag</a>'
                 :'<a class="or-link" onclick="setOrderPickup(\''+order.soid+'\',true)" title="Whole order — still order-level, not per-item">📦 mark as pickup</a>'))+
               (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
-              // Move-by-a-day only makes sense relative to today/tomorrow/
-              // yesterday — viewing anything further back via the date
-              // picker just omits this, rather than guessing what "move"
-              // should mean N days back. Yesterday's case moves 2 days
-              // forward (yesterday→tomorrow) — openMoveDateModal's
-              // direction is a plain day-offset, not just ±1, so this
-              // reuses it directly instead of a new wrapper function.
+              // "→ tomorrow" only makes sense relative to today/yesterday —
+              // openMoveDateModal's direction is a plain day-offset, not
+              // just ±1, so yesterday's case (moves 2 days forward,
+              // yesterday→tomorrow) reuses it directly instead of a new
+              // wrapper function. "← add to today's orders" is offered for
+              // ANY date before today, however far back, using the actual
+              // day-count back to today rather than a fixed ±1.
               (cancelled?'':(
-                viewDate===addDays(CALENDAR_TODAY,1)?'<a class="or-link" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>'
-                :viewDate===CALENDAR_TODAY?'<a class="or-link" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>'
-                :viewDate===addDays(CALENDAR_TODAY,-1)?'<a class="or-link" onclick="openMoveDateModal(\''+order.soid+'\',2)">→ tomorrow</a>'
-                :''
+                (viewDate<CALENDAR_TODAY?'<a class="or-link" onclick="openMoveDateModal(\''+order.soid+'\','+daysBetween(viewDate,CALENDAR_TODAY)+')">← add to today\'s orders</a>':'')+
+                (viewDate===addDays(CALENDAR_TODAY,1)?'<a class="or-link" onclick="moveToTodayPrompt(\''+order.soid+'\')">← add to today\'s orders</a>':'')+
+                (viewDate===CALENDAR_TODAY?'<a class="or-link" onclick="moveToTomorrowPrompt(\''+order.soid+'\')">→ tomorrow</a>':'')+
+                (viewDate===addDays(CALENDAR_TODAY,-1)?'<a class="or-link" onclick="openMoveDateModal(\''+order.soid+'\',2)">→ tomorrow</a>':'')
               ))+
               (cancelled?'':'<a class="or-link" style="color:#b3261e" onclick="cancelOrderSingle(\''+order.soid+'\')">🗑 cancel order</a>')+
               (cancelled?'<a class="or-link" style="color:#2d6b2d" onclick="uncancelOrderSingle(\''+order.soid+'\')">↩️ uncancel order</a>':'')+
@@ -5662,10 +5663,33 @@ let mtTargetOrder=null;
 let mtDirection=1;
 const mtModal=document.getElementById('mt-modal'),mtItems=document.getElementById('mt-items'),mtTitle=document.getElementById('mt-title'),mtMoveBtn=document.getElementById('mt-move');
 
+// "Select all"/"Deselect all" toggle above the per-item checkboxes — label
+// always reflects current state (checking/unchecking one item by hand
+// flips it too), rather than being a one-shot action button.
+function updateMtSelectAllLabel(){
+  const boxes=[...mtItems.querySelectorAll('input[type=checkbox]')];
+  const allChecked=boxes.length>0&&boxes.every(cb=>cb.checked);
+  document.getElementById('mt-select-all-toggle').textContent=allChecked?'Deselect all':'Select all';
+}
+function toggleMtSelectAll(){
+  const boxes=[...mtItems.querySelectorAll('input[type=checkbox]')];
+  const allChecked=boxes.length>0&&boxes.every(cb=>cb.checked);
+  boxes.forEach(cb=>{cb.checked=!allChecked;});
+  updateMtSelectAllLabel();
+}
+mtItems.addEventListener('change',updateMtSelectAllLabel);
+
 function addDays(dateStr,n){
   const d=new Date(dateStr+'T00:00:00Z');
   d.setUTCDate(d.getUTCDate()+n);
   return d.toISOString().slice(0,10);
+}
+
+// Whole days from `a` to `b` (positive when b is later) — used to compute
+// the day-offset for "add to today's orders" from any past date, not just
+// yesterday.
+function daysBetween(a,b){
+  return Math.round((new Date(b+'T00:00:00Z')-new Date(a+'T00:00:00Z'))/86400000);
 }
 
 function openMoveDateModal(salesOrderId,direction){
@@ -5674,13 +5698,22 @@ function openMoveDateModal(salesOrderId,direction){
   if(!order||!movable.length){uxAlert('No items to move');return;}
   mtTargetOrder=salesOrderId;
   mtDirection=direction;
-  mtTitle.textContent=direction>0?'Move to tomorrow':"Add to today's orders";
-  mtMoveBtn.textContent=direction>0?'Move to Tomorrow':"Add to Today's Orders";
+  // Label by the actual resulting date, not just the sign of direction —
+  // a past date moved forward can land on today (not "tomorrow"), and a
+  // multi-day jump from an older date needs its own date in the label
+  // rather than a misleading "tomorrow".
+  const targetDate=addDays(salesOrderId.slice(0,10),direction);
+  const label=targetDate===CALENDAR_TODAY?"Add to Today's Orders"
+    :targetDate===addDays(CALENDAR_TODAY,1)?'Move to Tomorrow'
+    :'Move to '+targetDate;
+  mtTitle.textContent=label;
+  mtMoveBtn.textContent=label;
   mtItems.innerHTML=movable.map(item=>
     '<label class="mt-item-row"><input type="checkbox" value="'+item.id+'" checked>'+
       escH(item.item_name)+' × '+item.requested_quantity+
     '</label>'
   ).join('');
+  updateMtSelectAllLabel();
   mtModal.classList.remove('hidden');
 }
 
