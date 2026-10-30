@@ -8,3 +8,7 @@
   Cache-Control: no-cache, no-store, must-revalidate
 /order-confirmed.html
   Cache-Control: no-cache, no-store, must-revalidate
+/style.css
+  Cache-Control: no-cache, no-store, must-revalidate
+/config.js
+  Cache-Control: no-cache, no-store, must-revalidate
