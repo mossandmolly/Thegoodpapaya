@@ -43,6 +43,7 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .add-btn:disabled{background:#c9c0b3;cursor:default}
 
 .empty-state{text-align:center;padding:40px 20px;color:#8a7a6a;font-size:14px}
+#welcome-heading{color:#2d6b2d;margin-bottom:20px}
 
 .cart-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #f0e8dc}
 .cart-row img,.cart-row .ph{width:52px;height:52px;border-radius:8px;object-fit:cover;background:#f5efe4;font-size:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
