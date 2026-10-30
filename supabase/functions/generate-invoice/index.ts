@@ -639,12 +639,15 @@ Deno.serve(async (req) => {
       .update({ status: 'invoiced' })
       .in('id', items.map((i: any) => i.id));
 
-    // Best-effort: (re)generate whichever payment mechanism was already
-    // active on this order so it reflects the current invoice total — never
-    // invents one that wasn't there before (an order nobody's dispatched or
-    // manually linked yet stays untouched), and never creates a second one
-    // alongside whichever's already active (orders.qr_code_id and
-    // razorpay_link_id are mutually exclusive by design).
+    // Best-effort: every invoiced order should always have a working
+    // Razorpay pay link on the customer-facing invoices page — so an order
+    // that already has a QR code just gets it refreshed (still mutually
+    // exclusive with a Razorpay link by design), and one that already has a
+    // Razorpay link gets that refreshed too, but one with NEITHER yet now
+    // gets a brand-new link created here rather than being left with no way
+    // to pay. Still requires a phone on file (Razorpay needs a contact to
+    // send the link to) — an order with no phone at all stays untouched,
+    // same as before.
     let paymentLink: string | null = null;
     try {
       const keyId     = Deno.env.get('RAZORPAY_KEY_ID');
@@ -661,8 +664,10 @@ Deno.serve(async (req) => {
             qr_image_url:  qr.image_url,
             qr_created_at: new Date().toISOString(),
           }).eq('sales_order_id', sales_order_id);
-        } else if (order.razorpay_link_id && order.phone) {
-          await razorpayCancelLink(order.razorpay_link_id, auth);
+        } else if (order.phone) {
+          if (order.razorpay_link_id) {
+            await razorpayCancelLink(order.razorpay_link_id, auth);
+          }
           const link = await razorpayCreateLink(
             Math.round(invoice_total * 100), order.customer_name, order.phone, sales_order_id, auth,
           );
