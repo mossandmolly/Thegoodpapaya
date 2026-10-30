@@ -581,8 +581,14 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // When a caller resolved this item via rate_overrides, use the
+      // picked catalog name on the actual invoice line too — previously
+      // only the rate and item_id were resolved from the override, so the
+      // invoice (and invoice_line_items, and therefore the customer-facing
+      // invoices page) kept showing the original unmatched name even
+      // though it billed and linked correctly under the hood.
       lineItems.push({
-        name: i.item_name, requested_qty: i.requested_quantity ?? 0,
+        name: overrides[i.item_name] || i.item_name, requested_qty: i.requested_quantity ?? 0,
         qty: i.final_quantity ?? 0, rate, description: i.description || undefined,
         item_id: itemIdByLowerName.get(lookupKey),
       });
