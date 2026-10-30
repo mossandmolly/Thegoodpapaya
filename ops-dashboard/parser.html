@@ -1190,6 +1190,22 @@ Banana, 15, 450"></textarea>
   </div>
 </div>
 
+<!-- PHONE PROPAGATION MODAL — after saving a phone on one order, offer to
+     apply the same number to other customer names that look like the same
+     house (society name + house number both appear as substrings), so a
+     name-spelling variant doesn't miss out on the phone/auto-fill. -->
+<div class="modal-overlay hidden" id="pp-modal">
+  <div class="modal-box">
+    <h3>Also save this phone number for...</h3>
+    <p class="note" style="margin-top:0">These other customer names look like they might be the same house. Pick any that are — unpick any that aren't.</p>
+    <div id="pp-items"></div>
+    <div class="modal-actions">
+      <button class="btn-sec" id="pp-cancel" style="margin-bottom:0">No thanks</button>
+      <button class="btn-parse" id="pp-save" style="margin-bottom:0">Save to selected</button>
+    </div>
+  </div>
+</div>
+
 <!-- MOVE TO TOMORROW / BACK TO TODAY MODAL -->
 <div class="modal-overlay hidden" id="mt-modal">
   <div class="modal-box">
@@ -4522,10 +4538,74 @@ async function editCustomerPhone(soid){
     if(!res.ok)throw new Error(data.error||'Could not save phone number');
     evictCustomerLookupCache(soid);
     await loadTodaysOrders();
+    await maybeOfferPhonePropagation(order.customer,trimmed);
   }catch(e){
     uxAlert('Failed: '+e.message);
   }
 }
+
+// Splits a customer name into its non-digit "society" part and its digit
+// groups (house/unit number, possibly more than one — e.g. "23-1"). Used
+// as a pure substring match, not exact-token matching, per the explicit
+// ask — this is a loose "looks like the same house" heuristic, not a
+// guaranteed match, which is exactly why it's a pick-list, not an
+// auto-apply.
+function phoneMatchTokens(name){
+  const lower=(name||'').toLowerCase();
+  return{
+    society:lower.replace(/\d+/g,'').replace(/[^a-z]/g,'').trim(),
+    digits:lower.match(/\d+/g)||[],
+  };
+}
+
+async function findPhonePropagationCandidates(customerName){
+  const names=await ensureCustomerNameOptions();
+  const cur=phoneMatchTokens(customerName);
+  if(!cur.society||!cur.digits.length)return[];
+  return names.filter(n=>{
+    if(n===customerName)return false;
+    const cand=phoneMatchTokens(n);
+    if(!cand.society)return false;
+    // Bidirectional — "Villa 23" vs "Summerfieldvilla 23" should match
+    // each other even though neither society string fully contains the
+    // other in just one direction (e.g. the shorter name is a substring
+    // of the longer one, not vice versa).
+    const societyMatch=cand.society.includes(cur.society)||cur.society.includes(cand.society);
+    if(!societyMatch)return false;
+    return cur.digits.some(d=>cand.digits.includes(d));
+  });
+}
+
+const ppModal=document.getElementById('pp-modal'),ppItems=document.getElementById('pp-items');
+let ppPendingPhone=null;
+
+async function maybeOfferPhonePropagation(customerName,phone){
+  const candidates=await findPhonePropagationCandidates(customerName).catch(()=>[]);
+  if(!candidates.length)return;
+  ppPendingPhone=phone;
+  ppItems.innerHTML=candidates.map(n=>
+    '<label class="mt-item-row"><input type="checkbox" value="'+escH(n)+'" checked>'+escH(n)+'</label>'
+  ).join('');
+  ppModal.classList.remove('hidden');
+}
+
+document.getElementById('pp-cancel').addEventListener('click',()=>{ppModal.classList.add('hidden');});
+
+document.getElementById('pp-save').addEventListener('click',async()=>{
+  const names=[...ppItems.querySelectorAll('input:checked')].map(cb=>cb.value);
+  ppModal.classList.add('hidden');
+  if(!names.length||!ppPendingPhone)return;
+  // customer_phones has an open "for all using (true)" RLS policy
+  // (migration 103) — same table set-order-phone itself writes to — so a
+  // direct client upsert here is consistent with that existing trust
+  // boundary, not a new one.
+  const{error}=await sb.from('customer_phones').upsert(
+    names.map(customer_name=>({customer_name,phone_number:ppPendingPhone,label:'manual'})),
+    {onConflict:'customer_name,phone_number'},
+  );
+  if(error){uxAlert('Failed to save for the selected names: '+error.message);return;}
+  uxAlert('Saved — future orders under '+(names.length===1?'that name':'those '+names.length+' names')+' will auto-fill this phone number.');
+});
 
 // Cancels the entire order via the existing cancel-order endpoint (same
 // one the bulk-select "Cancel" action already used) — deletes the Zoho
