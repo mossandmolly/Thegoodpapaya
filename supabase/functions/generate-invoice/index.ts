@@ -11,18 +11,20 @@
 // be packed and marked final before this is called; the frontend only shows
 // the "generate invoice" action once that's true for the whole order.
 //
-// Rate comes live from Zoho Books' /items endpoint (the source of truth for
-// pricing), matched to item_name case-insensitively — NOT from the local
-// catalog table, which is only a mirror kept fresh as a side effect here and
-// can otherwise silently lag behind a price changed directly in Zoho.
+// Rate comes from the local `catalog` table (see fetchCatalogItems below),
+// matched to item_name case-insensitively — NOT a live Zoho /items call per
+// invoice, which used to be the single biggest driver of this function's
+// Zoho API usage and contributed to hitting the daily rate limit. catalog
+// is kept fresh by sync-catalog, hourly via pg_cron (migration 118), so
+// staleness is bounded to ~1 hour instead of eliminated outright.
 // Items whose description contains "replacement", "free", or "free sample"
-// are billed at ₹0 regardless of the Zoho rate — reported back in free_items
-// so the frontend can show it in the confirmation summary.
-// If a non-free item's name doesn't match any live Zoho item at all, the
+// are billed at ₹0 regardless of the catalog rate — reported back in
+// free_items so the frontend can show it in the confirmation summary.
+// If a non-free item's name doesn't match any catalog item at all, the
 // request comes back with needs_resolution + closest-name suggestions
 // instead of failing outright; resubmit with
 // rate_overrides = { item_name: zoho_item_name } once the caller has picked
-// the right one, and it'll use that item's live rate.
+// the right one, and it'll use that item's catalog rate.
 //
 // Sets cf_requested_quantity custom field per line item.
 // Updates orders.invoice_status, zoho_invoice_id, invoice_number, invoice_total, balance_due.
