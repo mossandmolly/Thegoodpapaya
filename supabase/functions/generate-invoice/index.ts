@@ -613,9 +613,12 @@ Deno.serve(async (req) => {
     try {
       const keyId     = Deno.env.get('RAZORPAY_KEY_ID');
       const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
-      if (keyId && keySecret) {
+      if (!keyId || !keySecret) {
+        console.warn(`[generate-invoice] ${sales_order_id}: RAZORPAY_KEY_ID/SECRET not set — skipping pay link`);
+      } else {
         const auth = btoa(`${keyId}:${keySecret}`);
         if (order.qr_code_id) {
+          console.log(`[generate-invoice] ${sales_order_id}: order already has qr_code_id ${order.qr_code_id} — refreshing QR, not creating a Razorpay link`);
           await razorpayCloseQr(order.qr_code_id, auth);
           const qr = await razorpayCreateQr(
             Math.round(invoice_total * 100), order.customer_name, sales_order_id, auth,
@@ -637,10 +640,17 @@ Deno.serve(async (req) => {
             razorpay_url:     link.short_url,
           }).eq('sales_order_id', sales_order_id);
           paymentLink = link.short_url;
+          console.log(`[generate-invoice] ${sales_order_id}: Razorpay link created: ${link.short_url}`);
+        } else {
+          console.warn(`[generate-invoice] ${sales_order_id}: no phone on file — skipping pay link`);
         }
       }
-    } catch (_e) {
-      // swallow — payment link/QR refresh is a nice-to-have, not load-bearing for invoicing
+    } catch (e: any) {
+      // Logged (not load-bearing — the Zoho invoice above already
+      // succeeded regardless) so a real Razorpay failure is distinguishable
+      // from the "no phone on file" case above, instead of both looking
+      // identical from the outside.
+      console.error(`[generate-invoice] ${sales_order_id}: Razorpay pay link creation failed: ${e.message}`);
     }
 
     // ── Write invoice_line_items directly, right now ─────────────────────
