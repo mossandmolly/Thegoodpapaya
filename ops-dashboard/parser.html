@@ -6048,10 +6048,22 @@ function orderHasHeldItem(order){
 }
 let overviewHeldOnly=false;
 
+// Same condition the existing bulk "Payment Links" button already uses to
+// decide which selected orders need one (see paylinkIds below) — invoiced,
+// not already paid, and neither a Razorpay link nor a QR code is currently
+// on file. Excludes already-paid orders deliberately: razorpay-webhook
+// clears both fields on full payment, so a paid order with neither set is
+// expected, not a gap needing attention.
+function orderNeedsPaymentLink(order){
+  return isFullyInvoiced(order)&&!order.paymentCollected&&!order.razorpayUrl&&!order.qrImageUrl;
+}
+let overviewNoLinkOnly=false;
+
 function orderMatchesOverviewFilter(order){
   if(overviewPendingReviewOnly&&!orderHasPendingReview(order))return false;
   if(overviewVegetableOnly&&!orderHasVegetable(order))return false;
   if(overviewHeldOnly&&!orderHasHeldItem(order))return false;
+  if(overviewNoLinkOnly&&!orderNeedsPaymentLink(order))return false;
   if(overviewDeliveryFilter!=='all'){
     const ds=order.deliveryStatus||'not_dispatched';
     if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
@@ -6102,6 +6114,11 @@ function toggleOverviewHeldFilter(){
   renderOrdersList();
 }
 
+function toggleOverviewNoLinkFilter(){
+  overviewNoLinkOnly=!overviewNoLinkOnly;
+  renderOrdersList();
+}
+
 function renderOverviewSummaryPills(tripInfo){
   const orders=Object.values(currentOrdersById);
   // Pickup and replacement-only orders don't count toward "real" order
@@ -6116,6 +6133,7 @@ function renderOverviewSummaryPills(tripInfo){
   const pendingReview=orders.filter(orderHasPendingReview).length;
   const withVegetable=orders.filter(orderHasVegetable).length;
   const withHeld=active.filter(orderHasHeldItem).length;
+  const noLink=active.filter(orderNeedsPaymentLink).length;
   const pills=[
     {key:'all',label:'All',count:total},
     {key:'inprogress',label:'Open/Packed',count:inprogress},
@@ -6128,7 +6146,8 @@ function renderOverviewSummaryPills(tripInfo){
   ).join('')+
   (pendingReview?'<span class="filter-pill'+(overviewPendingReviewOnly?' active':'')+'" style="color:#8a5a00" onclick="toggleOverviewPendingReviewFilter()">💬 Pending review ('+pendingReview+')</span>':'')+
   (withVegetable?'<span class="filter-pill'+(overviewVegetableOnly?' active':'')+'" style="color:#2d6b2d" onclick="toggleOverviewVegetableFilter()">🥦 Has vegetable ('+withVegetable+')</span>':'')+
-  (withHeld?'<span class="filter-pill'+(overviewHeldOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewHeldFilter()">⏸ Held ('+withHeld+')</span>':'');
+  (withHeld?'<span class="filter-pill'+(overviewHeldOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewHeldFilter()">⏸ Held ('+withHeld+')</span>':'')+
+  (noLink?'<span class="filter-pill'+(overviewNoLinkOnly?' active':'')+'" style="color:#c2570a;font-weight:700" onclick="toggleOverviewNoLinkFilter()">🔗 No link generated ('+noLink+')</span>':'');
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
   const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;
