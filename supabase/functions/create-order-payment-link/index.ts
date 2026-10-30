@@ -137,6 +137,16 @@ Deno.serve(async (req) => {
       admin_action_reason: null,
     }).eq('sales_order_id', sales_order_id);
 
+    // invoice_line_items.payment_link is what the customer-facing invoices
+    // website actually reads (not orders.razorpay_url) — without this, a
+    // link generated here would update the order but never show up as a
+    // Pay Now button on the invoices page.
+    const { error: iliError } = await supabase.from('invoice_line_items').update({
+      payment_link:    link.short_url,
+      payment_link_id: link.id,
+    }).eq('sales_order_id', sales_order_id);
+    if (iliError) console.error(`invoice_line_items payment_link update failed for ${sales_order_id}:`, iliError.message);
+
     return new Response(
       JSON.stringify({ payment_url: link.short_url, razorpay_link_id: link.id }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
