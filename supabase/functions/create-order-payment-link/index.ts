@@ -55,19 +55,6 @@ async function cancelPaymentLink(linkId: string, auth: string): Promise<void> {
   });
 }
 
-// orders.qr_code_id and razorpay_link_id are mutually exclusive by design —
-// generating a link here while a dynamic QR is still active (order's OFD)
-// would leave both live at once, risking a duplicate payment. Closes it
-// first, best-effort.
-async function closeQrCode(qrCodeId: string, auth: string): Promise<void> {
-  try {
-    await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${qrCodeId}/close`, {
-      method: 'POST',
-      headers: { Authorization: `Basic ${auth}` },
-    });
-  } catch (_e) {} // best effort
-}
-
 async function createPaymentLink(
   amountPaise: number, customerName: string, phone: string, salesOrderId: string, auth: string,
 ): Promise<{ id: string; short_url: string }> {
@@ -113,11 +100,14 @@ Deno.serve(async (req) => {
     const keySecret = env('RAZORPAY_KEY_SECRET');
     const auth      = btoa(`${keyId}:${keySecret}`);
 
+    // Only cancels a PRIOR link of the same kind (regenerating this one) —
+    // a QR code is deliberately left untouched. QR and link are allowed to
+    // coexist now: a customer might pay online via the link while delivery
+    // is still underway and the QR is still showing in the rider's app.
+    // Whichever one actually gets paid first is what closes the other —
+    // see razorpay-webhook, not creation time.
     if (order.razorpay_link_id) {
       await cancelPaymentLink(order.razorpay_link_id, auth);
-    }
-    if (order.qr_code_id) {
-      await closeQrCode(order.qr_code_id, auth);
     }
 
     const amountPaise = Math.round(order.invoice_total * 100);
@@ -127,9 +117,6 @@ Deno.serve(async (req) => {
       phone,
       razorpay_link_id: link.id,
       razorpay_url:     link.short_url,
-      qr_code_id:    order.qr_code_id ? null : undefined,
-      qr_image_url:  order.qr_code_id ? null : undefined,
-      qr_created_at: order.qr_code_id ? null : undefined,
       // A manually-generated link is the expected way to resolve whatever
       // admin_action_needed flagged (most commonly: no phone was on file
       // for the automatic delivered-not-paid link — see mark-delivered).
