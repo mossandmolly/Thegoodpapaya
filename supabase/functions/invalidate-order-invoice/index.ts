@@ -12,11 +12,12 @@
 //
 //  1. If a Zoho invoice exists: unapply any payments (left as unused
 //     customer credit in Zoho automatically) then delete the invoice.
-//  2. Cancel the Razorpay payment link, if any — it was sized for the now-
-//     deleted invoice's total.
+//  2. Cancel the Razorpay payment link AND close an active QR code, if
+//     either exists — both were sized for the now-deleted invoice's total.
 //  3. Delete invoice_queue / invoice_line_items rows for this sales_order_id.
 //  4. Clear orders.zoho_invoice_id/invoice_number/invoice_total/balance_due/
-//     razorpay_link_id/razorpay_url and reset invoice_status to 'pending'.
+//     razorpay_link_id/razorpay_url/qr_code_id/qr_image_url/qr_created_at
+//     and reset invoice_status to 'pending'.
 //
 // Input:  { sales_order_id: string }
 // Output: { sales_order_id, invalidated: true }
@@ -146,6 +147,20 @@ async function cancelRazorpayLink(linkId: string): Promise<void> {
   } catch (_) {} // best effort
 }
 
+// Previously only cancelRazorpayLink ran here — an active QR was left
+// dangling, still scannable for the now-invalid invoice total, while
+// cancel-order (whole-order cancellation) already closed both. Same gap,
+// same fix.
+async function closeRazorpayQr(qrCodeId: string): Promise<void> {
+  try {
+    const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
+    await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${qrCodeId}/close`, {
+      method:  'POST',
+      headers: { Authorization: `Basic ${auth}` },
+    });
+  } catch (_) {} // best effort
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
@@ -173,6 +188,9 @@ Deno.serve(async (req) => {
     if (order.razorpay_link_id) {
       await cancelRazorpayLink(order.razorpay_link_id);
     }
+    if (order.qr_code_id) {
+      await closeRazorpayQr(order.qr_code_id);
+    }
 
     await supabase.from('invoice_queue').delete().eq('sales_order_id', sales_order_id);
     await supabase.from('invoice_line_items').delete().eq('sales_order_id', sales_order_id);
@@ -185,6 +203,9 @@ Deno.serve(async (req) => {
       invoice_status:   'pending',
       razorpay_link_id: null,
       razorpay_url:     null,
+      qr_code_id:       null,
+      qr_image_url:     null,
+      qr_created_at:    null,
     }).eq('sales_order_id', sales_order_id);
     if (updErr) throw new Error(updErr.message);
 

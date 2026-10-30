@@ -40,16 +40,14 @@
 // orders" pattern that lets any packer finish someone else's item lets any
 // rider deliver an order they weren't personally assigned).
 //
-// A rider marking an order delivered-and-paid closes whatever payment
-// mechanism (QR/link) was still active, since the order is settled through
-// a different channel now. Delivered-but-NOT-paid does nothing here —
-// generating a payment link for it is now a manual step from Order
-// Overview, not automatic. Best-effort either way: failures here never
-// fail the delivered-status update itself, which has already succeeded by
-// the time this runs.
+// This function never touches QR codes or Razorpay payment links, either
+// delivered-and-paid or delivered-but-unpaid — closing an active mechanism
+// is now solely razorpay-webhook's job, triggered by an actual confirmed
+// Razorpay payment, not a rider's manual "paid" claim here. Generating a
+// new link for an unpaid delivery is a manual step from Order Overview.
 //
 // Required env vars:
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -57,53 +55,6 @@ function env(key: string) {
   const val = Deno.env.get(key);
   if (!val) throw new Error(`Missing env: ${key}`);
   return val;
-}
-
-async function closeQrCode(qrCodeId: string, auth: string): Promise<void> {
-  try {
-    await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${qrCodeId}/close`, {
-      method: 'POST',
-      headers: { Authorization: `Basic ${auth}` },
-    });
-  } catch (_e) {} // best effort
-}
-
-async function cancelPaymentLink(linkId: string, auth: string): Promise<void> {
-  try {
-    await fetch(`https://api.razorpay.com/v1/payment_links/${linkId}/cancel`, {
-      method: 'POST',
-      headers: { Authorization: `Basic ${auth}` },
-    });
-  } catch (_e) {} // best effort
-}
-
-// A rider marking an order delivered-and-paid (cash or otherwise) settles
-// it through a channel other than the QR/link entirely — either one left
-// dangling and still live would mean the customer (or anyone with the
-// image) could still pay it again after the fact. Just closes whatever's
-// active — nothing new gets created here.
-async function closeActivePaymentMechanisms(supabase: any, salesOrderId: string): Promise<void> {
-  const { data: order } = await supabase
-    .from('orders')
-    .select('qr_code_id, razorpay_link_id')
-    .eq('sales_order_id', salesOrderId)
-    .maybeSingle();
-  if (!order || (!order.qr_code_id && !order.razorpay_link_id)) return;
-
-  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
-  const updates: Record<string, unknown> = {};
-  if (order.qr_code_id) {
-    await closeQrCode(order.qr_code_id, auth);
-    updates.qr_code_id = null;
-    updates.qr_image_url = null;
-    updates.qr_created_at = null;
-  }
-  if (order.razorpay_link_id) {
-    await cancelPaymentLink(order.razorpay_link_id, auth);
-    updates.razorpay_link_id = null;
-    updates.razorpay_url = null;
-  }
-  await supabase.from('orders').update(updates).eq('sales_order_id', salesOrderId);
 }
 
 // This function uses the service role internally, so it bypasses RLS
@@ -258,23 +209,6 @@ Deno.serve(async (req) => {
       .single();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);
-
-    if (delivered === true && data.payment_collected) {
-      try {
-        // data.payment_collected is the value actually just persisted above
-        // (post server-side-override, not necessarily what the client
-        // claimed) — using it here, not the raw request field, is what
-        // makes the override actually take effect on whether this runs.
-        // Delivered-but-NOT-paid no longer auto-generates a payment link
-        // here (previously switchToPaymentLink) — staff now does that
-        // manually from Order Overview's "No link generated" filter,
-        // rather than every unpaid delivery auto-texting the customer a
-        // link with reminders on.
-        await closeActivePaymentMechanisms(supabase, sales_order_id);
-      } catch (e: any) {
-        console.error(`[mark-delivered] payment mechanism cleanup failed for ${sales_order_id}:`, e.message);
-      }
-    }
 
     return new Response(
       JSON.stringify(data),
