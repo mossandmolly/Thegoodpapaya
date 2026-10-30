@@ -11,21 +11,20 @@
 // be packed and marked final before this is called; the frontend only shows
 // the "generate invoice" action once that's true for the whole order.
 //
-// Rate comes from the local `catalog` table (catalog.unit_price, active rows
-// only), matched to item_name case-insensitively — NOT fetched live from
-// Zoho per invoice, unless invoice_pricing_settings.source = 'zoho' (the
-// "Invoice prices" switch on Order Overview, migration 119), in which case
-// rates come live from Zoho's /items instead. catalog is an exact mirror of Zoho's active items, kept
-// current by sync-catalog (hourly pg_cron, migration 118, plus the manual
-// 💰 Catalog button in Order Overview).
+// Rate comes from the local `catalog` table (see fetchCatalogItems below),
+// matched to item_name case-insensitively — NOT a live Zoho /items call per
+// invoice, which used to be the single biggest driver of this function's
+// Zoho API usage and contributed to hitting the daily rate limit. catalog
+// is kept fresh by sync-catalog, hourly via pg_cron (migration 118), so
+// staleness is bounded to ~1 hour instead of eliminated outright.
 // Items whose description contains "replacement", "free", or "free sample"
 // are billed at ₹0 regardless of the catalog rate — reported back in
 // free_items so the frontend can show it in the confirmation summary.
-// If a non-free item's name doesn't match any active catalog item at all,
-// the request comes back with needs_resolution + closest-name suggestions
+// If a non-free item's name doesn't match any catalog item at all, the
+// request comes back with needs_resolution + closest-name suggestions
 // instead of failing outright; resubmit with
-// rate_overrides = { item_name: catalog_item_name } once the caller has
-// picked the right one, and it'll use that item's catalog rate.
+// rate_overrides = { item_name: zoho_item_name } once the caller has picked
+// the right one, and it'll use that item's catalog rate.
 //
 // Sets cf_requested_quantity custom field per line item.
 // Updates orders.invoice_status, zoho_invoice_id, invoice_number, invoice_total, balance_due.
