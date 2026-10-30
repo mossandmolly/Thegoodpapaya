@@ -645,14 +645,14 @@ Deno.serve(async (req) => {
       .in('id', items.map((i: any) => i.id));
 
     // Best-effort: every invoiced order should always have a working
-    // Razorpay pay link on the customer-facing invoices page — so an order
-    // that already has a QR code just gets it refreshed (still mutually
-    // exclusive with a Razorpay link by design), and one that already has a
-    // Razorpay link gets that refreshed too, but one with NEITHER yet now
-    // gets a brand-new link created here rather than being left with no way
-    // to pay. Still requires a phone on file (Razorpay needs a contact to
-    // send the link to) — an order with no phone at all stays untouched,
-    // same as before.
+    // Razorpay pay link on the customer-facing invoices page. QR and link
+    // are allowed to coexist — a customer might pay online via the link
+    // while delivery is still underway and the QR is still showing in the
+    // rider's app — so these two run independently of each other now,
+    // not as an if/else. Whichever one actually gets paid first is what
+    // closes the other (razorpay-webhook), not creation/refresh time here.
+    // The link still requires a phone on file (Razorpay needs a contact to
+    // send it to) — an order with no phone at all skips just that part.
     let paymentLink: string | null = null;
     try {
       const keyId     = Deno.env.get('RAZORPAY_KEY_ID');
@@ -662,7 +662,7 @@ Deno.serve(async (req) => {
       } else {
         const auth = btoa(`${keyId}:${keySecret}`);
         if (order.qr_code_id) {
-          console.log(`[generate-invoice] ${sales_order_id}: order already has qr_code_id ${order.qr_code_id} — refreshing QR, not creating a Razorpay link`);
+          console.log(`[generate-invoice] ${sales_order_id}: refreshing existing QR ${order.qr_code_id} to the current total`);
           await razorpayCloseQr(order.qr_code_id, auth);
           const qr = await razorpayCreateQr(
             Math.round(invoice_total * 100), order.customer_name, sales_order_id, auth,
@@ -672,7 +672,8 @@ Deno.serve(async (req) => {
             qr_image_url:  qr.image_url,
             qr_created_at: new Date().toISOString(),
           }).eq('sales_order_id', sales_order_id);
-        } else if (order.phone) {
+        }
+        if (order.phone) {
           if (order.razorpay_link_id) {
             await razorpayCancelLink(order.razorpay_link_id, auth);
           }

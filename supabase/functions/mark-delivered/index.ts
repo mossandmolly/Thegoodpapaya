@@ -40,13 +40,13 @@
 // orders" pattern that lets any packer finish someone else's item lets any
 // rider deliver an order they weren't personally assigned).
 //
-// A rider marking an order delivered-but-not-paid means whatever dynamic QR
-// was showing (see dispatch-order/refresh-delivery-qr) is now the wrong
-// mechanism — the delivery moment it was meant for has passed. This closes
-// that QR and, in its place, generates a Razorpay payment link (notified to
-// the customer over SMS/WhatsApp) so collection can continue after the
-// rider's left. Best-effort: failures here never fail the delivered-status
-// update itself, which has already succeeded by the time this runs.
+// A rider marking an order delivered-and-paid closes whatever payment
+// mechanism (QR/link) was still active, since the order is settled through
+// a different channel now. Delivered-but-NOT-paid does nothing here —
+// generating a payment link for it is now a manual step from Order
+// Overview, not automatic. Best-effort either way: failures here never
+// fail the delivered-status update itself, which has already succeeded by
+// the time this runs.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
@@ -77,78 +77,11 @@ async function cancelPaymentLink(linkId: string, auth: string): Promise<void> {
   } catch (_e) {} // best effort
 }
 
-async function createNotPaidPaymentLink(
-  amountPaise: number, customerName: string, phone: string, salesOrderId: string, auth: string,
-): Promise<{ id: string; short_url: string } | null> {
-  const res = await fetch('https://api.razorpay.com/v1/payment_links', {
-    method: 'POST',
-    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      amount: amountPaise, currency: 'INR',
-      description: `The Good Papaya — order ${salesOrderId}`,
-      customer: { name: customerName, contact: `+91${phone.replace(/^\+91/, '')}` },
-      notify: { sms: true, whatsapp: true, email: false },
-      reminder_enable: true,
-      notes: { sales_order_id: salesOrderId, source: 'not-paid-delivery' },
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) { console.error(`[mark-delivered] Payment link creation failed for ${salesOrderId}:`, data?.error?.description); return null; }
-  return { id: data.id, short_url: data.short_url };
-}
-
-async function switchToPaymentLink(supabase: any, salesOrderId: string): Promise<void> {
-  const { data: order } = await supabase
-    .from('orders')
-    .select('customer_name, phone, invoice_total, invoice_status, qr_code_id, razorpay_link_id')
-    .eq('sales_order_id', salesOrderId)
-    .maybeSingle();
-  if (!order) return;
-
-  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
-  const updates: Record<string, unknown> = {};
-
-  if (order.qr_code_id) {
-    await closeQrCode(order.qr_code_id, auth);
-    updates.qr_code_id = null;
-    updates.qr_image_url = null;
-    updates.qr_created_at = null;
-  }
-
-  if (!order.phone) {
-    // No number on file to send a link to — this used to fail completely
-    // silently. Flag it so ops actually sees it needs a human: add a
-    // phone number, then generate a payment link manually.
-    updates.admin_action_needed = true;
-    updates.admin_action_reason = 'Delivered, not paid — no phone number on file to send a payment link to.';
-  } else if (order.invoice_status === 'done' && order.invoice_total > 0) {
-    if (order.razorpay_link_id) await cancelPaymentLink(order.razorpay_link_id, auth);
-    const link = await createNotPaidPaymentLink(
-      Math.round(order.invoice_total * 100), order.customer_name, order.phone, salesOrderId, auth,
-    );
-    if (link) {
-      updates.razorpay_link_id = link.id;
-      updates.razorpay_url = link.short_url;
-      updates.admin_action_needed = false;
-      updates.admin_action_reason = null;
-    } else {
-      // Phone was present but Razorpay itself rejected/failed the request —
-      // equally worth a human's attention, just a different reason.
-      updates.admin_action_needed = true;
-      updates.admin_action_reason = 'Delivered, not paid — automatic payment link creation failed. Try again from Order Overview.';
-    }
-  }
-
-  if (Object.keys(updates).length) {
-    await supabase.from('orders').update(updates).eq('sales_order_id', salesOrderId);
-  }
-}
-
 // A rider marking an order delivered-and-paid (cash or otherwise) settles
 // it through a channel other than the QR/link entirely — either one left
 // dangling and still live would mean the customer (or anyone with the
 // image) could still pay it again after the fact. Just closes whatever's
-// active; unlike switchToPaymentLink, nothing new gets created here.
+// active — nothing new gets created here.
 async function closeActivePaymentMechanisms(supabase: any, salesOrderId: string): Promise<void> {
   const { data: order } = await supabase
     .from('orders')
@@ -326,14 +259,18 @@ Deno.serve(async (req) => {
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);
 
-    if (delivered === true) {
+    if (delivered === true && data.payment_collected) {
       try {
         // data.payment_collected is the value actually just persisted above
         // (post server-side-override, not necessarily what the client
         // claimed) — using it here, not the raw request field, is what
-        // makes the override actually take effect on which action runs.
-        if (data.payment_collected) await closeActivePaymentMechanisms(supabase, sales_order_id);
-        else await switchToPaymentLink(supabase, sales_order_id);
+        // makes the override actually take effect on whether this runs.
+        // Delivered-but-NOT-paid no longer auto-generates a payment link
+        // here (previously switchToPaymentLink) — staff now does that
+        // manually from Order Overview's "No link generated" filter,
+        // rather than every unpaid delivery auto-texting the customer a
+        // link with reminders on.
+        await closeActivePaymentMechanisms(supabase, sales_order_id);
       } catch (e: any) {
         console.error(`[mark-delivered] payment mechanism cleanup failed for ${sales_order_id}:`, e.message);
       }
