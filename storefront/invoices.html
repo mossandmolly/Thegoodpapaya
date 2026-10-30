@@ -23,9 +23,10 @@
   </div>
 
   <div id="results-screen" class="hidden">
-    <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;">← use a different number</a>
-    <div style="height:14px"></div>
+    <h2 id="welcome-heading" style="margin-top:0"></h2>
     <div id="results"></div>
+    <div style="height:16px"></div>
+    <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
   </div>
 </main>
 
@@ -44,6 +45,27 @@ function groupByInvoice(rows) {
     byInvoice[key].items.push({ item_name: r.item_name, qty: r.final_quantity ?? r.requested_quantity, price: r.item_price });
   });
   return Object.values(byInvoice).sort((a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || ''));
+}
+
+// Phone-based lookup (migration 127) can return invoices filed under
+// several name spellings for the same person (e.g. "somya p" / "Somya
+// Priyadarshini" / "SOMYA P") — picks whichever variant looks the most
+// properly cased (each word capitalized, rest lowercase) to greet with,
+// rather than whatever happened to be on the most recent invoice.
+function pickBestCasedName(names) {
+  const unique = [...new Set(names.filter(Boolean).map(n => n.trim()).filter(Boolean))];
+  if (!unique.length) return '';
+  function properCaseScore(name) {
+    const words = name.split(/\s+/);
+    const good = words.filter(w => /^[A-Z][a-z]*([-'][A-Z][a-z]*)*$/.test(w)).length;
+    return good / words.length;
+  }
+  return unique.slice().sort((a, b) => {
+    const diff = properCaseScore(b) - properCaseScore(a);
+    if (diff) return diff;
+    if (b.length !== a.length) return b.length - a.length; // prefer the fuller name on a tie
+    return a.localeCompare(b);
+  })[0];
 }
 
 function statusClass(s) {
@@ -81,6 +103,7 @@ async function lookup() {
   btn.innerHTML = '<span class="spinner"></span>Looking up…';
   const results = document.getElementById('results');
   results.innerHTML = '';
+  document.getElementById('welcome-heading').textContent = '';
 
   try {
     // get_invoices_by_phone matches phone_number exactly as stored — try
@@ -96,6 +119,8 @@ async function lookup() {
       results.innerHTML = '<div class="empty-state">No invoices found for this number yet.</div>';
       return;
     }
+
+    document.getElementById('welcome-heading').textContent = 'Welcome, ' + pickBestCasedName(data.map(r => r.customer_name)) + '!';
 
     const invoices = groupByInvoice(data);
     results.innerHTML = invoices.map(inv => {
