@@ -223,6 +223,9 @@ input:focus,select:focus{border-color:var(--accent);}
         <div style="font-size:20px;font-weight:800;">Purchase vs Sales · Margin</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
+        <button id="prevMonthBtn" class="top-btn" title="Previous month">◀</button>
+        <div id="monthNavLabel" style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted2);min-width:100px;text-align:center"></div>
+        <button id="nextMonthBtn" class="top-btn" title="Next month">▶</button>
         <button id="refreshBtn" title="Reload the latest purchases/sales/expenses from Supabase — this page only fetches once when the P&L tab is first opened, not automatically after that" style="font-size:10px;font-family:'DM Mono',monospace;letter-spacing:.08em;text-transform:uppercase;padding:5px 10px;border-radius:5px;border:1px solid rgba(184,240,80,.2);background:rgba(184,240,80,.08);color:var(--accent);cursor:pointer">🔄 Refresh</button>
         <div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace" id="periodLabel">—</div>
       </div>
@@ -385,6 +388,16 @@ const AUGUST_INVENTORY = {"_updated": "2026-08-29", "amaranthus": 0.0, "amla": 0
 
 // ── STATE ──
 var AUG = {purchases:[], sales:{}, expenses:[], inventory:{}};
+// The month currently being viewed on the live (non-archived) section —
+// defaults to the real current month, but Prev/Next can step it back to
+// any earlier month without needing a new hardcoded archive tab built for
+// it (like June/July/August above) once that month ends.
+var viewMonthStart=null; // set at init, after currentMonthStart() is defined below
+function addMonthsToMonthStart(monthStartStr,n){
+  var d=new Date(monthStartStr+'T00:00:00Z');
+  d.setUTCMonth(d.getUTCMonth()+n);
+  return d.toISOString().slice(0,7)+'-01';
+}
 var curGroup='All', chartInst=null;
 // All SKUs table sort state — persists across group-tab switches. Default
 // alphabetical by SKU (ascending); numeric columns default to descending
@@ -455,13 +468,23 @@ function sbPost(table,rows){
 // bound either now — today() only ever grows, so there's no future
 // boundary left to eventually go stale the same way.
 function currentMonthStart(){return today().slice(0,7)+'-01';}
+// viewMonthStart may still be null the very first time this runs (init
+// order — see bottom of file), in which case it's the real current month.
 function currentMonthLabel(){
-  return new Date().toLocaleDateString('en-US',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'});
+  var d=new Date((viewMonthStart||currentMonthStart())+'T00:00:00Z');
+  return d.toLocaleDateString('en-US',{month:'long',year:'numeric',timeZone:'UTC'});
 }
 
 function loadFromSupabase(){
   document.getElementById('loadingText').textContent='Loading from Supabase…';
-  var monthStart=currentMonthStart();
+  if(!viewMonthStart)viewMonthStart=currentMonthStart();
+  var monthStart=viewMonthStart;
+  // Upper bound matters once viewMonthStart can be a PAST month (Prev
+  // button) — without it, "gte monthStart" with no ceiling would keep
+  // pulling in every later month's data too, not just the one being
+  // viewed. Harmless no-op when viewing the real current month, since
+  // there's no future data yet to exclude.
+  var monthEndExclusive=addMonthsToMonthStart(monthStart,1);
   // order=date.DESC, not asc — Supabase's own project-wide "Max Rows"
   // setting silently caps every response at a fixed row count (1000 on
   // this project) regardless of the limit=5000 asked for here, with no
@@ -474,10 +497,10 @@ function loadFromSupabase(){
   // real fix is raising/removing Max Rows in Supabase's own dashboard
   // (Project Settings -> API) — this is a mitigation, not a substitute.
   return Promise.all([
-    sbGet('stock_purchases','date=gte.'+monthStart+'&order=date.desc&limit=5000'),
-    sbGet('daily_sales','date=gte.'+monthStart+'&order=date.desc&limit=5000'),
-    sbGet('daily_expenses','date=gte.'+monthStart+'&order=date.desc&limit=5000'),
-    sbGet('stock_closing','date=gte.'+monthStart+'&order=date.desc&limit=500'),
+    sbGet('stock_purchases','date=gte.'+monthStart+'&date=lt.'+monthEndExclusive+'&order=date.desc&limit=5000'),
+    sbGet('daily_sales','date=gte.'+monthStart+'&date=lt.'+monthEndExclusive+'&order=date.desc&limit=5000'),
+    sbGet('daily_expenses','date=gte.'+monthStart+'&date=lt.'+monthEndExclusive+'&order=date.desc&limit=5000'),
+    sbGet('stock_closing','date=gte.'+monthStart+'&date=lt.'+monthEndExclusive+'&order=date.desc&limit=500'),
     sbGet('catalog','select=item_name,category')
   ]).then(function(results){
     var pRows=results[0],sRows=results[1],eRows=results[2],closingRows=results[3],catalogRows=results[4];
@@ -1067,6 +1090,37 @@ function doRefresh(){
 }
 document.getElementById('refreshBtn').addEventListener('click',doRefresh);
 
+// ── MONTH NAV (Prev/Next on the live section) ──
+// "Prev" steps viewMonthStart back a month and reloads from Supabase for
+// that month's own date range (see loadFromSupabase's upper bound above).
+// "Next" is disabled once already viewing the real current month — there's
+// nothing later to show, and stepping past it would just show an empty
+// future month.
+function updateMonthNavUI(){
+  var label=currentMonthLabel();
+  var isCurrent=(viewMonthStart===currentMonthStart());
+  document.getElementById('monthNavLabel').textContent=label+(isCurrent?' (current)':'');
+  document.getElementById('nextMonthBtn').disabled=isCurrent;
+}
+
+function goToMonth(delta){
+  var btn=document.getElementById(delta<0?'prevMonthBtn':'nextMonthBtn');
+  var original=btn.textContent;
+  btn.disabled=true;btn.textContent='…';
+  viewMonthStart=addMonthsToMonthStart(viewMonthStart||currentMonthStart(),delta);
+  // Never let Next go past the real current month — nothing to load there.
+  if(viewMonthStart>currentMonthStart())viewMonthStart=currentMonthStart();
+  refreshCurrentMonthLabels();
+  updateMonthNavUI();
+  loadFromSupabase().then(function(){
+    populateSKUs();
+    btn.textContent=original;btn.disabled=false;
+    updateMonthNavUI();
+  });
+}
+document.getElementById('prevMonthBtn').addEventListener('click',function(){goToMonth(-1);});
+document.getElementById('nextMonthBtn').addEventListener('click',function(){goToMonth(1);});
+
 // The parent ops-dashboard page loads this iframe only once per browser
 // session (see its own comment on pnl-iframe — deliberate, to avoid
 // re-fetching this whole page's weight on every tab click) — so without
@@ -1079,7 +1133,9 @@ window.addEventListener('message',function(e){
 });
 
 // ── INIT ──
+viewMonthStart=currentMonthStart();
 refreshCurrentMonthLabels();
+updateMonthNavUI();
 loadFromSupabase();
 populateSKUs();
 </script>
