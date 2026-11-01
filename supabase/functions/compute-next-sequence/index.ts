@@ -185,7 +185,7 @@ const MAX_SEQUENCES_PER_RUN = 20;
 // (migration 087) is the primary source; this is only a gap-filler for any
 // item that table hasn't been back-filled for (e.g. added to Zoho after
 // that one-time backfill ran — sync-catalog doesn't set category).
-const VEGETABLE_ITEM_NAMES = new Set(["cauliflower","cabbage","capsicum green","capsicum yellow","capsicum red","carrot","tomato","ginger","beans","lady's finger","cucumber","coriander","chilli green","potato","onion","ridge gourd","bitter gourd","bottle gourd","brinjal bottle","broccoli","banana leaves","spinach","amaranthus","fenugreek","mangalore cucumber","drumstick","chilli bhajji","coccinia","mint","lettuce","beetroot","zucchini green","zucchini yellow","red cabbage","mushroom","garlic","spring onion"]);
+const VEGETABLE_ITEM_NAMES = new Set(["cauliflower","cabbage","capsicum green","capsicum yellow","capsicum red","carrot","tomato","ginger","beans","lady's finger","cucumber","coriander","chilli green","potato","onion","ridge gourd","bitter gourd","bottle gourd","brinjal bottle","broccoli","banana leaves","spinach","amaranthus","fenugreek","mangalore cucumber","drumstick","chilli bhajji","coccinia","mint","lettuce","beetroot","zucchini green","zucchini yellow","red cabbage","mushroom","garlic","spring onion","green peas"]);
 // Never reassigned across a fruit<->vegetable category line during
 // workload rebalancing (see below) — too delicate/unfamiliar to hand to
 // the other category's packer, even for a tiny top-up. Within the same
