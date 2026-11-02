@@ -6181,11 +6181,17 @@ function orderNeedsPaymentLink(order){
 }
 let overviewNoLinkOnly=false;
 
+// Restored — removed when Sequence view replaced the Time Sensitive sort,
+// but that was a sort order, not a filter; this is still a separate,
+// useful axis (which orders have ANY deadline constraint at all).
+let overviewDeadlineOnly=false;
+
 function orderMatchesOverviewFilter(order){
   if(overviewPendingReviewOnly&&!orderHasPendingReview(order))return false;
   if(overviewVegetableOnly&&!orderHasVegetable(order))return false;
   if(overviewHeldOnly&&!orderHasHeldItem(order))return false;
   if(overviewNoLinkOnly&&!orderNeedsPaymentLink(order))return false;
+  if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
   if(overviewDeliveryFilter!=='all'){
     const ds=order.deliveryStatus||'not_dispatched';
     if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
@@ -6241,6 +6247,11 @@ function toggleOverviewNoLinkFilter(){
   renderOrdersList();
 }
 
+function toggleOverviewDeadlineFilter(){
+  overviewDeadlineOnly=!overviewDeadlineOnly;
+  renderOrdersList();
+}
+
 function renderOverviewSummaryPills(tripInfo){
   const orders=Object.values(currentOrdersById);
   // Pickup and replacement-only orders don't count toward "real" order
@@ -6256,6 +6267,7 @@ function renderOverviewSummaryPills(tripInfo){
   const withVegetable=orders.filter(orderHasVegetable).length;
   const withHeld=active.filter(orderHasHeldItem).length;
   const noLink=active.filter(orderNeedsPaymentLink).length;
+  const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
   const pills=[
     {key:'all',label:'All',count:total},
     {key:'inprogress',label:'Open/Packed',count:inprogress},
@@ -6269,7 +6281,8 @@ function renderOverviewSummaryPills(tripInfo){
   (pendingReview?'<span class="filter-pill'+(overviewPendingReviewOnly?' active':'')+'" style="color:#8a5a00" onclick="toggleOverviewPendingReviewFilter()">💬 Pending review ('+pendingReview+')</span>':'')+
   (withVegetable?'<span class="filter-pill'+(overviewVegetableOnly?' active':'')+'" style="color:#2d6b2d" onclick="toggleOverviewVegetableFilter()">🥦 Has vegetable ('+withVegetable+')</span>':'')+
   (withHeld?'<span class="filter-pill'+(overviewHeldOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewHeldFilter()">⏸ Held ('+withHeld+')</span>':'')+
-  (noLink?'<span class="filter-pill'+(overviewNoLinkOnly?' active':'')+'" style="color:#c2570a;font-weight:700" onclick="toggleOverviewNoLinkFilter()">🔗 No link generated ('+noLink+')</span>':'');
+  (noLink?'<span class="filter-pill'+(overviewNoLinkOnly?' active':'')+'" style="color:#c2570a;font-weight:700" onclick="toggleOverviewNoLinkFilter()">🔗 No link generated ('+noLink+')</span>':'')+
+  (withDeadline?'<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>':'');
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
   const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;
@@ -7140,7 +7153,15 @@ async function deleteItem(id){
 
 // ── Packer ────────────────────────────────────────────────────────────────
 let packerItems=[],packerCustomerMap={},packerUnitByItem={},packerIdByFruit={},packerNameByFruit={};
-const packerFilters={search:'',fruits:new Set(),statuses:new Set(),offQtyOnly:false};
+const packerFilters={search:'',fruits:new Set(),statuses:new Set(),offQtyOnly:false,timelineOnly:false};
+
+// Mirrors Order Overview's removed-then-missed "Has timeline" filter —
+// an order with a deliver_by or deliver_after constraint set. Looked up
+// via packerCustomerMap (Packer only carries item rows, not full orders).
+function itemHasTimeline(item){
+  const o=packerCustomerMap[item.sales_order_id];
+  return!!(o&&(o.deliver_by||o.deliver_after));
+}
 let packerScope='all'; // 'all' | 'mine' — 'mine' = items whose fruit is in this device's packer's assigned_fruits (packers config table)
 // Per-group (society/trip) collapse — tracks which are EXPANDED, empty by
 // default so every bucket starts collapsed to just its header, same
@@ -7644,8 +7665,10 @@ function renderPackerFilterPills(){
   // reviewing what's already been weighed wants a quick way to pull up just
   // the ones worth double-checking instead of scanning every card.
   const offQtyCount=packerItems.filter(i=>qtyMismatchInfo(i)).length;
+  const timelineCount=packerItems.filter(itemHasTimeline).length;
   document.getElementById('pk-flags-pills').innerHTML=
-    '<span class="filter-pill'+(packerFilters.offQtyOnly?' active':'')+'" onclick="togglePackerOffQtyFilter()">⚠ Off Qty ('+offQtyCount+')</span>';
+    '<span class="filter-pill'+(packerFilters.offQtyOnly?' active':'')+'" onclick="togglePackerOffQtyFilter()">⚠ Off Qty ('+offQtyCount+')</span>'+
+    (timelineCount?'<span class="filter-pill'+(packerFilters.timelineOnly?' active':'')+'" onclick="togglePackerTimelineFilter()">⏰ Has timeline ('+timelineCount+')</span>':'');
 
   document.getElementById('pk-produce-pills').innerHTML=
     '<span class="filter-pill'+(packerProduceFilter==='fruit'?' active':'')+'" onclick="setPackerProduceFilter(\'fruit\')">🍎 Fruit only</span>'+
@@ -7654,6 +7677,12 @@ function renderPackerFilterPills(){
 
 function togglePackerOffQtyFilter(){
   packerFilters.offQtyOnly=!packerFilters.offQtyOnly;
+  renderPackerFilterPills();
+  renderPackerGrid();
+}
+
+function togglePackerTimelineFilter(){
+  packerFilters.timelineOnly=!packerFilters.timelineOnly;
   renderPackerFilterPills();
   renderPackerGrid();
 }
@@ -8481,6 +8510,7 @@ function renderPackerGrid(){
     if(packerFilters.statuses.size&&!packerFilters.statuses.has(item.status))return false;
     if(packerFilters.fruits.size&&!packerFilters.fruits.has(item.item_name))return false;
     if(packerFilters.offQtyOnly&&!qtyMismatchInfo(item))return false;
+    if(packerFilters.timelineOnly&&!itemHasTimeline(item))return false;
     const customer=packerCustomerMap[item.sales_order_id]?.customer_name||item.sales_order_id;
     // Match anywhere in the full customer name, not just the derived
     // society token (its first word) — searching a later word in the name
