@@ -2411,13 +2411,28 @@ async function loadCustomerInstructionsCache(){
   renderCustomerInstructionsTable(customerInstructionsCache);
 }
 
+// What this instruction does to the delivery time on new orders. The time is
+// read from the text by a database trigger (migration 131) when it's saved.
+function customerInstructionTimeNote(r){
+  const label=deliveryWindowLabel({deliverBy:r.deliver_by,deliverAfter:r.deliver_after});
+  let text=null,color='#2d6b2d';
+  if(label&&r.target==='packer'){
+    text='⏰ Time not set on orders: change "Seen by" to Delivery or Both';color='#b45309';
+  }else if(label){
+    text='⏰ Sets delivery time on new orders: '+label;
+  }else if(r.time_needs_review){
+    text='⚠️ Time not set on orders: use an exact time, like "after 4pm" or "by 4pm"';color='#b45309';
+  }
+  return text?'<div style="font-size:11px;color:'+color+';margin-top:3px">'+escH(text)+'</div>':'';
+}
+
 function renderCustomerInstructionsTable(rows){
   const tbody=document.getElementById('ci-tbody');
   if(!tbody)return;
   tbody.innerHTML=rows.map(r=>
     '<tr>'+
       '<td>'+escH(r.display_name)+'</td>'+
-      '<td><input type="text" id="ci-instr-'+r.id+'" value="'+escH(r.instructions)+'" style="width:100%"></td>'+
+      '<td><input type="text" id="ci-instr-'+r.id+'" value="'+escH(r.instructions)+'" style="width:100%">'+customerInstructionTimeNote(r)+'</td>'+
       '<td><select id="ci-target-'+r.id+'">'+
         Object.keys(CI_TARGET_LABEL).map(t=>'<option value="'+t+'"'+(t===r.target?' selected':'')+'>'+CI_TARGET_LABEL[t]+'</option>').join('')+
       '</select></td>'+
