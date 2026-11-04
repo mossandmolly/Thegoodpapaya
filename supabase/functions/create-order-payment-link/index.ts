@@ -124,6 +124,20 @@ Deno.serve(async (req) => {
       admin_action_reason: null,
     }).eq('sales_order_id', sales_order_id);
 
+    // Same upsert set-order-phone does — customers has no phone column as
+    // of migration 029, customer_phones is the real source orders_fill_
+    // phone_from_customer (migration 102) reads for every SUBSEQUENT order
+    // from this customer. Without this, a phone captured only through
+    // generating a link here never carried forward — best-effort, the link
+    // itself is already created and saved above regardless.
+    const { error: phoneErr } = await supabase
+      .from('customer_phones')
+      .upsert(
+        { customer_name: order.customer_name, phone_number: phone, label: 'manual' },
+        { onConflict: 'customer_name,phone_number' },
+      );
+    if (phoneErr) console.error(`[create-order-payment-link] customer_phones upsert failed for "${order.customer_name}":`, phoneErr.message);
+
     // No separate invoice_line_items write here anymore (migration 128) —
     // get_invoices_by_phone now reads payment_link live from orders via a
     // join, so the customer-facing invoices page reflects this the moment
