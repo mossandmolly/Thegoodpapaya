@@ -2668,6 +2668,28 @@ async function loadDailyFruitOverrides(){
   (data||[]).forEach(r=>{dailyFruitOverrides[r.item_name]=r.packer_id;});
 }
 
+async function loadLastCronRun(){
+  const{data,error}=await sb.from('packer_sequence_state').select('updated_at').eq('id',1).maybeSingle();
+  if(error){console.error(error);return;}
+  lastCronRunAt=data?.updated_at||null;
+}
+
+// Shown at the top of the Team tab so Somya can tell at a glance whether
+// the auto-sequencer is actually still ticking (vs. stuck/failing) without
+// needing to run the cron.job_run_details query herself. Flags stale (>10
+// min since the scheduled 5-min interval — migration 124) in red so a
+// silently-broken cron doesn't just look like "no recent activity."
+function renderLastCronRun(){
+  if(!lastCronRunAt)return '';
+  const d=new Date(lastCronRunAt);
+  const timeStr=d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'});
+  const minsAgo=Math.round((Date.now()-d.getTime())/60000);
+  const stale=minsAgo>10;
+  return '<div style="font-size:12px;color:'+(stale?'#b3261e':'#8a7a6a')+';margin-bottom:10px">'+
+    (stale?'⚠ ':'')+'Auto-sequencer last ran '+timeStr+' IST ('+minsAgo+' min ago)'+
+  '</div>';
+}
+
 // Sets (or clears, if packerId is falsy) today's override for one fruit, then
 // immediately sweeps every still-OPEN item of that fruit today onto the new
 // packer — "ALL bananas" has to mean the ones already sequenced today too,
@@ -7214,6 +7236,11 @@ let packerItems=[],packerCustomerMap={},packerUnitByItem={},packerIdByFruit={},p
 // persisted client-side beyond that — tomorrow's load reads tomorrow's
 // (empty) rows, so it resets itself without any cleanup code.
 let dailyFruitOverrides={};
+// Last time the compute-next-sequence cron actually ran, read off
+// packer_sequence_state.updated_at (migration 120) — that row is stamped
+// unconditionally at the end of EVERY run, whether or not anything changed,
+// so it's a true "last cron run" time, not just "last time it did work."
+let lastCronRunAt=null;
 const packerFilters={search:'',fruits:new Set(),statuses:new Set(),offQtyOnly:false,timelineOnly:false};
 
 // Mirrors Order Overview's removed-then-missed "Has timeline" filter —
@@ -7668,6 +7695,7 @@ async function loadPackerView(){
     loadCommunityPriorityConfig().catch(e=>console.error('Could not load community priority config',e)),
     loadCombinableGroupsConfig().catch(e=>console.error('Could not load combinable groups config',e)),
     loadDailyFruitOverrides(),
+    loadLastCronRun().catch(e=>console.error('Could not load last cron run',e)),
   ]);
   packerCustomerMap=map||{};
   packerUnitByItem={};
@@ -8538,6 +8566,7 @@ function renderPackerTeamView(){
     :perPacker.filter(r=>r.packer.name===teamPackerFilter);
 
   grid.innerHTML=
+    renderLastCronRun()+
     renderPackerCategoryToggles()+
     renderDailyFruitOverridePanel()+
     renderSequenceBoard()+
