@@ -8573,7 +8573,8 @@ function renderPackerTeamSummary(rows,totalFruit,totalVeg){
       '</div>'+
       (hasSplit?
         '<div class="pk-team-bar-rate">🍎 '+r.fruitCount+(fruitRate?' (avg '+escH(fruitRate)+')':'')+
-        ' · 🥦 '+r.vegCount+(vegRate?' (avg '+escH(vegRate)+')':'')+'</div>'
+        ' · 🥦 '+r.vegCount+(vegRate?' (avg '+escH(vegRate)+')':'')+
+        (rate?' · overall avg '+escH(rate):'')+'</div>'
       :(rate?'<div class="pk-team-bar-rate">avg '+escH(rate)+'</div>':''));
     }).join('')+
     // Store-wide totals — every non-cancelled item today (done + pending,
