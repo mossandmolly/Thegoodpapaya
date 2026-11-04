@@ -2654,6 +2654,88 @@ async function setItemPacker(itemName,packerId){
   await loadPackersConfig();
 }
 
+// ── Today-only fruit -> packer override (Team tab) ──────────────────────────
+// Distinct from the permanent Item -> Packer table above (packer_assignments):
+// "all bananas to Suman, just for today." Keyed to CALENDAR_TODAY, so it only
+// ever has an effect while viewing today's Packer tab — viewing tomorrow (or
+// any other date) loads an empty map instead, since dailyFruitOverrides is
+// reloaded fresh, filtered to CALENDAR_TODAY, on every Packer tab load.
+async function loadDailyFruitOverrides(){
+  if(viewDate!==CALENDAR_TODAY){dailyFruitOverrides={};return;}
+  const{data,error}=await sb.from('daily_fruit_packer_overrides').select('item_name,packer_id').eq('override_date',CALENDAR_TODAY);
+  if(error){console.error(error);return;}
+  dailyFruitOverrides={};
+  (data||[]).forEach(r=>{dailyFruitOverrides[r.item_name]=r.packer_id;});
+}
+
+// Sets (or clears, if packerId is falsy) today's override for one fruit, then
+// immediately sweeps every still-OPEN item of that fruit today onto the new
+// packer — "ALL bananas" has to mean the ones already sequenced today too,
+// not just ones that arrive from now on. Never touches anything already
+// packed/final/invoiced, same "nothing already handled gets undone" rule the
+// auto-sequencer's own rebalancer follows.
+async function setDailyFruitOverride(itemName,packerId){
+  if(!itemName)return;
+  if(!packerId){await clearDailyFruitOverride(itemName);return;}
+  const{error}=await sb.from('daily_fruit_packer_overrides')
+    .upsert({item_name:itemName,override_date:CALENDAR_TODAY,packer_id:packerId},{onConflict:'item_name,override_date'});
+  if(error){uxAlert('Failed to save: '+error.message);return;}
+  dailyFruitOverrides[itemName]=packerId;
+  const idsToMove=packerItems.filter(i=>i.item_name===itemName&&i.status==='open').map(i=>i.id);
+  if(idsToMove.length){
+    const{error:moveErr}=await sb.from('order_items').update({assigned_packer_id:packerId}).in('id',idsToMove);
+    if(moveErr)console.error('Failed to reassign existing items to today\'s override:',moveErr.message);
+    else packerItems.forEach(i=>{if(idsToMove.includes(i.id))i.assigned_packer_id=packerId;});
+  }
+  renderPackerGrid();
+}
+
+async function clearDailyFruitOverride(itemName){
+  const{error}=await sb.from('daily_fruit_packer_overrides').delete().eq('item_name',itemName).eq('override_date',CALENDAR_TODAY);
+  if(error){uxAlert('Failed to clear: '+error.message);return;}
+  delete dailyFruitOverrides[itemName];
+  renderPackerGrid();
+}
+
+function submitDailyFruitOverride(){
+  const fruitEl=document.getElementById('dfo-fruit'),packerEl=document.getElementById('dfo-packer');
+  const fruit=fruitEl.value,packerId=packerEl.value;
+  if(!fruit||!packerId){uxAlert('Pick both a fruit/vegetable and a packer.');return;}
+  setDailyFruitOverride(fruit,packerId);
+  fruitEl.value='';packerEl.value='';
+}
+
+// One row per active override + a form to add one. Only offered while
+// looking at today (viewDate===CALENDAR_TODAY) — setting an override while
+// looking at tomorrow's Packer tab would be confusing since it can only ever
+// apply to today regardless of what's on screen.
+function renderDailyFruitOverridePanel(){
+  if(viewDate!==CALENDAR_TODAY||!packersCache.length)return '';
+  const itemsToday=[...new Set(packerItems.map(i=>i.item_name))].sort();
+  const activeFruits=Object.keys(dailyFruitOverrides).sort();
+  return '<div class="pk-team-summary">'+
+    '<div class="pk-team-summary-legend">Today-only override — resets tomorrow automatically</div>'+
+    (activeFruits.length?'<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">'+
+      activeFruits.map(fruit=>{
+        const pname=packersCache.find(p=>p.id===dailyFruitOverrides[fruit])?.name||'?';
+        return '<div style="display:flex;align-items:center;gap:8px;font-size:13px">'+
+          '<span style="flex:1">'+escH(fruit)+' → <b>'+escH(pname)+'</b> (today only)</span>'+
+          '<button class="del-btn" onclick="clearDailyFruitOverride('+escH(JSON.stringify(fruit))+')">✕</button>'+
+        '</div>';
+      }).join('')+
+    '</div>':'')+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+      '<select id="dfo-fruit"><option value="">— item —</option>'+
+        itemsToday.map(f=>'<option value="'+escH(f)+'">'+escH(f)+'</option>').join('')+
+      '</select>'+
+      '<select id="dfo-packer"><option value="">— packer —</option>'+
+        packersCache.filter(p=>p.active).map(p=>'<option value="'+escH(p.id)+'">'+escH(p.name)+'</option>').join('')+
+      '</select>'+
+      '<button class="top-btn" onclick="submitDailyFruitOverride()">Assign for today</button>'+
+    '</div>'+
+  '</div>';
+}
+
 // ── Parser ────────────────────────────────────────────────────────────────
 // Customer identity must not depend on case or punctuation — "Dhavala A502",
 // "dhavala a502" and "Dhavala-A502" are the same customer/order. This key
@@ -7126,6 +7208,12 @@ async function deleteItem(id){
 
 // ── Packer ────────────────────────────────────────────────────────────────
 let packerItems=[],packerCustomerMap={},packerUnitByItem={},packerIdByFruit={},packerNameByFruit={};
+// Today-only "all bananas to Suman" override (migration 132, Team tab) —
+// item_name -> packer_id, loaded fresh from daily_fruit_packer_overrides
+// filtered to CALENDAR_TODAY on every Packer tab load. Deliberately never
+// persisted client-side beyond that — tomorrow's load reads tomorrow's
+// (empty) rows, so it resets itself without any cleanup code.
+let dailyFruitOverrides={};
 const packerFilters={search:'',fruits:new Set(),statuses:new Set(),offQtyOnly:false,timelineOnly:false};
 
 // Mirrors Order Overview's removed-then-missed "Has timeline" filter —
@@ -7253,12 +7341,14 @@ function matchCommunityPriority(text){
 
 // Which packer actually owns this item right now: a per-item override
 // (order_items.assigned_packer_id, set from Grid/My Sequence's "Assigned
-// to" line — see openReassignPacker below) wins over the default Item ->
+// to" line — see openReassignPacker below) wins over today's blanket
+// fruit override (dailyFruitOverrides, Team tab — see
+// setDailyFruitOverride), which in turn wins over the permanent Item ->
 // Packer assignment from Config. Returns a packer id, or null if
-// unassigned. compute-next-sequence (the auto-sequencer) writes this same
-// column server-side too, for its own packer load-balancing.
+// unassigned. compute-next-sequence (the auto-sequencer) applies the same
+// precedence server-side, for its own packer load-balancing.
 function effectivePackerIdForItem(item){
-  return item.assigned_packer_id||packerIdByFruit[item.item_name]||null;
+  return item.assigned_packer_id||dailyFruitOverrides[item.item_name]||packerIdByFruit[item.item_name]||null;
 }
 
 // Ranks an arbitrary set of one packer's items by community priority, with
@@ -7577,6 +7667,7 @@ async function loadPackerView(){
     loadPackersConfig(),
     loadCommunityPriorityConfig().catch(e=>console.error('Could not load community priority config',e)),
     loadCombinableGroupsConfig().catch(e=>console.error('Could not load combinable groups config',e)),
+    loadDailyFruitOverrides(),
   ]);
   packerCustomerMap=map||{};
   packerUnitByItem={};
@@ -8448,6 +8539,7 @@ function renderPackerTeamView(){
 
   grid.innerHTML=
     renderPackerCategoryToggles()+
+    renderDailyFruitOverridePanel()+
     renderSequenceBoard()+
     renderPackerTeamSummary(summaryRows)+
     renderTeamPackerFilterPills(hasUnassigned)+
