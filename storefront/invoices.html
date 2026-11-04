@@ -108,6 +108,7 @@ function formatPaidAt(iso) {
 }
 
 let hasLookedUp = false; // guards the auto-refresh below — never fires before a real lookup has happened
+let lastSearchedPhone = null; // the number that found these invoices — reused for pay-now-without-a-link, see payNowWithoutLink
 
 // Two distinct screens, never both visible at once — "enter your phone
 // number" and "here are your invoices" are never the same view, so there's
@@ -122,6 +123,7 @@ function showPhoneScreen() {
 
 async function lookup() {
   const phoneInput = document.getElementById('phone').value.trim();
+  lastSearchedPhone = phoneInput;
   if (!/^\d{10}$/.test(phoneInput)) {
     document.getElementById('results').innerHTML = '<div class="err-box show">Please enter a valid 10-digit phone number.</div>';
     document.getElementById('phone-screen').classList.add('hidden');
@@ -179,8 +181,12 @@ async function lookup() {
             (balance > 0 ? '<tr class="balance-row"><td colspan="3">Balance due</td><td>₹'+balance.toFixed(2)+'</td></tr>' : '') +
           '</tfoot>' +
         '</table>' +
-        (inv.payment_link && inv.payment_status !== 'paid'
-          ? '<div class="actions"><a class="pay" href="'+escH(inv.payment_link)+'" target="_blank" rel="noopener">Pay Now</a></div>'
+        (inv.payment_status !== 'paid'
+          ? '<div class="actions">' + (
+              inv.payment_link
+                ? '<a class="pay" href="'+escH(inv.payment_link)+'" target="_blank" rel="noopener">Pay Now</a>'
+                : '<button class="pay" onclick="payNowWithoutLink(this,'+escH(JSON.stringify(inv.sales_order_id))+')">Pay Now</button>'
+            ) + '</div>'
           : '') +
       '</div>';
     }).join('');
@@ -189,6 +195,38 @@ async function lookup() {
   } finally {
     btn.disabled = false;
     btn.textContent = 'View My Invoices';
+  }
+}
+
+// Pay Now for an invoice that has no Razorpay link yet (most commonly: the
+// order never had a phone on orders, so generate-invoice's own best-effort
+// link creation skipped it). Reuses the phone already searched with —
+// that's the only phone create-storefront-payment-link will actually
+// accept for this invoice anyway (it checks the number against
+// invoice_line_items.phone_number), and reusing it means no second prompt,
+// so this is one tap to a working payment link rather than two.
+async function payNowWithoutLink(btnEl, salesOrderId) {
+  if (btnEl.disabled) return;
+  const originalText = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.innerHTML = '<span class="spinner"></span>Preparing…';
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/create-storefront-payment-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sales_order_id: salesOrderId, phone: lastSearchedPhone }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create payment link');
+    window.location.href = data.payment_url;
+  } catch (e) {
+    btnEl.disabled = false;
+    btnEl.textContent = originalText;
+    const err = document.createElement('div');
+    err.className = 'err-box show';
+    err.style.marginBottom = '10px';
+    err.textContent = 'Could not start payment: ' + e.message;
+    document.getElementById('results').prepend(err);
   }
 }
 
