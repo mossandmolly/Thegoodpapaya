@@ -7548,28 +7548,42 @@ function isVegItem(item){
   return VEGETABLE_ITEM_NAMES.has((item.item_name||'').toLowerCase());
 }
 
+// Per Somya — the loose-leaf vegetables that take noticeably longer to pick
+// over/bag than a firm vegetable. Not the same list as compute-next-
+// sequence's own server-side LEAFY_ITEM_NAMES (that one exists for a
+// different reason — keeping a leafy item within its own category's
+// packers during rebalancing — and is missing moringa leaves/mint, which
+// Somya explicitly wants counted here).
+const TEAM_LEAFY_ITEM_NAMES=new Set(["spinach","fenugreek","spring onion","moringa leaves","coriander","amaranthus","mint"]);
+function isLeafyItem(item){
+  return TEAM_LEAFY_ITEM_NAMES.has((item.item_name||'').toLowerCase());
+}
+
 // Every item's own pack time is the gap since the PREVIOUS item finished
 // (that's the only duration packed_at gives us — same assumption
 // avgPackSecondsPerItem already makes overall). Attribute each gap to
-// whichever item it ENDED AT, by that item's own category, then sum and
-// average per category — every gap is used exactly once, for exactly the
-// one item it actually belongs to, so nothing gets inflated by folding in
-// unrelated work. (An earlier version filtered to one category FIRST and
-// measured gaps between what was left — when a category was a small
-// minority scattered through the other one, that silently counted all the
-// OTHER category's packing time as if it were one item's time, producing
-// nonsense like 75 minutes/item. This version can't do that: a gap is
-// always exactly "time since the previous item," never more.)
-function avgPackSecondsPerItemByCategory(doneSortedByPackedAt,wantVeg){
+// whichever item it ENDED AT, filtered by `predicate`, then sum and average
+// — every gap is used exactly once, for exactly the one item it actually
+// belongs to, so nothing gets inflated by folding in unrelated work. (An
+// earlier version filtered to one category FIRST and measured gaps between
+// what was left — when a category was a small minority scattered through
+// the other one, that silently counted all the OTHER category's packing
+// time as if it were one item's time, producing nonsense like 75
+// minutes/item. This version can't do that: a gap is always exactly "time
+// since the previous item," never more.)
+function avgPackSecondsForFilter(doneSortedByPackedAt,predicate){
   let totalSec=0,count=0;
   for(let i=1;i<doneSortedByPackedAt.length;i++){
     const cur=doneSortedByPackedAt[i];
-    if(isVegItem(cur)===wantVeg){
+    if(predicate(cur)){
       totalSec+=(new Date(cur.packed_at)-new Date(doneSortedByPackedAt[i-1].packed_at))/1000;
       count++;
     }
   }
   return count?totalSec/count:null;
+}
+function avgPackSecondsPerItemByCategory(doneSortedByPackedAt,wantVeg){
+  return avgPackSecondsForFilter(doneSortedByPackedAt,i=>isVegItem(i)===wantVeg);
 }
 
 // Items nobody actually owns right now — no per-item override AND no
@@ -8519,7 +8533,8 @@ function renderPackerTeamSummary(rows,totalFruit,totalVeg){
       // keeps the old single-line "avg" format it always had.
       const hasSplit=r.fruitCount!=null;
       const fruitRate=r.avgPackSecondsFruit!=null?formatPackRate(r.avgPackSecondsFruit):null;
-      const vegRate=r.avgPackSecondsVeg!=null?formatPackRate(r.avgPackSecondsVeg):null;
+      const leafyRate=r.avgPackSecondsLeafy!=null?formatPackRate(r.avgPackSecondsLeafy):null;
+      const nonLeafyVegRate=r.avgPackSecondsNonLeafyVeg!=null?formatPackRate(r.avgPackSecondsNonLeafyVeg):null;
       const rate=r.avgPackSeconds!=null?formatPackRate(r.avgPackSeconds):null;
       return '<div class="pk-team-bar-row">'+
         '<span class="pk-team-bar-label'+(r.isWarn?' pk-team-col-header-warn':'')+'">'+escH(r.label)+'</span>'+
@@ -8531,8 +8546,14 @@ function renderPackerTeamSummary(rows,totalFruit,totalVeg){
       '</div>'+
       (hasSplit?
         '<div class="pk-team-bar-rate">🍎 '+r.fruitCount+(fruitRate?' (avg '+escH(fruitRate)+')':'')+
-        ' · 🥦 '+r.vegCount+(vegRate?' (avg '+escH(vegRate)+')':'')+
-        (rate?' · overall avg '+escH(rate):'')+'</div>'
+        ' · 🥦 '+r.vegCount+
+        (rate?' · overall avg '+escH(rate):'')+'</div>'+
+        // Leafy/non-leafy sub-line under the veg count — per Somya, a plain
+        // combined veg avg hides that leafies (spinach, coriander, etc. —
+        // see TEAM_LEAFY_ITEM_NAMES) take noticeably longer to bag than a
+        // firm vegetable like potato or carrot.
+        (r.vegCount?'<div class="pk-team-bar-rate" style="padding-left:18px;color:#8a7a6a">🥬 leafy '+r.leafyCount+(leafyRate?' (avg '+escH(leafyRate)+')':'')+
+          ' · non-leafy '+r.nonLeafyVegCount+(nonLeafyVegRate?' (avg '+escH(nonLeafyVegRate)+')':'')+'</div>':'')
       :(rate?'<div class="pk-team-bar-rate">avg '+escH(rate)+'</div>':''));
     }).join('')+
     // Store-wide totals — every non-cancelled item today (done + pending,
@@ -8602,12 +8623,15 @@ function renderPackerTeamView(){
       const all=[...r.done,...r.pending];
       const fruitCount=all.filter(i=>!isVegItem(i)).length;
       const vegCount=all.filter(isVegItem).length;
+      const leafyCount=all.filter(i=>isVegItem(i)&&isLeafyItem(i)).length;
+      const nonLeafyVegCount=vegCount-leafyCount;
       return{
         label:r.packer.name,done:r.done.length,pending:r.pending.length,
         avgPackSeconds:avgPackSecondsPerItem(r.done),
-        fruitCount,vegCount,
+        fruitCount,vegCount,leafyCount,nonLeafyVegCount,
         avgPackSecondsFruit:avgPackSecondsPerItemByCategory(r.done,false),
-        avgPackSecondsVeg:avgPackSecondsPerItemByCategory(r.done,true),
+        avgPackSecondsLeafy:avgPackSecondsForFilter(r.done,i=>isVegItem(i)&&isLeafyItem(i)),
+        avgPackSecondsNonLeafyVeg:avgPackSecondsForFilter(r.done,i=>isVegItem(i)&&!isLeafyItem(i)),
       };
     }),
   ];
