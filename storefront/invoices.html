@@ -102,9 +102,9 @@ function formatPaidAt(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d)) return '';
-  const datePart = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+  const datePart = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
   const timePart = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
-  return 'Paid on ' + datePart + ' at ' + timePart;
+  return datePart + ', ' + timePart;
 }
 
 let hasLookedUp = false; // guards the auto-refresh below — never fires before a real lookup has happened
@@ -167,11 +167,13 @@ async function lookup() {
       return '<div class="invoice-card">' +
         '<div class="row1">' +
           '<span class="inv-num">'+escH(inv.invoice_number || inv.sales_order_id || 'Invoice')+'</span>' +
-          '<span class="status '+statusClass(inv)+'">'+escH(statusLabel(inv))+'</span>' +
+          '<div class="status-col">' +
+            '<span class="status '+statusClass(inv)+'">'+escH(statusLabel(inv))+'</span>' +
+            (inv.payment_status === 'paid' && inv.payment_collected_at
+              ? '<span class="paid-at">'+escH(formatPaidAt(inv.payment_collected_at))+'</span>'
+              : '') +
+          '</div>' +
         '</div>' +
-        (inv.payment_status === 'paid' && inv.payment_collected_at
-          ? '<div class="paid-at">'+escH(formatPaidAt(inv.payment_collected_at))+'</div>'
-          : '') +
         '<div class="meta">'+escH(inv.invoice_date || '')+'</div>' +
         '<table class="inv-items">' +
           '<thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Value</th></tr></thead>' +
