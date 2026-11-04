@@ -7539,6 +7539,26 @@ function formatPackRate(seconds){
   return seconds<60?Math.round(seconds)+'s/item':(seconds/60).toFixed(1)+'m/item';
 }
 
+// Same VEGETABLE_ITEM_NAMES convention used everywhere else client-side
+// (Order Overview's vegetable filter, Stock's type filter, etc.) and the
+// same fallback tier compute-next-sequence itself uses server-side when
+// catalog.category isn't set — "fruit" is the default, matching how most
+// packers are actually categorized (Config/Team tab's Fruit/Veg toggle).
+function isVegItem(item){
+  return VEGETABLE_ITEM_NAMES.has((item.item_name||'').toLowerCase());
+}
+
+// Same gap-between-consecutive-packs methodology as avgPackSecondsPerItem,
+// scoped to one category — a packer can end up with packed items in both
+// (today's override bypass, or the rebalancer's cross-category moves), so
+// a single combined rate would blend two different jobs together. Filtering
+// first preserves packed_at order, so a gap is still "time since this
+// packer's last pack OF THIS CATEGORY" even if other-category work happened
+// in between.
+function avgPackSecondsPerItemByCategory(doneSortedByPackedAt,wantVeg){
+  return avgPackSecondsPerItem(doneSortedByPackedAt.filter(i=>isVegItem(i)===wantVeg));
+}
+
 // Items nobody actually owns right now — no per-item override AND no
 // default Item -> Packer assignment for that fruit in Config. These never
 // show up in any packer's own column (effectivePackerIdForItem is null,
@@ -8481,6 +8501,12 @@ function renderPackerTeamSummary(rows){
     sorted.map(r=>{
       const total=r.done+r.pending;
       const donePct=r.done/maxTotal*100,pendingPct=r.pending/maxTotal*100;
+      // Fruit/veg split + per-category rate only apply to actual packers
+      // (fruitCount is undefined for the Unassigned row) — everything else
+      // keeps the old single-line "avg" format it always had.
+      const hasSplit=r.fruitCount!=null;
+      const fruitRate=r.avgPackSecondsFruit!=null?formatPackRate(r.avgPackSecondsFruit):null;
+      const vegRate=r.avgPackSecondsVeg!=null?formatPackRate(r.avgPackSecondsVeg):null;
       const rate=r.avgPackSeconds!=null?formatPackRate(r.avgPackSeconds):null;
       return '<div class="pk-team-bar-row">'+
         '<span class="pk-team-bar-label'+(r.isWarn?' pk-team-col-header-warn':'')+'">'+escH(r.label)+'</span>'+
@@ -8490,7 +8516,10 @@ function renderPackerTeamSummary(rows){
         '</div>'+
         '<span class="pk-team-bar-count">'+r.done+'/'+total+'</span>'+
       '</div>'+
-      (rate?'<div class="pk-team-bar-rate">avg '+escH(rate)+'</div>':'');
+      (hasSplit?
+        '<div class="pk-team-bar-rate">🍎 '+r.fruitCount+(fruitRate?' (avg '+escH(fruitRate)+')':'')+
+        ' · 🥦 '+r.vegCount+(vegRate?' (avg '+escH(vegRate)+')':'')+'</div>'
+      :(rate?'<div class="pk-team-bar-rate">avg '+escH(rate)+'</div>':''));
     }).join('')+
   '</div>';
 }
@@ -8548,7 +8577,20 @@ function renderPackerTeamView(){
     {label:'⚠️ Unassigned',done:unassigned.done.length,pending:unassigned.pending.length,isWarn:true},
     // No avgPackSeconds for Unassigned — a pack rate belongs to a specific
     // packer, not to a pile of items nobody's actually claimed.
-    ...perPacker.map(r=>({label:r.packer.name,done:r.done.length,pending:r.pending.length,avgPackSeconds:avgPackSecondsPerItem(r.done)})),
+    ...perPacker.map(r=>{
+      // Fruit/veg split counts today's whole workload (done + pending), not
+      // just what's left — "how much of each did she end up with today."
+      const all=[...r.done,...r.pending];
+      const fruitCount=all.filter(i=>!isVegItem(i)).length;
+      const vegCount=all.filter(isVegItem).length;
+      return{
+        label:r.packer.name,done:r.done.length,pending:r.pending.length,
+        avgPackSeconds:avgPackSecondsPerItem(r.done),
+        fruitCount,vegCount,
+        avgPackSecondsFruit:avgPackSecondsPerItemByCategory(r.done,false),
+        avgPackSecondsVeg:avgPackSecondsPerItemByCategory(r.done,true),
+      };
+    }),
   ];
 
   const hasUnassigned=unassigned.done.length>0||unassigned.pending.length>0;
