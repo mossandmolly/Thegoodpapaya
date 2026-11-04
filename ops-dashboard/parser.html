@@ -7548,25 +7548,24 @@ function isVegItem(item){
   return VEGETABLE_ITEM_NAMES.has((item.item_name||'').toLowerCase());
 }
 
-// Same gap-between-consecutive-packs idea as avgPackSecondsPerItem, scoped
-// to one category — a packer can end up with packed items in both (today's
-// override bypass, or the rebalancer's cross-category moves). Deliberately
-// NOT "filter to this category, then measure gaps between what's left" —
-// when a category is a small minority scattered through the other one (say
-// 6 veg items spread across 98 fruit), that approach silently folds all the
-// OTHER category's packing time into the "gap," producing something like
-// 75 minutes/item that's actually mostly fruit-packing time, not a real veg
-// rate. Only counts a gap when the two items are ALSO adjacent in the real
-// chronological done sequence — i.e. genuinely back-to-back same-category
-// work, nothing else packed in between. Returns null (not a number) when a
-// packer rarely does two of that category in a row — an honest "not enough
-// data" rather than a misleading figure.
+// Every item's own pack time is the gap since the PREVIOUS item finished
+// (that's the only duration packed_at gives us — same assumption
+// avgPackSecondsPerItem already makes overall). Attribute each gap to
+// whichever item it ENDED AT, by that item's own category, then sum and
+// average per category — every gap is used exactly once, for exactly the
+// one item it actually belongs to, so nothing gets inflated by folding in
+// unrelated work. (An earlier version filtered to one category FIRST and
+// measured gaps between what was left — when a category was a small
+// minority scattered through the other one, that silently counted all the
+// OTHER category's packing time as if it were one item's time, producing
+// nonsense like 75 minutes/item. This version can't do that: a gap is
+// always exactly "time since the previous item," never more.)
 function avgPackSecondsPerItemByCategory(doneSortedByPackedAt,wantVeg){
   let totalSec=0,count=0;
   for(let i=1;i<doneSortedByPackedAt.length;i++){
-    const prev=doneSortedByPackedAt[i-1],cur=doneSortedByPackedAt[i];
-    if(isVegItem(prev)===wantVeg&&isVegItem(cur)===wantVeg){
-      totalSec+=(new Date(cur.packed_at)-new Date(prev.packed_at))/1000;
+    const cur=doneSortedByPackedAt[i];
+    if(isVegItem(cur)===wantVeg){
+      totalSec+=(new Date(cur.packed_at)-new Date(doneSortedByPackedAt[i-1].packed_at))/1000;
       count++;
     }
   }
