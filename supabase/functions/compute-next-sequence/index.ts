@@ -367,13 +367,27 @@ function placeNewItems(
   defaultPackerIdByItem: Map<string, string>,
   packerIds: string[],
   existingCounts: Map<string, number>,
+  overriddenItemNames?: Set<string>,
 ): Map<string, string> {
   if (!packerIds.length || !items.length) return new Map();
   const counts = new Map<string, number>(packerIds.map(id => [id, existingCounts.get(id) || 0]));
   const writes = new Map<string, string>();
   for (const it of items) {
     const def = defaultPackerIdByItem.get(it.item_name);
-    const target = (def && packerIds.includes(def)) ? def : packerIds.reduce((a, b) => (counts.get(a)! <= counts.get(b)!) ? a : b);
+    // Today's blanket override (migration 132) is a deliberate, specific
+    // choice — it holds even if the named packer's category doesn't match
+    // this item's category, or isn't set at all in Config/Team tab. Without
+    // this carve-out, an override on, say, a fruit whose named packer is
+    // marked "vegetable" (or has no category set) would silently fall
+    // through to "whoever's least loaded in the fruit category" for every
+    // NEW item, since `def` would fail the packerIds.includes check below —
+    // exactly the bug that made new orders ignore the override while
+    // already-placed items (reassigned directly, no category check) obeyed
+    // it. A plain Config default still has to be a real category member.
+    const isOverride = !!(def && overriddenItemNames?.has(it.item_name));
+    const target = (def && (isOverride || packerIds.includes(def)))
+      ? def
+      : packerIds.reduce((a, b) => (counts.get(a)! <= counts.get(b)!) ? a : b);
     writes.set(it.id, target);
     counts.set(target, (counts.get(target) || 0) + 1);
   }
@@ -730,11 +744,13 @@ Deno.serve(async (req) => {
           movedItems.filter(it => itemCategory(it.item_name) === 'fruit'),
           defaultPackerIdByItem, fruitPackerIds,
           countsByPacker(targetExistingItems.filter(it => itemCategory(it.item_name) === 'fruit'), defaultPackerIdByItem, fruitPackerIds),
+          overriddenItemNames,
         ),
         ...placeNewItems(
           movedItems.filter(it => itemCategory(it.item_name) === 'vegetable'),
           defaultPackerIdByItem, vegPackerIds,
           countsByPacker(targetExistingItems.filter(it => itemCategory(it.item_name) === 'vegetable'), defaultPackerIdByItem, vegPackerIds),
+          overriddenItemNames,
         ),
       ]);
       for (const [itemId, packerId] of itemWrites) {
@@ -1051,11 +1067,13 @@ Deno.serve(async (req) => {
           newItems.filter(it => itemCategory(it.item_name) === 'fruit'),
           defaultPackerIdByItem, fruitPackerIds,
           countsByPacker(existingItems.filter(it => itemCategory(it.item_name) === 'fruit'), defaultPackerIdByItem, fruitPackerIds),
+          overriddenItemNames,
         ),
         ...placeNewItems(
           newItems.filter(it => itemCategory(it.item_name) === 'vegetable'),
           defaultPackerIdByItem, vegPackerIds,
           countsByPacker(existingItems.filter(it => itemCategory(it.item_name) === 'vegetable'), defaultPackerIdByItem, vegPackerIds),
+          overriddenItemNames,
         ),
       ]);
       for (const [itemId, packerId] of writes) {
@@ -1087,8 +1105,8 @@ Deno.serve(async (req) => {
       const fruitItems = seqItems.filter(it => itemCategory(it.item_name) === 'fruit');
       const vegItems = seqItems.filter(it => itemCategory(it.item_name) === 'vegetable');
       const writes = new Map<string, string>([
-        ...placeNewItems(fruitItems, defaultPackerIdByItem, fruitPackerIds, new Map()),
-        ...placeNewItems(vegItems, defaultPackerIdByItem, vegPackerIds, new Map()),
+        ...placeNewItems(fruitItems, defaultPackerIdByItem, fruitPackerIds, new Map(), overriddenItemNames),
+        ...placeNewItems(vegItems, defaultPackerIdByItem, vegPackerIds, new Map(), overriddenItemNames),
       ]);
       for (const [itemId, packerId] of writes) {
         const { error: itemErr } = await supabase.from('order_items').update({ assigned_packer_id: packerId }).eq('id', itemId);
