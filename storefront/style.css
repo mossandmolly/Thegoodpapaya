@@ -95,7 +95,8 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .inv-items .total-row td{color:#2b2320}
 .inv-items .balance-row td{color:#b3261e}
 .invoice-card .actions{display:flex;gap:8px}
-.invoice-card .actions a{flex:1;text-align:center;padding:9px;border-radius:8px;font-size:12px;font-weight:700}
+.invoice-card .actions a,.invoice-card .actions button{flex:1;text-align:center;padding:9px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:inherit}
+.invoice-card .actions button:disabled{opacity:.7;cursor:default}
 .invoice-card .actions .pay{background:#2d6b2d;color:#fff}
 
 .spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
