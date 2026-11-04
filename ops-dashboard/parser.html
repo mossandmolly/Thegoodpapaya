@@ -7548,15 +7548,29 @@ function isVegItem(item){
   return VEGETABLE_ITEM_NAMES.has((item.item_name||'').toLowerCase());
 }
 
-// Same gap-between-consecutive-packs methodology as avgPackSecondsPerItem,
-// scoped to one category — a packer can end up with packed items in both
-// (today's override bypass, or the rebalancer's cross-category moves), so
-// a single combined rate would blend two different jobs together. Filtering
-// first preserves packed_at order, so a gap is still "time since this
-// packer's last pack OF THIS CATEGORY" even if other-category work happened
-// in between.
+// Same gap-between-consecutive-packs idea as avgPackSecondsPerItem, scoped
+// to one category — a packer can end up with packed items in both (today's
+// override bypass, or the rebalancer's cross-category moves). Deliberately
+// NOT "filter to this category, then measure gaps between what's left" —
+// when a category is a small minority scattered through the other one (say
+// 6 veg items spread across 98 fruit), that approach silently folds all the
+// OTHER category's packing time into the "gap," producing something like
+// 75 minutes/item that's actually mostly fruit-packing time, not a real veg
+// rate. Only counts a gap when the two items are ALSO adjacent in the real
+// chronological done sequence — i.e. genuinely back-to-back same-category
+// work, nothing else packed in between. Returns null (not a number) when a
+// packer rarely does two of that category in a row — an honest "not enough
+// data" rather than a misleading figure.
 function avgPackSecondsPerItemByCategory(doneSortedByPackedAt,wantVeg){
-  return avgPackSecondsPerItem(doneSortedByPackedAt.filter(i=>isVegItem(i)===wantVeg));
+  let totalSec=0,count=0;
+  for(let i=1;i<doneSortedByPackedAt.length;i++){
+    const prev=doneSortedByPackedAt[i-1],cur=doneSortedByPackedAt[i];
+    if(isVegItem(prev)===wantVeg&&isVegItem(cur)===wantVeg){
+      totalSec+=(new Date(cur.packed_at)-new Date(prev.packed_at))/1000;
+      count++;
+    }
+  }
+  return count?totalSec/count:null;
 }
 
 // Items nobody actually owns right now — no per-item override AND no
