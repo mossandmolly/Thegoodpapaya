@@ -8532,7 +8532,7 @@ async function writeSequenceNumber(soids,value){
   renderPackerTeamView();
 }
 
-function renderPackerTeamSummary(rows){
+function renderPackerTeamSummary(rows,totalFruit,totalVeg){
   if(!rows.length)return '';
   const overallDone=rows.reduce((s,r)=>s+r.done,0);
   const overallPending=rows.reduce((s,r)=>s+r.pending,0);
@@ -8576,6 +8576,11 @@ function renderPackerTeamSummary(rows){
         ' · 🥦 '+r.vegCount+(vegRate?' (avg '+escH(vegRate)+')':'')+'</div>'
       :(rate?'<div class="pk-team-bar-rate">avg '+escH(rate)+'</div>':''));
     }).join('')+
+    // Store-wide totals — every non-cancelled item today (done + pending,
+    // including Unassigned), not just what's split out per packer above.
+    '<div class="pk-team-overall-row" style="margin-top:10px;padding-top:8px;border-top:1px solid #eee0d0;font-size:12px;color:#2b2320">'+
+      'Total 🍎 '+totalFruit+' · 🥦 '+totalVeg+
+    '</div>'+
   '</div>';
 }
 
@@ -8667,7 +8672,10 @@ function renderPackerTeamView(){
     renderPackerCategoryToggles()+
     renderDailyFruitOverridePanel()+
     renderSequenceBoard()+
-    renderPackerTeamSummary(summaryRows)+
+    renderPackerTeamSummary(summaryRows,
+      packerItems.filter(i=>i.status!=='cancelled'&&!isVegItem(i)).length,
+      packerItems.filter(i=>i.status!=='cancelled'&&isVegItem(i)).length,
+    )+
     renderTeamPackerFilterPills(hasUnassigned)+
     '<div class="pk-team-grid">'+
     unassignedCol+
