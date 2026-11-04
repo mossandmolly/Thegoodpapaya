@@ -96,6 +96,12 @@
 // within the target sequence — see placeNewItems() — deliberately never
 // touching an item that was already there.
 //
+// daily_fruit_packer_overrides (migration 132, set from the Team tab) can
+// pin one item_name to one packer for just today — overrides
+// packer_assignments as the default for new placements AND is excluded
+// entirely from the workload-evening sweep below, so "all bananas to Suman
+// today" actually holds for every banana today, not just new ones.
+//
 // Agreed expectation: most sequences will have little to no vacancy to
 // append into, by design — they're already built up toward the ~30 item
 // target/40 cap when formed, so an appended order will often find nowhere
@@ -427,7 +433,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Community priority + reference data ───────────────────────────────
-    const [cpRes, kwRes, catalogRes, packerRes, assignRes, combMemberRes] = await Promise.all([
+    const [cpRes, kwRes, catalogRes, packerRes, assignRes, combMemberRes, dailyOverrideRes] = await Promise.all([
       supabase.from('community_priority').select('unique_id,display_name,rank,default_deliver_by'),
       supabase.from('community_priority_keywords').select('community_unique_id,keyword'),
       supabase.from('catalog').select('item_name,category'),
@@ -436,16 +442,20 @@ Deno.serve(async (req) => {
       supabase.from('packers').select('id,name,category,active'),
       supabase.from('packer_assignments').select('packer_id,item_name'),
       supabase.from('community_combinable_group_members').select('group_id,community_unique_id'),
+      // Somya's today-only blanket override (migration 132, Team tab) — "all
+      // bananas go to Suman today." Scoped to `today` only, same IST string
+      // used everywhere else in this function.
+      supabase.from('daily_fruit_packer_overrides').select('item_name,packer_id').eq('override_date', today),
     ]);
     // None of these are fatal to crash the whole run over — degrade
     // gracefully (community/category/assignment/combinable-group data just
     // comes up empty, same as if nothing were configured yet) but log so a
     // persistent problem is actually visible in the function's logs.
-    [cpRes, kwRes, catalogRes, packerRes, assignRes, combMemberRes]
+    [cpRes, kwRes, catalogRes, packerRes, assignRes, combMemberRes, dailyOverrideRes]
       .forEach(r => { if (r.error) console.error('Reference data fetch failed:', r.error.message); });
     const cpRows = cpRes.data, kwRows = kwRes.data,
           catalogRows = catalogRes.data, packerRows = packerRes.data, assignRows = assignRes.data,
-          combMemberRows = combMemberRes.data;
+          combMemberRows = combMemberRes.data, dailyOverrideRows = dailyOverrideRes.data;
 
     const priorities: CommunityPriority[] = (cpRows || []).map((c: any) => ({ ...c, keywords: [] as string[] }));
     const priorityById = new Map(priorities.map(p => [p.unique_id, p]));
@@ -488,6 +498,20 @@ Deno.serve(async (req) => {
     const vegPackerIds = (packerRows || []).filter((p: any) => p.category === 'vegetable' && p.active !== false).map((p: any) => p.id);
     const defaultPackerIdByItem = new Map<string, string>();
     (assignRows || []).forEach((a: any) => defaultPackerIdByItem.set(a.item_name, a.packer_id));
+
+    // Today's blanket override (migration 132) wins over the permanent
+    // Config default for every NEW placement decision below (placeNewItems
+    // reads defaultPackerIdByItem, nothing else). The item_names it covers
+    // are also pinned against the workload rebalancer further down (see
+    // overriddenItemNames/candidateTargets) so an item already sitting with
+    // the named packer is never moved off her just to even out load —
+    // Somya's "ALL bananas" means all of them, not "by default." Resets on
+    // its own tomorrow since this only ever reads today's rows.
+    const overriddenItemNames = new Set<string>();
+    (dailyOverrideRows || []).forEach((o: any) => {
+      defaultPackerIdByItem.set(o.item_name, o.packer_id);
+      overriddenItemNames.add(o.item_name);
+    });
 
     // ── Reassign items stuck on a now-inactive packer ──────────────────────
     // packers.active has only ever gated NEW placements (placeNewItems
@@ -1187,8 +1211,13 @@ Deno.serve(async (req) => {
         return it.assigned_packer_id || defaultPackerIdByItem.get(it.item_name) || null;
       }
       // A leafy item never crosses a fruit<->vegetable line — candidate
-      // targets narrow to the mover's own category for one of these.
+      // targets narrow to the mover's own category for one of these. An
+      // item under today's blanket override (migration 132) has NO legal
+      // target at all — it's pinned to whoever it's already on (the named
+      // packer, via defaultPackerIdByItem above), so the load-evening sweep
+      // leaves it alone entirely rather than quietly moving it elsewhere.
       function candidateTargets(it: ItemRow): string[] {
+        if (overriddenItemNames.has(it.item_name)) return [];
         if (!LEAFY_ITEM_NAMES.has(it.item_name.toLowerCase())) return allPackerIds;
         return itemCategory(it.item_name) === 'fruit' ? fruitPackerIds : vegPackerIds;
       }
