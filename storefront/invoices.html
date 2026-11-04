@@ -68,10 +68,43 @@ function pickBestCasedName(names) {
   })[0];
 }
 
-function statusClass(s) {
-  if (s === 'paid') return 'paid';
-  if (s === 'overdue') return 'overdue';
-  return 'pending';
+// Whole calendar days between the invoice date and today, both taken as
+// plain IST dates (not a raw ms difference, which time-of-day would throw
+// off) — an invoice dated yesterday is 1 day overdue, dated today is 0.
+function daysOverdue(invoiceDateStr) {
+  if (!invoiceDateStr) return null;
+  const todayIst = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
+  const invMs = Date.parse(invoiceDateStr + 'T00:00:00Z');
+  const todayMs = Date.parse(todayIst + 'T00:00:00Z');
+  if (isNaN(invMs)) return null;
+  return Math.round((todayMs - invMs) / 86400000);
+}
+
+function statusClass(inv) {
+  if (inv.payment_status === 'paid') return 'paid';
+  const days = daysOverdue(inv.invoice_date);
+  return (days != null && days >= 1) ? 'overdue' : 'pending';
+}
+
+// Unpaid invoices show how overdue they are instead of a flat "pending" —
+// more useful than a static label, and matches what balance due already
+// implies. Paid invoices keep the plain "paid" badge (see formatPaidAt for
+// the separate paid-on-date line under it).
+function statusLabel(inv) {
+  if (inv.payment_status === 'paid') return 'paid';
+  const days = daysOverdue(inv.invoice_date);
+  if (days == null) return inv.payment_status || 'pending';
+  if (days <= 0) return 'Due today';
+  return 'Overdue by ' + days + ' day' + (days === 1 ? '' : 's');
+}
+
+function formatPaidAt(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const datePart = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+  const timePart = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+  return 'Paid on ' + datePart + ' at ' + timePart;
 }
 
 let hasLookedUp = false; // guards the auto-refresh below — never fires before a real lookup has happened
@@ -132,8 +165,11 @@ async function lookup() {
       return '<div class="invoice-card">' +
         '<div class="row1">' +
           '<span class="inv-num">'+escH(inv.invoice_number || inv.sales_order_id || 'Invoice')+'</span>' +
-          '<span class="status '+statusClass(inv.payment_status)+'">'+escH(inv.payment_status || 'pending')+'</span>' +
+          '<span class="status '+statusClass(inv)+'">'+escH(statusLabel(inv))+'</span>' +
         '</div>' +
+        (inv.payment_status === 'paid' && inv.payment_collected_at
+          ? '<div class="paid-at">'+escH(formatPaidAt(inv.payment_collected_at))+'</div>'
+          : '') +
         '<div class="meta">'+escH(inv.invoice_date || '')+'</div>' +
         '<table class="inv-items">' +
           '<thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Value</th></tr></thead>' +
