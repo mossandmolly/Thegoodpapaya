@@ -215,7 +215,11 @@ async function payNowWithoutLink(btnEl, salesOrderId) {
   try {
     const res = await fetch(SUPABASE_URL + '/functions/v1/create-storefront-payment-link', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      // apikey/Authorization satisfy Supabase's gateway-level JWT check —
+      // SUPABASE_ANON is the public anon key (config.js), safe to send from
+      // the browser; it's not what actually gates this function (see
+      // create-storefront-payment-link's own phone-ownership check).
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON },
       body: JSON.stringify({ sales_order_id: salesOrderId, phone: lastSearchedPhone }),
     });
     const data = await res.json();
