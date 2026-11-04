@@ -33,7 +33,11 @@ function env(key: string) {
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  // Must list every header the browser actually sends, or its CORS
+  // preflight blocks the real request before it's even sent — apikey/
+  // Authorization carry the public anon key (invoices.html), needed to
+  // satisfy Supabase's own gateway-level JWT check.
+  'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization',
 };
 
 async function cancelPaymentLink(linkId: string, auth: string): Promise<void> {
