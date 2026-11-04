@@ -20,13 +20,21 @@
 //      prior Zoho-synced one) — the backfill trigger prefers whichever was
 //      added most recently.
 //
-// Deliberately does NOT touch invoice_status, QR, or payment links itself —
-// an order can be OFD (or delivered) with no phone at all; this just makes
-// one available going forward. mark-delivered's own switchToPaymentLink
-// already fires the actual payment-link creation when needed.
+// Also creates a Razorpay payment link on the spot, best-effort, when this
+// phone is the thing that was actually missing for one to exist: the order
+// is already invoiced, still has a balance due, and has no QR or link
+// active yet. That's the one real gap left once a phone gets added AFTER
+// invoicing — generate-invoice's own link creation only ever runs once, at
+// invoice time, and skips entirely when there's no phone yet (see its own
+// comment); nothing used to pick it back up later. (mark-delivered used to
+// cover this via switchToPaymentLink, removed earlier — this is its
+// replacement, firing right when the missing phone shows up instead of
+// waiting for a delivery-time check.) Never touches an order that already
+// has a QR or link, invoiced or not — this only ever fills a genuine gap,
+// never regenerates or interferes with something already active.
 //
 // Required env vars:
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -65,6 +73,31 @@ async function requireAuth(req: Request): Promise<void> {
   if (!res.ok) throw new Error('Not authenticated');
 }
 
+// Same shape every other Razorpay link creation path in this app uses
+// (generate-invoice, create-order-payment-link, create-storefront-payment-
+// link) — notes.sales_order_id is what razorpay-webhook matches the
+// eventual payment back to the order with, so this has to stay identical.
+async function createPaymentLink(
+  amountPaise: number, customerName: string, phone: string, salesOrderId: string, auth: string,
+): Promise<{ id: string; short_url: string }> {
+  const res = await fetch('https://api.razorpay.com/v1/payment_links', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount:   amountPaise,
+      currency: 'INR',
+      description: `The Good Papaya — order ${salesOrderId}`,
+      customer: { name: customerName, contact: `+91${phone.replace(/^\+91/, '')}` },
+      notify:          { sms: true, whatsapp: true, email: false },
+      reminder_enable: false,
+      notes: { sales_order_id: salesOrderId, source: 'ops-dashboard' },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.description || 'Razorpay error');
+  return { id: data.id, short_url: data.short_url };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
@@ -79,7 +112,9 @@ Deno.serve(async (req) => {
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
     const { data: order, error: orderErr } = await supabase
-      .from('orders').select('customer_name').eq('sales_order_id', sales_order_id).single();
+      .from('orders')
+      .select('customer_name, invoice_status, invoice_total, balance_due, qr_code_id, razorpay_link_id')
+      .eq('sales_order_id', sales_order_id).single();
     if (orderErr || !order) throw new Error(`Order ${sales_order_id} not found`);
 
     const { error: updateErr } = await supabase
@@ -98,8 +133,38 @@ Deno.serve(async (req) => {
     // not that this save failed.
     if (phoneErr) console.error(`[set-order-phone] customer_phones upsert failed for "${order.customer_name}":`, phoneErr.message);
 
+    // The gap this closes: invoiced, still owed, and nothing active to pay
+    // it with yet — the only reason that combination exists is this phone
+    // was missing until right now. Never fires if a QR or link is already
+    // there (nothing to fill), or the order isn't invoiced yet (generate-
+    // invoice's own link creation will run when it is).
+    let payment_url: string | null = null;
+    const balanceDue = order.balance_due ?? order.invoice_total;
+    const needsLink = order.invoice_status === 'done' && order.invoice_total
+      && balanceDue > 0 && !order.qr_code_id && !order.razorpay_link_id;
+    if (needsLink) {
+      try {
+        const keyId = Deno.env.get('RAZORPAY_KEY_ID'), keySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
+        if (keyId && keySecret) {
+          const auth = btoa(`${keyId}:${keySecret}`);
+          const link = await createPaymentLink(
+            Math.round(order.invoice_total * 100), order.customer_name, phone, sales_order_id, auth,
+          );
+          await supabase.from('orders').update({
+            razorpay_link_id: link.id, razorpay_url: link.short_url,
+          }).eq('sales_order_id', sales_order_id);
+          payment_url = link.short_url;
+        } else {
+          console.warn(`[set-order-phone] ${sales_order_id}: RAZORPAY_KEY_ID/SECRET not set — skipping pay link`);
+        }
+      } catch (e: any) {
+        // Best-effort — the phone itself is already saved above regardless.
+        console.error(`[set-order-phone] ${sales_order_id}: payment link creation failed: ${e.message}`);
+      }
+    }
+
     return new Response(
-      JSON.stringify({ sales_order_id, phone }),
+      JSON.stringify({ sales_order_id, phone, payment_url }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
