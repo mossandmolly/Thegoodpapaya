@@ -8,17 +8,22 @@
 // Input:  { sales_order_id: string, phone: string }
 // Output: { sales_order_id, phone }
 //
-// Writes to two places:
+// Writes to three places:
 //   1. orders.phone for THIS order — so it's picked up immediately by
-//      anything reading it right away (mark-delivered's switchToPaymentLink
-//      if the rider marks it delivered-unpaid later today, generate-invoice's
-//      payment-link step, Order Overview's own display).
+//      anything reading it right away (Order Overview's own display, the
+//      link-creation step below).
 //   2. customer_phones (customer_name, phone) — so orders_fill_phone_from_
 //      customer (migration 102) auto-fills every SUBSEQUENT order for this
 //      same customer, no re-entry needed. Upserted, not deleted-and-
 //      replaced: a customer can have more than one number on file (e.g. a
 //      prior Zoho-synced one) — the backfill trigger prefers whichever was
 //      added most recently.
+//   3. invoice_line_items.phone_number for this order's existing invoice,
+//      if it has one — that column (not orders.phone) is what
+//      get_invoices_by_phone actually matches customers to invoices
+//      through, frozen at whatever it was when generate-invoice ran. Without
+//      this, a phone added after invoicing still leaves the customer unable
+//      to find the invoice by searching the storefront themselves.
 //
 // Also creates a Razorpay payment link on the spot, best-effort, when this
 // phone is the thing that was actually missing for one to exist: the order
@@ -132,6 +137,19 @@ Deno.serve(async (req) => {
     // right now. A failure here only means future orders won't auto-fill,
     // not that this save failed.
     if (phoneErr) console.error(`[set-order-phone] customer_phones upsert failed for "${order.customer_name}":`, phoneErr.message);
+
+    // Backfill invoice_line_items.phone_number too — it's written once, at
+    // invoice time, from whatever orders.phone was THEN (null, if this
+    // phone was missing when generate-invoice ran), and get_invoices_by_
+    // phone matches customers to invoices through THIS column, never
+    // orders.phone. Without this, a phone added after invoicing lets a
+    // payment link get created (see below) but the customer still can't
+    // find the invoice at all by searching the storefront — only a direct
+    // SMS/WhatsApp from Razorpay would ever reach them. No-op (0 rows) if
+    // this order has no invoice yet.
+    const { error: iliPhoneErr } = await supabase
+      .from('invoice_line_items').update({ phone_number: phone }).eq('sales_order_id', sales_order_id);
+    if (iliPhoneErr) console.error(`[set-order-phone] invoice_line_items phone backfill failed for ${sales_order_id}:`, iliPhoneErr.message);
 
     // The gap this closes: invoiced, still owed, and nothing active to pay
     // it with yet — the only reason that combination exists is this phone
