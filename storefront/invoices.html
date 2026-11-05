@@ -168,9 +168,16 @@ async function lookup() {
     // button doesn't pop in from nothing after a beat when it's clearly
     // going to be needed.
     const pending = invoices.filter(inv => inv.payment_status !== 'paid');
+    // Client's own quick estimate, shown only while waiting on the server's
+    // real answer — summed from the same balances already on screen, so
+    // it's right in the common case and gets replaced the moment
+    // refreshPayAllLink resolves with the server's authoritative amount
+    // (which could differ if something changed in the instant between this
+    // render and that call landing).
+    const pendingEstimate = pending.reduce((sum, inv) => sum + (+inv.balance || 0), 0);
     const payAllHtml = '<div id="pay-all-area" style="margin-bottom:16px">' +
       (pending.length >= 2
-        ? '<button class="btn-primary" disabled><span class="spinner"></span>Checking combined total…</button>'
+        ? '<button class="btn-primary" disabled><span class="spinner"></span>Checking total — ₹'+pendingEstimate.toFixed(2)+'…</button>'
         : '') +
       '</div>';
 
