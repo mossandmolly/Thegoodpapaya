@@ -699,7 +699,16 @@ Deno.serve(async (req) => {
         sales_order_id,
         pdf_url:            `https://inventory.zoho.in/app#/invoices/${invoice_id}`,
       }));
-      await supabase.from('invoice_line_items').delete().eq('zoho_invoice_id', invoice_id);
+      // By sales_order_id, not zoho_invoice_id — invoice_id here is the
+      // BRAND-NEW invoice just created above, which has never had any rows
+      // under it, so deleting by it was always a no-op. On a regenerate,
+      // the actual stale rows sit under the OLD zoho_invoice_id (just
+      // deleted from Zoho a few lines up), and never got cleaned up —
+      // surfacing as a phantom duplicate "invoice" on the storefront next
+      // to the real, current one. sales_order_id is stable across
+      // regenerations and this order only ever has one real invoice at a
+      // time, so clearing everything under it first is always correct.
+      await supabase.from('invoice_line_items').delete().eq('sales_order_id', sales_order_id);
       const { error: iliError } = await supabase.from('invoice_line_items').insert(iliRows);
       if (iliError) console.error(`invoice_line_items write failed for ${invoice_id}:`, iliError.message);
     } catch (e: any) {
