@@ -458,18 +458,36 @@ async function removeInvoice(zohoInvoiceId: string, invoiceNumber: string, reaso
 }
 
 // ── Customer sync ─────────────────────────────────────────────
+// Best-effort end to end — this enriches the customers/customer_phones
+// records from Zoho's own contact, it's never essential to the actual
+// balance/payment reconciliation processInvoice goes on to do. A pre-
+// existing data quirk (e.g. two customer_name spellings already in
+// `customers` that collide on the same normalized_key — see migration 061/
+// 062) must never block that real reconciliation from running, which is
+// exactly what happened before this: an unhandled throw here aborted the
+// rest of processInvoice entirely, silently skipping the invoice's actual
+// payment correction.
 async function resolveAndSyncCustomer(customerName: string, zohoContactId: string): Promise<string | null> {
-  await sbUpsert('customers', [{ customer_name: customerName }], 'customer_name');
-  const phones = await fetchContactPhones(zohoContactId);
-  if (phones.length > 0) {
-    await sbUpsert('customer_phones',
-      phones.map(p => ({ customer_name: customerName, phone_number: p.phone, label: p.label })),
-      'customer_name,phone_number'
-    );
-    return phones[0].phone;
+  try {
+    await sbUpsert('customers', [{ customer_name: customerName }], 'customer_name');
+  } catch (e: any) {
+    console.error(`[sync] customers upsert failed for "${customerName}" (continuing without it):`, e.message);
   }
-  const row = await sbSelectOne('customer_phones', `customer_name=eq.${encodeURIComponent(customerName)}&select=phone_number`);
-  return row?.phone_number ?? null;
+  try {
+    const phones = await fetchContactPhones(zohoContactId);
+    if (phones.length > 0) {
+      await sbUpsert('customer_phones',
+        phones.map(p => ({ customer_name: customerName, phone_number: p.phone, label: p.label })),
+        'customer_name,phone_number'
+      );
+      return phones[0].phone;
+    }
+    const row = await sbSelectOne('customer_phones', `customer_name=eq.${encodeURIComponent(customerName)}&select=phone_number`);
+    return row?.phone_number ?? null;
+  } catch (e: any) {
+    console.error(`[sync] phone resolution failed for "${customerName}" (continuing without it):`, e.message);
+    return null;
+  }
 }
 
 // ── Process a single invoice ──────────────────────────────────
