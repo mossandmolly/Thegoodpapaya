@@ -196,13 +196,22 @@ async function fetchInvoiceDetail(invoiceId: string): Promise<any> {
   return data.invoice;
 }
 
-// Fetch all Zoho invoice IDs for a date range (for reconciliation)
+// Fetch all Zoho invoice IDs for a date range (for reconciliation).
+// Uses date_start/date_end — the same param fetchModifiedInvoices uses and
+// that's confirmed working (the daily 5-min sync reliably gets back just
+// today's invoices with it). This function previously used
+// invoice_date_start/invoice_date_end, which Zoho silently ignores instead
+// of erroring on — so every call was returning the ENTIRE org's invoice
+// history (~34,500 invoices, 173 pages) regardless of the range asked for,
+// which alone was eating ~2 minutes of every reconcile run before it even
+// got to reprocessing anything, independent of how narrow ?since=/?until=
+// was scoped.
 async function fetchZohoInvoiceIds(dateStart: string, dateEnd: string): Promise<Set<string>> {
   const token = await getZohoToken();
   let page = 1;
   const ids = new Set<string>();
   while (true) {
-    const url = withOrg(`${zohoBase()}/invoices?invoice_date_start=${dateStart}&invoice_date_end=${dateEnd}&page=${page}&per_page=200`);
+    const url = withOrg(`${zohoBase()}/invoices?date_start=${dateStart}&date_end=${dateEnd}&page=${page}&per_page=200`);
     const res  = await fetch(url, { headers: zohoHeaders(token) });
     const data = await res.json();
     if (!data.invoices?.length) break;
