@@ -55,13 +55,25 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// Same rule as parser.html's isValidPhoneForPayment — Razorpay's own
-// contact-field constraint (8-14 chars) is the practical floor/ceiling
-// here too, so a stray non-phone value can't sail through and only fail
-// opaquely later at Razorpay.
+// Strips whatever country code and spacing someone typed — "+91 98766
+// 97877", "91-9876697877", "9876697877" all normalize to the same stored
+// value. Country code length varies (91 is 2 digits, 1 is 1, others go up
+// to 3), but the local mobile number itself is reliably 10 digits
+// worldwide, so "keep only the last 10 digits once there are more than
+// 10" is a simple rule that works regardless of which country code was
+// typed, without needing to recognize country codes individually.
+function normalizePhoneDigits(raw: string): string {
+  const digits = (raw || '').replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+// Same rule as parser.html's isValidPhoneForPayment — applied to the
+// already-normalized (country-code-stripped) value, so this is really just
+// a local-number sanity floor/ceiling now, not meant to tolerate a
+// still-prefixed number.
 function isValidPhone(phone: string): boolean {
   const digits = phone.replace(/\D/g, '');
-  return digits.length >= 8 && digits.length <= 14;
+  return digits.length >= 8 && digits.length <= 10;
 }
 
 // This function uses the service role internally, so it bypasses RLS
@@ -110,9 +122,9 @@ Deno.serve(async (req) => {
     await requireAuth(req);
     const { sales_order_id, phone: rawPhone } = await req.json();
     if (!sales_order_id) throw new Error('Missing sales_order_id');
-    const phone = (rawPhone || '').trim();
-    if (!phone) throw new Error('Missing phone number');
-    if (!isValidPhone(phone)) throw new Error('Phone number must be 8-14 digits');
+    if (!(rawPhone || '').trim()) throw new Error('Missing phone number');
+    const phone = normalizePhoneDigits(rawPhone);
+    if (!isValidPhone(phone)) throw new Error('Phone number must be 8-10 digits (after removing country code)');
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
