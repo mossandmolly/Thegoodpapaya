@@ -1,0 +1,21 @@
+-- Drops the "a phone number must be unique globally" constraint on
+-- customer_phones (migration 003's idx_customer_phones_phone), which
+-- blocked the phone-propagation feature (ops-dashboard parser.html's
+-- "Also save this phone number for..." picker) from ever actually saving
+-- the same phone under a second customer_name — every multi-name save hit
+-- "duplicate key value violates unique constraint idx_customer_phones_phone".
+--
+-- The composite primary key (customer_name, phone_number), added in
+-- migration 103, stays — it still stops a literal duplicate row (same
+-- name + same phone twice).
+--
+-- Per Somya, worth the tradeoff: nothing in the live app does a reverse
+-- "find the customer for this phone" lookup against this table (every
+-- reader — orders_fill_phone_from_customer, add-orders/upload-orders'
+-- bulk phone map, sync-invoices — looks it up BY customer_name, never by
+-- phone_number), so dropping this removes a blunt global safety net
+-- without breaking any actual code path. The real protection against a
+-- phone getting attached to a genuinely unrelated house is the
+-- propagation picker's manual review (checkboxes, no auto-apply), which
+-- this migration doesn't touch.
+drop index if exists public.idx_customer_phones_phone;
