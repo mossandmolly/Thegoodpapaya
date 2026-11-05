@@ -222,38 +222,6 @@ async function fetchZohoInvoiceIds(dateStart: string, dateEnd: string): Promise<
   return ids;
 }
 
-async function fetchContactPhones(contactId: string): Promise<{ phone: string; label: string }[]> {
-  if (!contactId) return [];
-  const token = await getZohoToken();
-  try {
-    const res  = await fetch(withOrg(`${zohoBase()}/contacts/${contactId}`), { headers: zohoHeaders(token) });
-    const data = await res.json();
-    const c    = data.contact;
-    const results: { phone: string; label: string }[] = [];
-    const add = (raw: string, label: string) => {
-      const n = normalisePhone(raw);
-      if (n) results.push({ phone: n, label });
-    };
-    add(c?.mobile, 'mobile');
-    add(c?.phone, 'landline');
-    for (const p of c?.contact_persons ?? []) {
-      const label = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'contact';
-      add(p.mobile, label);
-      add(p.phone, label);
-    }
-    const seen = new Set<string>();
-    return results.filter(r => { if (seen.has(r.phone)) return false; seen.add(r.phone); return true; });
-  } catch { return []; }
-}
-
-function normalisePhone(raw: string): string | null {
-  if (!raw) return null;
-  const d = raw.replace(/\D/g, '');
-  if (d.length === 10)                         return '+91' + d;
-  if (d.length === 12 && d.startsWith('91'))   return '+' + d;
-  if (d.length === 11 && d.startsWith('0'))    return '+91' + d.slice(1);
-  return null;
-}
 
 // ── Razorpay ──────────────────────────────────────────────────
 async function cancelPaymentLink(linkId: string) {
@@ -467,34 +435,30 @@ async function removeInvoice(zohoInvoiceId: string, invoiceNumber: string, reaso
 }
 
 // ── Customer sync ─────────────────────────────────────────────
-// Best-effort end to end — this enriches the customers/customer_phones
-// records from Zoho's own contact, it's never essential to the actual
-// balance/payment reconciliation processInvoice goes on to do. A pre-
-// existing data quirk (e.g. two customer_name spellings already in
-// `customers` that collide on the same normalized_key — see migration 061/
-// 062) must never block that real reconciliation from running, which is
-// exactly what happened before this: an unhandled throw here aborted the
-// rest of processInvoice entirely, silently skipping the invoice's actual
-// payment correction.
-async function resolveAndSyncCustomer(customerName: string, zohoContactId: string): Promise<string | null> {
+// Best-effort end to end — this enriches the `customers` record and reads
+// back whatever phone is already on file in `customer_phones`, never
+// essential to the actual balance/payment reconciliation processInvoice
+// goes on to do. A pre-existing data quirk (e.g. two customer_name
+// spellings already in `customers` that collide on the same normalized_key
+// — see migration 061/062) must never block that real reconciliation from
+// running, which is exactly what happened before this: an unhandled throw
+// here aborted the rest of processInvoice entirely, silently skipping the
+// invoice's actual payment correction.
+//
+// Zoho contacts don't carry phone numbers in this org, so this never writes
+// to customer_phones — only reads whatever's already there (saved via
+// set-order-phone, create-order-payment-link, WhatsApp resolution, etc.).
+async function resolveAndSyncCustomer(customerName: string): Promise<string | null> {
   try {
     await sbUpsert('customers', [{ customer_name: customerName }], 'customer_name');
   } catch (e: any) {
     console.error(`[sync] customers upsert failed for "${customerName}" (continuing without it):`, e.message);
   }
   try {
-    const phones = await fetchContactPhones(zohoContactId);
-    if (phones.length > 0) {
-      await sbUpsert('customer_phones',
-        phones.map(p => ({ customer_name: customerName, phone_number: p.phone, label: p.label })),
-        'customer_name,phone_number'
-      );
-      return phones[0].phone;
-    }
     const row = await sbSelectOne('customer_phones', `customer_name=eq.${encodeURIComponent(customerName)}&select=phone_number`);
     return row?.phone_number ?? null;
   } catch (e: any) {
-    console.error(`[sync] phone resolution failed for "${customerName}" (continuing without it):`, e.message);
+    console.error(`[sync] phone lookup failed for "${customerName}" (continuing without it):`, e.message);
     return null;
   }
 }
@@ -517,8 +481,7 @@ async function processInvoice(summary: any) {
   }
 
   const customerName  = detail.customer_name;
-  const zohoContactId = detail.customer_id;
-  const phone: string | null = await resolveAndSyncCustomer(customerName, zohoContactId);
+  const phone: string | null = await resolveAndSyncCustomer(customerName);
 
   if (!phone) console.warn(`[sync] No phone for "${customerName}" — syncing without Razorpay link`);
 
@@ -615,12 +578,12 @@ async function reconcileTodayDeletions(zohoIds: Set<string>) {
 // fetchModifiedInvoices always returns EVERY invoice dated today (Zoho
 // Inventory's list endpoint has no real "changed since X" filter — see its
 // own comment), so without this check every 3-minute cycle was calling
-// fetchInvoiceDetail + fetchContactPhones (2 Zoho API calls) for every
-// single one of today's invoices, all over again, all day — the exact
-// thing that was exhausting the Inventory API's daily rate limit within a
-// couple hours. Zoho's list response already includes balance/status per
-// invoice at no extra cost; skip the expensive per-invoice detail+contact
-// calls (and the resulting invoice_line_items rewrite) entirely for any
+// fetchInvoiceDetail (a Zoho API call) for every single one of today's
+// invoices, all over again, all day — the exact thing that was exhausting
+// the Inventory API's daily rate limit within a couple hours. Zoho's list
+// response already includes balance/status per invoice at no extra cost;
+// skip the expensive per-invoice detail call (and the resulting
+// invoice_line_items rewrite) entirely for any
 // invoice whose balance and status already match what's on file — nothing
 // about it could have changed in a way this sync cares about. Always
 // processes an invoice Supabase hasn't seen yet at all (first time either
