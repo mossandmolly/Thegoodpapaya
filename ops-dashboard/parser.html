@@ -1207,6 +1207,25 @@ Banana, 15, 450"></textarea>
   </div>
 </div>
 
+<!-- PHONE "SHARED WITH" MODAL — review every customer name currently
+     associated with one phone number (across customer_phones, orders.phone,
+     and invoice_line_items.phone_number — the three places a phone can
+     live), and remove any that were wrongly mapped. Needed now that the
+     same phone CAN legitimately span multiple names (migration 135 dropped
+     the old one-phone-one-household constraint) — there's no longer a
+     database error to catch a mistaken save, so this is the manual review/
+     undo path for it. -->
+<div class="modal-overlay hidden" id="ph-shared-modal">
+  <div class="modal-box">
+    <h3>Houses sharing this number</h3>
+    <p class="note" style="margin-top:0" id="ph-shared-phone-label"></p>
+    <div id="ph-shared-items"></div>
+    <div class="modal-actions">
+      <button class="btn-sec" id="ph-shared-close" style="margin-bottom:0">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- MOVE TO TOMORROW / BACK TO TODAY MODAL -->
 <div class="modal-overlay hidden" id="mt-modal">
   <div class="modal-box">
@@ -4635,10 +4654,91 @@ function phoneEntryHtml(order){
   if(order.orderStatus==='cancelled')return '';
   if(order.phone){
     return ' <span class="or-phone-tag" title="Used for this customer\'s invoice lookup + payment link">📞 '+escH(order.phone)+
-      ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Edit">✎</a></span>';
+      ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Edit">✎</a>'+
+      ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();openPhoneSharedModal('+escH(JSON.stringify(order.phone))+')" title="See every house currently sharing this number, and remove any that are wrong">📋</a></span>';
   }
   return ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Needed so this customer can look up their invoice, and for an automatic payment link if delivered unpaid">+ Add phone</a>';
 }
+
+// Every customer_name currently tied to this phone, across all three
+// places a phone can live — customer_phones (future-order auto-fill),
+// orders.phone (this specific order), invoice_line_items.phone_number (the
+// column the storefront's own lookup actually matches on). All three need
+// checking since a wrong mapping can land in any of them independently
+// (direct entry, propagation, or sync-invoices), and nothing stops the
+// same name showing up via more than one.
+async function fetchPhoneSharedWith(phone){
+  const bare=phone.replace(/^\+91/,'');
+  const variants=[bare,'+91'+bare];
+  const[{data:cpRows,error:cpErr},{data:ordRows,error:ordErr},{data:iliRows,error:iliErr}]=await Promise.all([
+    sb.from('customer_phones').select('customer_name').in('phone_number',variants),
+    sb.from('orders').select('customer_name').in('phone',variants),
+    sb.from('invoice_line_items').select('customer_name').in('phone_number',variants),
+  ]);
+  if(cpErr||ordErr||iliErr)throw new Error((cpErr||ordErr||iliErr).message);
+  const names=new Set();
+  (cpRows||[]).forEach(r=>names.add(r.customer_name));
+  (ordRows||[]).forEach(r=>names.add(r.customer_name));
+  (iliRows||[]).forEach(r=>names.add(r.customer_name));
+  return[...names].sort();
+}
+
+const phSharedModal=document.getElementById('ph-shared-modal'),phSharedItems=document.getElementById('ph-shared-items');
+let phSharedPhone=null;
+
+async function openPhoneSharedModal(phone){
+  phSharedPhone=phone;
+  document.getElementById('ph-shared-phone-label').textContent='For '+phone+' — unpick (✕) any house that shouldn\'t have this number.';
+  phSharedItems.innerHTML='<div class="to-empty">Loading…</div>';
+  phSharedModal.classList.remove('hidden');
+  try{
+    const names=await fetchPhoneSharedWith(phone);
+    renderPhoneSharedItems(names);
+  }catch(e){
+    phSharedItems.innerHTML='<div class="to-empty">'+escH(e.message)+'</div>';
+  }
+}
+
+function renderPhoneSharedItems(names){
+  phSharedItems.innerHTML=names.length
+    ?names.map(n=>
+      '<div class="mt-item-row" style="display:flex;justify-content:space-between;align-items:center">'+
+        '<span>'+escH(n)+'</span>'+
+        '<button class="del-btn" onclick="removePhoneFromCustomer('+escH(JSON.stringify(n))+')">✕ Remove</button>'+
+      '</div>'
+    ).join('')
+    :'<div class="to-empty">No one left with this number ✓</div>';
+}
+
+// Clears this phone from every place it lives for ONE customer_name —
+// scoped by customer_name + phone together throughout, so this only ever
+// removes the wrong association, never touches a different, correctly
+// mapped house that happens to share the same phone.
+async function removePhoneFromCustomer(customerName){
+  if(!phSharedPhone)return;
+  if(!await uxConfirm('Remove this number from "'+customerName+'"? Future orders under this name will stop auto-filling it, and their past invoices under this number will no longer be findable by it on the storefront.'))return;
+  const bare=phSharedPhone.replace(/^\+91/,'');
+  const variants=[bare,'+91'+bare];
+  try{
+    const[{error:cpErr},{error:ordErr},{error:iliErr}]=await Promise.all([
+      sb.from('customer_phones').delete().eq('customer_name',customerName).in('phone_number',variants),
+      sb.from('orders').update({phone:null}).eq('customer_name',customerName).in('phone',variants),
+      sb.from('invoice_line_items').update({phone_number:null}).eq('customer_name',customerName).in('phone_number',variants),
+    ]);
+    if(cpErr||ordErr||iliErr)throw new Error((cpErr||ordErr||iliErr).message);
+    // Could be any number of orders across any date for this customer —
+    // simplest correct thing is to drop the whole cache rather than try to
+    // enumerate every affected sales_order_id.
+    Object.keys(customerLookupCache).forEach(k=>delete customerLookupCache[k]);
+    await loadTodaysOrders();
+    const names=await fetchPhoneSharedWith(phSharedPhone);
+    renderPhoneSharedItems(names);
+  }catch(e){
+    uxAlert('Failed to remove: '+e.message);
+  }
+}
+
+document.getElementById('ph-shared-close').addEventListener('click',()=>{phSharedModal.classList.add('hidden');});
 
 async function editCustomerPhone(soid){
   const order=currentOrdersById[soid];
