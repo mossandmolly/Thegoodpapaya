@@ -1198,6 +1198,7 @@ Banana, 15, 450"></textarea>
   <div class="modal-box">
     <h3>Also save this phone number for...</h3>
     <p class="note" style="margin-top:0">These other customer names look like they might be the same house. Pick any that are — unpick any that aren't.</p>
+    <div class="push-row" style="margin:0 0 6px 0"><a class="or-link" id="pp-select-all-toggle" onclick="togglePpSelectAll()">Deselect all</a></div>
     <div id="pp-items"></div>
     <div class="modal-actions">
       <button class="btn-sec" id="pp-cancel" style="margin-bottom:0">No thanks</button>
@@ -4663,15 +4664,35 @@ async function editCustomerPhone(soid){
   }
 }
 
-// Splits a customer name into its non-digit "society" part and its digit
-// groups (house/unit number, possibly more than one — e.g. "23-1"). Used
-// as a pure substring match, not exact-token matching, per the explicit
-// ask — this is a loose "looks like the same house" heuristic, not a
-// guaranteed match, which is exactly why it's a pick-list, not an
-// auto-apply.
+// Identifies which known community a name belongs to (community_priority_
+// keywords, longest keyword wins — same rule matchCommunityPriority uses
+// elsewhere) and the house/unit digits found OUTSIDE that keyword's own
+// text. Stripping the matched keyword before pulling digits matters
+// because a community's own name can embed a number (e.g. "77 Degree") —
+// without this, that "77" gets treated as if it were a house number and
+// matches every other house in the same community, which is exactly the
+// over-matching bug this replaced (a propagation prompt listing the whole
+// community instead of just the same house).
+//
+// Falls back to the old plain-substring heuristic (strip all digits for a
+// loose "society" string, keep every digit group) when the name doesn't
+// match any registered community keyword at all — so a society that
+// hasn't been added to Config -> Community Priority yet still gets
+// reasonable matching instead of none.
 function phoneMatchTokens(name){
   const lower=(name||'').toLowerCase();
+  let bestKw=null,bestLen=-1,bestCommunityId=null;
+  Object.values(communityPriorityCache).forEach(c=>{
+    (c.keywords||[]).forEach(kw=>{
+      if(kw&&lower.includes(kw.toLowerCase())&&kw.length>bestLen){bestKw=kw.toLowerCase();bestLen=kw.length;bestCommunityId=c.unique_id;}
+    });
+  });
+  if(bestCommunityId){
+    const remainder=lower.split(bestKw).join(' ');
+    return{communityId:bestCommunityId,society:null,digits:remainder.match(/\d+/g)||[]};
+  }
   return{
+    communityId:null,
     society:lower.replace(/\d+/g,'').replace(/[^a-z]/g,'').trim(),
     digits:lower.match(/\d+/g)||[],
   };
@@ -4680,17 +4701,25 @@ function phoneMatchTokens(name){
 async function findPhonePropagationCandidates(customerName){
   const names=await ensureCustomerNameOptions();
   const cur=phoneMatchTokens(customerName);
-  if(!cur.society||!cur.digits.length)return[];
+  if(!cur.digits.length)return[];
+  if(!cur.communityId&&!cur.society)return[];
   return names.filter(n=>{
     if(n===customerName)return false;
     const cand=phoneMatchTokens(n);
-    if(!cand.society)return false;
-    // Bidirectional — "Villa 23" vs "Summerfieldvilla 23" should match
-    // each other even though neither society string fully contains the
-    // other in just one direction (e.g. the shorter name is a substring
-    // of the longer one, not vice versa).
-    const societyMatch=cand.society.includes(cur.society)||cur.society.includes(cand.society);
-    if(!societyMatch)return false;
+    if(cur.communityId||cand.communityId){
+      // Either side matched a real registered community — require BOTH to
+      // match the SAME one, rather than falling back to the loose society
+      // string (which would reintroduce the over-matching this fixed).
+      if(cand.communityId!==cur.communityId)return false;
+    }else{
+      if(!cand.society)return false;
+      // Bidirectional — "Villa 23" vs "Summerfieldvilla 23" should match
+      // each other even though neither society string fully contains the
+      // other in just one direction (e.g. the shorter name is a substring
+      // of the longer one, not vice versa).
+      const societyMatch=cand.society.includes(cur.society)||cur.society.includes(cand.society);
+      if(!societyMatch)return false;
+    }
     return cur.digits.some(d=>cand.digits.includes(d));
   });
 }
@@ -4705,8 +4734,24 @@ async function maybeOfferPhonePropagation(customerName,phone){
   ppItems.innerHTML=candidates.map(n=>
     '<label class="mt-item-row"><input type="checkbox" value="'+escH(n)+'" checked>'+escH(n)+'</label>'
   ).join('');
+  updatePpSelectAllLabel();
   ppModal.classList.remove('hidden');
 }
+
+// Same select-all/deselect-all toggle pattern as the Move-to-tomorrow
+// modal (toggleMtSelectAll) — label always reflects current state.
+function updatePpSelectAllLabel(){
+  const boxes=[...ppItems.querySelectorAll('input[type=checkbox]')];
+  const allChecked=boxes.length>0&&boxes.every(cb=>cb.checked);
+  document.getElementById('pp-select-all-toggle').textContent=allChecked?'Deselect all':'Select all';
+}
+function togglePpSelectAll(){
+  const boxes=[...ppItems.querySelectorAll('input[type=checkbox]')];
+  const allChecked=boxes.length>0&&boxes.every(cb=>cb.checked);
+  boxes.forEach(cb=>{cb.checked=!allChecked;});
+  updatePpSelectAllLabel();
+}
+ppItems.addEventListener('change',updatePpSelectAllLabel);
 
 document.getElementById('pp-cancel').addEventListener('click',()=>{ppModal.classList.add('hidden');});
 
