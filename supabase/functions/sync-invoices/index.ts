@@ -707,9 +707,15 @@ async function syncInvoices() {
 }
 
 // ── Daily reconciliation (D-1 and earlier, runs at noon) ──────
-async function reconcileOldInvoices() {
+// sinceOverride: optional one-off wider start date (e.g. ?mode=reconcile&
+// since=2026-10-27), for manually pulling a real Zoho status for a backlog
+// of older invoices in one shot — e.g. ones paid directly in Zoho that
+// never had a Razorpay event to trigger razorpay-webhook, and fell outside
+// the normal 7-day window below. The scheduled cron never passes this, so
+// its regular day-to-day behavior is unchanged.
+async function reconcileOldInvoices(sinceOverride?: string) {
   const today     = todayIST();
-  const since7    = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+  const since7    = sinceOverride || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
   // yesterday (D-1)
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
 
@@ -770,7 +776,8 @@ Deno.serve(async (req) => {
   try {
     const mode = new URL(req.url).searchParams.get('mode') ?? 'sync';
     if (mode === 'reconcile') {
-      await reconcileOldInvoices();
+      const since = new URL(req.url).searchParams.get('since') ?? undefined;
+      await reconcileOldInvoices(since);
     } else if (mode === 'qr-sweep') {
       // Razorpay-only (no Zoho calls at all) — runs on its own tight cron,
       // independent of the Zoho sync interval, so QR refresh timing never
