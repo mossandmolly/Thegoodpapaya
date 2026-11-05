@@ -438,27 +438,46 @@ async function removeInvoice(zohoInvoiceId: string, invoiceNumber: string, reaso
 // Best-effort end to end — this enriches the `customers` record and reads
 // back whatever phone is already on file in `customer_phones`, never
 // essential to the actual balance/payment reconciliation processInvoice
-// goes on to do. A pre-existing data quirk (e.g. two customer_name
-// spellings already in `customers` that collide on the same normalized_key
-// — see migration 061/062) must never block that real reconciliation from
-// running, which is exactly what happened before this: an unhandled throw
-// here aborted the rest of processInvoice entirely, silently skipping the
-// invoice's actual payment correction.
+// goes on to do.
+//
+// Zoho's own spelling of a customer's name often isn't byte-identical to
+// however it's spelled in `orders`/`customer_phones` (different spacing or
+// casing — "espana m401" vs "espanam401") even though they're the same real
+// customer. `customers.normalized_key` (migration 061) exists precisely to
+// treat those as equivalent, so this resolves to whichever customer_name is
+// ALREADY canonical for that normalized_key first, before doing anything
+// else — both the customers upsert and the customer_phones lookup use that
+// resolved name, not Zoho's raw one. Without this: the upsert would insert a
+// new row whose customer_name doesn't match any existing one but whose
+// normalized_key collides with an existing row's — unique_violation, not a
+// graceful "already exists, do nothing" (ON CONFLICT here only targets
+// customer_name, a different column) — and the phone lookup would search
+// for a customer_phones row keyed by Zoho's spelling, never finding the one
+// actually saved under the canonical spelling. Only a genuinely new
+// customer (no existing normalized_key match at all) still gets inserted
+// under Zoho's own spelling, same as before.
 //
 // Zoho contacts don't carry phone numbers in this org, so this never writes
 // to customer_phones — only reads whatever's already there (saved via
 // set-order-phone, create-order-payment-link, WhatsApp resolution, etc.).
 async function resolveAndSyncCustomer(customerName: string): Promise<string | null> {
+  const normalizedKey = customerName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  let canonicalName = customerName;
   try {
-    await sbUpsert('customers', [{ customer_name: customerName }], 'customer_name');
+    const existing = await sbSelectOne('customers', `normalized_key=eq.${encodeURIComponent(normalizedKey)}&select=customer_name`);
+    if (existing?.customer_name) {
+      canonicalName = existing.customer_name;
+    } else {
+      await sbUpsert('customers', [{ customer_name: customerName }], 'customer_name');
+    }
   } catch (e: any) {
-    console.error(`[sync] customers upsert failed for "${customerName}" (continuing without it):`, e.message);
+    console.error(`[sync] customers resolve/upsert failed for "${customerName}" (continuing without it):`, e.message);
   }
   try {
-    const row = await sbSelectOne('customer_phones', `customer_name=eq.${encodeURIComponent(customerName)}&select=phone_number`);
+    const row = await sbSelectOne('customer_phones', `customer_name=eq.${encodeURIComponent(canonicalName)}&select=phone_number`);
     return row?.phone_number ?? null;
   } catch (e: any) {
-    console.error(`[sync] phone lookup failed for "${customerName}" (continuing without it):`, e.message);
+    console.error(`[sync] phone lookup failed for "${canonicalName}" (continuing without it):`, e.message);
     return null;
   }
 }
