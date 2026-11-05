@@ -158,7 +158,19 @@ async function lookup() {
     document.getElementById('welcome-heading').textContent = 'Welcome, ' + pickBestCasedName(data.map(r => r.customer_name)) + '!';
 
     const invoices = groupByInvoice(data);
-    results.innerHTML = invoices.map(inv => {
+
+    // "Pay All" — only worth showing once there's more than one pending
+    // invoice to combine; a single pending invoice already has its own Pay
+    // Now button right below, no second way to do the same thing needed.
+    const pending = invoices.filter(inv => inv.payment_status !== 'paid');
+    const pendingTotal = pending.reduce((sum, inv) => sum + (+inv.balance || 0), 0);
+    const payAllHtml = pending.length >= 2
+      ? '<div style="margin-bottom:16px">' +
+          '<button class="btn-primary" id="pay-all-btn" onclick="payAllPending()">Pay All Pending — ₹'+pendingTotal.toFixed(2)+' ('+pending.length+' invoices)</button>' +
+        '</div>'
+      : '';
+
+    results.innerHTML = payAllHtml + invoices.map(inv => {
       const rows = inv.items.map(i => {
         const qty = +i.qty || 0, rate = +i.price || 0, value = qty * rate;
         return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+'</td><td>₹'+rate.toFixed(2)+'</td><td>₹'+value.toFixed(2)+'</td></tr>';
@@ -228,6 +240,36 @@ async function payNowWithoutLink(btnEl, salesOrderId) {
   } catch (e) {
     btnEl.disabled = false;
     btnEl.textContent = originalText;
+    const err = document.createElement('div');
+    err.className = 'err-box show';
+    err.style.marginBottom = '10px';
+    err.textContent = 'Could not start payment: ' + e.message;
+    document.getElementById('results').prepend(err);
+  }
+}
+
+// "Pay All" — one Razorpay link for every pending invoice currently shown,
+// built server-side from the same phone lookup (see
+// create-storefront-bulk-payment-link); no per-order ownership check needed
+// client-side since the server derives the order list from the phone itself.
+async function payAllPending() {
+  const btn = document.getElementById('pay-all-btn');
+  if (btn.disabled) return;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Proceeding to pay…';
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/create-storefront-bulk-payment-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON },
+      body: JSON.stringify({ phone: lastSearchedPhone }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create payment link');
+    window.location.href = data.payment_url;
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = originalText;
     const err = document.createElement('div');
     err.className = 'err-box show';
     err.style.marginBottom = '10px';

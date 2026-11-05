@@ -6,9 +6,15 @@
 // (either channel below) shows up as paid/partially paid in Zoho too,
 // without waiting on sync-invoices' 5-min poll to notice it indirectly.
 //
-// Handles two event types, both requiring sales_order_id in notes:
-//   - payment_link.paid  — the manual "Generate Payment Link" flow
-//   - qr_code.credited   — the delivery-panel Dynamic QR (dispatch-order)
+// Handles two event types:
+//   - payment_link.paid  — the manual "Generate Payment Link" flow, OR the
+//     storefront's "Pay All" bulk link (create-storefront-bulk-payment-link).
+//     Normally keyed by sales_order_id in notes; a bulk link is detected by
+//     looking up the link's own Razorpay id in razorpay_bulk_payment_links —
+//     if found, the single payment is split back across every order in that
+//     link's breakdown instead of applied to just one.
+//   - qr_code.credited   — the delivery-panel Dynamic QR (dispatch-order),
+//     always single-order, never bulk.
 // amount_paid is never reset — it accumulates across all payments and invoice regenerations.
 //
 // Required secrets: RAZORPAY_WEBHOOK_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
@@ -126,69 +132,21 @@ async function recordZohoPayment(
   if (!res.ok) throw new Error(data?.message || `Zoho payment recording failed (${res.status})`);
 }
 
-Deno.serve(async (req) => {
-  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
-
-  const body      = await req.text();
-  const signature = req.headers.get('x-razorpay-signature') ?? '';
-
-  const valid = await verifySignature(body, signature, env('RAZORPAY_WEBHOOK_SECRET'));
-  if (!valid) return new Response(JSON.stringify({ error: 'Invalid signature' }), { status: 401 });
-
-  let payload: any;
-  try { payload = JSON.parse(body); } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 });
-  }
-
-  if (payload.event !== 'payment_link.paid' && payload.event !== 'qr_code.credited') {
-    return new Response(JSON.stringify({ ok: true, ignored: true }), { status: 200 });
-  }
-
-  const paymentEntity = payload.payload?.payment?.entity;
-  const notesEntity    = payload.event === 'qr_code.credited'
-    ? payload.payload?.qr_code?.entity
-    : payload.payload?.payment_link?.entity;
-  const salesOrderId  = notesEntity?.notes?.sales_order_id as string | undefined;
-  const amountPaise   = paymentEntity?.amount as number | undefined;
-
-  if (!salesOrderId) {
-    console.warn('Razorpay webhook: no sales_order_id in notes');
-    return new Response(JSON.stringify({ ok: true, msg: 'no sales_order_id' }), { status: 200 });
-  }
-  if (!amountPaise) {
-    console.warn('Razorpay webhook: no payment amount');
-    return new Response(JSON.stringify({ ok: true, msg: 'no amount' }), { status: 200 });
-  }
-
-  const amountRupees = amountPaise / 100;
-  const supabase     = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
-
-  // Idempotency claim — Razorpay retries webhook delivery on any non-2xx
-  // response or timeout, and this handler used to have no guard against
-  // that: a redelivered event would add amountRupees to amount_paid a
-  // second time AND call Zoho's recordZohoPayment again for a payment
-  // already recorded there. razorpay_payment_events (migration 097) is
-  // keyed on Razorpay's own payment id — claiming it here, before touching
-  // orders or Zoho at all, means a genuine redelivery hits the unique
-  // constraint and is skipped as a no-op instead of being reprocessed. If
-  // Razorpay ever omits the payment id (shouldn't happen for either event
-  // type this function handles), fail open and process normally rather
-  // than silently drop a real payment.
-  const razorpayPaymentId = paymentEntity?.id as string | undefined;
-  if (razorpayPaymentId) {
-    const { error: claimErr } = await supabase
-      .from('razorpay_payment_events')
-      .insert({ razorpay_payment_id: razorpayPaymentId, sales_order_id: salesOrderId, amount: amountRupees, event: payload.event });
-    if (claimErr) {
-      if (claimErr.code === '23505') { // unique_violation — already processed this exact payment
-        console.warn(`Razorpay webhook: duplicate delivery of payment ${razorpayPaymentId} — skipped`);
-        return new Response(JSON.stringify({ ok: true, msg: 'duplicate delivery, already processed' }), { status: 200 });
-      }
-      console.error('razorpay_payment_events claim failed:', claimErr.message);
-    }
-  }
-
-  // Load current amounts
+// Applies amountRupees to ONE order — loads its current amount_paid/
+// invoice_total, recalculates balance_due, flips payment_collected when
+// fully paid, clears whichever payment mechanism (QR/link) is now spent, and
+// best-effort records the same amount against that order's own Zoho
+// invoice. Used both for a normal single-order payment and, once per order,
+// for a "Pay All" bulk payment — a bulk payment is just N of these back to
+// back, one per order in the link's breakdown, each with its own slice of
+// the one real amount the customer paid.
+async function applyPaymentToOrder(
+  supabase: ReturnType<typeof createClient>,
+  salesOrderId: string,
+  amountRupees: number,
+  razorpayPaymentId: string | undefined,
+  source: 'qr' | 'payment_link',
+): Promise<void> {
   const { data: order, error: orderErr } = await supabase
     .from('orders')
     .select('amount_paid, invoice_total, zoho_invoice_id')
@@ -197,7 +155,7 @@ Deno.serve(async (req) => {
 
   if (orderErr || !order) {
     console.error('Order not found for payment:', salesOrderId);
-    return new Response(JSON.stringify({ ok: true, msg: 'order not found' }), { status: 200 });
+    return;
   }
 
   const newAmountPaid = (order.amount_paid ?? 0) + amountRupees;
@@ -247,10 +205,7 @@ Deno.serve(async (req) => {
       const orgId = env('ZOHO_ORGANIZATION_ID');
       const zohoCustomerId = await fetchZohoInvoiceCustomerId(order.zoho_invoice_id, token, orgId);
       if (zohoCustomerId) {
-        await recordZohoPayment(
-          supabase, order.zoho_invoice_id, zohoCustomerId, amountRupees,
-          paymentEntity?.id, payload.event === 'qr_code.credited' ? 'qr' : 'payment_link',
-        );
+        await recordZohoPayment(supabase, order.zoho_invoice_id, zohoCustomerId, amountRupees, razorpayPaymentId, source);
       } else {
         console.warn(`Razorpay webhook: could not resolve Zoho customer_id for invoice ${order.zoho_invoice_id} — skipped Zoho payment recording`);
       }
@@ -258,6 +213,113 @@ Deno.serve(async (req) => {
       console.error(`Zoho payment recording failed for ${salesOrderId}:`, e.message);
     }
   }
+}
+
+Deno.serve(async (req) => {
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+
+  const body      = await req.text();
+  const signature = req.headers.get('x-razorpay-signature') ?? '';
+
+  const valid = await verifySignature(body, signature, env('RAZORPAY_WEBHOOK_SECRET'));
+  if (!valid) return new Response(JSON.stringify({ error: 'Invalid signature' }), { status: 401 });
+
+  let payload: any;
+  try { payload = JSON.parse(body); } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 });
+  }
+
+  if (payload.event !== 'payment_link.paid' && payload.event !== 'qr_code.credited') {
+    return new Response(JSON.stringify({ ok: true, ignored: true }), { status: 200 });
+  }
+
+  const paymentEntity = payload.payload?.payment?.entity;
+  const notesEntity    = payload.event === 'qr_code.credited'
+    ? payload.payload?.qr_code?.entity
+    : payload.payload?.payment_link?.entity;
+  // The payment LINK/QR code's own Razorpay id (e.g. "plink_..."), not the
+  // payment id — this is what create-storefront-bulk-payment-link stored
+  // razorpay_bulk_payment_links under, so it's how a bulk "Pay All" link is
+  // recognized below. QR codes are never bulk (dispatch-order only ever
+  // creates one QR per single order), but reading it here is harmless.
+  const linkId        = notesEntity?.id as string | undefined;
+  const salesOrderId  = notesEntity?.notes?.sales_order_id as string | undefined;
+  const amountPaise   = paymentEntity?.amount as number | undefined;
+
+  if (!amountPaise) {
+    console.warn('Razorpay webhook: no payment amount');
+    return new Response(JSON.stringify({ ok: true, msg: 'no amount' }), { status: 200 });
+  }
+
+  const amountRupees = amountPaise / 100;
+  const supabase     = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+
+  // A "Pay All" bulk link has no single sales_order_id in notes (it covers
+  // several) — recognized instead by its own link id having a row in
+  // razorpay_bulk_payment_links. Only payment_link.paid can ever be bulk.
+  let bulkBreakdown: { sales_order_id: string; amount: number }[] | null = null;
+  if (payload.event === 'payment_link.paid' && linkId) {
+    const { data: bulkRow } = await supabase
+      .from('razorpay_bulk_payment_links')
+      .select('breakdown')
+      .eq('razorpay_link_id', linkId)
+      .maybeSingle();
+    if (bulkRow) bulkBreakdown = bulkRow.breakdown as { sales_order_id: string; amount: number }[];
+  }
+
+  if (!bulkBreakdown && !salesOrderId) {
+    console.warn('Razorpay webhook: no sales_order_id in notes and not a bulk link');
+    return new Response(JSON.stringify({ ok: true, msg: 'no sales_order_id' }), { status: 200 });
+  }
+
+  // Idempotency claim — Razorpay retries webhook delivery on any non-2xx
+  // response or timeout, and this handler used to have no guard against
+  // that: a redelivered event would add amountRupees to amount_paid a
+  // second time AND call Zoho's recordZohoPayment again for a payment
+  // already recorded there. razorpay_payment_events (migration 097) is
+  // keyed on Razorpay's own payment id — claiming it here, before touching
+  // orders or Zoho at all, means a genuine redelivery hits the unique
+  // constraint and is skipped as a no-op instead of being reprocessed (this
+  // one claim row covers a bulk payment too — it's still a single Razorpay
+  // payment event, just applied to several orders below). If Razorpay ever
+  // omits the payment id (shouldn't happen for either event type this
+  // function handles), fail open and process normally rather than silently
+  // drop a real payment.
+  const razorpayPaymentId = paymentEntity?.id as string | undefined;
+  if (razorpayPaymentId) {
+    const { error: claimErr } = await supabase
+      .from('razorpay_payment_events')
+      .insert({
+        razorpay_payment_id: razorpayPaymentId,
+        sales_order_id: bulkBreakdown ? bulkBreakdown.map(b => b.sales_order_id).join(',') : salesOrderId!,
+        amount: amountRupees,
+        event: payload.event,
+      });
+    if (claimErr) {
+      if (claimErr.code === '23505') { // unique_violation — already processed this exact payment
+        console.warn(`Razorpay webhook: duplicate delivery of payment ${razorpayPaymentId} — skipped`);
+        return new Response(JSON.stringify({ ok: true, msg: 'duplicate delivery, already processed' }), { status: 200 });
+      }
+      console.error('razorpay_payment_events claim failed:', claimErr.message);
+    }
+  }
+
+  if (bulkBreakdown) {
+    for (const item of bulkBreakdown) {
+      await applyPaymentToOrder(supabase, item.sales_order_id, item.amount, razorpayPaymentId, 'payment_link');
+    }
+    await supabase
+      .from('razorpay_bulk_payment_links')
+      .update({ consumed_at: new Date().toISOString() })
+      .eq('razorpay_link_id', linkId!);
+
+    return new Response(
+      JSON.stringify({ ok: true, bulk: true, sales_order_ids: bulkBreakdown.map(b => b.sales_order_id), amount_added: amountRupees }),
+      { headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  await applyPaymentToOrder(supabase, salesOrderId!, amountRupees, razorpayPaymentId, payload.event === 'qr_code.credited' ? 'qr' : 'payment_link');
 
   return new Response(
     JSON.stringify({ ok: true, sales_order_id: salesOrderId, amount_added: amountRupees }),
