@@ -159,27 +159,19 @@ async function lookup() {
 
     const invoices = groupByInvoice(data);
 
-    // "Pay All" — a container that starts as either a loading placeholder
-    // (client's own quick guess says 2+ invoices are pending) or empty, then
-    // gets filled in — or emptied back out — once refreshPayAllLink's call
-    // to the server comes back with the real answer. The server is the only
-    // source of truth for whether a combined link actually makes sense right
-    // now (see create-storefront-bulk-payment-link); this is just so the
-    // button doesn't pop in from nothing after a beat when it's clearly
-    // going to be needed.
+    // "Pay All" — only worth showing once there's more than one pending
+    // invoice to combine; a single pending invoice already has its own Pay
+    // Now button right below. The amount shown is computed client-side from
+    // the same balances already on screen — the actual link (and its
+    // authoritative amount) is only created server-side when tapped, see
+    // payAllPending.
     const pending = invoices.filter(inv => inv.payment_status !== 'paid');
-    // Client's own quick estimate, shown only while waiting on the server's
-    // real answer — summed from the same balances already on screen, so
-    // it's right in the common case and gets replaced the moment
-    // refreshPayAllLink resolves with the server's authoritative amount
-    // (which could differ if something changed in the instant between this
-    // render and that call landing).
-    const pendingEstimate = pending.reduce((sum, inv) => sum + (+inv.balance || 0), 0);
-    const payAllHtml = '<div id="pay-all-area" style="margin-bottom:16px">' +
-      (pending.length >= 2
-        ? '<button class="btn-primary" disabled><span class="spinner"></span>Checking total — ₹'+pendingEstimate.toFixed(2)+'…</button>'
-        : '') +
-      '</div>';
+    const pendingTotal = pending.reduce((sum, inv) => sum + (+inv.balance || 0), 0);
+    const payAllHtml = pending.length >= 2
+      ? '<div style="margin-bottom:16px">' +
+          '<button class="btn-primary" id="pay-all-btn" onclick="payAllPending()">Pay All Pending — ₹'+pendingTotal.toFixed(2)+' ('+pending.length+' invoices)</button>' +
+        '</div>'
+      : '';
 
     results.innerHTML = payAllHtml + invoices.map(inv => {
       const rows = inv.items.map(i => {
@@ -215,12 +207,6 @@ async function lookup() {
           : '') +
       '</div>';
     }).join('');
-
-    // Fire-and-forget — never blocks the invoice list itself from showing,
-    // and never re-disables the lookup button; this just fills in (or
-    // empties back out) the #pay-all-area placeholder above once the server
-    // responds. See refreshPayAllLink for what "the real answer" means.
-    refreshPayAllLink(phoneInput);
   } catch (e) {
     results.innerHTML = '<div class="err-box show">Could not load invoices: '+escH(e.message)+'</div>';
   } finally {
@@ -229,37 +215,35 @@ async function lookup() {
   }
 }
 
-// Keeps the "Pay All" link in sync with reality, re-run on every lookup
-// (including the silent tab-refocus auto-refresh below) rather than only
-// when someone taps a button — so if a child invoice's balance changes
-// between visits, the combined link is already recalculated and ready
-// before the customer even looks for it, not computed on demand. The
-// server (create-storefront-bulk-payment-link) does the real work: reusing
-// the existing link untouched if nothing changed, replacing it if the
-// pending set or an amount did, or clearing it out if fewer than 2
-// invoices are pending now. This function only ever renders whatever the
-// server says is true — no amount/count is computed client-side.
-async function refreshPayAllLink(phone) {
-  let area = document.getElementById('pay-all-area');
-  if (!area) return; // nothing to fill in (shouldn't happen, but don't throw)
+// "Pay All" — one Razorpay link for every pending invoice currently shown,
+// created server-side only when tapped (create-storefront-bulk-payment-link
+// does the actual work: reusing an existing unconsumed link if the pending
+// set/amounts match, replacing it if not). No per-order ownership check
+// needed client-side since the server derives the order list from the
+// phone itself.
+async function payAllPending() {
+  const btn = document.getElementById('pay-all-btn');
+  if (btn.disabled) return;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Proceeding to pay…';
   try {
     const res = await fetch(SUPABASE_URL + '/functions/v1/create-storefront-bulk-payment-link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON },
-      body: JSON.stringify({ phone: phone }),
+      body: JSON.stringify({ phone: lastSearchedPhone }),
     });
     const data = await res.json();
-    // Guard against this call's response landing after the customer already
-    // searched a different number (or re-ran the same lookup) in the
-    // meantime — never paint over a newer screen with a stale answer.
-    if (phone !== lastSearchedPhone) return;
-    area = document.getElementById('pay-all-area');
-    if (!area) return;
-    if (!res.ok || !data.bulk) { area.innerHTML = ''; return; }
-    area.innerHTML = '<a class="btn-primary" style="text-decoration:none;box-sizing:border-box" href="'+escH(data.payment_url)+'">Pay All Pending — ₹'+(+data.amount || 0).toFixed(2)+' ('+data.sales_order_ids.length+' invoices)</a>';
+    if (!res.ok || !data.bulk) throw new Error(data.error || 'Could not create payment link');
+    window.location.href = data.payment_url;
   } catch (e) {
-    area = document.getElementById('pay-all-area');
-    if (area) area.innerHTML = '';
+    btn.disabled = false;
+    btn.textContent = originalText;
+    const err = document.createElement('div');
+    err.className = 'err-box show';
+    err.style.marginBottom = '10px';
+    err.textContent = 'Could not start payment: ' + e.message;
+    document.getElementById('results').prepend(err);
   }
 }
 
