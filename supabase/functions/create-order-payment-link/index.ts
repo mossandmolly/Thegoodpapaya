@@ -48,6 +48,15 @@ async function requireAuth(req: Request): Promise<void> {
   if (!res.ok) throw new Error('Not authenticated');
 }
 
+// Strips whatever country code and spacing someone typed — "+91 98766
+// 97877" / "91-9876697877" / "9876697877" all normalize the same. See
+// set-order-phone's identical helper for why "keep the last 10 digits" is
+// a safe rule regardless of which country code was typed.
+function normalizePhoneDigits(raw: string): string {
+  const digits = (raw || '').replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
 async function cancelPaymentLink(linkId: string, auth: string): Promise<void> {
   await fetch(`https://api.razorpay.com/v1/payment_links/${linkId}/cancel`, {
     method: 'POST',
@@ -93,8 +102,9 @@ Deno.serve(async (req) => {
       throw new Error('Order has not been invoiced yet');
     }
 
-    const phone = (inputPhone || order.phone || '').trim();
-    if (!phone) throw new Error('Missing phone number');
+    const rawPhone = (inputPhone || order.phone || '').trim();
+    if (!rawPhone) throw new Error('Missing phone number');
+    const phone = normalizePhoneDigits(rawPhone);
 
     const keyId     = env('RAZORPAY_KEY_ID');
     const keySecret = env('RAZORPAY_KEY_SECRET');
