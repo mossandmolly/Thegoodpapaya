@@ -4636,11 +4636,11 @@ async function editCustomerPhone(soid){
 // over-matching bug this replaced (a propagation prompt listing the whole
 // community instead of just the same house).
 //
-// Falls back to the old plain-substring heuristic (strip all digits for a
-// loose "society" string, keep every digit group) when the name doesn't
-// match any registered community keyword at all — so a society that
-// hasn't been added to Config -> Community Priority yet still gets
-// reasonable matching instead of none.
+// Deliberately NO fallback for a name that matches no registered keyword
+// at all — per Somya, a loose substring guess (e.g. "villa" inside
+// "summerfieldvilla") risks offering two genuinely unrelated houses as a
+// match. A society not yet in Config -> Community Priority just gets no
+// suggestions; that has to be done by hand.
 function phoneMatchTokens(name){
   const lower=(name||'').toLowerCase();
   let bestKw=null,bestLen=-1,bestCommunityId=null;
@@ -4649,39 +4649,19 @@ function phoneMatchTokens(name){
       if(kw&&lower.includes(kw.toLowerCase())&&kw.length>bestLen){bestKw=kw.toLowerCase();bestLen=kw.length;bestCommunityId=c.unique_id;}
     });
   });
-  if(bestCommunityId){
-    const remainder=lower.split(bestKw).join(' ');
-    return{communityId:bestCommunityId,society:null,digits:remainder.match(/\d+/g)||[]};
-  }
-  return{
-    communityId:null,
-    society:lower.replace(/\d+/g,'').replace(/[^a-z]/g,'').trim(),
-    digits:lower.match(/\d+/g)||[],
-  };
+  if(!bestCommunityId)return{communityId:null,digits:[]};
+  const remainder=lower.split(bestKw).join(' ');
+  return{communityId:bestCommunityId,digits:remainder.match(/\d+/g)||[]};
 }
 
 async function findPhonePropagationCandidates(customerName){
   const names=await ensureCustomerNameOptions();
   const cur=phoneMatchTokens(customerName);
-  if(!cur.digits.length)return[];
-  if(!cur.communityId&&!cur.society)return[];
+  if(!cur.communityId||!cur.digits.length)return[];
   return names.filter(n=>{
     if(n===customerName)return false;
     const cand=phoneMatchTokens(n);
-    if(cur.communityId||cand.communityId){
-      // Either side matched a real registered community — require BOTH to
-      // match the SAME one, rather than falling back to the loose society
-      // string (which would reintroduce the over-matching this fixed).
-      if(cand.communityId!==cur.communityId)return false;
-    }else{
-      if(!cand.society)return false;
-      // Bidirectional — "Villa 23" vs "Summerfieldvilla 23" should match
-      // each other even though neither society string fully contains the
-      // other in just one direction (e.g. the shorter name is a substring
-      // of the longer one, not vice versa).
-      const societyMatch=cand.society.includes(cur.society)||cur.society.includes(cand.society);
-      if(!societyMatch)return false;
-    }
+    if(cand.communityId!==cur.communityId)return false;
     return cur.digits.some(d=>cand.digits.includes(d));
   });
 }
