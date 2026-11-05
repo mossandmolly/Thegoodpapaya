@@ -91,11 +91,16 @@ Deno.serve(async (req) => {
 
     // The ownership check described above — same three phone forms
     // get_invoices_by_phone matches on (bare / +91-prefixed / stripped).
+    // .in() rather than a hand-built .or() string — a literal "+" embedded
+    // in an .or() filter string isn't safely escaped by the client and can
+    // get corrupted in transit (treated as a space), silently breaking the
+    // +91-prefixed branch, which is exactly the form sync-invoices
+    // normalizes numbers to. .in() encodes each value properly.
     const { data: matches, error: matchErr } = await supabase
       .from('invoice_line_items')
       .select('id')
       .eq('sales_order_id', sales_order_id)
-      .or(`phone_number.eq.${phone},phone_number.eq.+91${phone}`)
+      .in('phone_number', [phone, '+91' + phone])
       .limit(1);
     if (matchErr) throw new Error(matchErr.message);
     if (!matches || !matches.length) {
