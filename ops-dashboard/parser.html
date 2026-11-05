@@ -4616,10 +4616,19 @@ function phoneEntryHtml(order){
   if(order.orderStatus==='cancelled')return '';
   if(order.phone){
     return ' <span class="or-phone-tag" title="Used for this customer\'s invoice lookup + payment link">📞 '+escH(order.phone)+
+      ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();copyPhoneNumber(this,'+escH(JSON.stringify(order.phone))+')" title="Copy phone number">⧉</a>'+
       ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Edit">✎</a>'+
       ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();openPhoneSharedModal('+escH(JSON.stringify(order.phone))+')" title="See every house currently sharing this number, and remove any that are wrong">📋</a></span>';
   }
   return ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Needed so this customer can look up their invoice, and for an automatic payment link if delivered unpaid">+ Add phone</a>';
+}
+
+function copyPhoneNumber(linkEl,phone){
+  navigator.clipboard.writeText(phone).then(()=>{
+    const original=linkEl.textContent;
+    linkEl.textContent='✓';
+    setTimeout(()=>{linkEl.textContent=original;},1200);
+  }).catch(()=>uxAlert('Could not copy — your browser blocked clipboard access.'));
 }
 
 // Every customer_name currently tied to this phone, across all three
