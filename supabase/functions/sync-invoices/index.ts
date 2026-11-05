@@ -729,15 +729,24 @@ async function syncInvoices() {
 // since=2026-10-27), for manually pulling a real Zoho status for a backlog
 // of older invoices in one shot — e.g. ones paid directly in Zoho that
 // never had a Razorpay event to trigger razorpay-webhook, and fell outside
-// the normal 7-day window below. The scheduled cron never passes this, so
-// its regular day-to-day behavior is unchanged.
-async function reconcileOldInvoices(sinceOverride?: string) {
+// the normal 7-day window below.
+// untilOverride: optional end date (?until=2026-10-30), to bound a manual
+// run to a small window instead of always running up to yesterday — a wide
+// since..yesterday run processes every changed invoice across the whole
+// range in one go with no batching, so a large backlog (lots of invoices
+// that actually differ from Zoho) can run long enough to risk the function
+// timing out partway through, silently leaving everything after that point
+// unprocessed. Scoping to a few days at a time keeps each run small and
+// fast, and can just be repeated across the full backlog in slices.
+// The scheduled cron passes neither, so its regular day-to-day behavior
+// (always exactly D-7..D-1) is unchanged.
+async function reconcileOldInvoices(sinceOverride?: string, untilOverride?: string) {
   const today     = todayIST();
   const since7    = sinceOverride || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
-  // yesterday (D-1)
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+  // yesterday (D-1), unless a narrower end date was given for a manual run
+  const yesterday = untilOverride || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
 
-  console.log(`[reconcile] Checking D-1 and earlier (${since7} to ${yesterday})`);
+  console.log(`[reconcile] Checking ${since7} to ${yesterday}`);
 
   // 1. Fetch all Zoho invoice IDs from last 7 days (excluding today)
   const zohoIds = await fetchZohoInvoiceIds(since7, yesterday);
@@ -795,7 +804,8 @@ Deno.serve(async (req) => {
     const mode = new URL(req.url).searchParams.get('mode') ?? 'sync';
     if (mode === 'reconcile') {
       const since = new URL(req.url).searchParams.get('since') ?? undefined;
-      await reconcileOldInvoices(since);
+      const until = new URL(req.url).searchParams.get('until') ?? undefined;
+      await reconcileOldInvoices(since, until);
     } else if (mode === 'qr-sweep') {
       // Razorpay-only (no Zoho calls at all) — runs on its own tight cron,
       // independent of the Zoho sync interval, so QR refresh timing never
