@@ -6440,6 +6440,7 @@ function orderNeedsPaymentLink(order){
   return isFullyInvoiced(order)&&!order.paymentCollected&&!order.razorpayUrl&&!order.qrImageUrl;
 }
 let overviewNoLinkOnly=false;
+let overviewNoPhoneOnly=false;
 
 // Restored — removed when Sequence view replaced the Time Sensitive sort,
 // but that was a sort order, not a filter; this is still a separate,
@@ -6451,6 +6452,7 @@ function orderMatchesOverviewFilter(order){
   if(overviewVegetableOnly&&!orderHasVegetable(order))return false;
   if(overviewHeldOnly&&!orderHasHeldItem(order))return false;
   if(overviewNoLinkOnly&&!orderNeedsPaymentLink(order))return false;
+  if(overviewNoPhoneOnly&&order.phone)return false;
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
   if(overviewDeliveryFilter!=='all'){
     const ds=order.deliveryStatus||'not_dispatched';
@@ -6507,6 +6509,11 @@ function toggleOverviewNoLinkFilter(){
   renderOrdersList();
 }
 
+function toggleOverviewNoPhoneFilter(){
+  overviewNoPhoneOnly=!overviewNoPhoneOnly;
+  renderOrdersList();
+}
+
 function toggleOverviewDeadlineFilter(){
   overviewDeadlineOnly=!overviewDeadlineOnly;
   renderOrdersList();
@@ -6527,6 +6534,7 @@ function renderOverviewSummaryPills(tripInfo){
   const withVegetable=orders.filter(orderHasVegetable).length;
   const withHeld=active.filter(orderHasHeldItem).length;
   const noLink=active.filter(orderNeedsPaymentLink).length;
+  const noPhone=active.filter(o=>!o.phone).length;
   const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
   const pills=[
     {key:'all',label:'All',count:total},
@@ -6542,6 +6550,7 @@ function renderOverviewSummaryPills(tripInfo){
   (withVegetable?'<span class="filter-pill'+(overviewVegetableOnly?' active':'')+'" style="color:#2d6b2d" onclick="toggleOverviewVegetableFilter()">🥦 Has vegetable ('+withVegetable+')</span>':'')+
   (withHeld?'<span class="filter-pill'+(overviewHeldOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewHeldFilter()">⏸ Held ('+withHeld+')</span>':'')+
   (noLink?'<span class="filter-pill'+(overviewNoLinkOnly?' active':'')+'" style="color:#c2570a;font-weight:700" onclick="toggleOverviewNoLinkFilter()">🔗 No link generated ('+noLink+')</span>':'')+
+  (noPhone?'<span class="filter-pill'+(overviewNoPhoneOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewNoPhoneFilter()">📵 No phone ('+noPhone+')</span>':'')+
   (withDeadline?'<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>':'');
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
