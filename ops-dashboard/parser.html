@@ -4256,7 +4256,7 @@ function renderOrdersList(){
           (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           deliverWindowBadge+
-          (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus):'')+
+          (!cancelled&&fullyInvoiced?deliveryStatusBadgeHtml(order.deliveryStatus,order.deliveredAt):'')+
           (!cancelled&&order.invoiceDownloadedAt?' <span class="invoice-downloaded-badge" title="Invoice downloaded '+escH(new Date(order.invoiceDownloadedAt).toLocaleString())+'">✓ downloaded</span>':'')+
           (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'')+
           (!cancelled&&orderHasPendingReview(order)?' <span class="order-status-badge" style="background:#e6c927;color:#3a2e00" title="Created by the WhatsApp listener — needs review">💬 PENDING REVIEW</span>':'');
@@ -4520,9 +4520,15 @@ function deliveryWindowLabelWithDefault(order){
 // orders.delivery_status — 'not_dispatched' is the DB column's default
 // (since migration 031), so every invoiced order starts here and stays here
 // until dispatch-order/mark-delivered move it along.
-function deliveryStatusBadgeHtml(deliveryStatus){
-  if(deliveryStatus==='partially_delivered')return ' <span class="order-status-badge" style="background:#a0522d">PARTIALLY DELIVERED</span>';
-  if(deliveryStatus==='delivered')return ' <span class="order-status-badge" style="background:#2d6b2d">DELIVERED</span>';
+// deliveredAt (orders.delivered_at, set by mark-delivered) is only ever
+// meaningful once the order has actually reached 'delivered' or
+// 'partially_delivered' — shown as a tooltip on the badge itself rather
+// than a separate element, same spot a rider or ops staff is already
+// looking when checking delivery status.
+function deliveryStatusBadgeHtml(deliveryStatus,deliveredAt){
+  const deliveredTitle=deliveredAt?' title="Delivered '+escH(new Date(deliveredAt).toLocaleString())+'"':'';
+  if(deliveryStatus==='partially_delivered')return ' <span class="order-status-badge" style="background:#a0522d"'+deliveredTitle+'>PARTIALLY DELIVERED</span>';
+  if(deliveryStatus==='delivered')return ' <span class="order-status-badge" style="background:#2d6b2d"'+deliveredTitle+'>DELIVERED</span>';
   if(deliveryStatus==='ofd')return ' <span class="order-status-badge" style="background:#2f6690">OUT FOR DELIVERY</span>';
   return ' <span class="order-status-badge" style="background:#8a7a6a">NOT DISPATCHED</span>';
 }
@@ -9949,7 +9955,7 @@ function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions,gr
       '</div>'
     :'';
 
-  const deliveryStatusBadge=deliveryStatusBadgeHtml(order.deliveryStatus);
+  const deliveryStatusBadge=deliveryStatusBadgeHtml(order.deliveryStatus,order.deliveredAt);
 
   // Delivered: shows both PAID and NOT PAID — at that point it's a genuine
   // outstanding-payment flag worth calling out. Still-OFD: only shows PAID
