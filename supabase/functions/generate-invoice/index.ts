@@ -27,6 +27,10 @@
 // the right one, and it'll use that item's catalog rate.
 //
 // Sets cf_requested_quantity custom field per line item.
+// Applies orders.discount_type/discount_value (set from Order Overview, see
+// set-order-discount) as a whole-invoice discount if present — migration
+// 140. Zoho computes the discounted total itself; invoice_total below
+// already reflects it.
 // Updates orders.invoice_status, zoho_invoice_id, invoice_number, invoice_total, balance_due.
 // Marks the order_items 'invoiced' on success.
 // Does NOT reset amount_paid — cumulative across regenerations.
@@ -392,6 +396,7 @@ async function createZohoInvoice(
   lineItems: Array<{ name: string; requested_qty: number; qty: number; rate: number; description?: string; item_id?: string }>,
   token: string,
   orgId: string,
+  discount?: { type: 'flat' | 'percent'; value: number },
 ): Promise<{ invoice_id: string; invoice_number: string; invoice_total: number }> {
   const body = {
     customer_id:      contactId,
@@ -410,6 +415,16 @@ async function createZohoInvoice(
       rate:        i.rate,
       custom_fields: [{ api_name: 'cf_requested_quantity', value: i.requested_qty }],
     })),
+    // Whole-invoice discount, not per-line — orders.discount_type/_value,
+    // set from Order Overview. Zoho's `discount` field takes a plain number
+    // for a flat amount, or a "N%" string for a percentage; which one
+    // applies is otherwise ambiguous, hence discount_type. entity_level
+    // (vs item_level) is what makes this apply to the invoice as a whole.
+    ...(discount ? {
+      discount: discount.type === 'percent' ? `${discount.value}%` : discount.value,
+      discount_type: 'entity_level',
+      is_discount_before_tax: true,
+    } : {}),
   };
   const res  = await fetch(zohoUrl('/invoices', orgId), {
     method: 'POST',
@@ -580,8 +595,11 @@ Deno.serve(async (req) => {
     }
 
     const invoiceDate = order.invoice_date ?? new Date().toISOString().split('T')[0];
+    const discount = order.discount_type && order.discount_value != null
+      ? { type: order.discount_type as 'flat' | 'percent', value: Number(order.discount_value) }
+      : undefined;
     const { invoice_id, invoice_number, invoice_total } = await createZohoInvoice(
-      contactId, sales_order_id, invoiceDate, lineItems, token, orgId,
+      contactId, sales_order_id, invoiceDate, lineItems, token, orgId, discount,
     );
     await markZohoInvoiceSent(invoice_id, token, orgId);
 

@@ -3863,7 +3863,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at,sequence_number,sequenced_at')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at,sequence_number,sequenced_at,discount_type,discount_value')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -3911,7 +3911,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at,sequence_number,sequenced_at,dispatched_at')
+      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at,sequence_number,sequenced_at,dispatched_at,discount_type,discount_value')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -4048,6 +4048,8 @@ async function loadTodaysOrders(){
         assignedRider: o?.assigned_rider||null,
         dispatchedAt:  o?.dispatched_at||null,
         deliveredAt:   o?.delivered_at||null,
+        discountType:  o?.discount_type||null,
+        discountValue: o?.discount_value??null,
         isPickup:      !!o?.is_pickup,
         paymentCollected:      !!o?.payment_collected,
         paymentCollectedMethod:o?.payment_collected_method||null,
@@ -4303,6 +4305,7 @@ function renderOrdersList(){
             (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
             paymentMechanismHtml(order)+
             phoneEntryHtml(order)+
+            discountEntryHtml(order)+
           '</span>'+
           '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0">'+
             paidPill+
@@ -4628,6 +4631,71 @@ function phoneEntryHtml(order){
       ' <a href="javascript:void(0)" class="pay-link" style="'+iconStyle+'" onclick="event.stopPropagation();openPhoneSharedModal('+escH(JSON.stringify(order.phone))+')" title="See every house currently sharing this number, and remove any that are wrong">📋</a></span>';
   }
   return ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Needed so this customer can look up their invoice, and for an automatic payment link if delivered unpaid">+ Add phone</a>';
+}
+
+// orders.discount_type/discount_value (migration 140) — applied as a
+// whole-invoice discount by generate-invoice. Editable both before and
+// after invoicing; see editOrderDiscount for what happens on an
+// already-invoiced order.
+function discountEntryHtml(order){
+  if(order.orderStatus==='cancelled')return '';
+  if(order.discountType){
+    const label=order.discountType==='percent'?(order.discountValue+'% off'):('₹'+order.discountValue+' off');
+    return ' <span class="or-phone-tag" title="Applied to the Zoho invoice as a whole-invoice discount">💸 '+escH(label)+
+      ' <a href="javascript:void(0)" class="pay-link" style="margin-left:8px;font-size:19px;line-height:1;display:inline-block;padding:6px;vertical-align:middle" onclick="event.stopPropagation();editOrderDiscount(\''+order.soid+'\')" title="Edit">✎</a></span>';
+  }
+  return ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editOrderDiscount(\''+order.soid+'\')" title="Applies to the Zoho invoice — if this order is already invoiced, the invoice is regenerated immediately">+ Add discount</a>';
+}
+
+// Single prompt doing double duty for both discount_type and discount_value
+// — "50" means ₹50 off, "10%" means 10% off, matching how someone would
+// naturally say either one out loud. Blank clears an existing discount.
+// If the order is already invoiced (orders.zoho_invoice_id set), saving
+// here immediately regenerates the Zoho invoice with the new discount —
+// generate-invoice already rebuilds the invoice from current order state on
+// every call when zoho_invoice_id is present (same path item edits trigger
+// via autoRegenerateInvoiceIfReady), so this just calls it directly rather
+// than going through that function's own, differently-scoped "ready" gate
+// (which deliberately skips an order that's already fully invoiced with
+// nothing pending — exactly the case here).
+async function editOrderDiscount(soid){
+  const order=currentOrdersById[soid];
+  if(!order)return;
+  const current=order.discountType?(order.discountType==='percent'?order.discountValue+'%':String(order.discountValue)):'';
+  const entered=await uxPrompt('Discount for '+order.customer+' — enter an amount (e.g. 50) or a percentage (e.g. 10%). Leave blank to remove any discount:',current);
+  if(entered===null)return;
+  const trimmed=entered.trim();
+  let discount_type=null,discount_value=null;
+  if(trimmed){
+    const isPercent=trimmed.endsWith('%');
+    const num=parseFloat(isPercent?trimmed.slice(0,-1):trimmed.replace(/^₹/,''));
+    if(!Number.isFinite(num)||num<0){uxAlert('Enter a valid amount, like 50 or 10%.');return;}
+    if(isPercent&&num>100){uxAlert('Percentage discount cannot exceed 100%.');return;}
+    discount_type=isPercent?'percent':'flat';
+    discount_value=num;
+  }
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/set-order-discount',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,discount_type,discount_value}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not save discount');
+    evictCustomerLookupCache(soid);
+    if(order.invoiceStatus==='done'){
+      try{
+        await ensureCatalogSyncedToday();
+        await generateInvoiceCore(soid);
+      }catch(e){
+        console.error('Discount-triggered invoice regeneration failed for '+soid,e);
+        uxAlert('Discount saved, but regenerating the invoice failed: '+e.message+'\n\nUse "Generate Invoice" to retry.');
+      }
+    }
+    await loadTodaysOrders();
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+  }
 }
 
 function copyPhoneNumber(linkEl,phone){
