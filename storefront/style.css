@@ -97,6 +97,8 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .inv-items tfoot td{padding:7px 4px 0;border-bottom:none;font-weight:700}
 .inv-items .total-row td{color:#2b2320}
 .inv-items .balance-row td{color:#b3261e}
+.inv-items .subtotal-row td{color:#8a7a6a;font-weight:400}
+.inv-items .discount-row td{color:#2d6b2d}
 .invoice-card .actions{display:flex;gap:8px}
 .invoice-card .actions a,.invoice-card .actions button{flex:1;text-align:center;padding:9px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:inherit}
 .invoice-card .actions button:disabled{opacity:.7;cursor:default}
