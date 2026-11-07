@@ -174,11 +174,27 @@ async function lookup() {
       : '';
 
     results.innerHTML = payAllHtml + invoices.map(inv => {
+      let itemsSubtotal = 0;
       const rows = inv.items.map(i => {
         const qty = +i.qty || 0, rate = +i.price || 0, value = qty * rate;
+        itemsSubtotal += value;
         return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+'</td><td>₹'+rate.toFixed(2)+'</td><td>₹'+value.toFixed(2)+'</td></tr>';
       }).join('');
       const balance = +inv.balance || 0;
+      const invoiceTotal = +inv.invoice_total || 0;
+      // Computed from the real numbers (item rows vs. the post-discount
+      // total Zoho actually billed) rather than re-deriving from
+      // discount_type/discount_value — guarantees Subtotal - Discount =
+      // Total reconciles exactly regardless of rounding, flat vs percent,
+      // or a discount edited after these item rows were last written.
+      // Only shown when a discount is actually on file AND it's enough to
+      // show (a few paise of float noise shouldn't render a "Discount" row
+      // on every invoice).
+      const discountAmount = inv.discount_type ? (itemsSubtotal - invoiceTotal) : 0;
+      const showDiscount = inv.discount_type && discountAmount > 0.01;
+      const discountLabel = inv.discount_type === 'percent'
+        ? 'Discount ('+(+inv.discount_value||0)+'% off)'
+        : 'Discount';
       return '<div class="invoice-card">' +
         '<div class="row1">' +
           '<span class="inv-num">'+escH(inv.invoice_number || inv.sales_order_id || 'Invoice')+'</span>' +
@@ -194,7 +210,9 @@ async function lookup() {
           '<thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Value</th></tr></thead>' +
           '<tbody>'+rows+'</tbody>' +
           '<tfoot>' +
-            '<tr class="total-row"><td colspan="3">Total</td><td>₹'+(+inv.invoice_total || 0).toFixed(2)+'</td></tr>' +
+            (showDiscount ? '<tr class="subtotal-row"><td colspan="3">Subtotal</td><td>₹'+itemsSubtotal.toFixed(2)+'</td></tr>' : '') +
+            (showDiscount ? '<tr class="discount-row"><td colspan="3">'+escH(discountLabel)+'</td><td>−₹'+discountAmount.toFixed(2)+'</td></tr>' : '') +
+            '<tr class="total-row"><td colspan="3">Total</td><td>₹'+invoiceTotal.toFixed(2)+'</td></tr>' +
             (balance > 0 ? '<tr class="balance-row"><td colspan="3">Balance due</td><td>₹'+balance.toFixed(2)+'</td></tr>' : '') +
           '</tfoot>' +
         '</table>' +
