@@ -4570,7 +4570,8 @@ function paymentMechanismHtml(order){
       ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link" onclick="event.stopPropagation()">💳 payment link</a>'
       :(missingIsFailure?' <span class="pay-missing">Payment link not generated</span>':'');
   return mechanism+
-    ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();regeneratePaymentLinkSingle('+escH(JSON.stringify(order.soid))+')" title="Clear the existing QR/link and generate a new payment link">🔄 Generate</a>';
+    ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();regeneratePaymentLinkSingle('+escH(JSON.stringify(order.soid))+')" title="Clear the existing QR/link and generate a new payment link">🔄 Generate</a>'+
+    (order.paymentCollected?'':' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();markOrderPaid('+escH(JSON.stringify(order.soid))+')" title="Customer paid outside Razorpay — cash, or a shared screenshot. Checks Zoho\'s live invoice balance first.">💵 Mark as Paid</a>');
 }
 
 // Razorpay's own contact-field constraint — a stray non-phone value (e.g.
@@ -4606,6 +4607,59 @@ async function regeneratePaymentLinkSingle(soid){
     });
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Could not generate payment link');
+    evictCustomerLookupCache(soid);
+    await loadTodaysOrders();
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+  }
+}
+
+// Customer paid outside Razorpay entirely (cash handed to a rider after
+// delivery, or a payment screenshot shared directly) — unlike
+// mark-delivered's own cash-collection flag, this is the one path that
+// actually records the payment against the real Zoho invoice too, not just
+// this panel. Two round trips to mark-order-paid on purpose: the first is
+// read-only (fetches Zoho's CURRENT live balance, never trusts whatever
+// this panel last synced) so the confirm dialog shows a real number before
+// anything is written anywhere; the second actually commits, only once
+// confirmed.
+async function markOrderPaid(soid){
+  const order=currentOrdersById[soid];
+  if(!order)return;
+  await ensureRiderName();
+
+  let check;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-order-paid',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid}),
+    });
+    check=await res.json();
+    if(!res.ok)throw new Error(check.error||'Could not check Zoho invoice');
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+    return;
+  }
+
+  const amt=(+check.zoho_balance||0).toFixed(2);
+  const msg=check.discrepancy
+    ?'⚠️ Discrepancy — this panel shows ₹'+(+check.local_balance||0).toFixed(2)+' due, but Zoho\'s live invoice shows ₹'+amt+' due.\n\nMark as fully paid anyway?'+(check.zoho_balance>0?' This records a ₹'+amt+' cash payment in Zoho.':'')
+    :'Found Zoho invoice — ₹'+amt+' due. Mark as paid?';
+  if(!await uxConfirm(msg))return;
+
+  const methodEntered=((await uxPrompt('How did the customer pay — type "cash" or "screenshot":','cash'))||'').trim().toLowerCase();
+  if(!methodEntered)return;
+  const method=methodEntered.startsWith('s')?'screenshot':'cash';
+
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-order-paid',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,commit:true,method,marked_by:riderName}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not mark as paid');
     evictCustomerLookupCache(soid);
     await loadTodaysOrders();
   }catch(e){
