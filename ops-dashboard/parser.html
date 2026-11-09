@@ -1676,6 +1676,10 @@ let isTeamViewAllowed=false;
 // top of everything user@ has; user@ itself does not.
 const PACKER_REASSIGN_EXTRA_ALLOWED_EMAILS=new Set(['rohith@thegoodpapaya.com']);
 let isPackerReassignAllowed=false;
+// Mark as Paid (markOrderPaid) — records a real Zoho payment, so narrower
+// than most other actions on this page. Somya plus rohith@ only.
+const MARK_PAID_EXTRA_ALLOWED_EMAILS=new Set(['rohith@thegoodpapaya.com']);
+let isMarkPaidAllowed=false;
 
 // Neither the delivery login nor the shared packer/admin login distinguish
 // individual people — there's no per-person auth for either role, so
@@ -1753,6 +1757,7 @@ async function initAppAfterLogin(){
   isVegPerfAllowed=(session?.user?.email||'').toLowerCase()===VEGPERF_ALLOWED_EMAIL;
   isTeamViewAllowed=isVegPerfAllowed||TEAM_VIEW_EXTRA_ALLOWED_EMAILS.has((session?.user?.email||'').toLowerCase());
   isPackerReassignAllowed=isVegPerfAllowed||PACKER_REASSIGN_EXTRA_ALLOWED_EMAILS.has((session?.user?.email||'').toLowerCase());
+  isMarkPaidAllowed=isVegPerfAllowed||MARK_PAID_EXTRA_ALLOWED_EMAILS.has((session?.user?.email||'').toLowerCase());
   applyRoleRestrictions();
   await ensureRiderName();
   syncViewDatePickers();
@@ -4579,7 +4584,7 @@ function paymentMechanismHtml(order){
 // just a different spot in the row, with its own spacing since this row
 // gets crowded (phone icons + discount entry + this).
 function markAsPaidEntryHtml(order){
-  if(order.isPickup||order.orderStatus==='cancelled'||!isFullyInvoiced(order)||order.paymentCollected)return '';
+  if(!isMarkPaidAllowed||order.isPickup||order.orderStatus==='cancelled'||!isFullyInvoiced(order)||order.paymentCollected)return '';
   return ' <a href="javascript:void(0)" class="pay-link" style="margin-left:10px" onclick="event.stopPropagation();markOrderPaid('+escH(JSON.stringify(order.soid))+')" title="Customer paid outside Razorpay — cash, or a shared screenshot. Checks Zoho\'s live invoice balance first.">💵 Mark as Paid</a>';
 }
 
