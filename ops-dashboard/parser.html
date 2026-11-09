@@ -4306,6 +4306,7 @@ function renderOrdersList(){
             paymentMechanismHtml(order)+
             phoneEntryHtml(order)+
             discountEntryHtml(order)+
+            markAsPaidEntryHtml(order)+
           '</span>'+
           '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0">'+
             paidPill+
@@ -4570,8 +4571,16 @@ function paymentMechanismHtml(order){
       ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link" onclick="event.stopPropagation()">💳 payment link</a>'
       :(missingIsFailure?' <span class="pay-missing">Payment link not generated</span>':'');
   return mechanism+
-    ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();regeneratePaymentLinkSingle('+escH(JSON.stringify(order.soid))+')" title="Clear the existing QR/link and generate a new payment link">🔄 Generate</a>'+
-    (order.paymentCollected?'':' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();markOrderPaid('+escH(JSON.stringify(order.soid))+')" title="Customer paid outside Razorpay — cash, or a shared screenshot. Checks Zoho\'s live invoice balance first.">💵 Mark as Paid</a>');
+    ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();regeneratePaymentLinkSingle('+escH(JSON.stringify(order.soid))+')" title="Clear the existing QR/link and generate a new payment link">🔄 Generate</a>';
+}
+
+// Moved out of paymentMechanismHtml to sit next to discountEntryHtml
+// instead — same gate (invoiced, not cancelled/pickup, not already paid),
+// just a different spot in the row, with its own spacing since this row
+// gets crowded (phone icons + discount entry + this).
+function markAsPaidEntryHtml(order){
+  if(order.isPickup||order.orderStatus==='cancelled'||!isFullyInvoiced(order)||order.paymentCollected)return '';
+  return ' <a href="javascript:void(0)" class="pay-link" style="margin-left:10px" onclick="event.stopPropagation();markOrderPaid('+escH(JSON.stringify(order.soid))+')" title="Customer paid outside Razorpay — cash, or a shared screenshot. Checks Zoho\'s live invoice balance first.">💵 Mark as Paid</a>';
 }
 
 // Razorpay's own contact-field constraint — a stray non-phone value (e.g.
