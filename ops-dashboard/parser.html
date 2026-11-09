@@ -4767,15 +4767,28 @@ function discountEntryHtml(order){
 async function editOrderDiscount(soid){
   const order=currentOrdersById[soid];
   if(!order)return;
-  const current=order.discountType?(order.discountType==='percent'?order.discountValue+'%':String(order.discountValue)):'';
-  const entered=await uxPrompt('Discount for '+order.customer+' — enter an amount (e.g. 50) or a percentage (e.g. 10%). Leave blank to remove any discount:',current);
+  const current=order.discountType?(order.discountType==='percent'?order.discountValue+'% off':'₹'+order.discountValue+' off'):null;
+  // Type chosen up front via two real buttons (uxChoice — same generic
+  // modal every other choice dialog here uses) rather than inferring it
+  // from whether the typed value happens to end in '%', which wasn't
+  // obvious from the dialog alone.
+  const choice=await uxChoice(
+    'Discount for '+order.customer+(current?' — currently '+current+'.':'.')+'\n\nChoose a type, or Cancel to leave it unchanged.',
+    '₹ Flat amount','% Percentage','Cancel',
+  );
+  if(!choice)return;
+  const isPercent=choice==='secondary';
+  const existingMatchesType=order.discountType===(isPercent?'percent':'flat');
+  const entered=await uxPrompt(
+    isPercent?'Percentage off (e.g. 10). Leave blank to remove any discount:':'Amount off, in ₹ (e.g. 50). Leave blank to remove any discount:',
+    existingMatchesType?String(order.discountValue):'',
+  );
   if(entered===null)return;
   const trimmed=entered.trim();
   let discount_type=null,discount_value=null;
   if(trimmed){
-    const isPercent=trimmed.endsWith('%');
-    const num=parseFloat(isPercent?trimmed.slice(0,-1):trimmed.replace(/^₹/,''));
-    if(!Number.isFinite(num)||num<0){uxAlert('Enter a valid amount, like 50 or 10%.');return;}
+    const num=parseFloat(trimmed.replace(/[₹%]/g,''));
+    if(!Number.isFinite(num)||num<0){uxAlert('Enter a valid number.');return;}
     if(isPercent&&num>100){uxAlert('Percentage discount cannot exceed 100%.');return;}
     discount_type=isPercent?'percent':'flat';
     discount_value=num;
