@@ -4552,31 +4552,26 @@ function adminActionBadgeHtml(order){
   return ' <span class="admin-action-badge" title="'+escH(order.adminActionReason||'Admin action needed')+'">⚠ Admin action needed</span>';
 }
 
-// orders.qr_code_id and razorpay_link_id are mutually exclusive by design
-// (see migration 072 / sync-invoices) — shows whichever is actually active,
-// never both, plus a "Generate" action that force-clears whatever's active
-// and creates a fresh payment link. Order Overview only (the Delivery
-// panel's own dv-qr-block already covers the QR/link display there).
+// Just the payment link itself (or a missing-link warning) — no QR view and
+// no per-card regenerate action anymore (removed per Somya: "Generate
+// Invoice" already exists as the common/bulk control up top, and the QR
+// view wasn't needed from this view). The Delivery panel's own dv-qr-block
+// still covers QR display there, untouched.
 function paymentMechanismHtml(order){
-  // Nothing to show/generate before the order's actually invoiced — a
-  // payment link only ever makes sense once there's a real invoice total
-  // to charge, same gate the collapsed card used before this became a
-  // function of its own.
+  // Nothing to show before the order's actually invoiced — a payment link
+  // only ever makes sense once there's a real invoice total to charge, same
+  // gate the collapsed card used before this became a function of its own.
   if(order.isPickup||order.orderStatus==='cancelled'||!isFullyInvoiced(order))return '';
-  // No QR/link is completely normal before dispatch (nothing's been
-  // created yet) and once paid (webhook clears both — nothing left to
-  // collect) — neither is a problem worth a badge. It's only a real
-  // failure signal once the order's past OFD and still unpaid with
-  // nothing active: that means QR creation (at dispatch) or the
-  // delivered-not-paid payment-link fallback (mark-delivered) didn't work.
+  // No link is completely normal before dispatch (nothing's been created
+  // yet) and once paid (webhook clears it — nothing left to collect) —
+  // neither is a problem worth a badge. It's only a real failure signal
+  // once the order's past OFD and still unpaid with nothing active: that
+  // means QR creation (at dispatch) or the delivered-not-paid payment-link
+  // fallback (mark-delivered) didn't work.
   const missingIsFailure=order.deliveryStatus!=='not_dispatched'&&!order.paymentCollected;
-  const mechanism=order.qrImageUrl
-    ?' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();openImgLightbox('+escH(JSON.stringify(order.qrImageUrl))+')">📱 View QR</a>'
-    :order.razorpayUrl
-      ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link" onclick="event.stopPropagation()">💳 payment link</a>'
-      :(missingIsFailure?' <span class="pay-missing">Payment link not generated</span>':'');
-  return mechanism+
-    ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();regeneratePaymentLinkSingle('+escH(JSON.stringify(order.soid))+')" title="Clear the existing QR/link and generate a new payment link">🔄 Generate</a>';
+  return order.razorpayUrl
+    ?' <a href="'+escH(order.razorpayUrl)+'" target="_blank" class="pay-link" style="margin-left:10px" onclick="event.stopPropagation()">💳 payment link</a>'
+    :(missingIsFailure?' <span class="pay-missing" style="margin-left:10px">Payment link not generated</span>':'');
 }
 
 // Moved out of paymentMechanismHtml to sit next to discountEntryHtml
@@ -4596,36 +4591,6 @@ function markAsPaidEntryHtml(order){
 function isValidPhoneForPayment(phone){
   const digits=(phone||'').replace(/\D/g,'');
   return digits.length>=8&&digits.length<=14;
-}
-
-async function regeneratePaymentLinkSingle(soid){
-  const order=currentOrdersById[soid];
-  if(!order)return;
-  const existing=order.qrImageUrl?'QR code':order.razorpayUrl?'payment link':null;
-  const warning=existing
-    ?'This clears the existing '+existing+' — it will stop working — and generates a new payment link instead. If the customer already has the old one saved, it will no longer work. Continue?'
-    :'Generate a payment link for this order?';
-  if(!await uxConfirm(warning))return;
-
-  let phone=order.phone;
-  if(!isValidPhoneForPayment(phone)){
-    const entered=await uxPrompt('Phone number (10 digits):');
-    if(!entered||!entered.trim())return;
-    phone=entered.trim();
-  }
-  try{
-    const res=await fetch(SUPABASE_URL+'/functions/v1/create-order-payment-link',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:soid,phone}),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Could not generate payment link');
-    evictCustomerLookupCache(soid);
-    await loadTodaysOrders();
-  }catch(e){
-    uxAlert('Failed: '+e.message);
-  }
 }
 
 // Customer paid outside Razorpay entirely (cash handed to a rider after
@@ -4693,12 +4658,12 @@ function phoneEntryHtml(order){
   if(order.orderStatus==='cancelled')return '';
   if(order.phone){
     const iconStyle='margin-left:8px;font-size:19px;line-height:1;display:inline-block;padding:6px;vertical-align:middle';
-    return ' <span class="or-phone-tag" title="Used for this customer\'s invoice lookup + payment link">📞 '+escH(order.phone)+
+    return ' <span class="or-phone-tag" style="margin-left:10px" title="Used for this customer\'s invoice lookup + payment link">📞 '+escH(order.phone)+
       ' <a href="javascript:void(0)" class="pay-link" style="'+iconStyle+'" onclick="event.stopPropagation();copyPhoneNumber(this,'+escH(JSON.stringify(order.phone))+')" title="Copy phone number">⧉</a>'+
       ' <a href="javascript:void(0)" class="pay-link" style="'+iconStyle+'" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Edit">✎</a>'+
       ' <a href="javascript:void(0)" class="pay-link" style="'+iconStyle+'" onclick="event.stopPropagation();openPhoneSharedModal('+escH(JSON.stringify(order.phone))+')" title="See every house currently sharing this number, and remove any that are wrong">📋</a></span>';
   }
-  return ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Needed so this customer can look up their invoice, and for an automatic payment link if delivered unpaid">+ Add phone</a>';
+  return ' <a href="javascript:void(0)" class="pay-link" style="margin-left:10px" onclick="event.stopPropagation();editCustomerPhone(\''+order.soid+'\')" title="Needed so this customer can look up their invoice, and for an automatic payment link if delivered unpaid">+ Add phone</a>';
 }
 
 // orders.discount_type/discount_value (migration 140) — applied as a
@@ -4709,10 +4674,10 @@ function discountEntryHtml(order){
   if(order.orderStatus==='cancelled')return '';
   if(order.discountType){
     const label=order.discountType==='percent'?(order.discountValue+'% off'):('₹'+order.discountValue+' off');
-    return ' <span class="or-phone-tag" title="Applied to the Zoho invoice as a whole-invoice discount">💸 '+escH(label)+
+    return ' <span class="or-phone-tag" style="margin-left:10px" title="Applied to the Zoho invoice as a whole-invoice discount">💸 '+escH(label)+
       ' <a href="javascript:void(0)" class="pay-link" style="margin-left:8px;font-size:19px;line-height:1;display:inline-block;padding:6px;vertical-align:middle" onclick="event.stopPropagation();editOrderDiscount(\''+order.soid+'\')" title="Edit">✎</a></span>';
   }
-  return ' <a href="javascript:void(0)" class="pay-link" onclick="event.stopPropagation();editOrderDiscount(\''+order.soid+'\')" title="Applies to the Zoho invoice — if this order is already invoiced, the invoice is regenerated immediately">+ Add discount</a>';
+  return ' <a href="javascript:void(0)" class="pay-link" style="margin-left:10px" onclick="event.stopPropagation();editOrderDiscount(\''+order.soid+'\')" title="Applies to the Zoho invoice — if this order is already invoiced, the invoice is regenerated immediately">+ Add discount</a>';
 }
 
 // Single prompt doing double duty for both discount_type and discount_value
