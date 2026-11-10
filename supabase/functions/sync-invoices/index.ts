@@ -37,7 +37,7 @@ async function sbUpsert(table: string, rows: any[], onConflict: string) {
 
 // A plain UPDATE, never capable of inserting a new row — unlike sbUpsert,
 // which briefly caused a real crash: reconcileOrderPayment/
-// closeOrderPaymentMechanisms/sweepStaleQrCodes all look up an existing
+// closeOrderPaymentMechanisms look up an existing
 // order first and only ever mean to patch it, but sbUpsert's
 // merge-duplicates upsert falls back to a genuine INSERT whenever
 // on_conflict doesn't find a match at write time (e.g. the row changed
@@ -244,24 +244,6 @@ async function closeQrCode(qrCodeId: string) {
   } catch (_e) {} // best effort
 }
 
-async function createOrderQr(amountPaise: number, salesOrderId: string, customerName: string): Promise<{ id: string; image_url: string } | null> {
-  const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
-  const res = await fetch('https://api.razorpay.com/v1/payments/qr_codes', {
-    method: 'POST',
-    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      type: 'upi_qr', name: `Order ${salesOrderId}`, usage: 'single_use',
-      fixed_amount: true, payment_amount: amountPaise,
-      description: `The Good Papaya — order ${salesOrderId}`,
-      close_by: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
-      notes: { sales_order_id: salesOrderId, customer_name: customerName, source: 'delivery-qr' },
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) { console.error('[sync] QR creation failed:', data?.error?.description); return null; }
-  return { id: data.id, image_url: data.image_url };
-}
-
 async function createOrderPaymentLink(amountPaise: number, customerName: string, phone: string, salesOrderId: string): Promise<{ id: string; short_url: string } | null> {
   const auth = btoa(`${env('RAZORPAY_KEY_ID')}:${env('RAZORPAY_KEY_SECRET')}`);
   const res = await fetch('https://api.razorpay.com/v1/payment_links', {
@@ -328,31 +310,24 @@ async function reconcileOrderPayment(
     if (order.qr_code_id)        { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null;      updates.qr_image_url = null; updates.qr_created_at = null; }
     if (order.razorpay_link_id)  { await cancelPaymentLink(order.razorpay_link_id); updates.razorpay_link_id = null; updates.razorpay_url = null; }
 
-    // TEMPORARILY DISABLED — Razorpay QR/link regeneration turned off while
+    // TEMPORARILY DISABLED — Razorpay link regeneration turned off while
     // debugging sync-invoices/invoice_line_items. The close-above still
-    // runs (clears a stale-amount QR/link), this just stops a new one from
+    // runs (clears a stale-amount link), this just stops a new one from
     // being created in its place. Re-enable by uncommenting below once the
-    // sync issue is resolved.
+    // sync issue is resolved. (Dynamic QR regeneration removed for good —
+    // see dispatch-order for why — not just disabled here.)
     //
     // // Regenerating only ever makes sense for a live, still-OFD order from
-    // // TODAY — closing a stale-amount QR/link above is always correct
+    // // TODAY — closing a stale-amount link above is always correct
     // // regardless of date, but creating a fresh one for an order from a
     // // previous business day (or one that's already delivered/not yet
     // // dispatched) would just be spending real Razorpay API calls on an
-    // // order nobody's actively delivering right now. sweepStaleQrCodes has
-    // // this same today+ofd gate for the same reason.
+    // // order nobody's actively delivering right now.
     // const canRegenerate = order.delivery_status === 'ofd' && salesOrderId.startsWith(todayIST());
     //
-    // if (invoiceBalance > 0 && canRegenerate) {
-    //   // Regenerate whichever mechanism was already active — don't invent a
-    //   // new one for an order nobody's dispatched/linked yet.
-    //   if (order.qr_code_id) {
-    //     const qr = await createOrderQr(Math.round(invoiceBalance * 100), salesOrderId, customerName);
-    //     if (qr) { updates.qr_code_id = qr.id; updates.qr_image_url = qr.image_url; updates.qr_created_at = new Date().toISOString(); }
-    //   } else if (order.razorpay_link_id && phone) {
-    //     const link = await createOrderPaymentLink(Math.round(invoiceBalance * 100), customerName, phone, salesOrderId);
-    //     if (link) { updates.razorpay_link_id = link.id; updates.razorpay_url = link.short_url; }
-    //   }
+    // if (invoiceBalance > 0 && canRegenerate && order.razorpay_link_id && phone) {
+    //   const link = await createOrderPaymentLink(Math.round(invoiceBalance * 100), customerName, phone, salesOrderId);
+    //   if (link) { updates.razorpay_link_id = link.id; updates.razorpay_url = link.short_url; }
     // }
   }
 
@@ -380,48 +355,6 @@ async function closeOrderPaymentMechanisms(salesOrderId: string) {
   if (order.qr_code_id)       { await closeQrCode(order.qr_code_id);       updates.qr_code_id = null; updates.qr_image_url = null; updates.qr_created_at = null; }
   if (order.razorpay_link_id) { await cancelPaymentLink(order.razorpay_link_id); updates.razorpay_link_id = null; updates.razorpay_url = null; }
   await sbUpdate('orders', salesOrderId, updates);
-}
-
-// ── Proactive QR refresh sweep ─────────────────────────────────
-// Razorpay auto-closes a dynamic QR after its close_by (~2hrs), but nothing
-// otherwise updates our own stored qr_image_url — the Delivery panel could
-// keep showing a QR Razorpay's already silently killed. Rather than wait
-// for that and just clear it, refresh (close + recreate, resetting the
-// clock) any QR that has less than 60 minutes left before that ~2hr
-// expiry — i.e. reached 60 minutes old — and is still needed. Since this
-// sync now runs hourly (not every few minutes), that 60-min margin is what
-// guarantees a QR gets caught and refreshed by the very next run, before
-// it can ever actually expire on a customer mid-delivery. Purely a time
-// check: no rider location or delivery-sequence awareness needed.
-//
-// Scoped to TODAY's orders only (sales_order_id prefix) — an order still
-// sitting at delivery_status='ofd' from a previous day is a dangling/stuck
-// order (never marked delivered, cancelled, or otherwise closed out), not a
-// live delivery in progress. Without this, the sweep would keep spending
-// real Razorpay QR-creation calls indefinitely refreshing a QR nobody's
-// ever going to scan again.
-async function sweepStaleQrCodes() {
-  const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const stale = await sbSelectMany('orders',
-    `sales_order_id=like.${encodeURIComponent(todayIST())}-*&qr_code_id=not.is.null&delivery_status=eq.ofd&payment_collected=eq.false&qr_created_at=lt.${encodeURIComponent(cutoff)}&select=sales_order_id,customer_name,invoice_total,qr_code_id`
-  );
-  if (!stale.length) return;
-  console.log(`[sync] ${stale.length} QR(s) within 60 min of expiry — refreshing`);
-
-  for (const order of stale) {
-    try {
-      await closeQrCode(order.qr_code_id);
-      const qr = await createOrderQr(Math.round(order.invoice_total * 100), order.sales_order_id, order.customer_name);
-      if (qr) {
-        await sbUpdate('orders', order.sales_order_id, {
-          qr_code_id: qr.id, qr_image_url: qr.image_url, qr_created_at: new Date().toISOString(),
-        });
-        console.log(`[sync] Refreshed QR for ${order.sales_order_id}`);
-      }
-    } catch (e: any) {
-      console.error(`[sync] QR refresh failed for ${order.sales_order_id}:`, e.message);
-    }
-  }
 }
 
 // ── Remove invoice from Supabase + cancel payment link ────────
@@ -798,11 +731,10 @@ Deno.serve(async (req) => {
       const until = new URL(req.url).searchParams.get('until') ?? undefined;
       await reconcileOldInvoices(since, until);
     } else if (mode === 'qr-sweep') {
-      // Razorpay-only (no Zoho calls at all) — runs on its own tight cron,
-      // independent of the Zoho sync interval, so QR refresh timing never
-      // has to trade off against Zoho API consumption. See
-      // supabase/migrations for the schedule.
-      await sweepStaleQrCodes();
+      // Dynamic QR removed entirely (see dispatch-order) — nothing left to
+      // sweep. Kept as a recognized, harmless no-op mode rather than an
+      // error, since its pg_cron schedule still calls this on its old
+      // interval until that schedule is removed too.
     } else {
       await syncInvoices();
     }
