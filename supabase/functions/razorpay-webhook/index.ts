@@ -6,7 +6,7 @@
 // (either channel below) shows up as paid/partially paid in Zoho too,
 // without waiting on sync-invoices' 5-min poll to notice it indirectly.
 //
-// Handles two event types:
+// Handles these event types:
 //   - payment_link.paid  — the manual "Generate Payment Link" flow, OR the
 //     storefront's "Pay All" bulk link (create-storefront-bulk-payment-link).
 //     Normally keyed by sales_order_id in notes; a bulk link is detected by
@@ -14,7 +14,19 @@
 //     if found, the single payment is split back across every order in that
 //     link's breakdown instead of applied to just one.
 //   - qr_code.credited   — the delivery-panel Dynamic QR (dispatch-order),
-//     always single-order, never bulk.
+//     always single-order, never bulk. Dynamic QR creation is removed
+//     (see dispatch-order) but this stays to catch the tail of any
+//     already-created ones still unpaid.
+//   - refund.created / refund.processed — Razorpay can reverse a payment
+//     after the fact (e.g. "payment made on closed qr code" — a customer
+//     paid into a QR we'd already closed, Razorpay accepted it anyway, then
+//     auto-refunded). Until this was added, nothing here ever heard about
+//     that: the order stayed marked paid forever. Matches the refunded
+//     payment back to its order via razorpay_payment_events (the claim this
+//     webhook itself made when the original payment landed), reverses
+//     amount_paid/balance_due/payment_collected, and flags the order
+//     payment_refunded so it surfaces clearly on Order Overview instead of
+//     silently vanishing.
 // amount_paid is never reset — it accumulates across all payments and invoice regenerations.
 //
 // Required secrets: RAZORPAY_WEBHOOK_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
@@ -215,6 +227,106 @@ async function applyPaymentToOrder(
   }
 }
 
+// Reverses a refunded payment on whichever order(s) it was originally
+// applied to. The order link comes from razorpay_payment_events — this
+// webhook's own claim row from when the payment first landed (keyed on
+// Razorpay's payment id) — not from anything in the refund payload itself,
+// since a refund event carries no sales_order_id. A payment with no claim
+// row on file (predates this idempotency table, or was never applied
+// through this webhook at all) can't be matched automatically; logged
+// loudly so it's at least visible, rather than silently doing nothing.
+async function handleRefundEvent(
+  supabase: ReturnType<typeof createClient>, payload: any,
+): Promise<Response> {
+  const refundEntity  = payload.payload?.refund?.entity;
+  const paymentEntity = payload.payload?.payment?.entity;
+  const refundId   = refundEntity?.id as string | undefined;
+  const paymentId  = refundEntity?.payment_id as string | undefined;
+  const amountPaise = refundEntity?.amount as number | undefined;
+
+  if (!refundId || !paymentId || !amountPaise) {
+    console.error('Razorpay webhook: refund event missing id/payment_id/amount', JSON.stringify(payload.payload));
+    return new Response(JSON.stringify({ ok: true, msg: 'incomplete refund payload' }), { status: 200 });
+  }
+  const refundAmountRupees = amountPaise / 100;
+
+  const { data: paymentEvent } = await supabase
+    .from('razorpay_payment_events')
+    .select('sales_order_id')
+    .eq('razorpay_payment_id', paymentId)
+    .maybeSingle();
+
+  if (!paymentEvent) {
+    console.error(
+      `[REFUND] ${refundId}: payment ${paymentId} (₹${refundAmountRupees}) refunded but no razorpay_payment_events ` +
+      `row for it — could not identify which order to reverse. Check the Razorpay dashboard for this payment id manually.`
+    );
+    return new Response(
+      JSON.stringify({ ok: true, msg: 'no matching order for refunded payment', payment_id: paymentId, refund_id: refundId }),
+      { status: 200 },
+    );
+  }
+
+  // Claim the refund id before touching anything — a redelivery of
+  // refund.created/refund.processed, or both firing for the same refund,
+  // then hits this unique constraint and is skipped instead of reversing
+  // the same payment twice.
+  const salesOrderIds = paymentEvent.sales_order_id.split(',');
+  const { error: claimErr } = await supabase
+    .from('razorpay_refund_events')
+    .insert({
+      razorpay_refund_id: refundId,
+      sales_order_id: salesOrderIds.join(','),
+      amount: refundAmountRupees,
+      event: payload.event,
+    });
+  if (claimErr) {
+    if (claimErr.code === '23505') {
+      return new Response(JSON.stringify({ ok: true, msg: 'duplicate refund delivery, already processed' }), { status: 200 });
+    }
+    console.error('razorpay_refund_events claim failed:', claimErr.message);
+  }
+
+  // Razorpay's refund entity doesn't carry a plain-English reason field —
+  // "payment made on closed qr code" shows up in the dashboard, not here —
+  // so this is best-effort context for the badge tooltip, not guaranteed.
+  const reason = refundEntity?.notes?.reason || paymentEntity?.description
+    || `Refund ${refundId} — see Razorpay dashboard for details`;
+
+  // Split evenly across a bulk payment's several orders (rare — most
+  // refunds are single-order) — exact per-order attribution isn't knowable
+  // from the refund event itself.
+  const perOrderAmount = refundAmountRupees / salesOrderIds.length;
+
+  for (const soid of salesOrderIds) {
+    const { data: order } = await supabase
+      .from('orders').select('amount_paid, invoice_total')
+      .eq('sales_order_id', soid).maybeSingle();
+    if (!order) {
+      console.error(`[REFUND] ${refundId}: order ${soid} no longer exists — skipped`);
+      continue;
+    }
+    const newAmountPaid = Math.max(0, (order.amount_paid ?? 0) - perOrderAmount);
+    const newBalanceDue = Math.max(0, (order.invoice_total ?? 0) - newAmountPaid);
+    const { error } = await supabase.from('orders').update({
+      amount_paid:       newAmountPaid,
+      balance_due:       newBalanceDue,
+      payment_collected: false,
+      payment_refunded:  true,
+      refunded_at:        new Date().toISOString(),
+      refund_amount:      perOrderAmount,
+      refund_reason:      reason,
+    }).eq('sales_order_id', soid);
+    if (error) console.error(`[REFUND] ${refundId}: update failed for ${soid}:`, error.message);
+    else console.warn(`[REFUND] ${soid}: ₹${perOrderAmount} refunded — flipped back to unpaid (${reason})`);
+  }
+
+  return new Response(
+    JSON.stringify({ ok: true, refunded: true, sales_order_ids: salesOrderIds, amount: refundAmountRupees }),
+    { headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
@@ -227,6 +339,11 @@ Deno.serve(async (req) => {
   let payload: any;
   try { payload = JSON.parse(body); } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 });
+  }
+
+  if (payload.event === 'refund.created' || payload.event === 'refund.processed') {
+    const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+    return await handleRefundEvent(supabase, payload);
   }
 
   if (payload.event !== 'payment_link.paid' && payload.event !== 'qr_code.credited') {

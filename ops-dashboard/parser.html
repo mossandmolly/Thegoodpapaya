@@ -143,6 +143,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .admin-action-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#b3261e}
 .order-cancelled{opacity:0.75}
 .cancelled-badge{background:#8a8a8a;color:#ffffff;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;letter-spacing:0.3px;vertical-align:middle}
+.refunded-badge{display:inline-block;background:#b3261e;color:#ffffff;border-radius:4px;padding:2px 9px;font-size:11px;font-weight:800;letter-spacing:0.3px;vertical-align:middle;text-transform:uppercase}
 .dv-delivered{opacity:0.7}
 .dv-phone-row{font-size:12px;color:#5c4f42;margin-bottom:8px}
 .dv-phone{color:#1a73e8;cursor:pointer;text-decoration:none;font-weight:600}
@@ -3868,7 +3869,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at,sequence_number,sequenced_at,discount_type,discount_value')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at,sequence_number,sequenced_at,discount_type,discount_value,payment_refunded,refunded_at,refund_amount,refund_reason')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -3916,7 +3917,7 @@ async function fetchCustomerMap(ids){
   for(let i=0;i<uncached.length;i+=CUSTOMER_LOOKUP_CHUNK){
     const chunk=uncached.slice(i,i+CUSTOMER_LOOKUP_CHUNK);
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at,sequence_number,sequenced_at,dispatched_at,discount_type,discount_value')
+      .select('sales_order_id,customer_name,society,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,created_at,sequence_number,sequenced_at,dispatched_at,discount_type,discount_value,payment_refunded,refunded_at,refund_amount,refund_reason')
       .in('sales_order_id',chunk);
     if(error)return{map:null,error};
     (data||[]).forEach(o=>{customerLookupCache[o.sales_order_id]=o;map[o.sales_order_id]=o;});
@@ -4055,6 +4056,10 @@ async function loadTodaysOrders(){
         deliveredAt:   o?.delivered_at||null,
         discountType:  o?.discount_type||null,
         discountValue: o?.discount_value??null,
+        paymentRefunded:o?.payment_refunded||false,
+        refundedAt:    o?.refunded_at||null,
+        refundAmount:  o?.refund_amount??null,
+        refundReason:  o?.refund_reason||null,
         isPickup:      !!o?.is_pickup,
         paymentCollected:      !!o?.payment_collected,
         paymentCollectedMethod:o?.payment_collected_method||null,
@@ -4260,6 +4265,7 @@ function renderOrdersList(){
           :'';
         const statusBadges=(order.isPickup?' <span class="pickup-badge">📦 PICKUP</span>':'')+
           (!cancelled&&order.sequenceNumber!=null?' <span class="queue-badge" title="Auto-sequenced for packing">Seq '+(sequencePositions.get(order.sequenceNumber)||order.sequenceNumber)+'</span>':'')+
+          (order.paymentRefunded?' <span class="refunded-badge" title="'+escH((order.refundReason||'Refunded by Razorpay')+(order.refundedAt?' — '+new Date(order.refundedAt).toLocaleString():''))+'">⚠️ REFUNDED'+(order.refundAmount?' ₹'+(+order.refundAmount).toFixed(0):'')+'</span>':'')+
           (cancelled?' <span class="cancelled-badge">CANCELLED</span>':'')+
           (overallStatus?' <span class="order-status-badge status-'+overallStatus+'">'+ITEM_STATUS_LABEL[overallStatus]+'</span>':'')+
           deliverWindowBadge+
@@ -6513,6 +6519,7 @@ function orderNeedsPaymentLink(order){
 }
 let overviewNoLinkOnly=false;
 let overviewNoPhoneOnly=false;
+let overviewRefundedOnly=false;
 
 // Restored — removed when Sequence view replaced the Time Sensitive sort,
 // but that was a sort order, not a filter; this is still a separate,
@@ -6520,6 +6527,7 @@ let overviewNoPhoneOnly=false;
 let overviewDeadlineOnly=false;
 
 function orderMatchesOverviewFilter(order){
+  if(overviewRefundedOnly&&!order.paymentRefunded)return false;
   if(overviewPendingReviewOnly&&!orderHasPendingReview(order))return false;
   if(overviewVegetableOnly&&!orderHasVegetable(order))return false;
   if(overviewHeldOnly&&!orderHasHeldItem(order))return false;
@@ -6586,6 +6594,11 @@ function toggleOverviewNoPhoneFilter(){
   renderOrdersList();
 }
 
+function toggleOverviewRefundedFilter(){
+  overviewRefundedOnly=!overviewRefundedOnly;
+  renderOrdersList();
+}
+
 function toggleOverviewDeadlineFilter(){
   overviewDeadlineOnly=!overviewDeadlineOnly;
   renderOrdersList();
@@ -6607,6 +6620,10 @@ function renderOverviewSummaryPills(tripInfo){
   const withHeld=active.filter(orderHasHeldItem).length;
   const noLink=active.filter(orderNeedsPaymentLink).length;
   const noPhone=active.filter(o=>!o.phone).length;
+  // All orders, not just active ones — a refund matters regardless of
+  // whether the order was later cancelled, and must never be hidden by
+  // that exclusion the way the other operational pills correctly are.
+  const refunded=orders.filter(o=>o.paymentRefunded).length;
   const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
   const pills=[
     {key:'all',label:'All',count:total},
@@ -6615,7 +6632,12 @@ function renderOverviewSummaryPills(tripInfo){
     {key:'invoiced',label:'Invoiced',count:invoiced},
     {key:'cancelled',label:'Cancelled',count:cancelled},
   ];
-  document.getElementById('to-summary-pills').innerHTML=pills.map(p=>
+  // REFUNDED leads the row, ahead of even the main status pills — a
+  // silently-reversed payment (see razorpay-webhook's refund handling) is
+  // the one thing here that needs to be impossible to miss.
+  document.getElementById('to-summary-pills').innerHTML=
+  (refunded?'<span class="filter-pill'+(overviewRefundedOnly?' active':'')+'" style="background:#b3261e;color:#fff;font-weight:800" onclick="toggleOverviewRefundedFilter()">⚠️ REFUNDED ('+refunded+')</span>':'')+
+  pills.map(p=>
     '<span class="filter-pill'+(toOverviewFilter===p.key?' active':'')+'" onclick="setOverviewFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
   (pendingReview?'<span class="filter-pill'+(overviewPendingReviewOnly?' active':'')+'" style="color:#8a5a00" onclick="toggleOverviewPendingReviewFilter()">💬 Pending review ('+pendingReview+')</span>':'')+
@@ -9398,6 +9420,10 @@ async function loadDeliveryView(silent){
         deliveryPhotoPaths:    o?.delivery_photo_paths||[],
         paymentCollected:      !!o?.payment_collected,
         paymentCollectedMethod:o?.payment_collected_method||null,
+        paymentRefunded:       o?.payment_refunded||false,
+        refundedAt:            o?.refunded_at||null,
+        refundAmount:          o?.refund_amount??null,
+        refundReason:          o?.refund_reason||null,
         assignedRider:         o?.assigned_rider||null,
         deliverBy:             o?.deliver_by||null,
         deliverAfter:          o?.deliver_after||null,
@@ -10057,24 +10083,24 @@ function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions,gr
     // should never have to squint to tell those apart.
     '<div class="dv-total-bar"><span>Total</span><span>₹'+total.toFixed(0)+'</span></div>';
 
-  // A real Razorpay Dynamic QR Code (created by dispatch-order the moment
-  // this order went OFD) is the default. If the rider marked it delivered-
-  // but-not-paid, mark-delivered's switchToPaymentLink already closed that
-  // QR (qrImageUrl goes null) and generated a payment link instead — shown
-  // here as a QR-of-that-link via a public QR-image API, since payment
-  // links don't come with their own hosted QR image the way Dynamic QR
-  // Codes do. Only worth showing while there's still money to collect —
-  // once the rider's confirmed payment there's nothing to add.
-  const qrBlock=(order.qrImageUrl&&!order.paymentCollected)
+  // One fixed static UPI QR (never expires, never gets closed by us) shown
+  // on every delivery card with money still outstanding — replaces the old
+  // per-order Razorpay Dynamic QR entirely. A dynamic QR could still accept
+  // a scan after Razorpay had already closed it (e.g. refreshed by a later
+  // invoice regen while the rider was still showing the old image) and
+  // Razorpay would then silently auto-refund the customer with no signal
+  // back to us, leaving the order wrongly marked paid
+  // ("payment made on closed qr code"). This static QR has no amount or
+  // order reference encoded — the label below tells the customer what to
+  // pay, and since Razorpay can't tell which order it's for, a payment made
+  // this way needs confirming manually via Mark as Paid once it shows up in
+  // Razorpay, rather than auto-reconciling the way a payment link still
+  // does.
+  const qrBlock=!order.paymentCollected
     ?'<div class="dv-qr-block">'+
         '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+' — tap to enlarge</div>'+
-        '<img src="'+escH(order.qrImageUrl)+'" width="160" height="160" alt="Payment QR" style="cursor:pointer" onclick="openImgLightbox(this.src)">'+
-      '</div>'
-    :(order.razorpayUrl&&!order.paymentCollected)
-    ?'<div class="dv-qr-block">'+
-        '<div class="dv-qr-label">💳 Scan to pay ₹'+total.toFixed(0)+' (payment link sent) — tap to enlarge</div>'+
-        '<img src="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data='+encodeURIComponent(order.razorpayUrl)+'" width="160" height="160" alt="Payment QR" style="cursor:pointer" onclick="openImgLightbox(this.src)">'+
-        '<a class="or-link" href="'+escH(order.razorpayUrl)+'" target="_blank">or open payment link</a>'+
+        '<img src="/static-upi-qr.jpg" width="160" height="160" alt="Payment QR" style="cursor:pointer" onclick="openImgLightbox(this.src)">'+
+        (order.razorpayUrl?'<a class="or-link" href="'+escH(order.razorpayUrl)+'" target="_blank">or open payment link</a>':'')+
       '</div>'
     :'';
 

@@ -134,41 +134,6 @@ async function razorpayCreateLink(
   return { id: data.id, short_url: data.short_url };
 }
 
-// ── Razorpay Dynamic QR Code — the delivery-panel mechanism (dispatch-order/
-// sync-invoices) — kept in sync with a regenerated invoice the same way the
-// payment link above is. orders.qr_code_id/razorpay_link_id are mutually
-// exclusive at any given time (see reconcileOrderPayment in sync-invoices),
-// so only whichever one is currently active on the order gets touched here —
-// never both, and never invented fresh if neither was active yet.
-async function razorpayCloseQr(qrCodeId: string, auth: string): Promise<void> {
-  await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${qrCodeId}/close`, {
-    method: 'POST',
-    headers: { Authorization: `Basic ${auth}` },
-  });
-}
-
-async function razorpayCreateQr(
-  amountPaise: number, customerName: string, salesOrderId: string, auth: string,
-): Promise<{ id: string; image_url: string }> {
-  const res = await fetch('https://api.razorpay.com/v1/payments/qr_codes', {
-    method: 'POST',
-    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      type:           'upi_qr',
-      name:            `Order ${salesOrderId}`,
-      usage:          'single_use',
-      fixed_amount:    true,
-      payment_amount:  amountPaise,
-      description:    `The Good Papaya — order ${salesOrderId}`,
-      close_by:        Math.floor(Date.now() / 1000) + 24 * 60 * 60,
-      notes:          { sales_order_id: salesOrderId, customer_name: customerName, source: 'delivery-qr' },
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.description || 'Razorpay QR error');
-  return { id: data.id, image_url: data.image_url };
-}
-
 function env(key: string) {
   const val = Deno.env.get(key);
   if (!val) throw new Error(`Missing env: ${key}`);
@@ -625,12 +590,10 @@ Deno.serve(async (req) => {
       .in('id', items.map((i: any) => i.id));
 
     // Best-effort: every invoiced order should always have a working
-    // Razorpay pay link on the customer-facing invoices page. QR and link
-    // are allowed to coexist — a customer might pay online via the link
-    // while delivery is still underway and the QR is still showing in the
-    // rider's app — so these two run independently of each other now,
-    // not as an if/else. Whichever one actually gets paid first is what
-    // closes the other (razorpay-webhook), not creation/refresh time here.
+    // Razorpay pay link on the customer-facing invoices page. No more QR
+    // refresh here — the Delivery panel shows one fixed static QR image for
+    // every order now, nothing per-order to keep in sync with the invoice
+    // total any more (see dispatch-order for why dynamic QR was dropped).
     // The link still requires a phone on file (Razorpay needs a contact to
     // send it to) — an order with no phone at all skips just that part.
     let paymentLink: string | null = null;
@@ -641,18 +604,6 @@ Deno.serve(async (req) => {
         console.warn(`[generate-invoice] ${sales_order_id}: RAZORPAY_KEY_ID/SECRET not set — skipping pay link`);
       } else {
         const auth = btoa(`${keyId}:${keySecret}`);
-        if (order.qr_code_id) {
-          console.log(`[generate-invoice] ${sales_order_id}: refreshing existing QR ${order.qr_code_id} to the current total`);
-          await razorpayCloseQr(order.qr_code_id, auth);
-          const qr = await razorpayCreateQr(
-            Math.round(invoice_total * 100), order.customer_name, sales_order_id, auth,
-          );
-          await supabase.from('orders').update({
-            qr_code_id:    qr.id,
-            qr_image_url:  qr.image_url,
-            qr_created_at: new Date().toISOString(),
-          }).eq('sales_order_id', sales_order_id);
-        }
         if (order.phone) {
           if (order.razorpay_link_id) {
             await razorpayCancelLink(order.razorpay_link_id, auth);
