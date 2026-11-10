@@ -317,6 +317,13 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .community-table td{padding:4px 6px;border-bottom:1px solid #f1e9df;color:#5c4f42}
 .community-table input{width:90px;padding:4px 6px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit;background:#ffffff}
 .community-table input[type="text"]{width:110px}
+/* Stock tab specifically — narrower than the shared .community-table
+   default, since this one has the most columns of any table using it and
+   was running wide enough to need horizontal scroll on a laptop screen. */
+#stock-table th,#stock-table td{padding:3px 4px;font-size:11px}
+#stock-table .stock-qty-input{width:58px;padding:3px 4px}
+#stock-table select{font-size:11px;padding:2px 3px;max-width:100px}
+#stock-table .stock-packer-select{max-width:88px}
 .purchases-total-row td{font-weight:700;color:#5c4f42;border-bottom:none;border-top:2px solid #eee0d0}
 .stock-qty-input{width:80px;padding:5px 7px;border:1px solid #eee0d0;border-radius:6px;font-size:12px;font-family:inherit}
 .stock-badge{display:inline-flex;align-items:center;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap}
@@ -838,6 +845,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <input type="text" class="pk-search" id="stock-search" placeholder="🔍 Search fruit..." oninput="renderStockTable()">
   <div id="stock-summary-pills" class="filter-pills status-pills"></div>
   <div id="stock-type-pills" class="filter-pills status-pills"></div>
+  <div id="stock-packer-pills" class="filter-pills status-pills"></div>
   <div class="add-row" style="margin-top:0">
     <div class="ac-wrap" style="flex:2">
       <input type="text" id="stock-add-fruit-input" placeholder="Type a fruit name to track…" autocomplete="off">
@@ -846,9 +854,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
     <button type="button" id="stock-add-fruit-btn" disabled onclick="commitStockFruitPicks()">+ Add (0)</button>
   </div>
   <div class="stock-fruit-pills" id="stock-fruit-pills"></div>
+  <button type="button" class="btn-sec" style="margin:6px 0" onclick="autoAssignStockPackers()" title="Spreads every tracked fruit's cycle-count/closing-stock responsibility fairly across packers who have a category set in Config — onion/potato/tomato and all Leafy Greens are kept off any single packer where possible.">⚖️ Auto-assign packers</button>
   <div class="stock-table-wrap">
     <table class="community-table" id="stock-table"><thead><tr>
-      <th>Fruit</th><th>Opening stock</th><th>Available D-1</th><th>Write off</th><th>Purchased</th><th class="vp-sortable" onclick="sortStockRows('packed')">Packed/Invoiced<span id="stock-sort-packed" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('pending')">Pending orders<span id="stock-sort-pending" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('available')">Available<span id="stock-sort-available" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('status')">Status<span id="stock-sort-status" class="vp-sort-ind"></span></th><th>Closing stock</th>
+      <th>Fruit</th><th>Opening stock</th><th>Available D-1</th><th>Write off</th><th>Purchased</th><th class="vp-sortable" onclick="sortStockRows('packed')">Packed/Invoiced<span id="stock-sort-packed" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('pending')">Pending orders<span id="stock-sort-pending" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('available')">Available<span id="stock-sort-available" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('status')">Status<span id="stock-sort-status" class="vp-sort-ind"></span></th><th>Closing stock</th><th title="Who cycle-counts and enters closing stock for this fruit at day's end">Packer</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
   </div>
   <div id="stock-buy-list"></div>
@@ -5933,7 +5942,7 @@ async function ensureCatalogItems(){
   // unit_price is only used by the Delivery tab (per-item amount + total),
   // but it's harmless to carry along for every other caller of this shared,
   // session-cached fetch too.
-  const{data,error}=await sb.from('catalog').select('item_name,unit,unit_price,pcs_per_kg').order('item_name');
+  const{data,error}=await sb.from('catalog').select('item_name,unit,unit_price,pcs_per_kg,subsection').order('item_name');
   if(error)throw new Error('Could not load catalog: '+error.message);
   catalogItems=data||[];
   return catalogItems;
@@ -11341,7 +11350,8 @@ async function loadVegPerfView(){
     : '<tr><td colspan="4" class="to-empty">No vegetable orders in this range</td></tr>';
 }
 
-const STOCK_COLSPAN=10;
+const STOCK_COLSPAN=11;
+let stockPackerFilter='all'; // 'all' | packer id | 'unassigned'
 
 async function loadStockView(){
   const tbody=document.getElementById('stock-tbody');
@@ -11368,6 +11378,10 @@ async function loadStockView(){
     sb.from('stock_opening').select('item_name,opening_qty').eq('date',prevDate),
     sb.from('stock_purchases').select('item_name,qty').eq('date',prevDate),
     fetchAllOrderItems(q=>q.like('sales_order_id',prevDate+'-%')),
+    // packersCache (packer dropdown/pills, auto-assign) — Config normally
+    // loads this, but Stock can be opened first in a session without ever
+    // visiting Config, so it can't assume this is already populated.
+    loadPackersConfig().catch(e=>console.error(e)),
   ]);
   const firstErr=trackedRes.error||openingRes.error||closingRes.error||purchaseRes.error||itemsRes.error||historyRes.error||openingD1Res.error||purchaseD1Res.error||itemsD1Res.error;
   if(firstErr){tbody.innerHTML='<tr><td colspan="'+STOCK_COLSPAN+'" class="to-empty">'+escH(firstErr.message)+'</td></tr>';return;}
@@ -11556,6 +11570,108 @@ function setStockTypeFilter(key){
   renderStockTable();
 }
 
+// One pill per packer who actually has at least one tracked fruit assigned
+// (packer_assignments, via packersCache's assigned_fruits — same source
+// Config's Item -> Packer table and the Packer tab's "mine" scope both
+// read), plus "Unassigned" when any tracked fruit has no packer at all —
+// clicking filters the Stock table down to just that packer's items.
+function renderStockPackerPills(activeCatalog){
+  const el=document.getElementById('stock-packer-pills');
+  if(!el)return;
+  const packerIdByItem={};
+  (packersCache||[]).forEach(p=>p.assigned_fruits.forEach(item=>{packerIdByItem[item]=p.id;}));
+  const counts=new Map(); // packer id -> count, plus 'unassigned'
+  activeCatalog.forEach(c=>{
+    const pid=packerIdByItem[c.item_name]||'unassigned';
+    counts.set(pid,(counts.get(pid)||0)+1);
+  });
+  const pills=[{key:'all',label:'All',count:activeCatalog.length}];
+  (packersCache||[]).forEach(p=>{
+    if(counts.get(p.id))pills.push({key:p.id,label:'🧑 '+p.name,count:counts.get(p.id)});
+  });
+  if(counts.get('unassigned'))pills.push({key:'unassigned',label:'— Unassigned',count:counts.get('unassigned')});
+  el.innerHTML=pills.length>1?pills.map(p=>
+    '<span class="filter-pill'+(stockPackerFilter===p.key?' active':'')+'" onclick="setStockPackerFilter('+escH(JSON.stringify(p.key))+')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join(''):'';
+}
+
+function setStockPackerFilter(key){
+  stockPackerFilter=key;
+  renderStockTable();
+}
+
+// Fruit names this exact onion/potato/tomato rule applies to — called out
+// by name since they're the highest-volume items every single day, and the
+// business cost of all three sitting with one packer (that person's whole
+// cycle-count ends up gating the buy list if they're out sick) is worse
+// than for any other single item.
+const STOCK_HIGH_VOLUME_SPREAD=new Set(['Onion','Potato','Tomato']);
+
+// Re-balances packer_assignments (the same Item -> Packer table Config's
+// "Item -> Packer" tab and order-pack routing both already use — this
+// isn't a separate table, just a new reason to keep it well-distributed)
+// across every currently tracked stock fruit. Only packers with a category
+// set in Config (packersCache[].category) are eligible — an uncategorized
+// packer was never meant to carry a fixed plate of items. Greedy
+// least-loaded assignment, with two hard-ish constraints applied first:
+// Onion/Potato/Tomato never share a packer with each other, and no two
+// Leafy Greens (catalog.subsection) share a packer either, UNLESS there
+// simply aren't enough eligible packers to avoid it (falls back to
+// whoever's least loaded rather than leaving an item unassigned).
+async function autoAssignStockPackers(){
+  const eligible=(packersCache||[]).filter(p=>p.active!==false&&p.category);
+  if(!eligible.length){
+    uxAlert('No packers have a category (Fruit/Veg) set in Config yet — assign at least one before auto-assigning.');
+    return;
+  }
+  const items=[...stockTrackedFruits];
+  if(!items.length){uxAlert('Nothing is being tracked in Stock yet.');return;}
+
+  if(!await uxConfirm('Re-balance the Packer column for all '+items.length+' tracked fruit(s) across '+eligible.length+' packer(s) with a category set?\n\nThis updates the same Item → Packer table used for order packing, not a separate Stock-only list.'))return;
+
+  const subsectionByItem={};
+  stockCatalog.forEach(c=>{subsectionByItem[c.item_name]=c.subsection||null;});
+  const groupKeyFor=item=>{
+    if(STOCK_HIGH_VOLUME_SPREAD.has(item))return 'high-volume';
+    if(subsectionByItem[item]==='Leafy Greens')return 'leafy';
+    return null;
+  };
+
+  const loadCount={};eligible.forEach(p=>{loadCount[p.id]=0;});
+  const groupUsed={}; // group key -> Set of packer ids already holding one of that group
+  const assignment={}; // item_name -> packer_id
+
+  function pickPacker(item){
+    const gk=groupKeyFor(item);
+    const used=gk?(groupUsed[gk]||new Set()):new Set();
+    let candidates=eligible.filter(p=>!used.has(p.id));
+    if(!candidates.length)candidates=eligible; // more constrained items than packers — best effort
+    candidates=[...candidates].sort((a,b)=>loadCount[a.id]-loadCount[b.id]);
+    const chosen=candidates[0];
+    loadCount[chosen.id]++;
+    if(gk){groupUsed[gk]=groupUsed[gk]||new Set();groupUsed[gk].add(chosen.id);}
+    return chosen.id;
+  }
+
+  // Constrained items first (stable alphabetical) so the hard-ish rules get
+  // first pick of a fresh, evenly-loaded packer pool — everything else
+  // follows, continuing the same running load count for overall fairness.
+  const constrained=items.filter(i=>groupKeyFor(i)).sort();
+  const rest=items.filter(i=>!groupKeyFor(i)).sort();
+  [...constrained,...rest].forEach(item=>{assignment[item]=pickPacker(item);});
+
+  const{error:delErr}=await sb.from('packer_assignments').delete().in('item_name',items);
+  if(delErr){uxAlert('Failed: '+delErr.message);return;}
+  const rows=Object.entries(assignment).map(([item_name,packer_id])=>({item_name,packer_id}));
+  if(rows.length){
+    const{error:insErr}=await sb.from('packer_assignments').insert(rows);
+    if(insErr){uxAlert('Failed: '+insErr.message);return;}
+  }
+  await loadPackersConfig();
+  renderStockTable();
+  uxAlert('Assigned '+rows.length+' fruit(s) across '+eligible.length+' packer(s).');
+}
+
 // Fruits picked (typed + selected from the autocomplete) but not yet
 // committed — shown as removable pills, cleared on commit or on a date
 // change. Nothing's written to the DB until "+ Add" is actually clicked.
@@ -11671,6 +11787,7 @@ function renderStockTable(){
   const activeCatalog=stockCatalog.filter(c=>isStockFruitActive(c.item_name));
   renderStockSummaryPills(activeCatalog);
   renderStockTypePills(activeCatalog);
+  renderStockPackerPills(activeCatalog);
   const search=document.getElementById('stock-search').value.trim().toLowerCase();
   const tbody=document.getElementById('stock-tbody');
 
@@ -11679,6 +11796,9 @@ function renderStockTable(){
     if(el)el.textContent=k===stockSortKey?(stockSortDir==='desc'?'▾':'▴'):'';
   });
 
+  const packerIdByItem={};
+  (packersCache||[]).forEach(p=>p.assigned_fruits.forEach(item=>{packerIdByItem[item]=p.id;}));
+
   const rows=activeCatalog.filter(c=>{
     if(search&&!c.item_name.toLowerCase().includes(search))return false;
     if(stockStatusFilter!=='all'&&stockStatusFor(c.item_name).status!==stockStatusFilter)return false;
@@ -11686,6 +11806,10 @@ function renderStockTable(){
       const isVeg=VEGETABLE_ITEM_NAMES.has(c.item_name.toLowerCase());
       if(stockTypeFilter==='veggie'&&!isVeg)return false;
       if(stockTypeFilter==='fruit'&&isVeg)return false;
+    }
+    if(stockPackerFilter!=='all'){
+      const pid=packerIdByItem[c.item_name]||'unassigned';
+      if(pid!==stockPackerFilter)return false;
     }
     return true;
   }).map(c=>({c,s:stockStatusFor(c.item_name)}));
@@ -11758,6 +11882,10 @@ function renderStockTable(){
       '<td>'+STOCK_STATUS_BADGE[s.status]+'</td>'+
       '<td><input type="number" class="stock-qty-input" step="0.01" min="0" value="'+(stockClosingMap[c.item_name]??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
         '<button class="pk-tick" disabled onclick="saveStockClosing(this.previousElementSibling,'+escH(JSON.stringify(c.item_name))+')" title="Save closing stock">✓</button></td>'+
+      '<td><select class="stock-packer-select" onchange="setItemPacker('+escH(JSON.stringify(c.item_name))+',this.value);renderStockTable()" title="Who cycle-counts and enters closing stock for this fruit">'+
+        '<option value="">—</option>'+
+        (packersCache||[]).map(p=>'<option value="'+escH(p.id)+'"'+(p.id===(packerIdByItem[c.item_name]||'')?' selected':'')+'>'+escH(p.name)+'</option>').join('')+
+      '</select></td>'+
     '</tr>';
   }).join('');
 }
