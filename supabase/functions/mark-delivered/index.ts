@@ -46,6 +46,23 @@
 // Razorpay payment, not a rider's manual "paid" claim here. Generating a
 // new link for an unpaid delivery is a manual step from Order Overview.
 //
+// A rider's own payment_collected/payment_collected_method claim no longer
+// flips orders.payment_collected directly (cash or online, either one) —
+// that used to go straight to the storefront with no check at all, which
+// was already a soft spot for cash and became a sharp one for online once
+// dynamic QR was removed (a static QR has no automatic webhook
+// reconciliation, so a rider's claim was about to become the only signal
+// for it). Only a server-confirmed payment (the Razorpay webhook) or an
+// explicit Somya/Rohith verification (mark-order-paid) ever sets
+// payment_collected now. A rider's claim instead lands in
+// payment_pending_verification/payment_claimed_* — visible on Order
+// Overview and the Delivery panel as "PAID – PENDING VERIFICATION," but
+// never reflected as paid on the customer-facing storefront until someone
+// actually checks it. The one case this doesn't apply to: if the order was
+// ALREADY genuinely payment_collected=true server-side before this call
+// (e.g. a real online payment already landed) — that's never downgraded
+// just because a rider's screen hadn't refreshed to see it yet.
+//
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
@@ -117,43 +134,46 @@ Deno.serve(async (req) => {
         deliveryStatus = (cancelledItems && cancelledItems.length) ? 'partially_delivered' : 'delivered';
       }
 
-      // A rider's screen can be stale (limited connectivity — they may not
-      // have refreshed since a QR payment landed) — never trust a "not
-      // paid" claim blindly on a fresh delivered:true call; check the
-      // server's own current state first. If it's already paid online,
-      // ignore the stale claim entirely rather than flipping a real
-      // payment back to unpaid and triggering a needless fresh payment
-      // link. (This never runs on the separate undo-delivery path, which
-      // sends delivered:false, not a payment claim.)
-      let effectivePaymentCollected = !!payment_collected;
-      let effectivePaymentMethod    = payment_collected_method || null;
-      if (delivered && !payment_collected) {
-        const { data: current } = await supabase
-          .from('orders')
-          .select('payment_collected, payment_collected_method')
-          .eq('sales_order_id', sales_order_id)
-          .maybeSingle();
-        if (current?.payment_collected) {
-          effectivePaymentCollected = true;
-          effectivePaymentMethod = current.payment_collected_method || 'online';
-        }
-      }
+      // A rider's own payment claim (cash or online) never flips
+      // payment_collected directly any more — only a genuine server-side
+      // confirmation does. Always check the server's current state first:
+      //   - already payment_collected=true (a real webhook-confirmed
+      //     payment already landed) — that always wins, regardless of what
+      //     the rider's own screen shows (it may just be stale).
+      //   - otherwise, a rider claiming paid goes to
+      //     payment_pending_verification instead, visible but not trusted
+      //     anywhere customer-facing until Somya/Rohith verify it
+      //     (mark-order-paid).
+      const { data: current } = await supabase
+        .from('orders')
+        .select('payment_collected, payment_collected_method')
+        .eq('sales_order_id', sales_order_id)
+        .maybeSingle();
 
-      // payment_collected/_method/_at travel with delivered_at, not with
-      // notes/photos — un-marking a delivery means the payment the rider
-      // claimed to have collected at that (now-undone) delivery is undone
-      // too, whereas remarks/photos already attached stay as history.
-      // Undoing a delivered (or partially-delivered) order reverts to 'ofd',
-      // not all the way back to 'not_dispatched' — the items were already
-      // collected into the bag (that's how it reached this state in the
-      // first place), it just hasn't actually been handed over, so it's
-      // still out with the rider.
+      const alreadyVerified = !!current?.payment_collected;
+      const effectivePaymentCollected = alreadyVerified;
+      const effectivePaymentMethod    = alreadyVerified ? (current?.payment_collected_method || 'online') : null;
+      const claimPending = !alreadyVerified && !!payment_collected;
+
+      // payment_collected/_method/_at and the new pending-verification
+      // fields all travel with delivered_at, not with notes/photos —
+      // un-marking a delivery means the payment claimed at that (now-undone)
+      // delivery is undone too, whereas remarks/photos already attached
+      // stay as history. Undoing a delivered (or partially-delivered) order
+      // reverts to 'ofd', not all the way back to 'not_dispatched' — the
+      // items were already collected into the bag (that's how it reached
+      // this state in the first place), it just hasn't actually been
+      // handed over, so it's still out with the rider.
       update.delivery_status          = deliveryStatus;
       update.delivered_at             = delivered ? new Date().toISOString() : null;
       update.delivered_by             = delivered ? (rider || null) : null;
       update.payment_collected        = delivered ? effectivePaymentCollected : false;
       update.payment_collected_method = delivered && effectivePaymentCollected ? effectivePaymentMethod : null;
       update.payment_collected_at     = delivered && effectivePaymentCollected ? new Date().toISOString() : null;
+      update.payment_pending_verification = delivered ? claimPending : false;
+      update.payment_claimed_method       = delivered && claimPending ? (payment_collected_method || null) : null;
+      update.payment_claimed_at           = delivered && claimPending ? new Date().toISOString() : null;
+      update.payment_claimed_by           = delivered && claimPending ? (rider || null) : null;
     } else if (sync_partial_status) {
       const { data: current } = await supabase
         .from('orders')
@@ -192,7 +212,7 @@ Deno.serve(async (req) => {
       if (sync_partial_status) {
         const { data, error } = await supabase
           .from('orders')
-          .select('sales_order_id, delivery_status, delivered_at, delivered_by, payment_collected, payment_collected_method')
+          .select('sales_order_id, delivery_status, delivered_at, delivered_by, payment_collected, payment_collected_method, payment_pending_verification, payment_claimed_method, payment_claimed_at, payment_claimed_by')
           .eq('sales_order_id', sales_order_id)
           .single();
         if (error) throw new Error(error.message);
@@ -205,7 +225,7 @@ Deno.serve(async (req) => {
       .from('orders')
       .update(update)
       .eq('sales_order_id', sales_order_id)
-      .select('sales_order_id, delivery_status, delivered_at, delivered_by, payment_collected, payment_collected_method')
+      .select('sales_order_id, delivery_status, delivered_at, delivered_by, payment_collected, payment_collected_method, payment_pending_verification, payment_claimed_method, payment_claimed_at, payment_claimed_by')
       .single();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`Order ${sales_order_id} not found`);
