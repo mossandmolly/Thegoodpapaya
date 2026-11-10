@@ -31,7 +31,13 @@
 //      entirely different channel, so a live link/QR left behind is a real
 //      double-payment risk, not just stale bookkeeping.
 //
-// Input:  { sales_order_id, commit?: boolean, method?: 'cash'|'screenshot', marked_by?: string }
+// Also doubles as the verification step for a rider's own payment claim at
+// delivery (mark-delivered sets orders.payment_pending_verification instead
+// of trusting that claim directly — see its header comment) — a commit
+// here always clears that flag, whether or not the order actually had a
+// pending claim on it.
+//
+// Input:  { sales_order_id, commit?: boolean, method?: 'cash'|'screenshot'|'online', marked_by?: string }
 // Output (dry run):  { zoho_balance, zoho_total, zoho_status, local_balance, discrepancy }
 // Output (commit):   { sales_order_id, amount_recorded, balance_due: 0 }
 //
@@ -187,9 +193,10 @@ Deno.serve(async (req) => {
     // Commit — re-check fresh (zohoBalance above, just fetched) rather than
     // trusting any number the frontend might still be holding from an
     // earlier dry-run call.
+    const methodLabel = method === 'screenshot' ? 'screenshot' : method === 'online' ? 'online' : 'cash';
     let amountRecorded = 0;
     if (zohoBalance > 0) {
-      const reference = `Manual (${method === 'screenshot' ? 'screenshot' : 'cash'}) — marked by ${marked_by || 'ops'}`;
+      const reference = `Manual (${methodLabel}) — marked by ${marked_by || 'ops'}`;
       await recordZohoCashPayment(token, orgId, order.zoho_invoice_id, zohoInvoice.customer_id, zohoBalance, reference);
       amountRecorded = zohoBalance;
     }
@@ -197,10 +204,20 @@ Deno.serve(async (req) => {
     const updates: Record<string, unknown> = {
       balance_due: 0,
       payment_collected: true,
-      payment_collected_method: method === 'screenshot' ? 'screenshot' : 'cash',
+      payment_collected_method: methodLabel,
       payment_collected_at: new Date().toISOString(),
       qr_code_id: null, qr_image_url: null, qr_created_at: null,
       razorpay_link_id: null, razorpay_url: null,
+      // This is the verification step for whatever a rider may have
+      // claimed at delivery (mark-delivered no longer trusts that claim
+      // directly — see its own header comment) — clear it now that it's
+      // been checked and confirmed, whether or not it actually came from a
+      // rider's claim in the first place (Somya/Rohith can also use this
+      // for a payment nobody at delivery flagged at all).
+      payment_pending_verification: false,
+      payment_claimed_method: null,
+      payment_claimed_at: null,
+      payment_claimed_by: null,
     };
     // amount_paid is cumulative everywhere else in this app — add whatever
     // was actually just recorded. If Zoho's balance was already 0 (paid
