@@ -3941,20 +3941,38 @@ async function fetchCustomerMap(ids){
   return{map,error:null};
 }
 
-// Same customer, same day, same item ordered 2+ times (quantities may differ)
-// — flags likely accidental double-entries from WhatsApp parsing so an admin
-// or packer can spot and remove the extra one, distinct from the exact-match
-// 'held' duplicate check which only catches identical quantities.
+// Same customer, same day, same item ordered 2+ times (quantities may
+// differ) — flags likely accidental double-entries from WhatsApp parsing so
+// an admin or packer can spot and remove the extra one, distinct from the
+// exact-match 'held' duplicate check (pushRows/whatsapp-create-order) which
+// only catches identical quantities within a single push.
+//
+// Deliberately keyed by customer+day, NOT sales_order_id — two different
+// sales_order_ids can be the same real customer on the same day (most
+// commonly a dispatched/delivered order getting split into a fresh
+// "-N" suffix for a late addition, see nextSplitSuffix/pushRows), and the
+// same accidental double-entry can land on either side of that split just
+// as easily as within one order. The day comes from the sales_order_id's
+// own date prefix (every creation path stamps it there); the customer
+// comes from whichever order-lookup map this tab has populated
+// (currentOrdersById for Today's Orders, packerCustomerMap for Packer),
+// canonicalized the same way sales_order_id itself is built so a spelling/
+// casing difference between the two orders' customer_name doesn't hide a
+// real duplicate. Falls back to the raw sales_order_id when neither map has
+// an entry (shouldn't normally happen) — same as the old same-order-only
+// behavior for that one item, rather than erroring.
 function computeDuplicateItemIds(items){
+  const keyFor=i=>{
+    const day=i.sales_order_id.slice(0,10);
+    const order=currentOrdersById[i.sales_order_id]||packerCustomerMap[i.sales_order_id];
+    const custName=order?.customer||order?.customer_name||i.sales_order_id;
+    return day+'|'+canonicalCustomerKey(custName)+'|'+i.item_name;
+  };
+  const keys=items.map(keyFor);
   const counts={};
-  items.forEach(i=>{
-    const key=i.sales_order_id+'|'+i.item_name;
-    counts[key]=(counts[key]||0)+1;
-  });
+  keys.forEach(k=>{counts[k]=(counts[k]||0)+1;});
   const dupIds=new Set();
-  items.forEach(i=>{
-    if(counts[i.sales_order_id+'|'+i.item_name]>1)dupIds.add(i.id);
-  });
+  items.forEach((i,idx)=>{if(counts[keys[idx]]>1)dupIds.add(i.id);});
   return dupIds;
 }
 
