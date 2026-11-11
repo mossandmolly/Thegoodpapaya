@@ -851,7 +851,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button type="button" class="btn-sec" style="margin:6px 0" onclick="autoAssignStockPackers()" title="Spreads every tracked fruit's cycle-count/closing-stock responsibility fairly across packers who have a category set in Config — onion/potato/tomato and all Leafy Greens are kept off any single packer where possible.">⚖️ Auto-assign packers</button>
   <div class="stock-table-wrap">
     <table class="community-table" id="stock-table"><thead><tr>
-      <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th class="vp-sortable" onclick="sortStockRows('packed')">Packed/Invoiced<span id="stock-sort-packed" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('pending')">Pending orders<span id="stock-sort-pending" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('available')">Available<span id="stock-sort-available" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('status')">Status<span id="stock-sort-status" class="vp-sort-ind"></span></th><th>Closing stock</th><th title="Opening + Purchased − Packed/Invoiced − Closing stock">Write off</th><th title="Who cycle-counts and enters closing stock for this fruit at day's end">Packer</th>
+      <th>Fruit</th><th>Opening stock</th><th>Purchased</th><th class="vp-sortable" onclick="sortStockRows('packed')">Packed/Invoiced<span id="stock-sort-packed" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('pending')">Pending orders<span id="stock-sort-pending" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('available')">Available<span id="stock-sort-available" class="vp-sort-ind"></span></th><th class="vp-sortable" onclick="sortStockRows('status')">Status<span id="stock-sort-status" class="vp-sort-ind"></span></th><th>Closing stock</th><th class="vp-sortable" onclick="sortStockRows('writeOff')" title="Opening + Purchased − Packed/Invoiced − Closing stock">Write off<span id="stock-sort-writeOff" class="vp-sort-ind"></span></th><th title="Who cycle-counts and enters closing stock for this fruit at day's end">Packer</th>
     </tr></thead><tbody id="stock-tbody"></tbody></table>
   </div>
   <div id="stock-buy-list"></div>
@@ -11735,7 +11735,7 @@ function renderStockTable(){
   const search=document.getElementById('stock-search').value.trim().toLowerCase();
   const tbody=document.getElementById('stock-tbody');
 
-  ['packed','pending','available','status'].forEach(k=>{
+  ['packed','pending','available','status','writeOff'].forEach(k=>{
     const el=document.getElementById('stock-sort-'+k);
     if(el)el.textContent=k===stockSortKey?(stockSortDir==='desc'?'▾':'▴'):'';
   });
