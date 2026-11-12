@@ -637,6 +637,28 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .login-box{width:100%;max-width:320px;background:#fdf8f3;border:1px solid #eee0d0;border-radius:12px;padding:24px}
 .login-box input{width:100%;padding:9px 10px;border:1px solid #eee0d0;border-radius:8px;font-size:13px;color:#2b2320;font-family:inherit;margin-bottom:12px;background:#ffffff}
 .signout-link{font-size:11px;color:#8a7a6a;cursor:pointer;text-decoration:underline;margin-left:8px;flex-shrink:0}
+/* Phone Lookup tab — ported from storefront/style.css's .invoice-card
+   family (pl- prefixed throughout to stay clear of any existing class of
+   the same bare name), so this admin view looks exactly like what a
+   customer sees on "My Invoices". */
+.pl-invoice-card{background:#fff;border:1px solid #eee0d0;border-radius:12px;padding:14px;margin-bottom:12px}
+.pl-invoice-card .pl-row1{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
+.pl-invoice-card .pl-inv-num{font-weight:700;font-size:14px}
+.pl-status-col{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.pl-invoice-card .pl-status{font-size:10px;font-weight:700;padding:3px 9px;border-radius:10px;text-transform:uppercase}
+.pl-status.pending,.pl-status.overdue{background:#fdeaea;color:#b3261e}
+.pl-status.paid{background:#2d6b2d;color:#fff;font-size:13px;padding:5px 14px;border-radius:14px;letter-spacing:.2px}
+.pl-invoice-card .pl-paid-at{font-size:11px;color:#8a7a6a;font-weight:600}
+.pl-invoice-card .pl-meta{font-size:12px;color:#8a7a6a;margin-bottom:10px}
+.pl-inv-items{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:12px}
+.pl-inv-items th{text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#8a7a6a;padding:0 4px 6px;border-bottom:1px solid #eee0d0}
+.pl-inv-items th:not(:first-child),.pl-inv-items td:not(:first-child){text-align:right}
+.pl-inv-items td{padding:5px 4px;border-bottom:1px solid #f5efe4}
+.pl-inv-items tfoot td{padding:7px 4px 0;border-bottom:none;font-weight:700}
+.pl-inv-items .pl-total-row td{color:#2b2320}
+.pl-inv-items .pl-balance-row td{color:#b3261e}
+.pl-inv-items .pl-subtotal-row td{color:#8a7a6a;font-weight:400}
+.pl-inv-items .pl-discount-row td{color:#2d6b2d}
 </style>
 </head>
 <body>
@@ -675,6 +697,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab" onclick="switchTab('stock')" id="tab-stock">📊 Stock</button>
   <button class="tab" onclick="switchTab('vegperf')" id="tab-vegperf">🥦 Veg Performance</button>
   <button class="tab" onclick="switchTab('pnl')" id="tab-pnl">📈 P&amp;L</button>
+  <button class="tab" onclick="switchTab('phonelookup')" id="tab-phonelookup">📞 Phone Lookup</button>
   <button class="tab" onclick="switchTab('purchases')" id="tab-purchases" style="margin-left:auto">🧺 Purchases</button>
   <button class="tab" onclick="openQuickAdd()" id="tab-quickadd">⚡ Quick Add</button>
   <button class="tab" onclick="openAdhocPaymentLink()" id="tab-adhoc-pay">💳 Payment Link</button>
@@ -1508,6 +1531,20 @@ Banana, 15, 450"></textarea>
   <div id="img-type-pills" class="filter-pills status-pills"></div>
   <div id="img-grid" class="catalog-img-grid"></div>
 </div>
+
+<div class="panel" id="panel-phonelookup">
+  <div class="section-label date-header-row">
+    <span>📞 Phone Lookup <span id="pl-rc"></span></span>
+  </div>
+  <p class="note">Shows exactly what a customer sees on "My Invoices" — sourced directly from invoice_line_items, no date cutoff. Search by phone number or customer name; fix a wrong phone/house mapping right here.</p>
+  <div id="pl-multi-house-cta"></div>
+  <div class="add-row" style="margin-top:0">
+    <input type="text" class="pk-search" id="pl-search" placeholder="🔍 Phone number or customer name…" style="flex:2" onkeydown="if(event.key==='Enter')plSearch()">
+    <button type="button" class="btn-sec" onclick="plSearch()">Search</button>
+  </div>
+  <div id="pl-houses"></div>
+  <div id="pl-invoices"></div>
+</div>
 </div>
 
 <!-- GENERIC ALERT / CONFIRM / PROMPT MODAL — replaces native browser
@@ -1742,6 +1779,13 @@ function applyRoleRestrictions(){
       if(el)el.style.display='none';
     });
   }
+  // Phone Lookup can change which house a phone number (and its past
+  // invoices) is associated with — same Somya+Rohith gate as Mark as Paid,
+  // not just the Somya-only one above.
+  if(!isMarkPaidAllowed){
+    const el=document.getElementById('tab-phonelookup');
+    if(el)el.style.display='none';
+  }
   if(isBuyerRole){
     ['tab-parser','tab-live','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd','tab-adhoc-pay'].forEach(id=>{
       const el=document.getElementById(id);
@@ -1868,6 +1912,7 @@ function switchTab(name){
   else if(isDeliveryRole)name='delivery';
   else if(name==='vegperf'&&!isVegPerfAllowed)name='today';
   else if(name==='pnl'&&!isVegPerfAllowed)name='today';
+  else if(name==='phonelookup'&&!isMarkPaidAllowed)name='today';
   // Matched by id, not position — Parser/Config are header-btn links now,
   // not part of the main .tabs row, so the old fixed-index array no longer
   // lines up with what's actually in there.
@@ -1883,6 +1928,7 @@ function switchTab(name){
   if(name==='stock')loadStockView();
   if(name==='purchases')loadPurchasesView();
   if(name==='images')loadCatalogImagesView();
+  if(name==='phonelookup')loadPhoneLookupView();
   if(name==='vegperf'){loadVegPerfView();loadVegCustomerTrend();loadVegFixedWindowTiles();}
   // Lazy src — only ever loads pnl.html (its own Supabase queries, own
   // page weight) the first time someone who's actually allowed opens this
@@ -12918,6 +12964,224 @@ function discardUnmatchedImage(i){
     if(files.length)uploadCatalogImageFiles(files);
   });
 })();
+
+// ── Phone Lookup (admin) ─────────────────────────────────────────────────
+// Mirrors the storefront's "My Invoices" page exactly (same card look,
+// same item/subtotal/discount/total/balance layout), sourced straight from
+// invoice_line_items with no date cutoff or row limit — this is a
+// debugging/correction tool, not the customer-facing page, so it needs to
+// reach old data the storefront deliberately doesn't show. No Pay Now/Pay
+// All here on purpose — this view exists to fix data, not take payments.
+// Somya+Rohith only (see applyRoleRestrictions/tab-phonelookup).
+
+let plLastSearchType=null,plLastSearchValue=null;
+
+async function loadPhoneLookupView(){
+  document.getElementById('pl-houses').innerHTML='';
+  document.getElementById('pl-invoices').innerHTML='';
+  const ctaEl=document.getElementById('pl-multi-house-cta');
+  ctaEl.innerHTML='<div class="to-empty">Loading…</div>';
+  const{data,error}=await sb.rpc('admin_multi_house_numbers');
+  if(error){ctaEl.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  if(!data||!data.length){ctaEl.innerHTML='';return;}
+  ctaEl.innerHTML='<div class="section-label" style="margin-bottom:8px">⚠️ '+data.length+' phone number'+(data.length!==1?'s':'')+' with more than one house mapped — tap to review</div>'+
+    '<div class="filter-pills status-pills">'+
+      data.map(r=>'<span class="filter-pill" style="color:#b3261e;border-color:#f3c7c7" onclick="plSearchPhone('+escH(JSON.stringify(r.phone))+')">'+escH(r.phone)+' ('+r.house_count+')</span>').join('')+
+    '</div>';
+}
+
+// A phone search if it's mostly/all digits and long enough to plausibly be
+// one (8+ digits, allowing +/space/-/() the way a pasted number might come
+// in) — anything else is treated as a customer-name contains-search.
+function plSearch(){
+  const q=(document.getElementById('pl-search').value||'').trim();
+  if(!q)return;
+  const digits=q.replace(/\D/g,'');
+  if(digits.length>=8&&/^[\d+\s()-]+$/.test(q))plSearchPhone(digits);
+  else plSearchName(q);
+}
+
+function plRerunLastSearch(){
+  if(plLastSearchType==='phone')plSearchPhone(plLastSearchValue);
+  else if(plLastSearchType==='name')plSearchName(plLastSearchValue);
+}
+
+function plHouseRowHtml(name,phone){
+  return '<div class="mt-item-row" style="display:flex;justify-content:space-between;align-items:center">'+
+    '<span>'+escH(name)+' <span style="color:#8a7a6a;font-size:12px">— '+escH(phone)+'</span></span>'+
+    '<span>'+
+      '<a href="javascript:void(0)" class="or-link" onclick="plEditMapping('+escH(JSON.stringify(name))+','+escH(JSON.stringify(phone))+')" title="Correct the phone number for this house">✎ Edit</a>'+
+      ' <button class="del-btn" onclick="plDeleteMapping('+escH(JSON.stringify(name))+','+escH(JSON.stringify(phone))+')" title="This house should not be associated with this number">✕</button>'+
+    '</span>'+
+  '</div>';
+}
+
+async function plSearchPhone(phone){
+  plLastSearchType='phone';plLastSearchValue=phone;
+  document.getElementById('pl-search').value=phone;
+  const housesEl=document.getElementById('pl-houses'),invEl=document.getElementById('pl-invoices');
+  housesEl.innerHTML='<div class="to-empty">Loading…</div>';
+  invEl.innerHTML='';
+  const bare=phone.replace(/^\+91/,'');
+  const[{data:houseRows,error:houseErr},{data:invRows,error:invErr}]=await Promise.all([
+    sb.rpc('admin_houses_for_phone',{p_phone:bare}),
+    sb.rpc('admin_invoices_for_phone',{p_phone:bare}),
+  ]);
+  if(houseErr){housesEl.innerHTML='<div class="to-empty">'+escH(houseErr.message)+'</div>';}
+  else{
+    housesEl.innerHTML='<div class="section-label" style="margin-top:14px">Houses mapped to '+escH(bare)+' ('+(houseRows||[]).length+')</div>'+
+      (houseRows&&houseRows.length
+        ?houseRows.map(r=>plHouseRowHtml(r.customer_name,bare)).join('')
+        :'<div class="to-empty">No houses found for this number.</div>');
+  }
+  if(invErr){invEl.innerHTML='<div class="to-empty">'+escH(invErr.message)+'</div>';return;}
+  plRenderInvoiceCards(invRows||[]);
+}
+
+async function plSearchName(q){
+  plLastSearchType='name';plLastSearchValue=q;
+  document.getElementById('pl-search').value=q;
+  const housesEl=document.getElementById('pl-houses'),invEl=document.getElementById('pl-invoices');
+  housesEl.innerHTML='<div class="to-empty">Loading…</div>';
+  invEl.innerHTML='';
+  const{data:invRows,error}=await sb.rpc('admin_invoices_for_customer_name',{p_name:q});
+  if(error){housesEl.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  // Houses list here comes straight off the matched invoice rows (distinct
+  // customer_name+phone_number pairs) rather than the broader 3-table
+  // union admin_houses_for_phone uses — there's no single phone to key
+  // that off in name-search mode. Re-search by one of these phones to get
+  // the fuller cross-table view if needed.
+  const pairs=new Map();
+  (invRows||[]).forEach(r=>{
+    if(!r.phone_number)return;
+    const key=r.customer_name+'|'+r.phone_number;
+    if(!pairs.has(key))pairs.set(key,{name:r.customer_name,phone:r.phone_number});
+  });
+  const pairList=[...pairs.values()].sort((a,b)=>a.name.localeCompare(b.name));
+  housesEl.innerHTML='<div class="section-label" style="margin-top:14px">Matching houses ('+pairList.length+')</div>'+
+    (pairList.length
+      ?pairList.map(p=>plHouseRowHtml(p.name,p.phone)).join('')
+      :'<div class="to-empty">No phone on file for any match.</div>');
+  plRenderInvoiceCards(invRows||[]);
+}
+
+function plGroupByInvoice(rows){
+  const byInvoice={};
+  rows.forEach(r=>{
+    const key=r.invoice_number||r.zoho_invoice_id||r.sales_order_id;
+    if(!byInvoice[key])byInvoice[key]={...r,items:[]};
+    byInvoice[key].items.push({item_name:r.item_name,qty:r.final_quantity??r.requested_quantity,price:r.item_price});
+  });
+  return Object.values(byInvoice).sort((a,b)=>(b.invoice_date||'').localeCompare(a.invoice_date||''));
+}
+
+function plDaysOverdue(invoiceDateStr){
+  if(!invoiceDateStr)return null;
+  const todayIst=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
+  const invMs=Date.parse(invoiceDateStr+'T00:00:00Z');
+  const todayMs=Date.parse(todayIst+'T00:00:00Z');
+  if(isNaN(invMs))return null;
+  return Math.round((todayMs-invMs)/86400000);
+}
+
+function plStatusClass(inv){
+  if(inv.payment_status==='paid')return 'paid';
+  const days=plDaysOverdue(inv.invoice_date);
+  return(days!=null&&days>=1)?'overdue':'pending';
+}
+
+function plStatusLabel(inv){
+  if(inv.payment_status==='paid')return 'paid';
+  const days=plDaysOverdue(inv.invoice_date);
+  if(days==null)return inv.payment_status||'pending';
+  if(days<=0)return 'Due today';
+  return 'Overdue by '+days+' day'+(days===1?'':'s');
+}
+
+function plFormatPaidAt(iso){
+  if(!iso)return '';
+  const d=new Date(iso);
+  if(isNaN(d))return '';
+  const datePart=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',timeZone:'Asia/Kolkata'});
+  const timePart=d.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'});
+  return datePart+', '+timePart;
+}
+
+function plRenderInvoiceCards(rows){
+  const el=document.getElementById('pl-invoices');
+  if(!rows.length){el.innerHTML='<div class="to-empty">No invoices found.</div>';return;}
+  const invoices=plGroupByInvoice(rows);
+  el.innerHTML='<div class="section-label" style="margin-top:14px">Invoices ('+invoices.length+')</div>'+
+    invoices.map(inv=>{
+      let itemsSubtotal=0;
+      const itemRows=inv.items.map(i=>{
+        const qty=+i.qty||0,rate=+i.price||0,value=qty*rate;
+        itemsSubtotal+=value;
+        return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+'</td><td>₹'+rate.toFixed(2)+'</td><td>₹'+value.toFixed(2)+'</td></tr>';
+      }).join('');
+      const balance=+inv.balance||0;
+      const invoiceTotal=+inv.invoice_total||0;
+      const discountAmount=inv.discount_type?(itemsSubtotal-invoiceTotal):0;
+      const showDiscount=inv.discount_type&&discountAmount>0.01;
+      const discountLabel=inv.discount_type==='percent'
+        ?'Discount ('+(+inv.discount_value||0)+'% off)'
+        :'Discount';
+      return '<div class="pl-invoice-card">'+
+        '<div class="pl-row1">'+
+          '<span class="pl-inv-num">'+escH(inv.invoice_number||inv.sales_order_id||'Invoice')+'</span>'+
+          '<div class="pl-status-col">'+
+            '<span class="pl-status '+plStatusClass(inv)+'">'+escH(plStatusLabel(inv))+'</span>'+
+            (inv.payment_status==='paid'&&inv.payment_collected_at
+              ?'<span class="pl-paid-at">'+escH(plFormatPaidAt(inv.payment_collected_at))+'</span>'
+              :'')+
+          '</div>'+
+        '</div>'+
+        '<div class="pl-meta">'+escH(inv.customer_name||'')+' · '+escH(inv.phone_number||'no phone')+' · '+escH(inv.invoice_date||'')+'</div>'+
+        '<table class="pl-inv-items">'+
+          '<thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Value</th></tr></thead>'+
+          '<tbody>'+itemRows+'</tbody>'+
+          '<tfoot>'+
+            (showDiscount?'<tr class="pl-subtotal-row"><td colspan="3">Subtotal</td><td>₹'+itemsSubtotal.toFixed(2)+'</td></tr>':'')+
+            (showDiscount?'<tr class="pl-discount-row"><td colspan="3">'+escH(discountLabel)+'</td><td>−₹'+discountAmount.toFixed(2)+'</td></tr>':'')+
+            '<tr class="pl-total-row"><td colspan="3">Total</td><td>₹'+invoiceTotal.toFixed(2)+'</td></tr>'+
+            (balance>0?'<tr class="pl-balance-row"><td colspan="3">Balance due</td><td>₹'+balance.toFixed(2)+'</td></tr>':'')+
+          '</tfoot>'+
+        '</table>'+
+      '</div>';
+    }).join('');
+}
+
+async function plDeleteMapping(name,phone){
+  if(!await uxConfirm('Remove "'+name+'" from phone '+phone+'?\n\nClears it from customer_phones, their invoices, and any current order still carrying this number. Their past invoices stay — just without this number attached.'))return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/fix-phone-mapping',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({action:'delete',customer_name:name,phone}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not remove mapping');
+    uxAlert('Removed — '+data.customer_phones+' customer_phones row(s), '+data.invoice_line_items+' invoice(s), '+data.orders+' order(s) updated.');
+    plRerunLastSearch();
+  }catch(e){uxAlert('Failed: '+e.message);}
+}
+
+async function plEditMapping(name,phone){
+  const newPhone=((await uxPrompt('Correct phone number for "'+name+'" (currently '+phone+'):'))||'').trim();
+  if(!newPhone)return;
+  if(!await uxConfirm('Change "'+name+'" from '+phone+' to '+newPhone+' everywhere — customer_phones, their invoices, and any current order carrying the old number?'))return;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/fix-phone-mapping',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({action:'edit',customer_name:name,phone,new_phone:newPhone}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not update mapping');
+    uxAlert('Updated — '+data.customer_phones+' customer_phones row(s), '+data.invoice_line_items+' invoice(s), '+data.orders+' order(s) updated.');
+    plRerunLastSearch();
+  }catch(e){uxAlert('Failed: '+e.message);}
+}
 
 </script>
 </body>
