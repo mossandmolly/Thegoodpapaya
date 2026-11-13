@@ -12981,6 +12981,10 @@ let plLastSearchType=null,plLastSearchValue=null;
 // several houses at once and clicking one is just "show less of this".
 let plCurrentInvoiceRows=[];
 let plHouseFilterName=null;
+// Keyed by sales_order_id as each card renders — plMarkOrderPaid looks an
+// invoice up here (Phone Lookup has no currentOrdersById entry for most of
+// what it shows, since Order Overview only ever loads today's orders).
+let plCurrentInvoicesBySoid={};
 
 function plFilterByHouse(name){
   plHouseFilterName=name;
@@ -13165,6 +13169,7 @@ function plFormatPaidAt(iso){
 function plRenderInvoiceCards(rows,headerHtml){
   const el=document.getElementById('pl-invoices');
   headerHtml=headerHtml||'';
+  plCurrentInvoicesBySoid={};
   if(!rows.length){el.innerHTML=headerHtml+'<div class="to-empty">No invoices found.</div>';return;}
   const invoices=plGroupByInvoice(rows);
   el.innerHTML=headerHtml+'<div class="section-label" style="margin-top:14px">Invoices ('+invoices.length+')</div>'+
@@ -13182,6 +13187,7 @@ function plRenderInvoiceCards(rows,headerHtml){
       const discountLabel=inv.discount_type==='percent'
         ?'Discount ('+(+inv.discount_value||0)+'% off)'
         :'Discount';
+      plCurrentInvoicesBySoid[inv.sales_order_id]=inv;
       return '<div class="pl-invoice-card">'+
         '<div class="pl-row1">'+
           '<span class="pl-inv-num">'+escH(inv.invoice_number||inv.sales_order_id||'Invoice')+'</span>'+
@@ -13190,6 +13196,7 @@ function plRenderInvoiceCards(rows,headerHtml){
             (inv.payment_status==='paid'&&inv.payment_collected_at
               ?'<span class="pl-paid-at">'+escH(plFormatPaidAt(inv.payment_collected_at))+'</span>'
               :'')+
+            plMarkAsPaidEntryHtml(inv)+
           '</div>'+
         '</div>'+
         '<div class="pl-meta">'+escH(inv.customer_name||'')+' · '+escH(inv.phone_number||'no phone')+' · '+escH(inv.invoice_date||'')+'</div>'+
@@ -13205,6 +13212,71 @@ function plRenderInvoiceCards(rows,headerHtml){
         '</table>'+
       '</div>';
     }).join('');
+}
+
+// Same gate and same action (markOrderPaid/mark-order-paid) as Order
+// Overview's markAsPaidEntryHtml — reading the equivalent fields off the
+// admin RPC row instead of currentOrdersById, since Phone Lookup shows
+// invoices Order Overview's own "today's orders" load never touches.
+function plMarkAsPaidEntryHtml(inv){
+  if(!isMarkPaidAllowed||inv.is_pickup||inv.order_status==='cancelled'||inv.payment_status==='paid'||!inv.sales_order_id)return '';
+  const pending=inv.payment_pending_verification;
+  const label=pending?'✔️ Verify payment':'💵 Mark as Paid';
+  const title=pending
+    ?'Rider claims '+(inv.payment_claimed_method||'payment')+' collected'+(inv.payment_claimed_by?' by '+inv.payment_claimed_by:'')+' — checks Zoho\'s live invoice balance before confirming.'
+    :'Customer paid outside Razorpay — cash, or a shared screenshot. Checks Zoho\'s live invoice balance first.';
+  return ' <a href="javascript:void(0)" class="pay-link" style="margin-left:10px" onclick="event.stopPropagation();plMarkOrderPaid('+escH(JSON.stringify(inv.sales_order_id))+')" title="'+escH(title)+'">'+label+'</a>';
+}
+
+// Mirrors markOrderPaid exactly (same two-step mark-order-paid call, same
+// confirm/prompt flow) — only difference is refreshing Phone Lookup's own
+// view afterward instead of loadTodaysOrders.
+async function plMarkOrderPaid(soid){
+  const inv=plCurrentInvoicesBySoid[soid];
+  if(!inv)return;
+  await ensureRiderName();
+
+  let check;
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-order-paid',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid}),
+    });
+    check=await res.json();
+    if(!res.ok)throw new Error(check.error||'Could not check Zoho invoice');
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+    return;
+  }
+
+  const amt=(+check.zoho_balance||0).toFixed(2);
+  const claimLine=inv.payment_pending_verification
+    ?'Rider claims '+(inv.payment_claimed_method||'payment')+' collected'+(inv.payment_claimed_by?' by '+inv.payment_claimed_by:'')+(inv.payment_claimed_at?' at '+new Date(inv.payment_claimed_at).toLocaleString():'')+'.\n\n'
+    :'';
+  const msg=claimLine+(check.discrepancy
+    ?'⚠️ Discrepancy — this panel shows ₹'+(+check.local_balance||0).toFixed(2)+' due, but Zoho\'s live invoice shows ₹'+amt+' due.\n\nMark as fully paid anyway?'+(check.zoho_balance>0?' This records a ₹'+amt+' cash payment in Zoho.':'')
+    :'Found Zoho invoice — ₹'+amt+' due. Mark as paid?');
+  if(!await uxConfirm(msg))return;
+
+  const defaultMethod=inv.payment_claimed_method==='online'?'online':'cash';
+  const methodEntered=((await uxPrompt('How did the customer pay — type "cash", "online", or "screenshot":',defaultMethod))||'').trim().toLowerCase();
+  if(!methodEntered)return;
+  const method=methodEntered.startsWith('s')?'screenshot':methodEntered.startsWith('o')?'online':'cash';
+
+  try{
+    const res=await fetch(SUPABASE_URL+'/functions/v1/mark-order-paid',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+      body:JSON.stringify({sales_order_id:soid,commit:true,method,marked_by:riderName}),
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Could not mark as paid');
+    evictCustomerLookupCache(soid);
+    plRerunLastSearch();
+  }catch(e){
+    uxAlert('Failed: '+e.message);
+  }
 }
 
 // Stores the CURRENT door-key signature for this phone as "reviewed" —
