@@ -654,6 +654,10 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .pl-status.pending,.pl-status.overdue{background:#fdeaea;color:#b3261e}
 .pl-status.paid{background:#2d6b2d;color:#fff;font-size:13px;padding:5px 14px;border-radius:14px;letter-spacing:.2px}
 .pl-invoice-card .pl-paid-at{font-size:11px;color:#8a7a6a;font-weight:600}
+.pl-mark-paid-pill{display:inline-flex;align-items:center;gap:4px;background:#2d6b2d;color:#fff;font-size:12px;font-weight:700;padding:6px 14px;border-radius:14px;cursor:pointer;text-decoration:none;white-space:nowrap;border:none}
+.pl-mark-paid-pill:hover{background:#245a24}
+.pl-mark-paid-pill.verify{background:#b3261e}
+.pl-mark-paid-pill.verify:hover{background:#951f18}
 .pl-invoice-card .pl-meta{font-size:12px;color:#8a7a6a;margin-bottom:10px}
 .pl-inv-items{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:12px}
 .pl-inv-items th{text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#8a7a6a;padding:0 4px 6px;border-bottom:1px solid #eee0d0}
@@ -13267,7 +13271,7 @@ function plMarkAsPaidEntryHtml(inv){
   const title=pending
     ?'Rider claims '+(inv.payment_claimed_method||'payment')+' collected'+(inv.payment_claimed_by?' by '+inv.payment_claimed_by:'')+' — checks Zoho\'s live invoice balance before confirming.'
     :'Customer paid outside Razorpay — cash, or a shared screenshot. Checks Zoho\'s live invoice balance first.';
-  return ' <a href="javascript:void(0)" class="pay-link" style="margin-left:10px" onclick="event.stopPropagation();plMarkOrderPaid('+escH(JSON.stringify(inv.sales_order_id))+')" title="'+escH(title)+'">'+label+'</a>';
+  return ' <a href="javascript:void(0)" class="pl-mark-paid-pill'+(pending?' verify':'')+'" onclick="event.stopPropagation();plMarkOrderPaid('+escH(JSON.stringify(inv.sales_order_id))+')" title="'+escH(title)+'">'+label+'</a>';
 }
 
 // Mirrors markOrderPaid exactly (same two-step mark-order-paid call, same
