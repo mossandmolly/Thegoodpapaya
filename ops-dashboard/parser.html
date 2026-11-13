@@ -1539,8 +1539,8 @@ Banana, 15, 450"></textarea>
   <p class="note">Shows exactly what a customer sees on "My Invoices" — sourced directly from invoice_line_items, no date cutoff. Search by phone number or customer name; fix a wrong phone/house mapping right here.</p>
   <div id="pl-multi-house-cta"></div>
   <div class="add-row" style="margin-top:0">
-    <input type="text" class="pk-search" id="pl-search" placeholder="🔍 Phone number or customer name…" style="flex:2" onkeydown="if(event.key==='Enter')plSearch()">
-    <button type="button" class="btn-sec" onclick="plSearch()">Search</button>
+    <input type="text" id="pl-search" placeholder="🔍 Phone number or customer name…" onkeydown="if(event.key==='Enter')plSearch()">
+    <button type="button" onclick="plSearch()">Search</button>
   </div>
   <div id="pl-houses"></div>
   <div id="pl-invoices"></div>
@@ -12979,6 +12979,14 @@ let plLastSearchType=null,plLastSearchValue=null;
 async function loadPhoneLookupView(){
   document.getElementById('pl-houses').innerHTML='';
   document.getElementById('pl-invoices').innerHTML='';
+  await plRefreshMultiHouseCta();
+}
+
+// Separated out so a delete/edit/review action can refresh just the CTA
+// pill list (counts, or a now-resolved number dropping off entirely)
+// without wiping whatever houses/invoices are currently on screen below
+// it — only the initial tab load clears those too, via loadPhoneLookupView.
+async function plRefreshMultiHouseCta(){
   const ctaEl=document.getElementById('pl-multi-house-cta');
   ctaEl.innerHTML='<div class="to-empty">Loading…</div>';
   const{data,error}=await sb.rpc('admin_multi_house_numbers');
@@ -13029,7 +13037,10 @@ async function plSearchPhone(phone){
   ]);
   if(houseErr){housesEl.innerHTML='<div class="to-empty">'+escH(houseErr.message)+'</div>';}
   else{
-    housesEl.innerHTML='<div class="section-label" style="margin-top:14px">Houses mapped to '+escH(bare)+' ('+(houseRows||[]).length+')</div>'+
+    housesEl.innerHTML='<div class="section-label" style="margin-top:14px;display:flex;justify-content:space-between;align-items:center">'+
+        '<span>Houses mapped to '+escH(bare)+' ('+(houseRows||[]).length+')</span>'+
+        '<a href="javascript:void(0)" class="or-link" onclick="plMarkReviewed('+escH(JSON.stringify(bare))+')" title="Hide this number from the CTA list above until its mapping actually changes again">✓ Mark reviewed</a>'+
+      '</div>'+
       (houseRows&&houseRows.length
         ?houseRows.map(r=>plHouseRowHtml(r.customer_name,bare)).join('')
         :'<div class="to-empty">No houses found for this number.</div>');
@@ -13151,6 +13162,25 @@ function plRenderInvoiceCards(rows){
     }).join('');
 }
 
+// Stores the CURRENT door-key signature for this phone as "reviewed" —
+// admin_multi_house_numbers (migration 150) only hides a dismissed phone
+// while its live signature still matches what was stored here, so an
+// actual mapping change (a house added/removed, a ✕/✎ correction) always
+// surfaces it again on its own, with no manual "undo" needed.
+async function plMarkReviewed(phone){
+  const phoneNorm=phone.replace(/\D/g,'').slice(-10);
+  try{
+    const{data:sig,error:sigErr}=await sb.rpc('admin_phone_mapping_signature',{p_phone:phoneNorm});
+    if(sigErr)throw new Error(sigErr.message);
+    const{error:upErr}=await sb.from('phone_mapping_review_dismissals')
+      .upsert({phone_norm:phoneNorm,signature:sig||'',dismissed_by:riderName||null,dismissed_at:new Date().toISOString()});
+    if(upErr)throw new Error(upErr.message);
+    // Refresh just the CTA pills — leaves the houses/invoices still on
+    // screen below exactly as they were, just no longer listed above.
+    await plRefreshMultiHouseCta();
+  }catch(e){uxAlert('Failed: '+e.message);}
+}
+
 async function plDeleteMapping(name,phone){
   if(!await uxConfirm('Remove "'+name+'" from phone '+phone+'?\n\nClears it from customer_phones, their invoices, and any current order still carrying this number. Their past invoices stay — just without this number attached.'))return;
   try{
@@ -13163,6 +13193,7 @@ async function plDeleteMapping(name,phone){
     if(!res.ok)throw new Error(data.error||'Could not remove mapping');
     uxAlert('Removed — '+data.customer_phones+' customer_phones row(s), '+data.invoice_line_items+' invoice(s), '+data.orders+' order(s) updated.');
     plRerunLastSearch();
+    plRefreshMultiHouseCta();
   }catch(e){uxAlert('Failed: '+e.message);}
 }
 
@@ -13180,6 +13211,7 @@ async function plEditMapping(name,phone){
     if(!res.ok)throw new Error(data.error||'Could not update mapping');
     uxAlert('Updated — '+data.customer_phones+' customer_phones row(s), '+data.invoice_line_items+' invoice(s), '+data.orders+' order(s) updated.');
     plRerunLastSearch();
+    plRefreshMultiHouseCta();
   }catch(e){uxAlert('Failed: '+e.message);}
 }
 
