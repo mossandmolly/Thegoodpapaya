@@ -1536,7 +1536,7 @@ Banana, 15, 450"></textarea>
   <div class="section-label date-header-row">
     <span>📞 Phone Lookup <span id="pl-rc"></span></span>
   </div>
-  <p class="note">Shows exactly what a customer sees on "My Invoices" — sourced directly from invoice_line_items, no date cutoff. Search by phone number or customer name; fix a wrong phone/house mapping right here.</p>
+  <p class="note">Shows exactly what a customer sees on "My Invoices" — same invoices, same Oct 27 cutoff. Search by phone number or customer name; fix a wrong phone/house mapping right here.</p>
   <div id="pl-multi-house-cta"></div>
   <div class="add-row" style="margin-top:0">
     <input type="text" id="pl-search" placeholder="🔍 Phone number or customer name…" oninput="plOnSearchInput()" onkeydown="if(event.key==='Enter'){clearTimeout(plSearchDebounceTimer);plSearch();}">
@@ -12966,13 +12966,13 @@ function discardUnmatchedImage(i){
 })();
 
 // ── Phone Lookup (admin) ─────────────────────────────────────────────────
-// Mirrors the storefront's "My Invoices" page exactly (same card look,
-// same item/subtotal/discount/total/balance layout), sourced straight from
-// invoice_line_items with no date cutoff or row limit — this is a
-// debugging/correction tool, not the customer-facing page, so it needs to
-// reach old data the storefront deliberately doesn't show. No Pay Now/Pay
-// All here on purpose — this view exists to fix data, not take payments.
-// Somya+Rohith only (see applyRoleRestrictions/tab-phonelookup).
+// Mirrors the storefront's "My Invoices" page exactly — same card look,
+// same item/subtotal/discount/total/balance layout, same invoice_date >=
+// 2026-10-27 cutoff (migration 151 — deliberately kept in sync with what
+// a customer actually sees, not everything that's ever existed). No row
+// limit though (the customer RPC caps at 10 most recent; this doesn't),
+// and no Pay Now/Pay All on purpose — this view exists to fix data, not
+// take payments. Somya+Rohith only (see applyRoleRestrictions/tab-phonelookup).
 
 let plLastSearchType=null,plLastSearchValue=null;
 // Full result set from the last search, plus which single house (if any)
