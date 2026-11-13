@@ -1539,7 +1539,7 @@ Banana, 15, 450"></textarea>
   <p class="note">Shows exactly what a customer sees on "My Invoices" — sourced directly from invoice_line_items, no date cutoff. Search by phone number or customer name; fix a wrong phone/house mapping right here.</p>
   <div id="pl-multi-house-cta"></div>
   <div class="add-row" style="margin-top:0">
-    <input type="text" id="pl-search" placeholder="🔍 Phone number or customer name…" onkeydown="if(event.key==='Enter')plSearch()">
+    <input type="text" id="pl-search" placeholder="🔍 Phone number or customer name…" oninput="plOnSearchInput()" onkeydown="if(event.key==='Enter'){clearTimeout(plSearchDebounceTimer);plSearch();}">
     <button type="button" onclick="plSearch()">Search</button>
   </div>
   <div id="pl-houses"></div>
@@ -12975,6 +12975,35 @@ function discardUnmatchedImage(i){
 // Somya+Rohith only (see applyRoleRestrictions/tab-phonelookup).
 
 let plLastSearchType=null,plLastSearchValue=null;
+// Full result set from the last search, plus which single house (if any)
+// it's currently narrowed to — filtering is purely client-side over what's
+// already loaded, no extra round trip, since a name/phone search can span
+// several houses at once and clicking one is just "show less of this".
+let plCurrentInvoiceRows=[];
+let plHouseFilterName=null;
+
+function plFilterByHouse(name){
+  plHouseFilterName=name;
+  plApplyHouseFilterAndRender();
+}
+
+function plClearHouseFilter(){
+  plHouseFilterName=null;
+  plApplyHouseFilterAndRender();
+}
+
+function plApplyHouseFilterAndRender(){
+  const rows=plHouseFilterName
+    ?plCurrentInvoiceRows.filter(r=>r.customer_name===plHouseFilterName)
+    :plCurrentInvoiceRows;
+  const banner=plHouseFilterName
+    ?'<div class="section-label" style="display:flex;justify-content:space-between;align-items:center">'+
+        '<span>Showing only: '+escH(plHouseFilterName)+'</span>'+
+        '<a href="javascript:void(0)" class="or-link" onclick="plClearHouseFilter()">✕ clear, show all '+plCurrentInvoiceRows.length+' row'+(plCurrentInvoiceRows.length!==1?'s':'')+'</a>'+
+      '</div>'
+    :'';
+  plRenderInvoiceCards(rows,banner);
+}
 
 async function loadPhoneLookupView(){
   document.getElementById('pl-houses').innerHTML='';
@@ -13000,13 +13029,23 @@ async function plRefreshMultiHouseCta(){
 
 // A phone search if it's mostly/all digits and long enough to plausibly be
 // one (8+ digits, allowing +/space/-/() the way a pasted number might come
-// in) — anything else is treated as a customer-name contains-search.
+// in) — anything else is treated as a customer-name contains-search. Skips
+// anything under 3 characters — a 1-2 char name/digit fragment would match
+// half the table and isn't a search anyone's actually trying to run yet.
 function plSearch(){
   const q=(document.getElementById('pl-search').value||'').trim();
-  if(!q)return;
+  if(q.length<3)return;
   const digits=q.replace(/\D/g,'');
   if(digits.length>=8&&/^[\d+\s()-]+$/.test(q))plSearchPhone(digits);
   else plSearchName(q);
+}
+
+// Search-as-you-type — debounced so a fast typist doesn't fire a query per
+// keystroke; Enter (see the input's onkeydown) bypasses the wait entirely.
+let plSearchDebounceTimer=null;
+function plOnSearchInput(){
+  clearTimeout(plSearchDebounceTimer);
+  plSearchDebounceTimer=setTimeout(plSearch,350);
 }
 
 function plRerunLastSearch(){
@@ -13016,7 +13055,9 @@ function plRerunLastSearch(){
 
 function plHouseRowHtml(name,phone){
   return '<div class="mt-item-row" style="display:flex;justify-content:space-between;align-items:center">'+
-    '<span>'+escH(name)+' <span style="color:#8a7a6a;font-size:12px">— '+escH(phone)+'</span></span>'+
+    '<a href="javascript:void(0)" onclick="plFilterByHouse('+escH(JSON.stringify(name))+')" title="Show only this house\'s invoices below" style="color:inherit;text-decoration:none">'+
+      escH(name)+' <span style="color:#8a7a6a;font-size:12px">— '+escH(phone)+'</span>'+
+    '</a>'+
     '<span>'+
       '<a href="javascript:void(0)" class="or-link" onclick="plEditMapping('+escH(JSON.stringify(name))+','+escH(JSON.stringify(phone))+')" title="Correct the phone number for this house">✎ Edit</a>'+
       ' <button class="del-btn" onclick="plDeleteMapping('+escH(JSON.stringify(name))+','+escH(JSON.stringify(phone))+')" title="This house should not be associated with this number">✕</button>'+
@@ -13046,7 +13087,7 @@ async function plSearchPhone(phone){
         :'<div class="to-empty">No houses found for this number.</div>');
   }
   if(invErr){invEl.innerHTML='<div class="to-empty">'+escH(invErr.message)+'</div>';return;}
-  plRenderInvoiceCards(invRows||[]);
+  plCurrentInvoiceRows=invRows||[];plHouseFilterName=null;plApplyHouseFilterAndRender();
 }
 
 async function plSearchName(q){
@@ -13073,7 +13114,7 @@ async function plSearchName(q){
     (pairList.length
       ?pairList.map(p=>plHouseRowHtml(p.name,p.phone)).join('')
       :'<div class="to-empty">No phone on file for any match.</div>');
-  plRenderInvoiceCards(invRows||[]);
+  plCurrentInvoiceRows=invRows||[];plHouseFilterName=null;plApplyHouseFilterAndRender();
 }
 
 function plGroupByInvoice(rows){
@@ -13118,11 +13159,15 @@ function plFormatPaidAt(iso){
   return datePart+', '+timePart;
 }
 
-function plRenderInvoiceCards(rows){
+// rows is whatever should actually render; headerHtml is prepended as-is
+// (the house-filter banner, when one's active) — kept as one innerHTML
+// write rather than two separate ones so the banner can't flash/overwrite.
+function plRenderInvoiceCards(rows,headerHtml){
   const el=document.getElementById('pl-invoices');
-  if(!rows.length){el.innerHTML='<div class="to-empty">No invoices found.</div>';return;}
+  headerHtml=headerHtml||'';
+  if(!rows.length){el.innerHTML=headerHtml+'<div class="to-empty">No invoices found.</div>';return;}
   const invoices=plGroupByInvoice(rows);
-  el.innerHTML='<div class="section-label" style="margin-top:14px">Invoices ('+invoices.length+')</div>'+
+  el.innerHTML=headerHtml+'<div class="section-label" style="margin-top:14px">Invoices ('+invoices.length+')</div>'+
     invoices.map(inv=>{
       let itemsSubtotal=0;
       const itemRows=inv.items.map(i=>{
