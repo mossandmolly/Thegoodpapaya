@@ -995,12 +995,11 @@ Banana, 15, 450"></textarea>
   <input type="text" class="pk-search" id="purchases-search" placeholder="🔍 Search fruit..." oninput="renderPurchasesTable()">
   <div class="stock-table-wrap">
     <table class="community-table" id="purchases-table">
-      <colgroup><col style="width:58px"><col style="width:52px"><col style="width:36px"><col style="width:82px"><col style="width:44px"><col style="width:72px"></colgroup>
-      <thead><tr>
-      <th>Fruit</th><th>Rate (₹/kg)</th><th>Qty</th><th>Source</th><th>Time</th><th>Cost (₹)</th>
-    </tr></thead><tbody id="purchases-tbody"></tbody>
+      <colgroup id="purchases-colgroup"></colgroup>
+      <thead id="purchases-thead"></thead>
+      <tbody id="purchases-tbody"></tbody>
     <tfoot><tr class="purchases-total-row hidden" id="purchases-total-row">
-      <td colspan="5">Total</td><td id="purchases-total-cost"></td>
+      <td id="purchases-total-label">Total</td><td id="purchases-total-cost"></td>
     </tr></tfoot></table>
   </div>
 
@@ -12083,17 +12082,49 @@ async function deleteStockPurchase(id){
 // Purchased for the viewed date, and logs the ₹ cost against each one —
 // the one field stock_purchases never had until migration 054.
 let purchasesRows=[];
+// item_name -> that day's catalog unit_price, from the 12-noon-IST snapshot
+// (migration 153 + snapshot-catalog-prices) — a point-in-time read, not a
+// live catalog join, so it reflects what the price actually was that day
+// even if catalog has since changed.
+let purchasesCatalogSnapshot={};
+
+// Purchase Rate (cost÷qty) and Sales Rate (the snapshot above) are Somya-
+// only — same single-email gate as Veg Performance (isVegPerfAllowed),
+// not the wider Somya+Rohith one Mark as Paid/Phone Lookup use.
+function purchasesColumnCount(){return isVegPerfAllowed?7:5;}
+
+function renderPurchasesHeader(){
+  const widths=isVegPerfAllowed
+    ?['58px','52px','52px','36px','82px','44px','72px']
+    :['68px','42px','96px','52px','82px'];
+  document.getElementById('purchases-colgroup').innerHTML=
+    widths.map(w=>'<col style="width:'+w+'">').join('');
+  document.getElementById('purchases-thead').innerHTML='<tr>'+
+    '<th>Fruit</th>'+
+    (isVegPerfAllowed?'<th>Rate (₹/kg)</th><th>Sales Rate (₹/kg)</th>':'')+
+    '<th>Qty</th><th>Source</th><th>Time</th><th>Cost (₹)</th>'+
+    '</tr>';
+  document.getElementById('purchases-total-label').colSpan=isVegPerfAllowed?6:4;
+}
 
 async function loadPurchasesView(){
+  renderPurchasesHeader();
   document.getElementById('purchases-date-picker').value=viewDate;
   const tbody=document.getElementById('purchases-tbody');
-  tbody.innerHTML='<tr><td colspan="5" class="to-empty">Loading…</td></tr>';
-  const{data,error}=await sb.from('stock_purchases')
-    .select('id,item_name,qty,source,created_at,cost')
-    .eq('date',viewDate)
-    .order('item_name');
-  if(error){tbody.innerHTML='<tr><td colspan="5" class="to-empty">'+escH(error.message)+'</td></tr>';return;}
-  purchasesRows=data||[];
+  tbody.innerHTML='<tr><td colspan="'+purchasesColumnCount()+'" class="to-empty">Loading…</td></tr>';
+  const[purchasesRes,snapshotRes]=await Promise.all([
+    sb.from('stock_purchases')
+      .select('id,item_name,qty,source,created_at,cost')
+      .eq('date',viewDate)
+      .order('item_name'),
+    isVegPerfAllowed
+      ?sb.from('catalog_price_snapshots').select('item_name,unit_price').eq('date',viewDate)
+      :Promise.resolve({data:[],error:null}),
+  ]);
+  if(purchasesRes.error){tbody.innerHTML='<tr><td colspan="'+purchasesColumnCount()+'" class="to-empty">'+escH(purchasesRes.error.message)+'</td></tr>';return;}
+  purchasesRows=purchasesRes.data||[];
+  purchasesCatalogSnapshot={};
+  (snapshotRes.data||[]).forEach(r=>{purchasesCatalogSnapshot[r.item_name]=r.unit_price;});
   renderPurchasesTable();
   loadExpensesView();
 }
@@ -12233,17 +12264,21 @@ function renderPurchasesTable(){
     return a.item_name.localeCompare(b.item_name,undefined,{sensitivity:'base'});
   });
   document.getElementById('purchases-rc').textContent=rows.length?('('+rows.length+')'):'';
-  tbody.innerHTML=rows.length?rows.map(r=>
-    '<tr><td title="'+escH(r.item_name)+'">'+escH(r.item_name)+'</td>'+
-    '<td>'+((r.cost!=null&&+r.qty>0)?'₹'+(Number(r.cost)/Number(r.qty)).toFixed(2):'—')+'</td>'+
+  tbody.innerHTML=rows.length?rows.map(r=>{
+    const salesRate=purchasesCatalogSnapshot[r.item_name];
+    return '<tr><td title="'+escH(r.item_name)+'">'+escH(r.item_name)+'</td>'+
+    (isVegPerfAllowed
+      ?'<td>'+((r.cost!=null&&+r.qty>0)?'₹'+(Number(r.cost)/Number(r.qty)).toFixed(2):'—')+'</td>'+
+       '<td>'+(salesRate!=null?'₹'+Number(salesRate).toFixed(2):'—')+'</td>'
+      :'')+
     '<td>'+r.qty+'</td>'+
     '<td><span class="purchase-source-group">'+PURCHASE_SOURCES.map(s=>
       '<label><input type="radio" name="src-'+escH(r.id)+'" value="'+s+'" '+(r.source===s?'checked':'')+' onchange="setPurchaseSource('+escH(JSON.stringify(r.id))+','+escH(JSON.stringify(s))+')">'+s+'</label>'
     ).join('')+'</span></td>'+
     '<td>'+new Date(r.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</td>'+
     '<td><input type="number" class="stock-qty-input" step="0.01" min="0" placeholder="₹" value="'+(r.cost??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
-      '<button class="pk-tick" disabled onclick="savePurchaseCost(this.previousElementSibling,'+escH(JSON.stringify(r.id))+')" title="Save cost">✓</button></td></tr>'
-  ).join(''):'<tr><td colspan="6" class="to-empty">No purchases logged for this date</td></tr>';
+      '<button class="pk-tick" disabled onclick="savePurchaseCost(this.previousElementSibling,'+escH(JSON.stringify(r.id))+')" title="Save cost">✓</button></td></tr>';
+  }).join(''):'<tr><td colspan="'+purchasesColumnCount()+'" class="to-empty">No purchases logged for this date</td></tr>';
 
   const totalRow=document.getElementById('purchases-total-row');
   if(rows.length){
