@@ -1001,12 +1001,12 @@ Banana, 15, 450"></textarea>
   <input type="text" class="pk-search" id="purchases-search" placeholder="🔍 Search fruit..." oninput="renderPurchasesTable()">
   <div class="stock-table-wrap">
     <table class="community-table" id="purchases-table">
-      <colgroup><col style="width:90px"><col style="width:55px"><col style="width:130px"><col style="width:70px"><col style="width:110px"></colgroup>
+      <colgroup><col style="width:68px"><col style="width:42px"><col style="width:96px"><col style="width:52px"><col style="width:62px"><col style="width:82px"></colgroup>
       <thead><tr>
-      <th>Fruit</th><th>Qty</th><th>Source</th><th>Time</th><th>Cost (₹)</th>
+      <th>Fruit</th><th>Qty</th><th>Source</th><th>Time</th><th>Rate (₹/kg)</th><th>Cost (₹)</th>
     </tr></thead><tbody id="purchases-tbody"></tbody>
     <tfoot><tr class="purchases-total-row hidden" id="purchases-total-row">
-      <td colspan="4">Total</td><td id="purchases-total-cost"></td>
+      <td colspan="5">Total</td><td id="purchases-total-cost"></td>
     </tr></tfoot></table>
   </div>
 
@@ -12281,9 +12281,10 @@ function renderPurchasesTable(){
       '<label><input type="radio" name="src-'+escH(r.id)+'" value="'+s+'" '+(r.source===s?'checked':'')+' onchange="setPurchaseSource('+escH(JSON.stringify(r.id))+','+escH(JSON.stringify(s))+')">'+s+'</label>'
     ).join('')+'</span></td>'+
     '<td>'+new Date(r.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</td>'+
+    '<td>'+((r.cost!=null&&+r.qty>0)?'₹'+(Number(r.cost)/Number(r.qty)).toFixed(2):'—')+'</td>'+
     '<td><input type="number" class="stock-qty-input" step="0.01" min="0" placeholder="₹" value="'+(r.cost??'')+'" oninput="this.nextElementSibling.disabled=false"> '+
       '<button class="pk-tick" disabled onclick="savePurchaseCost(this.previousElementSibling,'+escH(JSON.stringify(r.id))+')" title="Save cost">✓</button></td></tr>'
-  ).join(''):'<tr><td colspan="5" class="to-empty">No purchases logged for this date</td></tr>';
+  ).join(''):'<tr><td colspan="6" class="to-empty">No purchases logged for this date</td></tr>';
 
   const totalRow=document.getElementById('purchases-total-row');
   if(rows.length){
