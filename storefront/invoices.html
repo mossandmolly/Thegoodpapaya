@@ -19,7 +19,9 @@
 }
 .feedback-card{border:1px solid #eee0d0;border-radius:14px;padding:16px;background:#fffaf2;margin-top:16px}
 @media(min-width:860px){.feedback-card{margin-top:16px}}
-.feedback-intro{font-size:13px;color:#5c5346;line-height:1.5;margin-bottom:14px}
+.feedback-intro{font-size:13px;color:#5c5346;line-height:1.5;margin-bottom:10px}
+.feedback-offer{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:15px;font-weight:700;color:#b35a00;background:#fff3e0;border:1px dashed #e8720c;border-radius:10px;padding:10px 12px;margin-bottom:14px;line-height:1.4}
+.feedback-offer-note{display:block;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-style:normal;font-weight:400;font-size:11px;color:#a89b8a;margin-top:3px}
 .feedback-card .form-field{margin-bottom:14px}
 .fb-smileys{display:flex;justify-content:space-between;gap:4px;margin-top:4px}
 .fb-smiley{flex:1;font-size:21px;background:#fff;border:1px solid #eee0d0;border-radius:10px;padding:6px 0;cursor:pointer;line-height:1}
@@ -57,7 +59,8 @@
 </main>
 <aside class="feedback-aside hidden" id="feedback-aside">
   <div class="feedback-card">
-    <div class="feedback-intro">Our goal is to give you the best possible service and be your <b>trusted</b> fresh provider. Please help us become better!<br><br><b>Help us improve, get ₹25 off on your next order!</b> <span style="color:#a89b8a;font-size:11px">(valid once within a 30 day period)</span></div>
+    <div class="feedback-intro">Our goal is to give you the best possible service and be your <b>trusted</b> fresh provider. Please help us become better!</div>
+    <div class="feedback-offer">Help us improve, get ₹25 off on your next order!<span class="feedback-offer-note">(valid once within a 30 day period)</span></div>
     <div class="form-field">
       <label>What can we improve?</label>
       <textarea id="fb-improve" rows="3" placeholder="Tell us anything..."></textarea>
