@@ -1566,7 +1566,7 @@ Banana, 15, 450"></textarea>
   <div class="stock-table-wrap">
     <table class="community-table" id="fbview-table">
       <colgroup><col style="width:110px"><col style="width:150px"><col><col style="width:130px"></colgroup>
-      <thead><tr><th>Phone</th><th>House</th><th>Feedback</th><th>Date</th></tr></thead>
+      <thead id="fbview-thead"></thead>
       <tbody id="fbview-tbody"></tbody>
     </table>
   </div>
@@ -13417,7 +13417,41 @@ let feedbackRows=[];
 const FB_SMILEYS={1:'😠',2:'🙁',3:'😐',4:'🙂',5:'😍'};
 const FEEDBACK_LAST_SEEN_KEY='gp_feedback_last_seen';
 
+// Sortable by every column — defaults to latest-first on Date (the natural
+// reading order for a feedback stream); clicking any other column starts
+// it ascending, same convention as Stock's generalized sort.
+const FB_COLUMNS=[
+  {key:'phone_number',label:'Phone'},
+  {key:'house_name',label:'House'},
+  {key:'feedback',label:'Feedback'},
+  {key:'created_at',label:'Date'},
+];
+let fbSortKey='created_at';
+let fbSortDir='desc';
+
+function setFbSort(key){
+  if(fbSortKey===key)fbSortDir=fbSortDir==='asc'?'desc':'asc';
+  else{fbSortKey=key;fbSortDir=key==='created_at'?'desc':'asc';}
+  renderFeedbackView();
+}
+
+function fbSortValueFor(r,key){
+  if(key==='feedback')return r.recommend_score??-1;
+  if(key==='created_at')return r.created_at?new Date(r.created_at).getTime():0;
+  return (r[key]||'').toLowerCase();
+}
+
+function renderFeedbackHeader(){
+  document.getElementById('fbview-thead').innerHTML='<tr>'+
+    FB_COLUMNS.map(c=>{
+      const arrow=fbSortKey===c.key?(fbSortDir==='asc'?' ▲':' ▼'):'';
+      return '<th style="cursor:pointer" onclick="setFbSort('+escH(JSON.stringify(c.key))+')">'+escH(c.label)+arrow+'</th>';
+    }).join('')+
+  '</tr>';
+}
+
 async function loadFeedbackView(){
+  renderFeedbackHeader();
   const el=document.getElementById('fbview-tbody');
   el.innerHTML='<tr><td colspan="4" class="to-empty">Loading…</td></tr>';
   const{data,error}=await sb.rpc('admin_feedback_with_house');
@@ -13426,8 +13460,12 @@ async function loadFeedbackView(){
   document.getElementById('fbview-rc').textContent=feedbackRows.length?('('+feedbackRows.length+')'):'';
   renderFeedbackView();
   // Opening this tab is what "reading" it means — clears the red dot and
-  // moves the unread watermark forward to the newest row just shown.
-  if(feedbackRows.length)localStorage.setItem(FEEDBACK_LAST_SEEN_KEY,feedbackRows[0].created_at);
+  // moves the unread watermark forward to the newest row actually loaded
+  // (not whatever the current sort/filter happens to show on top).
+  if(feedbackRows.length){
+    const newest=feedbackRows.reduce((max,r)=>r.created_at>max?r.created_at:max,feedbackRows[0].created_at);
+    localStorage.setItem(FEEDBACK_LAST_SEEN_KEY,newest);
+  }
   updateFeedbackUnreadBadge();
 }
 
@@ -13440,6 +13478,7 @@ function fbFormatDate(iso){
 }
 
 function renderFeedbackView(){
+  renderFeedbackHeader();
   const el=document.getElementById('fbview-tbody');
   const q=(document.getElementById('fbview-search').value||'').trim().toLowerCase();
   const fromStr=document.getElementById('fbview-date-from').value;
@@ -13452,6 +13491,10 @@ function renderFeedbackView(){
     if(fromStr&&rowDate<fromStr)return false;
     if(toStr&&rowDate>toStr)return false;
     return true;
+  }).sort((a,b)=>{
+    const va=fbSortValueFor(a,fbSortKey),vb=fbSortValueFor(b,fbSortKey);
+    const cmp=typeof va==='string'?va.localeCompare(vb):va-vb;
+    return fbSortDir==='asc'?cmp:-cmp;
   });
   if(!rows.length){el.innerHTML='<tr><td colspan="4" class="to-empty">No feedback found.</td></tr>';return;}
   el.innerHTML=rows.map(r=>
