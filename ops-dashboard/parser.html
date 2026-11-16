@@ -1587,7 +1587,7 @@ Banana, 15, 450"></textarea>
   <div class="stock-table-wrap">
     <table class="community-table" id="fbview-houses-table">
       <colgroup><col style="width:150px"><col><col style="width:130px"></colgroup>
-      <thead><tr><th>Phone</th><th>House</th><th>First viewed</th></tr></thead>
+      <thead id="fbview-houses-thead"></thead>
       <tbody id="fbview-houses-tbody"></tbody>
     </table>
   </div>
@@ -13483,6 +13483,49 @@ function fbSortValueFor(r,key){
   return (r[key]||'').toLowerCase();
 }
 
+// Sortable by every column, same convention as the Feedback table below
+// it — defaults to latest-first on Last Viewed.
+const FB_HOUSES_COLUMNS=[
+  {key:'phone_number',label:'Phone'},
+  {key:'customer_name',label:'House'},
+  {key:'created_at',label:'Last viewed'},
+];
+let fbHousesSortKey='created_at';
+let fbHousesSortDir='desc';
+let fbHousesRows=[];
+
+function setFbHousesSort(key){
+  if(fbHousesSortKey===key)fbHousesSortDir=fbHousesSortDir==='asc'?'desc':'asc';
+  else{fbHousesSortKey=key;fbHousesSortDir=key==='created_at'?'desc':'asc';}
+  renderHousesViewedTable();
+}
+
+function renderFeedbackHousesHeader(){
+  document.getElementById('fbview-houses-thead').innerHTML='<tr>'+
+    FB_HOUSES_COLUMNS.map(c=>{
+      const arrow=fbHousesSortKey===c.key?(fbHousesSortDir==='asc'?' ▲':' ▼'):'';
+      return '<th style="cursor:pointer" onclick="setFbHousesSort('+escH(JSON.stringify(c.key))+')">'+escH(c.label)+arrow+'</th>';
+    }).join('')+
+  '</tr>';
+}
+
+function renderHousesViewedTable(){
+  renderFeedbackHousesHeader();
+  const housesTbody=document.getElementById('fbview-houses-tbody');
+  const rows=[...fbHousesRows].sort((a,b)=>{
+    const key=fbHousesSortKey;
+    const va=key==='created_at'?new Date(a.created_at).getTime():(a[key]||'').toLowerCase();
+    const vb=key==='created_at'?new Date(b.created_at).getTime():(b[key]||'').toLowerCase();
+    const cmp=typeof va==='string'?va.localeCompare(vb):va-vb;
+    return fbHousesSortDir==='asc'?cmp:-cmp;
+  });
+  document.getElementById('fbview-houses-rc').textContent=rows.length?('('+rows.length+')'):'';
+  housesTbody.innerHTML=rows.length?rows.map(r=>
+    '<tr><td>'+escH(r.phone_number)+' <button type="button" class="or-link" style="border:none;background:none;cursor:pointer;padding:0;font:inherit" onclick="plCopyPhone('+escH(JSON.stringify(r.phone_number))+',this)" title="Copy phone number">📋</button></td>'+
+    '<td>'+escH(r.customer_name)+'</td><td>'+escH(fbFormatDate(r.created_at))+'</td></tr>'
+  ).join(''):'<tr><td colspan="3" class="to-empty">No house visits found for this date.</td></tr>';
+}
+
 // Reads invoice_page_visits directly (RLS already grants authenticated
 // select, no RPC needed) — one row per distinct house found on a phone
 // lookup, or a single null-house row when nothing turned up, logged by
@@ -13516,19 +13559,15 @@ async function loadVisitReport(){
     '<span class="ps-total-chip">Houses: <b>'+uniqueHouses+'</b></span>';
 
   // One row per house, not per visit — same house looking up twice in a
-  // day collapses to a single row, keeping the earliest timestamp.
+  // day collapses to a single row, keeping the latest timestamp.
   const byHouse=new Map();
   rows.filter(r=>r.customer_name).forEach(r=>{
     const key=r.phone_number+'|'+r.customer_name;
     const existing=byHouse.get(key);
-    if(!existing||r.created_at<existing.created_at)byHouse.set(key,r);
+    if(!existing||r.created_at>existing.created_at)byHouse.set(key,r);
   });
-  const houseRows=[...byHouse.values()].sort((a,b)=>a.customer_name.localeCompare(b.customer_name));
-  document.getElementById('fbview-houses-rc').textContent=houseRows.length?('('+houseRows.length+')'):'';
-  housesTbody.innerHTML=houseRows.length?houseRows.map(r=>
-    '<tr><td>'+escH(r.phone_number)+' <button type="button" class="or-link" style="border:none;background:none;cursor:pointer;padding:0;font:inherit" onclick="plCopyPhone('+escH(JSON.stringify(r.phone_number))+',this)" title="Copy phone number">📋</button></td>'+
-    '<td>'+escH(r.customer_name)+'</td><td>'+escH(fbFormatDate(r.created_at))+'</td></tr>'
-  ).join(''):'<tr><td colspan="3" class="to-empty">No house visits found for this date.</td></tr>';
+  fbHousesRows=[...byHouse.values()];
+  renderHousesViewedTable();
 }
 
 function renderFeedbackHeader(){
