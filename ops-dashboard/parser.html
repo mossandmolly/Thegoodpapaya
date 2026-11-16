@@ -1579,6 +1579,18 @@ Banana, 15, 450"></textarea>
       <tbody id="fbview-tbody"></tbody>
     </table>
   </div>
+
+  <div class="section-label date-header-row" style="margin-top:22px">
+    <span>🏠 Houses Viewed <span id="fbview-houses-rc"></span></span>
+  </div>
+  <p class="note">Each house that looked up its invoices on the date picked above — one row per house, not per visit.</p>
+  <div class="stock-table-wrap">
+    <table class="community-table" id="fbview-houses-table">
+      <colgroup><col style="width:150px"><col><col style="width:130px"></colgroup>
+      <thead><tr><th>Phone</th><th>House</th><th>First viewed</th></tr></thead>
+      <tbody id="fbview-houses-tbody"></tbody>
+    </table>
+  </div>
 </div>
 </div>
 
@@ -13482,18 +13494,38 @@ async function loadVisitReport(){
   const endDate=new Date(startIso);
   endDate.setUTCDate(endDate.getUTCDate()+1);
   const el=document.getElementById('fbview-visit-stats');
+  const housesTbody=document.getElementById('fbview-houses-tbody');
   el.innerHTML='<span class="to-empty">Loading…</span>';
+  housesTbody.innerHTML='<tr><td colspan="3" class="to-empty">Loading…</td></tr>';
   const{data,error}=await sb.from('invoice_page_visits')
-    .select('phone_number,customer_name')
+    .select('phone_number,customer_name,created_at')
     .gte('created_at',startIso)
     .lt('created_at',endDate.toISOString());
-  if(error){el.innerHTML='<span class="to-empty">'+escH(error.message)+'</span>';return;}
+  if(error){
+    el.innerHTML='<span class="to-empty">'+escH(error.message)+'</span>';
+    housesTbody.innerHTML='<tr><td colspan="3" class="to-empty">'+escH(error.message)+'</td></tr>';
+    return;
+  }
   const rows=data||[];
   const uniqueNumbers=new Set(rows.map(r=>r.phone_number)).size;
   const uniqueHouses=new Set(rows.filter(r=>r.customer_name).map(r=>r.customer_name)).size;
   el.innerHTML=
     '<span class="ps-total-chip">Phone numbers: <b>'+uniqueNumbers+'</b></span>'+
     '<span class="ps-total-chip">Houses: <b>'+uniqueHouses+'</b></span>';
+
+  // One row per house, not per visit — same house looking up twice in a
+  // day collapses to a single row, keeping the earliest timestamp.
+  const byHouse=new Map();
+  rows.filter(r=>r.customer_name).forEach(r=>{
+    const key=r.phone_number+'|'+r.customer_name;
+    const existing=byHouse.get(key);
+    if(!existing||r.created_at<existing.created_at)byHouse.set(key,r);
+  });
+  const houseRows=[...byHouse.values()].sort((a,b)=>a.customer_name.localeCompare(b.customer_name));
+  document.getElementById('fbview-houses-rc').textContent=houseRows.length?('('+houseRows.length+')'):'';
+  housesTbody.innerHTML=houseRows.length?houseRows.map(r=>
+    '<tr><td>'+escH(r.phone_number)+'</td><td>'+escH(r.customer_name)+'</td><td>'+escH(fbFormatDate(r.created_at))+'</td></tr>'
+  ).join(''):'<tr><td colspan="3" class="to-empty">No house visits found for this date.</td></tr>';
 }
 
 function renderFeedbackHeader(){
