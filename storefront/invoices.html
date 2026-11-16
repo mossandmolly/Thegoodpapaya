@@ -5,6 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>My Invoices — The Good Papaya</title>
 <link rel="stylesheet" href="style.css">
+<style>
+/* Page-specific layout — only invoices.html goes wider than the shared
+   640px main column, to make room for the feedback card beside it. Keeps
+   style.css's main{} rule untouched for every other storefront page. */
+.page-wrap{display:flex;flex-direction:column;gap:20px;max-width:1000px;margin:0 auto;padding:0 16px}
+.page-wrap>main{max-width:none;margin:0;padding:16px 0;flex:1 1 auto;min-width:0}
+.feedback-aside{flex:0 0 auto}
+@media(min-width:860px){
+  .page-wrap{flex-direction:row;align-items:flex-start;padding:0 16px}
+  .page-wrap>main{padding:16px 16px 16px 0;max-width:640px}
+  .feedback-aside{flex:0 0 300px;position:sticky;top:76px}
+}
+.feedback-card{border:1px solid #eee0d0;border-radius:14px;padding:16px;background:#fffaf2;margin-top:16px}
+@media(min-width:860px){.feedback-card{margin-top:16px}}
+.feedback-intro{font-size:13px;color:#5c5346;line-height:1.5;margin-bottom:14px}
+.feedback-card .form-field{margin-bottom:14px}
+.fb-smileys{display:flex;justify-content:space-between;gap:4px;margin-top:4px}
+.fb-smiley{flex:1;font-size:21px;background:#fff;border:1px solid #eee0d0;border-radius:10px;padding:6px 0;cursor:pointer;line-height:1}
+.fb-smiley.active{border-color:#2d6b2d;background:#eaf3ea}
+.fb-smiley-labels{display:flex;justify-content:space-between;font-size:10px;color:#a89b8a;margin-top:4px}
+.feedback-card .btn-primary{padding:11px;font-size:14px}
+#fb-result{margin-top:8px;font-size:12px}
+#fb-result.ok{color:#2d6b2d;font-weight:700}
+#fb-result.err{color:#b3261e}
+</style>
 </head>
 <body>
 
@@ -12,6 +37,7 @@
   <a href="index.html" class="brand">🥭 The Good Papaya</a>
 </header>
 
+<div class="page-wrap">
 <main>
   <div id="phone-screen">
     <h2 style="margin-top:0">View your invoices</h2>
@@ -29,6 +55,29 @@
     <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
   </div>
 </main>
+<aside class="feedback-aside">
+  <div class="feedback-card">
+    <div class="feedback-intro">Our goal is to give you the best possible service and be your <b>TRUSted</b> fresh provider. Please help us become better!</div>
+    <div class="form-field">
+      <label>What can we improve?</label>
+      <textarea id="fb-improve" rows="3" placeholder="Tell us anything..."></textarea>
+    </div>
+    <div class="form-field">
+      <label>Would you recommend us to a friend?</label>
+      <div class="fb-smileys" id="fb-smileys">
+        <button type="button" class="fb-smiley" data-score="1" onclick="setFbScore(1)" title="Not right now">😠</button>
+        <button type="button" class="fb-smiley" data-score="2" onclick="setFbScore(2)" title="2">🙁</button>
+        <button type="button" class="fb-smiley" data-score="3" onclick="setFbScore(3)" title="3">😐</button>
+        <button type="button" class="fb-smiley" data-score="4" onclick="setFbScore(4)" title="4">🙂</button>
+        <button type="button" class="fb-smiley" data-score="5" onclick="setFbScore(5)" title="Absolutely!">😍</button>
+      </div>
+      <div class="fb-smiley-labels"><span>Not right now</span><span>Absolutely!</span></div>
+    </div>
+    <button class="btn-primary" id="fb-submit-btn" onclick="submitFeedback()">Submit feedback</button>
+    <div id="fb-result"></div>
+  </div>
+</aside>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
@@ -298,6 +347,51 @@ async function payNowWithoutLink(btnEl, salesOrderId) {
     err.style.marginBottom = '10px';
     err.textContent = 'Could not start payment: ' + e.message;
     document.getElementById('results').prepend(err);
+  }
+}
+
+// Short "what can we improve / would you recommend us" survey, shown
+// alongside invoices regardless of lookup state — phone_number is
+// whatever's already been searched (lastSearchedPhone), left null if
+// nothing has been looked up yet, since the survey isn't gated on that.
+let fbScore = null;
+function setFbScore(n) {
+  fbScore = n;
+  document.querySelectorAll('.fb-smiley').forEach(el => el.classList.toggle('active', +el.dataset.score === n));
+}
+
+async function submitFeedback() {
+  const improve = (document.getElementById('fb-improve').value || '').trim();
+  const resultEl = document.getElementById('fb-result');
+  if (!improve && !fbScore) {
+    resultEl.className = 'err';
+    resultEl.textContent = 'Please answer at least one question.';
+    return;
+  }
+  const btn = document.getElementById('fb-submit-btn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+  resultEl.className = '';
+  resultEl.textContent = '';
+  try {
+    const { error } = await sb.from('customer_feedback').insert({
+      phone_number: lastSearchedPhone || null,
+      improvement_text: improve || null,
+      recommend_score: fbScore,
+    });
+    if (error) throw new Error(error.message);
+    resultEl.className = 'ok';
+    resultEl.textContent = 'Thank you! Your feedback helps us improve.';
+    document.getElementById('fb-improve').value = '';
+    document.getElementById('fb-improve').disabled = true;
+    document.querySelectorAll('.fb-smiley').forEach(el => el.disabled = true);
+    btn.remove();
+  } catch (e) {
+    resultEl.className = 'err';
+    resultEl.textContent = 'Could not submit: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = originalText;
   }
 }
 
