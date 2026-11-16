@@ -13189,10 +13189,29 @@ function plHouseRowHtml(name,phone){
       escH(name)+' <span style="color:#8a7a6a;font-size:12px">— '+escH(phone)+'</span>'+
     '</a>'+
     '<span>'+
-      '<a href="javascript:void(0)" class="or-link" onclick="plEditMapping('+escH(JSON.stringify(name))+','+escH(JSON.stringify(phone))+')" title="Correct the phone number for this house">✎ Edit</a>'+
+      '<button type="button" class="or-link" style="border:none;background:none;cursor:pointer;padding:0;font:inherit" onclick="event.stopPropagation();plCopyPhone('+escH(JSON.stringify(phone))+',this)" title="Copy phone number">📋 Copy</button>'+
+      ' <a href="javascript:void(0)" class="or-link" onclick="plEditMapping('+escH(JSON.stringify(name))+','+escH(JSON.stringify(phone))+')" title="Correct the phone number for this house">✎ Edit</a>'+
       ' <button class="del-btn" onclick="plDeleteMapping('+escH(JSON.stringify(name))+','+escH(JSON.stringify(phone))+')" title="This house should not be associated with this number">✕</button>'+
     '</span>'+
   '</div>';
+}
+
+// Clipboard write, with the button's own label as the "did it work" signal
+// — flips to "✓ Copied" briefly instead of an uxAlert popup, since copying
+// a number is meant to be a quick, low-friction action.
+function plCopyPhone(phone,btnEl){
+  const text=(phone||'').toString();
+  const flash=ok=>{
+    if(!btnEl)return;
+    const original=btnEl.textContent;
+    btnEl.textContent=ok?'✓ Copied':'Could not copy';
+    setTimeout(()=>{btnEl.textContent=original;},1200);
+  };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>flash(true)).catch(()=>flash(false));
+  }else{
+    flash(false);
+  }
 }
 
 async function plSearchPhone(phone){
