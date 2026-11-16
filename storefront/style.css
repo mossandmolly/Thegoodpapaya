@@ -59,6 +59,8 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .form-field label{display:block;font-size:12px;font-weight:700;color:#8a7a6a;margin-bottom:5px;text-transform:uppercase;letter-spacing:.3px}
 .form-field input,.form-field select,.form-field textarea{width:100%;padding:12px 14px;border:1px solid #eee0d0;border-radius:10px;font-size:15px;font-family:inherit;background:#fff}
 .form-field input:focus,.form-field select:focus,.form-field textarea:focus{outline:none;border-color:#2d6b2d}
+.form-field.invalid label{color:#b3261e}
+.form-field.invalid input,.form-field.invalid select,.form-field.invalid textarea{border-color:#b3261e;background:#fdeaea}
 
 .pay-toggle{display:flex;gap:8px;margin-bottom:16px}
 .pay-opt{flex:1;padding:14px;border:2px solid #eee0d0;border-radius:12px;text-align:center;cursor:pointer}

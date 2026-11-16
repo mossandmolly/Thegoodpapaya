@@ -66,6 +66,19 @@ function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 function showErr(msg){const e=document.getElementById('err');e.textContent=msg;e.classList.add('show');}
 function hideErr(){document.getElementById('err').classList.remove('show');}
 
+// Highlights exactly the mandatory fields (society, door, phone) that
+// are actually missing/invalid, rather than just a generic text error —
+// clears as soon as the person starts correcting that one field, not all
+// of them at once, since fixing one shouldn't hide a still-real problem
+// with another.
+function markInvalid(id,bad){
+  const field=document.getElementById(id).closest('.form-field');
+  if(field)field.classList.toggle('invalid',bad);
+}
+['society','door','phone'].forEach(id=>{
+  document.getElementById(id).addEventListener('input',()=>markInvalid(id,false));
+});
+
 function setMethod(m) {
   method = m;
   document.querySelectorAll('.pay-opt').forEach(o => o.classList.toggle('active', o.dataset.method === m));
@@ -147,9 +160,21 @@ async function placeOrder() {
   const notes = document.getElementById('notes').value.trim();
 
   if (!cart.length) { showErr('Your basket is empty.'); return; }
-  if (!society) { showErr('Please enter your society/community name.'); return; }
-  if (!door) { showErr('Please enter your door/flat number.'); return; }
-  if (!/^\d{10}$/.test(phone)) { showErr('Please enter a valid 10-digit phone number.'); return; }
+
+  const phoneOk = /^\d{10}$/.test(phone);
+  markInvalid('society', !society);
+  markInvalid('door', !door);
+  markInvalid('phone', !phoneOk);
+  if (!society || !door || !phoneOk) {
+    const missingLabels = [!society && 'Society/community', !door && 'Door/flat number', !phoneOk && 'Phone number'].filter(Boolean);
+    showErr(missingLabels.length > 1
+      ? 'Please fill in: ' + missingLabels.join(', ') + '.'
+      : !society ? 'Please enter your society/community name.'
+      : !door ? 'Please enter your door/flat number.'
+      : 'Please enter a valid 10-digit phone number.');
+    document.getElementById(!society ? 'society' : !door ? 'door' : 'phone').focus();
+    return;
+  }
 
   const btn = document.getElementById('place-btn');
   btn.disabled = true;
