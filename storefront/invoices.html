@@ -239,6 +239,19 @@ async function lookup() {
     }
     if (error) throw new Error(error.message);
 
+    // Daily visit log (migration 157) — every real phone lookup, regardless
+    // of whether any invoices turned up, so a report can count distinct
+    // numbers/houses that used this page on a given day. One row per
+    // distinct house found, or a single null-house row when none did.
+    // Fire-and-forget — never blocks rendering or surfaces to the customer.
+    const visitNames = [...new Set((data || []).map(r => r.customer_name).filter(Boolean))];
+    const visitRows = visitNames.length
+      ? visitNames.map(name => ({ phone_number: phoneInput, customer_name: name }))
+      : [{ phone_number: phoneInput, customer_name: null }];
+    sb.from('invoice_page_visits').insert(visitRows).then(({ error: logErr }) => {
+      if (logErr) console.error('visit log failed:', logErr.message);
+    });
+
     if (!data || !data.length) {
       results.innerHTML = '<div class="empty-state">No invoices found for this number yet.</div>';
       return;
