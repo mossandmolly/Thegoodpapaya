@@ -13314,7 +13314,9 @@ function plRenderInvoiceCards(rows,headerHtml){
             plMarkAsPaidEntryHtml(inv)+
           '</div>'+
         '</div>'+
-        '<div class="pl-meta">'+escH(inv.customer_name||'')+' · '+escH(inv.phone_number||'no phone')+' · '+escH(inv.invoice_date||'')+'</div>'+
+        '<div class="pl-meta">'+escH(inv.customer_name||'')+' · '+escH(inv.phone_number||'no phone')+
+          (inv.phone_number?' <button type="button" class="or-link" style="border:none;background:none;cursor:pointer;padding:0;font:inherit" onclick="plCopyPhone('+escH(JSON.stringify(inv.phone_number))+',this)" title="Copy phone number">📋</button>':'')+
+          ' · '+escH(inv.invoice_date||'')+'</div>'+
         '<table class="pl-inv-items">'+
           '<thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Value</th></tr></thead>'+
           '<tbody>'+itemRows+'</tbody>'+
@@ -13524,7 +13526,8 @@ async function loadVisitReport(){
   const houseRows=[...byHouse.values()].sort((a,b)=>a.customer_name.localeCompare(b.customer_name));
   document.getElementById('fbview-houses-rc').textContent=houseRows.length?('('+houseRows.length+')'):'';
   housesTbody.innerHTML=houseRows.length?houseRows.map(r=>
-    '<tr><td>'+escH(r.phone_number)+'</td><td>'+escH(r.customer_name)+'</td><td>'+escH(fbFormatDate(r.created_at))+'</td></tr>'
+    '<tr><td>'+escH(r.phone_number)+' <button type="button" class="or-link" style="border:none;background:none;cursor:pointer;padding:0;font:inherit" onclick="plCopyPhone('+escH(JSON.stringify(r.phone_number))+',this)" title="Copy phone number">📋</button></td>'+
+    '<td>'+escH(r.customer_name)+'</td><td>'+escH(fbFormatDate(r.created_at))+'</td></tr>'
   ).join(''):'<tr><td colspan="3" class="to-empty">No house visits found for this date.</td></tr>';
 }
 
