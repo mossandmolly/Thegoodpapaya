@@ -57,8 +57,8 @@
     <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
   </div>
 </main>
-<aside class="feedback-aside hidden" id="feedback-aside">
-  <div class="feedback-card">
+<aside class="feedback-aside" id="feedback-aside">
+  <div class="feedback-card hidden" id="feedback-card">
     <div class="feedback-intro">Our goal is to give you the best possible service and be your <b>trusted</b> fresh provider. Please help us become better!</div>
     <div class="feedback-offer">Help us improve, get ₹50 off on your next order!<span class="feedback-offer-note">(valid once within a 30 day period)</span></div>
     <div class="form-field">
@@ -169,10 +169,35 @@ let lastSearchedPhone = null; // the number that found these invoices — reused
 function showPhoneScreen() {
   document.getElementById('phone-screen').classList.remove('hidden');
   document.getElementById('results-screen').classList.add('hidden');
-  document.getElementById('feedback-aside').classList.add('hidden');
+  document.getElementById('feedback-card').classList.add('hidden');
   document.getElementById('phone').value = '';
   document.getElementById('phone').focus();
 }
+
+// On a phone-width screen, the feedback card normally sits in the aside
+// below every invoice card — on a customer with several invoices that's
+// a long scroll before they ever see it. Moving the actual card node (not
+// a copy — a copy would duplicate every id inside it, breaking the form)
+// to right after the first invoice card puts it on screen without
+// scrolling, matching what's already visible the moment results load.
+// Desktop (>=860px, same breakpoint as the CSS) keeps it in the sidebar.
+function placeFeedbackCard() {
+  const card = document.getElementById('feedback-card');
+  const aside = document.getElementById('feedback-aside');
+  if (!card || !aside) return;
+  const isDesktop = window.matchMedia('(min-width:860px)').matches;
+  if (isDesktop) {
+    if (card.parentElement !== aside) aside.appendChild(card);
+    return;
+  }
+  const firstInvoice = document.querySelector('#results .invoice-card');
+  if (firstInvoice) {
+    if (firstInvoice.nextElementSibling !== card) firstInvoice.after(card);
+  } else if (card.parentElement !== aside) {
+    aside.appendChild(card);
+  }
+}
+window.addEventListener('resize', () => { if (!document.getElementById('feedback-card').classList.contains('hidden')) placeFeedbackCard(); });
 
 async function lookup() {
   const phoneInput = document.getElementById('phone').value.trim();
@@ -189,7 +214,7 @@ async function lookup() {
   // looked up — so phone_number on every submission is reliably auto-
   // captured, never anonymous because someone never got past the entry
   // screen.
-  document.getElementById('feedback-aside').classList.remove('hidden');
+  document.getElementById('feedback-card').classList.remove('hidden');
   hasLookedUp = true;
   const btn = document.getElementById('lookup-btn');
   btn.disabled = true;
@@ -288,6 +313,7 @@ async function lookup() {
   } finally {
     btn.disabled = false;
     btn.textContent = 'View My Invoices';
+    placeFeedbackCard();
   }
 }
 
