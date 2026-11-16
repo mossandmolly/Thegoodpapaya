@@ -1560,6 +1560,15 @@ Banana, 15, 450"></textarea>
 
 <div class="panel" id="panel-feedback">
   <div class="section-label date-header-row">
+    <span>📈 My Invoices Visits</span>
+  </div>
+  <p class="note">Unique phone numbers and houses that looked up their invoices on a given day.</p>
+  <div class="add-row" style="margin-top:0">
+    <label style="font-size:12px;color:#8a7a6a;white-space:nowrap">Date <input type="date" id="fbview-visit-date" onchange="loadVisitReport()"></label>
+  </div>
+  <div id="fbview-visit-stats" style="display:flex;gap:12px;margin:12px 0 4px"></div>
+
+  <div class="section-label date-header-row" style="margin-top:22px">
     <span>💬 Customer Feedback <span id="fbview-rc"></span></span>
   </div>
   <p class="note">Submitted from the "My Invoices" page — newest first.</p>
@@ -13483,6 +13492,33 @@ function fbSortValueFor(r,key){
   return (r[key]||'').toLowerCase();
 }
 
+// Reads invoice_page_visits directly (RLS already grants authenticated
+// select, no RPC needed) — one row per distinct house found on a phone
+// lookup, or a single null-house row when nothing turned up, logged by
+// My Invoices itself (migration 157). Unique numbers/houses for whichever
+// single IST day is picked, defaulting to today.
+async function loadVisitReport(){
+  const dateInput=document.getElementById('fbview-visit-date');
+  if(!dateInput.value)dateInput.value=new Date(Date.now()+330*60*1000).toISOString().slice(0,10);
+  const dateStr=dateInput.value;
+  const startIso=dateStr+'T00:00:00+05:30';
+  const endDate=new Date(startIso);
+  endDate.setUTCDate(endDate.getUTCDate()+1);
+  const el=document.getElementById('fbview-visit-stats');
+  el.innerHTML='<span class="to-empty">Loading…</span>';
+  const{data,error}=await sb.from('invoice_page_visits')
+    .select('phone_number,customer_name')
+    .gte('created_at',startIso)
+    .lt('created_at',endDate.toISOString());
+  if(error){el.innerHTML='<span class="to-empty">'+escH(error.message)+'</span>';return;}
+  const rows=data||[];
+  const uniqueNumbers=new Set(rows.map(r=>r.phone_number)).size;
+  const uniqueHouses=new Set(rows.filter(r=>r.customer_name).map(r=>r.customer_name)).size;
+  el.innerHTML=
+    '<span class="ps-total-chip">Phone numbers: <b>'+uniqueNumbers+'</b></span>'+
+    '<span class="ps-total-chip">Houses: <b>'+uniqueHouses+'</b></span>';
+}
+
 function renderFeedbackHeader(){
   document.getElementById('fbview-thead').innerHTML='<tr>'+
     FB_COLUMNS.map(c=>{
@@ -13493,6 +13529,7 @@ function renderFeedbackHeader(){
 }
 
 async function loadFeedbackView(){
+  loadVisitReport();
   renderFeedbackHeader();
   const el=document.getElementById('fbview-tbody');
   el.innerHTML='<tr><td colspan="4" class="to-empty">Loading…</td></tr>';
