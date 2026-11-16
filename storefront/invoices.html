@@ -220,6 +220,12 @@ async function lookup() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Looking up…';
   const results = document.getElementById('results');
+  // A prior lookup on a phone-width screen may have physically moved the
+  // feedback-card node into #results (placeFeedbackCard) — park it back in
+  // the aside BEFORE wiping #results below, or clearing results.innerHTML
+  // would destroy the card itself, not just hide it, leaving every lookup
+  // after the first with no feedback card at all.
+  document.getElementById('feedback-aside').appendChild(document.getElementById('feedback-card'));
   results.innerHTML = '';
   document.getElementById('welcome-heading').textContent = '';
 
