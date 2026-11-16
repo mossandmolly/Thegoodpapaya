@@ -24,6 +24,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .tabs{display:flex;gap:8px;margin-bottom:20px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap}
 .tab{padding:8px 16px;border-radius:20px;border:1.5px solid #eee0d0;background:transparent;color:#8a7a6a;font-size:13px;cursor:pointer;font-family:inherit;flex-shrink:0}
 .tab.active{background:#e8720c;color:#ffffff;border-color:#e8720c;font-weight:600}
+.tab.has-unread{position:relative}
+.tab.has-unread::after{content:'';position:absolute;top:2px;right:4px;width:8px;height:8px;border-radius:50%;background:#e4273a;border:1.5px solid #fff}
 .panel{display:none}.panel.active{display:block}
 .drop-zone{border:1.5px dashed #eee0d0;border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:12px;position:relative;background:#fdf8f3}
 .drop-zone:hover,.drop-zone.drag{border-color:#e8720c}
@@ -1555,8 +1557,19 @@ Banana, 15, 450"></textarea>
     <span>💬 Customer Feedback <span id="fbview-rc"></span></span>
   </div>
   <p class="note">Submitted from the "My Invoices" page — newest first.</p>
-  <input type="text" class="pk-search" id="fbview-search" placeholder="🔍 Search phone or feedback text…" oninput="renderFeedbackView()">
-  <div id="fbview-list"></div>
+  <input type="text" class="pk-search" id="fbview-search" placeholder="🔍 Search phone or house or feedback text…" oninput="renderFeedbackView()">
+  <div class="add-row" style="margin-top:8px">
+    <label style="font-size:12px;color:#8a7a6a;white-space:nowrap">From <input type="date" id="fbview-date-from" onchange="renderFeedbackView()"></label>
+    <label style="font-size:12px;color:#8a7a6a;white-space:nowrap">To <input type="date" id="fbview-date-to" onchange="renderFeedbackView()"></label>
+    <button type="button" class="btn-sec" onclick="document.getElementById('fbview-date-from').value='';document.getElementById('fbview-date-to').value='';renderFeedbackView()">Clear dates</button>
+  </div>
+  <div class="stock-table-wrap">
+    <table class="community-table" id="fbview-table">
+      <colgroup><col style="width:110px"><col style="width:150px"><col><col style="width:130px"></colgroup>
+      <thead><tr><th>Phone</th><th>House</th><th>Feedback</th><th>Date</th></tr></thead>
+      <tbody id="fbview-tbody"></tbody>
+    </table>
+  </div>
 </div>
 </div>
 
@@ -1837,6 +1850,10 @@ async function initAppAfterLogin(){
   syncEntryDatePicker();
   renderDvQueueBadge();
   flushDvQueue();
+  if(isMarkPaidAllowed){
+    updateFeedbackUnreadBadge();
+    setInterval(updateFeedbackUnreadBadge,120000);
+  }
   // Needed for trip-view grouping on Overview/Packer/Delivery regardless of
   // which tab loads first — loaded once here rather than lazily on first
   // Config visit, best-effort (a failure here just means trip view falls
@@ -13391,23 +13408,27 @@ async function plEditMapping(name,phone){
 }
 
 // ── Customer Feedback (Somya+Rohith only) ───────────────────────────────
-// Read-only view of what customers submit on My Invoices' feedback card
+// Read-only table of what customers submit on My Invoices' feedback card
 // (migration 155) — a text comment and a 1-5 smiley "would you recommend
-// us" score, neither tied to a specific invoice.
+// us" score, neither tied to a specific invoice. House name is resolved
+// server-side (migration 156) from the same phone-ownership data Phone
+// Lookup already uses, since feedback itself only ever carries a phone.
 let feedbackRows=[];
 const FB_SMILEYS={1:'😠',2:'🙁',3:'😐',4:'🙂',5:'😍'};
+const FEEDBACK_LAST_SEEN_KEY='gp_feedback_last_seen';
 
 async function loadFeedbackView(){
-  const el=document.getElementById('fbview-list');
-  el.innerHTML='<div class="to-empty">Loading…</div>';
-  const{data,error}=await sb.from('customer_feedback')
-    .select('id,phone_number,improvement_text,recommend_score,created_at')
-    .order('created_at',{ascending:false})
-    .limit(500);
-  if(error){el.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  const el=document.getElementById('fbview-tbody');
+  el.innerHTML='<tr><td colspan="4" class="to-empty">Loading…</td></tr>';
+  const{data,error}=await sb.rpc('admin_feedback_with_house');
+  if(error){el.innerHTML='<tr><td colspan="4" class="to-empty">'+escH(error.message)+'</td></tr>';return;}
   feedbackRows=data||[];
   document.getElementById('fbview-rc').textContent=feedbackRows.length?('('+feedbackRows.length+')'):'';
   renderFeedbackView();
+  // Opening this tab is what "reading" it means — clears the red dot and
+  // moves the unread watermark forward to the newest row just shown.
+  if(feedbackRows.length)localStorage.setItem(FEEDBACK_LAST_SEEN_KEY,feedbackRows[0].created_at);
+  updateFeedbackUnreadBadge();
 }
 
 function fbFormatDate(iso){
@@ -13419,24 +13440,48 @@ function fbFormatDate(iso){
 }
 
 function renderFeedbackView(){
-  const el=document.getElementById('fbview-list');
+  const el=document.getElementById('fbview-tbody');
   const q=(document.getElementById('fbview-search').value||'').trim().toLowerCase();
-  const rows=feedbackRows.filter(r=>!q||
-    (r.phone_number||'').toLowerCase().includes(q)||
-    (r.improvement_text||'').toLowerCase().includes(q));
-  if(!rows.length){el.innerHTML='<div class="to-empty">No feedback yet.</div>';return;}
+  const fromStr=document.getElementById('fbview-date-from').value;
+  const toStr=document.getElementById('fbview-date-to').value;
+  const rows=feedbackRows.filter(r=>{
+    if(q&&!(r.phone_number||'').toLowerCase().includes(q)
+         &&!(r.house_name||'').toLowerCase().includes(q)
+         &&!(r.improvement_text||'').toLowerCase().includes(q))return false;
+    const rowDate=(r.created_at||'').slice(0,10);
+    if(fromStr&&rowDate<fromStr)return false;
+    if(toStr&&rowDate>toStr)return false;
+    return true;
+  });
+  if(!rows.length){el.innerHTML='<tr><td colspan="4" class="to-empty">No feedback found.</td></tr>';return;}
   el.innerHTML=rows.map(r=>
-    '<div class="pl-invoice-card">'+
-      '<div class="pl-row1">'+
-        '<span class="pl-inv-num">'+(r.phone_number?escH(r.phone_number):'<i>No phone</i>')+'</span>'+
-        (r.recommend_score?'<span style="font-size:20px">'+FB_SMILEYS[r.recommend_score]+'</span>':'')+
-      '</div>'+
-      '<div class="pl-meta">'+escH(fbFormatDate(r.created_at))+'</div>'+
-      (r.improvement_text
-        ?'<div style="margin-top:8px;font-size:13px;color:#4a4237;white-space:pre-wrap">'+escH(r.improvement_text)+'</div>'
-        :'<div class="to-empty" style="text-align:left;margin-top:6px">No improvement comment</div>')+
-    '</div>'
+    '<tr>'+
+      '<td>'+(r.phone_number?escH(r.phone_number):'<i>—</i>')+'</td>'+
+      '<td>'+(r.house_name?escH(r.house_name):'<i>Unknown</i>')+'</td>'+
+      '<td>'+
+        (r.recommend_score?'<span style="font-size:16px;margin-right:6px">'+FB_SMILEYS[r.recommend_score]+'</span>':'')+
+        (r.improvement_text?escH(r.improvement_text):'<span class="to-empty" style="display:inline">No comment</span>')+
+      '</td>'+
+      '<td>'+escH(fbFormatDate(r.created_at))+'</td>'+
+    '</tr>'
   ).join('');
+}
+
+// Red dot on the Feedback tab pill whenever a row exists newer than the
+// last time this browser actually opened the tab (loadFeedbackView moves
+// the watermark forward) — checked once at login and re-polled, same as
+// live view's own 20s refresh, just much less frequent since feedback
+// isn't time-critical.
+async function updateFeedbackUnreadBadge(){
+  if(!isMarkPaidAllowed)return;
+  const tabEl=document.getElementById('tab-feedback');
+  if(!tabEl)return;
+  const{data,error}=await sb.from('customer_feedback')
+    .select('created_at').order('created_at',{ascending:false}).limit(1);
+  if(error||!data||!data.length){tabEl.classList.remove('has-unread');return;}
+  const lastSeen=localStorage.getItem(FEEDBACK_LAST_SEEN_KEY);
+  const hasUnread=!lastSeen||new Date(data[0].created_at)>new Date(lastSeen);
+  tabEl.classList.toggle('has-unread',hasUnread);
 }
 
 </script>
