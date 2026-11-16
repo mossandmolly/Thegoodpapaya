@@ -23,10 +23,15 @@ function cartCount(cart) {
 
 function updateCartBadge() {
   const badge = document.getElementById('cart-badge');
-  if (!badge) return;
-  const n = cartCount();
-  badge.textContent = n;
-  badge.classList.toggle('hidden', n === 0);
+  if (badge) {
+    const n = cartCount();
+    badge.textContent = n;
+    badge.classList.toggle('hidden', n === 0);
+  }
+  // Pages that have a cart side panel (index.html) define this themselves —
+  // shared config.js can't assume every page has one (checkout.html,
+  // invoices.html don't), so it's called only if present.
+  if (typeof renderCartPanel === 'function') renderCartPanel();
 }
 
 function addToCart(item_name, quantity, unit) {

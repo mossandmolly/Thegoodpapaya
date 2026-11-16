@@ -5,6 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>The Good Papaya — Fresh Fruits & Vegetables</title>
 <link rel="stylesheet" href="style.css">
+<style>
+/* Cart side panel — a slide-over drawer rather than a permanent sidebar,
+   since a persistent panel would eat into the already-tight item grid on
+   a phone. Same drawer on every screen size, just narrower on mobile. */
+.cart-panel-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:30;opacity:0;pointer-events:none;transition:opacity .2s}
+.cart-panel-overlay.open{opacity:1;pointer-events:auto}
+.cart-panel{position:fixed;top:0;right:0;height:100%;width:88vw;max-width:360px;background:#fffdf9;box-shadow:-4px 0 16px rgba(0,0,0,.12);z-index:31;transform:translateX(100%);transition:transform .25s ease;display:flex;flex-direction:column}
+.cart-panel.open{transform:translateX(0)}
+.cart-panel-head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #eee0d0}
+.cart-panel-head h3{margin:0;font-size:16px}
+.cart-panel-close{background:none;border:none;font-size:20px;cursor:pointer;color:#8a7a6a;line-height:1;padding:4px}
+.cart-panel-items{flex:1;overflow-y:auto;padding:12px 16px}
+.cart-panel-footer{padding:14px 16px;border-top:1px solid #eee0d0}
+.cart-panel-footer .summary-row{margin-bottom:4px}
+</style>
 </head>
 <body>
 
@@ -12,7 +27,7 @@
   <div class="brand">🥭 The Good Papaya<span>Fresh, delivered</span></div>
   <nav>
     <a href="invoices.html">My Invoices</a>
-    <a href="checkout.html" class="cart-link">🧺<span id="cart-badge" class="hidden">0</span></a>
+    <a href="javascript:void(0)" class="cart-link" onclick="openCartPanel()">🧺<span id="cart-badge" class="hidden">0</span></a>
   </nav>
 </header>
 
@@ -25,6 +40,16 @@
   </div>
   <div id="grid"><div class="empty-state">Loading…</div></div>
 </main>
+
+<div class="cart-panel-overlay" id="cart-panel-overlay" onclick="closeCartPanel()"></div>
+<div class="cart-panel" id="cart-panel">
+  <div class="cart-panel-head">
+    <h3>Your basket</h3>
+    <button class="cart-panel-close" onclick="closeCartPanel()" aria-label="Close">✕</button>
+  </div>
+  <div class="cart-panel-items" id="cart-panel-items"></div>
+  <div class="cart-panel-footer" id="cart-panel-footer"></div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
@@ -195,6 +220,69 @@ function commitQtyEdit(item_name, value) {
   editingItem = null;
   const next = Math.max(0, +parseFloat(value || '0').toFixed(2)) || 0;
   setCartQty(item_name, next);
+  render();
+}
+
+// Cart side panel — a quick-review drawer while still browsing, so adding
+// items doesn't require bouncing to checkout.html just to see what's in
+// the basket. renderCartPanel is called automatically by config.js's
+// saveCart/updateCartBadge whenever the cart changes, plus explicitly
+// here on open/remove.
+function openCartPanel() {
+  renderCartPanel();
+  document.getElementById('cart-panel').classList.add('open');
+  document.getElementById('cart-panel-overlay').classList.add('open');
+}
+function closeCartPanel() {
+  document.getElementById('cart-panel').classList.remove('open');
+  document.getElementById('cart-panel-overlay').classList.remove('open');
+}
+
+function renderCartPanel() {
+  const itemsEl = document.getElementById('cart-panel-items');
+  const footerEl = document.getElementById('cart-panel-footer');
+  if (!itemsEl || !footerEl) return;
+  const cart = getCart();
+  if (!cart.length) {
+    itemsEl.innerHTML = '<div class="empty-state">Your basket is empty.</div>';
+    footerEl.innerHTML = '';
+    return;
+  }
+  const catalogByName = {};
+  catalog.forEach(c => catalogByName[c.item_name] = c);
+  let subtotal = 0;
+  let hasPieceItem = false;
+  itemsEl.innerHTML = cart.map(i => {
+    const c = catalogByName[i.item_name];
+    if (i.mode === 'piece') {
+      hasPieceItem = true;
+      const approx = c && c.piece_approx_kg ? ' (~'+(i.quantity * c.piece_approx_kg).toFixed(2)+'kg)' : '';
+      return '<div class="cart-row">' +
+        '<div class="info">' +
+          '<div class="name">'+escH(i.item_name)+'</div>' +
+          '<div class="price">'+i.quantity+' pc'+approx+' · 🧾 priced at packing</div>' +
+        '</div>' +
+        '<a class="remove" onclick="removeFromCartPanel('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
+      '</div>';
+    }
+    const price = c ? c.unit_price : null;
+    const lineTotal = price != null ? price * i.quantity : null;
+    if (lineTotal != null) subtotal += lineTotal;
+    return '<div class="cart-row">' +
+      '<div class="info">' +
+        '<div class="name">'+escH(i.item_name)+'</div>' +
+        '<div class="price">'+i.quantity+' '+(c ? escH(c.unit||'kg') : '')+(lineTotal!=null?' · ₹'+lineTotal.toFixed(0):'')+'</div>' +
+      '</div>' +
+      '<a class="remove" onclick="removeFromCartPanel('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
+    '</div>';
+  }).join('');
+  footerEl.innerHTML =
+    '<div class="summary-row"><span>Items ('+cart.length+')</span><span>₹'+subtotal.toFixed(0)+(hasPieceItem?' + packing items':'')+'</span></div>' +
+    '<a href="checkout.html" class="btn-primary" style="display:block;text-align:center;text-decoration:none;margin-top:10px">Go to Checkout</a>';
+}
+
+function removeFromCartPanel(item_name) {
+  setCartQty(item_name, 0);
   render();
 }
 
