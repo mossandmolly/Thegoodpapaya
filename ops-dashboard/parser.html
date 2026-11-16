@@ -366,6 +366,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .bc-empty-note{font-size:12px;color:#8a7a6a;margin-bottom:6px}
 #purchases-table{table-layout:fixed}
 #purchases-table td:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#fbview-houses-table{table-layout:fixed}
+#fbview-houses-table td:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .purchase-source-group{display:flex;flex-wrap:wrap;gap:2px 8px;white-space:normal}
 .purchase-source-group label{display:inline-flex;align-items:center;gap:2px;font-size:11px;cursor:pointer;white-space:nowrap}
 .purchase-source-group input{width:auto!important;margin:0}
@@ -1592,7 +1594,7 @@ Banana, 15, 450"></textarea>
   <p class="note">Each house that looked up its invoices on the date picked above — one row per house, not per visit.</p>
   <div class="stock-table-wrap">
     <table class="community-table" id="fbview-houses-table">
-      <colgroup><col style="width:150px"><col><col style="width:130px"></colgroup>
+      <colgroup><col style="width:150px"><col style="width:150px"><col style="width:130px"></colgroup>
       <thead id="fbview-houses-thead"></thead>
       <tbody id="fbview-houses-tbody"></tbody>
     </table>
@@ -13564,7 +13566,7 @@ function renderHousesViewedTable(){
   document.getElementById('fbview-houses-rc').textContent=rows.length?('('+rows.length+')'):'';
   housesTbody.innerHTML=rows.length?rows.map(r=>
     '<tr><td>'+escH(r.phone_number)+' <button type="button" class="or-link" style="border:none;background:none;cursor:pointer;padding:0;font:inherit" onclick="plCopyPhone('+escH(JSON.stringify(r.phone_number))+',this)" title="Copy phone number">📋</button></td>'+
-    '<td>'+escH(r.customer_name)+'</td><td>'+escH(fbFormatDate(r.created_at))+'</td></tr>'
+    '<td title="'+escH(r.customer_name)+'">'+escH(r.customer_name)+'</td><td>'+escH(fbFormatDate(r.created_at))+'</td></tr>'
   ).join(''):'<tr><td colspan="3" class="to-empty">No house visits found for this date.</td></tr>';
 }
 
