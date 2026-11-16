@@ -702,6 +702,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab" onclick="switchTab('vegperf')" id="tab-vegperf">🥦 Veg Performance</button>
   <button class="tab" onclick="switchTab('pnl')" id="tab-pnl">📈 P&amp;L</button>
   <button class="tab" onclick="switchTab('phonelookup')" id="tab-phonelookup">📞 Phone Lookup</button>
+  <button class="tab" onclick="switchTab('feedback')" id="tab-feedback">💬 Feedback</button>
   <button class="tab" onclick="switchTab('purchases')" id="tab-purchases" style="margin-left:auto">🧺 Purchases</button>
   <button class="tab" onclick="openQuickAdd()" id="tab-quickadd">⚡ Quick Add</button>
   <button class="tab" onclick="openAdhocPaymentLink()" id="tab-adhoc-pay">💳 Payment Link</button>
@@ -1548,6 +1549,15 @@ Banana, 15, 450"></textarea>
   <div id="pl-houses"></div>
   <div id="pl-invoices"></div>
 </div>
+
+<div class="panel" id="panel-feedback">
+  <div class="section-label date-header-row">
+    <span>💬 Customer Feedback <span id="fbview-rc"></span></span>
+  </div>
+  <p class="note">Submitted from the "My Invoices" page — newest first.</p>
+  <input type="text" class="pk-search" id="fbview-search" placeholder="🔍 Search phone or feedback text…" oninput="renderFeedbackView()">
+  <div id="fbview-list"></div>
+</div>
 </div>
 
 <!-- GENERIC ALERT / CONFIRM / PROMPT MODAL — replaces native browser
@@ -1789,6 +1799,11 @@ function applyRoleRestrictions(){
     const el=document.getElementById('tab-phonelookup');
     if(el)el.style.display='none';
   }
+  // Customer Feedback — same Somya+Rohith gate as Phone Lookup/Mark as Paid.
+  if(!isMarkPaidAllowed){
+    const el=document.getElementById('tab-feedback');
+    if(el)el.style.display='none';
+  }
   if(isBuyerRole){
     ['tab-parser','tab-live','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd','tab-adhoc-pay'].forEach(id=>{
       const el=document.getElementById(id);
@@ -1916,6 +1931,7 @@ function switchTab(name){
   else if(name==='vegperf'&&!isVegPerfAllowed)name='today';
   else if(name==='pnl'&&!isVegPerfAllowed)name='today';
   else if(name==='phonelookup'&&!isMarkPaidAllowed)name='today';
+  else if(name==='feedback'&&!isMarkPaidAllowed)name='today';
   // Matched by id, not position — Parser/Config are header-btn links now,
   // not part of the main .tabs row, so the old fixed-index array no longer
   // lines up with what's actually in there.
@@ -1932,6 +1948,7 @@ function switchTab(name){
   if(name==='purchases')loadPurchasesView();
   if(name==='images')loadCatalogImagesView();
   if(name==='phonelookup')loadPhoneLookupView();
+  if(name==='feedback')loadFeedbackView();
   if(name==='vegperf'){loadVegPerfView();loadVegCustomerTrend();loadVegFixedWindowTiles();}
   // Lazy src — only ever loads pnl.html (its own Supabase queries, own
   // page weight) the first time someone who's actually allowed opens this
@@ -13371,6 +13388,55 @@ async function plEditMapping(name,phone){
     plRerunLastSearch();
     plRefreshMultiHouseCta();
   }catch(e){uxAlert('Failed: '+e.message);}
+}
+
+// ── Customer Feedback (Somya+Rohith only) ───────────────────────────────
+// Read-only view of what customers submit on My Invoices' feedback card
+// (migration 155) — a text comment and a 1-5 smiley "would you recommend
+// us" score, neither tied to a specific invoice.
+let feedbackRows=[];
+const FB_SMILEYS={1:'😠',2:'🙁',3:'😐',4:'🙂',5:'😍'};
+
+async function loadFeedbackView(){
+  const el=document.getElementById('fbview-list');
+  el.innerHTML='<div class="to-empty">Loading…</div>';
+  const{data,error}=await sb.from('customer_feedback')
+    .select('id,phone_number,improvement_text,recommend_score,created_at')
+    .order('created_at',{ascending:false})
+    .limit(500);
+  if(error){el.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
+  feedbackRows=data||[];
+  document.getElementById('fbview-rc').textContent=feedbackRows.length?('('+feedbackRows.length+')'):'';
+  renderFeedbackView();
+}
+
+function fbFormatDate(iso){
+  const d=new Date(iso);
+  if(isNaN(d))return '';
+  const datePart=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
+  const timePart=d.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'});
+  return datePart+', '+timePart;
+}
+
+function renderFeedbackView(){
+  const el=document.getElementById('fbview-list');
+  const q=(document.getElementById('fbview-search').value||'').trim().toLowerCase();
+  const rows=feedbackRows.filter(r=>!q||
+    (r.phone_number||'').toLowerCase().includes(q)||
+    (r.improvement_text||'').toLowerCase().includes(q));
+  if(!rows.length){el.innerHTML='<div class="to-empty">No feedback yet.</div>';return;}
+  el.innerHTML=rows.map(r=>
+    '<div class="pl-invoice-card">'+
+      '<div class="pl-row1">'+
+        '<span class="pl-inv-num">'+(r.phone_number?escH(r.phone_number):'<i>No phone</i>')+'</span>'+
+        (r.recommend_score?'<span style="font-size:20px">'+FB_SMILEYS[r.recommend_score]+'</span>':'')+
+      '</div>'+
+      '<div class="pl-meta">'+escH(fbFormatDate(r.created_at))+'</div>'+
+      (r.improvement_text
+        ?'<div style="margin-top:8px;font-size:13px;color:#4a4237;white-space:pre-wrap">'+escH(r.improvement_text)+'</div>'
+        :'<div class="to-empty" style="text-align:left;margin-top:6px">No improvement comment</div>')+
+    '</div>'
+  ).join('');
 }
 
 </script>
