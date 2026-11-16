@@ -55,9 +55,9 @@
     <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
   </div>
 </main>
-<aside class="feedback-aside">
+<aside class="feedback-aside hidden" id="feedback-aside">
   <div class="feedback-card">
-    <div class="feedback-intro">Our goal is to give you the best possible service and be your <b>TRUSted</b> fresh provider. Please help us become better!</div>
+    <div class="feedback-intro">Our goal is to give you the best possible service and be your <b>trusted</b> fresh provider. Please help us become better!</div>
     <div class="form-field">
       <label>What can we improve?</label>
       <textarea id="fb-improve" rows="3" placeholder="Tell us anything..."></textarea>
@@ -166,6 +166,7 @@ let lastSearchedPhone = null; // the number that found these invoices — reused
 function showPhoneScreen() {
   document.getElementById('phone-screen').classList.remove('hidden');
   document.getElementById('results-screen').classList.add('hidden');
+  document.getElementById('feedback-aside').classList.add('hidden');
   document.getElementById('phone').value = '';
   document.getElementById('phone').focus();
 }
@@ -181,6 +182,11 @@ async function lookup() {
   }
   document.getElementById('phone-screen').classList.add('hidden');
   document.getElementById('results-screen').classList.remove('hidden');
+  // Feedback card is only ever shown once a real, valid phone has been
+  // looked up — so phone_number on every submission is reliably auto-
+  // captured, never anonymous because someone never got past the entry
+  // screen.
+  document.getElementById('feedback-aside').classList.remove('hidden');
   hasLookedUp = true;
   const btn = document.getElementById('lookup-btn');
   btn.disabled = true;
