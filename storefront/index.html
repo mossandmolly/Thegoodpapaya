@@ -153,6 +153,7 @@ function cardHtml(c, cartMap, cartModeMap) {
     let qtyHtml;
     if (editing) {
       qtyHtml = '<input type="number" class="qty-edit" id="qty-edit-input" inputmode="decimal" step="0.05" min="0" value="'+qty+'" '+
+        'onclick="event.stopPropagation()" '+
         'onblur="commitQtyEdit('+escH(JSON.stringify(c.item_name))+',this.value)" '+
         'onkeydown="if(event.key===\'Enter\')this.blur()">';
     } else if (mode === 'piece') {
@@ -160,14 +161,14 @@ function cardHtml(c, cartMap, cartModeMap) {
       qtyHtml = '<span class="qty-val">'+qty+' pc'+approx+'</span>';
     } else {
       qtyHtml = weight
-        ? '<span class="qty-val" onclick="startQtyEdit('+escH(JSON.stringify(c.item_name))+')">'+qty+' '+escH(c.unit||'kg')+'</span>'
+        ? '<span class="qty-val" onclick="event.stopPropagation();startQtyEdit('+escH(JSON.stringify(c.item_name))+')">'+qty+' '+escH(c.unit||'kg')+'</span>'
         : '<span class="qty-val">'+qty+'</span>';
     }
 
     const modeToggle = pieceEligible
       ? '<div class="mode-toggle">'+
-          '<span class="'+(mode==='kg'?'active':'')+'" onclick="setMode('+escH(JSON.stringify(c.item_name))+',\'kg\')">By kg</span>'+
-          '<span class="'+(mode==='piece'?'active':'')+'" onclick="setMode('+escH(JSON.stringify(c.item_name))+',\'piece\')">By piece</span>'+
+          '<span class="'+(mode==='kg'?'active':'')+'" onclick="event.stopPropagation();setMode('+escH(JSON.stringify(c.item_name))+',\'kg\')">By kg</span>'+
+          '<span class="'+(mode==='piece'?'active':'')+'" onclick="event.stopPropagation();setMode('+escH(JSON.stringify(c.item_name))+',\'piece\')">By piece</span>'+
         '</div>'
       : '';
 
@@ -175,7 +176,13 @@ function cardHtml(c, cartMap, cartModeMap) {
       ? '<div class="price piece-note">🧾 Priced at packing'+(c.piece_approx_kg?' · ~'+c.piece_approx_kg+'kg/pc':'')+'</div>'
       : '<div class="price">₹'+c.unit_price+' / '+escH(c.unit||'kg')+'</div>';
 
-    return '<div class="item-card">' +
+    // Tapping anywhere on the card (image, name, price — the "dead space")
+    // adds one unit if it isn't in the cart yet, same as tapping +Add, and
+    // opens the cart side panel either way so the tap's effect is visible
+    // immediately. The +/- steppers, qty-edit, and mode toggle each stop
+    // propagation so they keep their own precise behavior instead of also
+    // triggering this.
+    return '<div class="item-card" onclick="cardTap('+escH(JSON.stringify(c.item_name))+','+step+',\''+mode+'\')">' +
       (c.image_url ? '<img src="'+escH(c.image_url)+'" loading="lazy">' : '<div class="ph">'+iconFor(c.item_name, c.category)+'</div>') +
       '<div class="body">' +
         '<div class="name">'+escH(c.item_name)+'</div>' +
@@ -183,10 +190,10 @@ function cardHtml(c, cartMap, cartModeMap) {
         modeToggle +
         '<div class="add-row">' +
           (qty > 0
-            ? '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+',-'+step+',\''+mode+'\')">−</button>'+
+            ? '<button class="qty-btn" onclick="event.stopPropagation();changeQty('+escH(JSON.stringify(c.item_name))+',-'+step+',\''+mode+'\')">−</button>'+
               qtyHtml+
-              '<button class="qty-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+',\''+mode+'\')">+</button>'
-            : '<button class="add-btn" onclick="changeQty('+escH(JSON.stringify(c.item_name))+','+step+',\''+mode+'\')">+ Add</button>') +
+              '<button class="qty-btn" onclick="event.stopPropagation();changeQty('+escH(JSON.stringify(c.item_name))+','+step+',\''+mode+'\')">+</button>'
+            : '<button class="add-btn" onclick="event.stopPropagation();changeQty('+escH(JSON.stringify(c.item_name))+','+step+',\''+mode+'\')">+ Add</button>') +
         '</div>' +
       '</div>' +
     '</div>';
@@ -206,6 +213,16 @@ function changeQty(item_name, delta, mode) {
   const next = Math.max(0, +(current + delta).toFixed(2));
   setCartQty(item_name, next, mode);
   render();
+}
+
+// Tapping the card itself (poster-style "pick it and see it land in your
+// basket") — adds a first unit if nothing's been added yet, then always
+// opens the cart panel so the tap's effect is immediately visible on the
+// right, same whether this was the first tap or just a glance at the cart.
+function cardTap(item_name, step, mode) {
+  const existing = getCart().find(i => i.item_name === item_name);
+  if (!existing || !existing.quantity) changeQty(item_name, step, mode);
+  openCartPanel();
 }
 
 // Weight quantities: the +/- stepper is fine for small nudges, but typing
