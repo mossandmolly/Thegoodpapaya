@@ -1599,6 +1599,23 @@ Banana, 15, 450"></textarea>
       <tbody id="fbview-houses-tbody"></tbody>
     </table>
   </div>
+
+  <div class="section-label date-header-row" style="margin-top:22px">
+    <span>💰 Stale Payments Check</span>
+  </div>
+  <p class="note">Orders from Oct 27 onward still marked pending even though the same house has a more recent paid order — usually a payment that happened but never got marked. Checks Zoho's real balance for each one; nothing is changed until you click Apply.</p>
+  <div class="add-row" style="margin-top:0">
+    <button type="button" onclick="runStalePaymentsCheck(false)">🔍 Dry run (check only)</button>
+    <button type="button" class="btn-sec" id="stale-apply-btn" onclick="runStalePaymentsCheck(true)" disabled>✅ Apply fixes</button>
+  </div>
+  <div id="stale-payments-progress" style="margin-top:10px"></div>
+  <div class="stock-table-wrap">
+    <table class="community-table" id="stale-payments-table">
+      <colgroup><col style="width:150px"><col><col style="width:110px"><col></colgroup>
+      <thead><tr><th>Order</th><th>House</th><th>Phone</th><th>Result</th></tr></thead>
+      <tbody id="stale-payments-tbody"></tbody>
+    </table>
+  </div>
 </div>
 </div>
 
@@ -13701,6 +13718,62 @@ async function updateFeedbackUnreadBadge(){
   const lastSeen=localStorage.getItem(FEEDBACK_LAST_SEEN_KEY);
   const hasUnread=!lastSeen||new Date(data[0].created_at)>new Date(lastSeen);
   tabEl.classList.toggle('has-unread',hasUnread);
+}
+
+// ── Stale Payments Check (Somya+Rohith only) ────────────────────────────
+// Loops the check-stale-payments edge function page by page (it's
+// paginated server-side so one call can't run long enough to time out),
+// accumulating a running total and a growing results table. Dry run
+// (commit=false) must complete at least once before Apply (commit=true)
+// unlocks, same confirm-before-write convention as Mark as Paid.
+let staleDryRunDone=false;
+
+async function runStalePaymentsCheck(commit){
+  if(commit&&!staleDryRunDone){uxAlert('Run the dry run first.');return;}
+  if(commit&&!await uxConfirm('Apply fixes for everything Zoho confirms is actually paid? This updates real orders.'))return;
+
+  document.getElementById('stale-apply-btn').disabled=true;
+  document.getElementById('stale-payments-tbody').innerHTML='';
+  const progressEl=document.getElementById('stale-payments-progress');
+  progressEl.textContent='Starting…';
+
+  let offset=0,checked=0,paid=0,pending=0,errored=0;
+  const rowsHtml=[];
+  try{
+    while(true){
+      const res=await fetch(SUPABASE_URL+'/functions/v1/check-stale-payments',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
+        body:JSON.stringify({commit,offset,limit:25}),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Check failed');
+
+      data.results.forEach(r=>{
+        checked++;
+        if(r.outcome==='paid')paid++;
+        else if(r.outcome==='pending')pending++;
+        else errored++;
+        const resultLabel=r.outcome==='paid'
+          ?(commit?'✅ marked paid':'✅ paid in Zoho (dry run)')
+          :r.outcome==='pending'
+            ?'pending (₹'+(+r.zoho_balance||0).toFixed(2)+' due)'
+            :'✗ '+escH(r.error||'could not verify');
+        rowsHtml.push('<tr><td>'+escH(r.sales_order_id)+'</td><td>'+escH(r.customer_name||'')+'</td><td>'+(r.phone?escH(r.phone):'<i>—</i>')+'</td><td>'+resultLabel+'</td></tr>');
+      });
+      document.getElementById('stale-payments-tbody').innerHTML=rowsHtml.join('');
+      progressEl.textContent='Checked '+checked+' of '+data.totalFlagged+'…';
+
+      if(data.done)break;
+      offset=data.nextOffset;
+    }
+    progressEl.innerHTML='<b>Done.</b> Checked '+checked+' · '+
+      (commit?'Marked paid: <b>'+paid+'</b>':'Paid in Zoho (not yet applied): <b>'+paid+'</b>')+
+      ' · Still pending: '+pending+' · Could not verify: '+errored;
+    if(!commit){staleDryRunDone=true;document.getElementById('stale-apply-btn').disabled=paid===0;}
+  }catch(e){
+    progressEl.innerHTML='<span style="color:#b3261e">Failed: '+escH(e.message)+'</span>';
+  }
 }
 
 </script>
