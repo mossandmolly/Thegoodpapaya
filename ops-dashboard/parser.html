@@ -10227,7 +10227,9 @@ function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions,gr
   const revealed=revealedPhones.has(order.soid);
   const phoneDisplay=order.phone
     ?(revealed
-      ?'<a class="dv-phone" href="tel:'+escH(order.phone)+'">'+escH(order.phone)+'</a> <a class="or-link" onclick="toggleRevealPhone(\''+order.soid+'\')">hide</a>'
+      ?'<a class="dv-phone" href="tel:'+escH(order.phone)+'">'+escH(order.phone)+'</a> '+
+       '<button type="button" class="or-link" style="border:none;background:none;cursor:pointer;padding:0;font:inherit" onclick="event.preventDefault();plCopyPhone('+escH(JSON.stringify(order.phone))+',this)" title="Copy phone number">📋 copy</button> '+
+       '<a class="or-link" onclick="toggleRevealPhone(\''+order.soid+'\')">hide</a>'
       :'<a class="dv-phone" onclick="toggleRevealPhone(\''+order.soid+'\')">'+escH(maskPhone(order.phone))+' · tap to reveal</a>')
     :'<span style="color:#a39a8c">no phone on file</span>';
 
