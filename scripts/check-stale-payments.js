@@ -9,13 +9,37 @@
 // Dry run by default — prints exactly what it WOULD change, writes
 // nothing. Pass --commit to actually apply the updates.
 //
+// Credentials come from scripts/.env.local (gitignored — paste real
+// values there ONCE, see scripts/.env.local.example) rather than typed
+// into the terminal every run.
+//
 // Usage:
-//   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... \
-//   ZOHO_CLIENT_ID=... ZOHO_CLIENT_SECRET=... ZOHO_REFRESH_TOKEN=... ZOHO_ORGANIZATION_ID=... \
 //   node scripts/check-stale-payments.js            # dry run
-//   ...same env vars... node scripts/check-stale-payments.js --commit
+//   node scripts/check-stale-payments.js --commit   # actually apply
 //
 // Requires Node 18+ (built-in fetch). No npm install needed.
+
+const fs = require('fs');
+const path = require('path');
+
+// Minimal KEY=VALUE[.env] loader — only fills vars not already set in the
+// real environment, so an explicit env var (e.g. in CI) still wins.
+(function loadEnvLocal() {
+  const envPath = path.join(__dirname, '.env.local');
+  if (!fs.existsSync(envPath)) return;
+  for (const rawLine of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = val;
+  }
+})();
 
 const COMMIT = process.argv.includes('--commit');
 const CUTOFF_DATE = '2026-10-27'; // same Oct 27 window My Invoices/Phone Lookup use
@@ -23,7 +47,11 @@ const ZOHO_DELAY_MS = 400; // light pacing between Zoho calls — 432 invoices i
 
 function env(key) {
   const v = process.env[key];
-  if (!v) { console.error(`Missing required env var: ${key}`); process.exit(1); }
+  if (!v) {
+    console.error(`Missing required env var: ${key}`);
+    console.error(`Set it in scripts/.env.local (copy scripts/.env.local.example if you haven't yet).`);
+    process.exit(1);
+  }
   return v;
 }
 
