@@ -161,9 +161,9 @@ function render() {
 }
 
 // Dense, tap-only card — photo and name only (no price, no steppers on the
-// card itself). Tapping bumps quantity by 1 each time, like counting out
-// loud ("I want 3") — fine-tuning (exact amount, pc/kg, a note) happens in
-// the live cart list on the right, not here.
+// card itself). Tap adds it (qty 1); tap the same card again removes it.
+// Adjusting quantity beyond 1, pc/kg, and notes all happen in the live
+// cart list on the right, not here.
 function cardHtml(c, qtyMap) {
   const qty = qtyMap[c.item_name] || 0;
   const selected = qty > 0;
@@ -174,11 +174,14 @@ function cardHtml(c, qtyMap) {
   '</div>';
 }
 
+// Tap to add (qty 1), tap the same card again to remove it entirely — a
+// toggle, not a counter. Adjusting quantity beyond 1 is the live cart's
+// +/- stepper's job, not repeated taps here.
 function bumpItem(item_name) {
   const cart = getCart();
   const existing = cart.find(i => i.item_name === item_name);
-  const current = existing ? existing.quantity : 0;
-  setCartQty(item_name, +(current + 1).toFixed(2), existing ? existing.mode : 'kg');
+  const inCart = !!(existing && existing.quantity > 0);
+  setCartQty(item_name, inCart ? 0 : 1, existing ? existing.mode : 'kg');
   render();
   const el = document.querySelector('.item-card[data-item="'+CSS.escape(item_name)+'"]');
   if (el) {
