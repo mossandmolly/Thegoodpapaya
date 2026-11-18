@@ -241,14 +241,26 @@ function renderLiveCart() {
   const catalogByName = {};
   catalog.forEach(c => catalogByName[c.item_name] = c);
   let subtotal = 0;
-  let hasPieceItem = false;
+  let subtotalIsApprox = false;
+  // Only true for a piece-mode item with no piece_approx_kg on file —
+  // can't even estimate it, so it stays out of the bill as its own caveat.
+  let hasUnestimable = false;
 
   listEl.innerHTML = [...cart].reverse().map(i => {
     const c = catalogByName[i.item_name];
     const pieceEligible = !!(c && c.sold_by_piece);
     const mode = i.mode || 'kg';
-    if (mode === 'piece') hasPieceItem = true;
-    else if (c) subtotal += c.unit_price * i.quantity;
+    if (mode === 'piece') {
+      // unit_price is always per-kg — approx piece price = rate × est.
+      // kg/piece × qty. Exact amount is only known once actually weighed
+      // at packing, hence "approx," not a firm number.
+      if (c && c.piece_approx_kg && c.unit_price != null) {
+        subtotal += c.unit_price * c.piece_approx_kg * i.quantity;
+        subtotalIsApprox = true;
+      } else {
+        hasUnestimable = true;
+      }
+    } else if (c) subtotal += c.unit_price * i.quantity;
     const stepSize = mode === 'piece' ? 1 : 0.25;
 
     const unitToggle = pieceEligible
@@ -280,8 +292,8 @@ function renderLiveCart() {
   }).join('');
 
   let billLine = '';
-  if (subtotal > 0) billLine = 'Your approx bill ₹'+subtotal.toFixed(0)+(hasPieceItem?' + packing items':'');
-  else if (hasPieceItem) billLine = 'Priced at packing';
+  if (subtotal > 0) billLine = 'Your '+(subtotalIsApprox?'approx ':'')+'bill ₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
+  else if (hasUnestimable) billLine = 'Priced at packing';
   footerEl.innerHTML =
     '<a href="checkout.html" class="btn-primary checkout-cta">Checkout'+(billLine?'<span class="bill">'+billLine+'</span>':'')+'</a>';
 
