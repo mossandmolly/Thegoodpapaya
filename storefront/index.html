@@ -44,7 +44,8 @@
 .note-input{width:100%;box-sizing:border-box;margin-top:6px;padding:5px 7px;border:1px solid #eee0d0;border-radius:5px;font-size:10px;color:#4a4237;font-family:inherit}
 .live-cart-footer{padding:0 10px 10px;border-bottom:1px solid #eee0d0;margin-bottom:4px;flex-shrink:0}
 .live-cart-footer:empty{padding:0;border-bottom:none;margin-bottom:0}
-.live-cart-footer .checkout-cta{display:block;text-align:center;text-decoration:none;padding:10px;font-size:12.5px}
+.live-cart-footer .checkout-cta{display:block;text-align:center;text-decoration:none;padding:9px 10px;font-size:12.5px;font-weight:700;border-radius:10px;background:#3a7d3a}
+.live-cart-footer .checkout-cta .bill{display:block;font-size:10px;font-weight:500;opacity:.85;margin-top:1px}
 
 /* Plain-text quick snapshot — no controls, just names (+ qty as plain
    text), so you can glance at the whole order at once without scrolling
@@ -266,8 +267,11 @@ function renderLiveCart() {
     '</div>';
   }).join('');
 
+  let billLine = '';
+  if (subtotal > 0) billLine = 'Your approx bill ₹'+subtotal.toFixed(0)+(hasPieceItem?' + packing items':'');
+  else if (hasPieceItem) billLine = 'Priced at packing';
   footerEl.innerHTML =
-    '<a href="checkout.html" class="btn-primary checkout-cta">Checkout'+(subtotal>0?' — ₹'+subtotal.toFixed(0):'')+(hasPieceItem?' + packing items':'')+'</a>';
+    '<a href="checkout.html" class="btn-primary checkout-cta">Checkout'+(billLine?'<span class="bill">'+billLine+'</span>':'')+'</a>';
 
   if (quicklistEl) {
     quicklistEl.innerHTML = '<div class="label">Quick list</div>' +
