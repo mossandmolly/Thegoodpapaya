@@ -64,6 +64,9 @@ let catalogPrices = {};
 
 function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function showErr(msg){const e=document.getElementById('err');e.textContent=msg;e.classList.add('show');}
+// Leafy items (subsection already set via catalog settings) are counted
+// in bunches, not pieces — same underlying piece-mode plumbing either way.
+function pieceUnitLabel(p){return p && p.subsection === 'Leafy Greens' ? 'bunch' : 'pc';}
 function hideErr(){document.getElementById('err').classList.remove('show');}
 
 // Highlights exactly the mandatory fields (society, door, phone) that
@@ -87,7 +90,7 @@ function setMethod(m) {
 async function loadPrices() {
   const cart = getCart();
   if (!cart.length) return;
-  const { data } = await sb.from('catalog').select('item_name,unit_price,unit,piece_approx_kg').in('item_name', cart.map(i => i.item_name));
+  const { data } = await sb.from('catalog').select('item_name,unit_price,unit,piece_approx_kg,subsection').in('item_name', cart.map(i => i.item_name));
   (data || []).forEach(r => catalogPrices[r.item_name] = r);
   renderCart();
 }
@@ -129,7 +132,7 @@ function renderCart() {
       return '<div class="cart-row">' +
         '<div class="info">' +
           '<div class="name">'+escH(i.item_name)+'</div>' +
-          '<div class="price">'+i.quantity+' pc'+approxWeight+' · '+priceLabel+'</div>' +
+          '<div class="price">'+i.quantity+' '+pieceUnitLabel(p)+approxWeight+' · '+priceLabel+'</div>' +
           (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
         '</div>' +
         '<a class="remove" onclick="removeItem('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +

@@ -146,6 +146,9 @@ async function load() {
 // Subsection display order — anything not listed here (a new/uncategorized
 // subsection) just sorts alphabetically after these.
 const SUBSECTION_ORDER = ['Seasonal Fruits','Everyday Fruits','Exotic & Berries','Daily Vegetables','Leafy Greens','Gourds & Other Vegetables'];
+// Leafy items (subsection already set via catalog settings) are counted
+// in bunches, not pieces — same underlying piece-mode plumbing either way.
+function pieceUnitLabel(c) { return c && c.subsection === 'Leafy Greens' ? 'bunch' : 'pc'; }
 
 function render() {
   const search = document.getElementById('search').value.trim().toLowerCase();
@@ -265,10 +268,12 @@ function renderLiveCart() {
 
     const unitToggle = pieceEligible
       ? '<div class="unit-toggle">'+
-          '<span class="'+(mode==='piece'?'active':'')+'" onclick="setItemMode('+escH(JSON.stringify(i.item_name))+',\'piece\')">pc</span>'+
+          '<span class="'+(mode==='piece'?'active':'')+'" onclick="setItemMode('+escH(JSON.stringify(i.item_name))+',\'piece\')">'+pieceUnitLabel(c)+'</span>'+
           '<span class="'+(mode==='kg'?'active':'')+'" onclick="setItemMode('+escH(JSON.stringify(i.item_name))+',\'kg\')">kg</span>'+
         '</div>'
-      : '';
+      // Not piece-eligible — no choice to make, but still show the unit
+      // so it doesn't look blank next to the quantity box.
+      : '<div class="unit-toggle"><span class="active" style="cursor:default">kg</span></div>';
 
     return '<div class="cart-live-row">' +
       '<div class="row-top">' +
@@ -300,7 +305,7 @@ function renderLiveCart() {
   if (quicklistEl) {
     quicklistEl.innerHTML = '<div class="label">Quick list</div>' +
       [...cart].reverse().map(i =>
-        '<div class="line">'+i.quantity+(i.mode==='piece'?' pc':' kg')+' · '+escH(i.item_name)+'</div>'
+        '<div class="line">'+i.quantity+(i.mode==='piece'?' '+pieceUnitLabel(catalogByName[i.item_name]):' kg')+' · '+escH(i.item_name)+'</div>'
       ).join('');
   }
 }
