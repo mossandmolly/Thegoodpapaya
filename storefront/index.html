@@ -39,7 +39,8 @@
 .unit-toggle span{padding:6px 11px;cursor:pointer;background:#f5efe4;color:#8a7a6a}
 .unit-toggle span.active{background:#2d6b2d;color:#fff}
 .note-input{width:100%;box-sizing:border-box;margin-top:6px;padding:5px 7px;border:1px solid #eee0d0;border-radius:5px;font-size:10px;color:#4a4237;font-family:inherit}
-.live-cart-footer{padding:10px;border-top:1px solid #eee0d0;flex-shrink:0}
+.live-cart-footer{padding:0 10px 10px;border-bottom:1px solid #eee0d0;margin-bottom:4px;flex-shrink:0}
+.live-cart-footer:empty{padding:0;border-bottom:none;margin-bottom:0}
 .live-cart-footer .checkout-cta{display:block;text-align:center;text-decoration:none;padding:10px;font-size:12.5px}
 
 .item-card{position:relative;transition:transform .15s ease}
@@ -75,8 +76,8 @@
   <div class="shop-right">
     <div class="live-cart-pane">
       <div class="live-cart-head">Your cart (<span id="cart-count">0</span>)</div>
-      <div class="live-cart-list" id="cart-list"></div>
       <div class="live-cart-footer" id="cart-footer"></div>
+      <div class="live-cart-list" id="cart-list"></div>
     </div>
   </div>
 </div>
@@ -214,7 +215,7 @@ function renderLiveCart() {
   let subtotal = 0;
   let hasPieceItem = false;
 
-  listEl.innerHTML = cart.map(i => {
+  listEl.innerHTML = [...cart].reverse().map(i => {
     const c = catalogByName[i.item_name];
     const pieceEligible = !!(c && c.sold_by_piece);
     const mode = i.mode || 'kg';
@@ -241,7 +242,7 @@ function renderLiveCart() {
         '</div>' +
         unitToggle +
       '</div>' +
-      '<input class="note-input" value="'+escH(i.note || '')+'" oninput="setCartNote('+escH(JSON.stringify(i.item_name))+',this.value)" placeholder="note e.g. papaya long, semi-ripe…">' +
+      '<input class="note-input" value="'+escH(i.note || '')+'" oninput="setCartNote('+escH(JSON.stringify(i.item_name))+',this.value)" placeholder="note e.g. ripe, small or big">' +
     '</div>';
   }).join('');
 
