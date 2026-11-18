@@ -28,10 +28,10 @@ function updateCartBadge() {
     badge.textContent = n;
     badge.classList.toggle('hidden', n === 0);
   }
-  // Pages that have a cart side panel (index.html) define this themselves —
+  // Pages with a live cart column (index.html) define this themselves —
   // shared config.js can't assume every page has one (checkout.html,
   // invoices.html don't), so it's called only if present.
-  if (typeof renderCartPanel === 'function') renderCartPanel();
+  if (typeof renderLiveCart === 'function') renderLiveCart();
 }
 
 function addToCart(item_name, quantity, unit) {
@@ -53,6 +53,19 @@ function setCartQty(item_name, quantity, mode) {
     else cart.push({ item_name, quantity, mode: mode || 'kg' });
   }
   saveCart(cart);
+}
+
+// Per-item special-request text (e.g. "papaya long", "banana semi-ripe") —
+// place-order already accepts this per cart line and writes it into
+// order_items.description. Deliberately does NOT go through saveCart (no
+// re-render): the live-cart note input calls this on every keystroke, and
+// a full re-render mid-typing would blow away focus/cursor position. The
+// note is still persisted to localStorage immediately either way, so it's
+// never lost — just not reflected back into the open text field each time.
+function setCartNote(item_name, note) {
+  const cart = getCart();
+  const item = cart.find(i => i.item_name === item_name);
+  if (item) { item.note = note; localStorage.setItem(CART_KEY, JSON.stringify(cart)); }
 }
 
 function clearCart() { saveCart([]); }
