@@ -113,6 +113,7 @@ function renderCart() {
         '<div class="info">' +
           '<div class="name">'+escH(i.item_name)+'</div>' +
           '<div class="price">'+i.quantity+' pc'+approx+' · 🧾 priced at packing</div>' +
+          (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
         '</div>' +
         '<a class="remove" onclick="removeItem('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
       '</div>';
@@ -124,6 +125,7 @@ function renderCart() {
       '<div class="info">' +
         '<div class="name">'+escH(i.item_name)+'</div>' +
         '<div class="price">'+i.quantity+' '+(p ? escH(p.unit||'kg') : '')+(lineTotal!=null?' · ₹'+lineTotal.toFixed(0):'')+'</div>' +
+        (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
       '</div>' +
       '<a class="remove" onclick="removeItem('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
     '</div>';
@@ -185,7 +187,7 @@ async function placeOrder() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity, mode: i.mode || 'kg' })),
+        cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity, mode: i.mode || 'kg', notes: i.note || undefined })),
         society, door_number: door, phone, notes,
         payment_method: method,
       }),
