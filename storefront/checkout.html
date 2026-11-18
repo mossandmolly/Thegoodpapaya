@@ -104,15 +104,32 @@ function renderCart() {
     return;
   }
   let subtotal = 0;
+  let subtotalIsApprox = false;
+  // An item can still be genuinely unestimable (sold by piece, but no
+  // piece_approx_kg on file for it) — kept as its own caveat rather than
+  // silently treating it as ₹0.
+  let hasUnestimable = false;
+  // Separate from hasUnestimable: the online-payment restriction below
+  // is a COD-until-weighed policy call, not a pricing-data gap, so it
+  // still keys off "any piece item" regardless of whether we can show
+  // an estimate for it.
   const hasPieceItem = cart.some(i => i.mode === 'piece');
   list.innerHTML = cart.map(i => {
     const p = catalogPrices[i.item_name];
     if (i.mode === 'piece') {
-      const approx = p && p.piece_approx_kg ? ' (~'+(i.quantity * p.piece_approx_kg).toFixed(2)+'kg)' : '';
+      const hasApprox = p && p.piece_approx_kg;
+      const approxWeight = hasApprox ? ' (~'+(i.quantity * p.piece_approx_kg).toFixed(2)+'kg)' : '';
+      // unit_price is always per-kg — approx piece price = rate × est.
+      // kg/piece × qty. Exact amount is only known once actually weighed
+      // at packing, hence "~" and the note, not a firm number.
+      const approxPrice = (hasApprox && p.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null;
+      if (approxPrice != null) { subtotal += approxPrice; subtotalIsApprox = true; }
+      else hasUnestimable = true;
+      const priceLabel = approxPrice != null ? '~₹'+approxPrice.toFixed(0)+' (exact at packing)' : '🧾 priced at packing';
       return '<div class="cart-row">' +
         '<div class="info">' +
           '<div class="name">'+escH(i.item_name)+'</div>' +
-          '<div class="price">'+i.quantity+' pc'+approx+' · 🧾 priced at packing</div>' +
+          '<div class="price">'+i.quantity+' pc'+approxWeight+' · '+priceLabel+'</div>' +
           (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
         '</div>' +
         '<a class="remove" onclick="removeItem('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
@@ -131,8 +148,9 @@ function renderCart() {
     '</div>';
   }).join('');
   document.getElementById('item-count').textContent = cart.length;
-  document.getElementById('subtotal').textContent = '₹'+subtotal.toFixed(0)+(hasPieceItem?' + packing items':'');
-  document.getElementById('total').textContent = '₹'+subtotal.toFixed(0)+(hasPieceItem?' + packing items':'');
+  const totalText = (subtotalIsApprox?'~':'')+'₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
+  document.getElementById('subtotal').textContent = totalText;
+  document.getElementById('total').textContent = totalText;
   document.getElementById('place-btn').disabled = false;
 
   // Piece-mode items have no confirmed price yet, so there's nothing to
