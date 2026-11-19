@@ -213,12 +213,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .trip-pending-badge{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#ffffff;background:#c2570a}
 .dv-queue-badge{font-size:12px;font-weight:600;color:#b45f0e;background:#fdead9;border:1px solid #f5c896;border-radius:8px;padding:6px 10px;margin-bottom:10px}
 .dv-queue-badge.hidden{display:none}
+/* Shared shell for every collapsible Order Overview summary box (OFD By
+   Rider & Trip, Past Trips) — named for the first one that used it
+   (Not Dispatched by Cluster, since retired), kept generic since. */
 .cluster-summary-box{background:#fff8f0;border:1px solid #f0dfc8;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px}
 .cluster-summary-title{font-weight:700;color:#b45f0e;font-size:11px;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:6px}
-.cluster-summary-row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #f5ebd9;color:#5c4f42}
-.cluster-summary-row:last-child{border-bottom:none}
-.cluster-summary-row .cs-name{font-weight:600}
-.cluster-summary-row .cs-detail{color:#8a7a6a;font-size:11px;flex-basis:100%}
 .trip-progress-bar{position:relative;height:6px;background:#eee0d0;border-radius:3px;margin:4px 0 10px;flex-basis:100%}
 .trip-bar-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;border:2px solid #ffffff;box-shadow:0 0 0 1px rgba(0,0,0,0.12);cursor:pointer}
 .trip-bar-dot.tb-start{background:#2f6690}
@@ -784,7 +783,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="to-payment-pills" class="filter-pills delivery-status-pills"></div>
   <div class="filter-group-label">View</div>
   <div id="to-sort-toggle" class="filter-pills status-pills"></div>
-  <div id="to-notdispatched-summary"></div>
   <div id="to-ofd-summary"></div>
   <div id="to-past-trips-summary"></div>
   <div class="push-row bulk-actions-row">
@@ -1089,21 +1087,6 @@ Banana, 15, 450"></textarea>
   </div>
 </div>
 
-<!-- MOVE TO TRIP MODAL — dropdown of today's existing trips (by number/
-     cluster/order-count) plus a "create new trip" option, replacing the old
-     free-text prompt. -->
-<div class="modal-overlay hidden" id="move-trip-modal">
-  <div class="modal-box">
-    <h3>Move to trip</h3>
-    <label class="modal-label">Trip</label>
-    <select id="move-trip-select"></select>
-    <div class="modal-actions">
-      <button class="btn-sec" id="move-trip-cancel" style="margin-bottom:0">Cancel</button>
-      <button class="btn-parse" id="move-trip-confirm" style="margin-bottom:0">Move</button>
-    </div>
-  </div>
-</div>
-
 <!-- PACKER IDENTITY MODAL — picked (not typed) from packersCache, used only
      when switching into the Packer tab's My Sequence, which needs to
      know which packer's fruit assignment to filter to. Same underlying
@@ -1398,22 +1381,7 @@ Banana, 15, 450"></textarea>
   </div>
 
   <div class="config-section">
-    <h3>🗺️ Clusters <span style="font-size:11px;color:#8a7a6a;font-weight:400">(regional grouping for the Not Dispatched summary on Overview)</span></h3>
-    <p class="note">A cluster is a coarse geographic grouping of several communities (many trips' worth) — used only to summarize not-dispatched orders by region on Order Overview. Stack rank sets delivery priority order (lower goes out first); any community not assigned to a cluster below shows up under "Unnamed" in that summary, ranked last. Assign each community to a cluster from the Communities table below.</p>
-    <div class="add-row">
-      <input type="text" id="new-cluster-name" placeholder="New cluster name">
-      <input type="number" id="new-cluster-rank" placeholder="Stack rank" style="max-width:110px">
-      <button onclick="addCluster()">Add</button>
-    </div>
-    <div class="table-scroll">
-      <table class="community-table"><thead><tr>
-        <th>Cluster</th><th>Stack rank</th><th></th>
-      </tr></thead><tbody id="cluster-tbody"></tbody></table>
-    </div>
-  </div>
-
-  <div class="config-section">
-    <h3>🏘️ Communities <span style="font-size:11px;color:#8a7a6a;font-weight:400">(lat/lng + trip grouping — feeds the Trip view on Overview/Packer/Delivery)</span></h3>
+    <h3>🏘️ Communities <span style="font-size:11px;color:#8a7a6a;font-weight:400">(lat/lng + trip grouping — feeds the trip labels on Overview's rider summaries)</span></h3>
     <p class="note">Communities are also added automatically as new orders come in — this list is for filling in each one's coordinates and trip grouping, plus adding/renaming/removing entries by hand. Combinable group is a plain label you choose — any communities sharing the same label become one trip together; leave it blank to let a community be its own single-community trip. Renaming one only fixes this record — if new orders keep deriving the old name from a customer's address, that name will just get auto-recreated alongside it, so renaming is best used for one-off typo fixes, not an ongoing display name.</p>
     <div class="add-row">
       <input type="text" id="new-community-name" placeholder="New community name">
@@ -1422,7 +1390,7 @@ Banana, 15, 450"></textarea>
     <div id="community-duplicates"></div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th>Cluster</th><th></th>
+        <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th></th>
       </tr></thead><tbody id="community-tbody"></tbody></table>
     </div>
   </div>
@@ -1894,16 +1862,12 @@ async function initAppAfterLogin(){
     updateFeedbackUnreadBadge();
     setInterval(updateFeedbackUnreadBadge,120000);
   }
-  // Needed for trip-view grouping on Overview/Packer/Delivery regardless of
-  // which tab loads first — loaded once here rather than lazily on first
-  // Config visit, best-effort (a failure here just means trip view falls
-  // back to plain society grouping until the next successful load).
-  // Clusters loaded first since Overview's not-dispatched-by-cluster
-  // summary needs the stack-rank list regardless of whether Config was
-  // ever opened this session.
-  loadClustersConfig()
-    .catch(e=>console.error('Could not load clusters config',e))
-    .then(()=>loadCommunitiesConfig())
+  // Needed for trip-key grouping (deriveTrip, feeds the rider/trip
+  // summaries) on Overview/Packer/Delivery regardless of which tab loads
+  // first — loaded once here rather than lazily on first Config visit,
+  // best-effort (a failure here just means trip grouping falls back to
+  // plain per-community identity until the next successful load).
+  loadCommunitiesConfig()
     .catch(e=>console.error('Could not load communities config',e));
   // Separate, hand-curated model that powers Order Overview's Time
   // Sensitive sort — pre-warmed here so the cache is ready before Overview
@@ -2055,9 +2019,6 @@ async function renderConfig(){
   document.getElementById('pkg-list').innerHTML=Object.entries(PKG).map(([k,v])=>`<li>${k}<span>${v} kg/pc</span><button class="del-btn" onclick="delPkg('${k}')">✕</button></li>`).join('');
   document.getElementById('alias-list').innerHTML=Object.entries(ALIASES).map(([k,v])=>`<li>${k}<span>→ ${v}</span><button class="del-btn" onclick="delAlias('${k}')">✕</button></li>`).join('');
   loadPackersConfig();
-  // Clusters loaded first — the Communities table's cluster picker needs
-  // the full cluster list to already be in clustersCache when it renders.
-  await loadClustersConfig();
   loadCommunitiesConfig();
   loadCustomerInstructionsCache();
   loadCatalogSettingsConfig();
@@ -2138,86 +2099,6 @@ async function saveCatalogSetting(itemName,field,value,inputEl){
   }
 }
 
-// ── Communities (lat/lng + trip grouping) ────────────────────────────────
-// Keyed by cluster name — same session-cache convention as
-// communitiesCache below. Loaded alongside it since the Communities
-// table's per-row cluster picker (and the Overview not-dispatched-by-
-// cluster summary) both need the full cluster list, not just what's
-// currently referenced by a community.
-let clustersCache={};
-
-async function loadClustersConfig(){
-  const{data,error}=await sb.from('clusters').select('*').order('stack_rank',{nullsFirst:false});
-  if(error){console.error(error);return;}
-  clustersCache={};
-  (data||[]).forEach(c=>{clustersCache[c.name]=c;});
-  renderClusterTable(data||[]);
-}
-
-function clusterOptionsHtml(selected){
-  return '<option value="">— Unnamed —</option>'+
-    Object.keys(clustersCache).map(name=>
-      '<option value="'+escH(name)+'"'+(name===selected?' selected':'')+'>'+escH(name)+'</option>'
-    ).join('');
-}
-
-function renderClusterTable(rows){
-  const tbody=document.getElementById('cluster-tbody');
-  if(!tbody)return;
-  tbody.innerHTML=rows.map(c=>
-    '<tr>'+
-      '<td><input type="text" id="cluster-name-'+escH(c.name)+'" value="'+escH(c.name)+'"></td>'+
-      '<td><input type="number" id="cluster-rank-'+escH(c.name)+'" value="'+(c.stack_rank??'')+'"></td>'+
-      '<td style="white-space:nowrap">'+
-        '<button class="del-btn" style="color:#2d6b2d" onclick="saveCluster('+escH(JSON.stringify(c.name))+')" title="Save">💾</button>'+
-        '<button class="del-btn" onclick="deleteCluster('+escH(JSON.stringify(c.name))+')" title="Delete">✕</button>'+
-      '</td>'+
-    '</tr>'
-  ).join('');
-}
-
-async function saveCluster(oldName){
-  const name=document.getElementById('cluster-name-'+oldName).value.trim();
-  if(!name){uxAlert('Cluster name can\'t be empty');return;}
-  const rank=document.getElementById('cluster-rank-'+oldName).value;
-  const stackRank=rank===''?null:parseInt(rank,10);
-  if(name!==oldName){
-    // Renaming a cluster's primary key — every community pointing at the
-    // old name needs to follow it, or they'd silently fall back to
-    // "Unnamed" the moment the old row's gone.
-    const{error:commErr}=await sb.from('communities').update({cluster:name}).eq('cluster',oldName);
-    if(commErr){uxAlert('Failed to update communities using this cluster: '+commErr.message);return;}
-    const{error:insErr}=await sb.from('clusters').insert({name,stack_rank:stackRank});
-    if(insErr){uxAlert('Failed to save: '+insErr.message);return;}
-    await sb.from('clusters').delete().eq('name',oldName);
-  }else{
-    const{error}=await sb.from('clusters').update({stack_rank:stackRank}).eq('name',oldName);
-    if(error){uxAlert('Failed to save: '+error.message);return;}
-  }
-  await loadClustersConfig();
-  await loadCommunitiesConfig();
-}
-
-async function addCluster(){
-  const nameEl=document.getElementById('new-cluster-name'),rankEl=document.getElementById('new-cluster-rank');
-  const name=nameEl.value.trim();
-  if(!name)return;
-  if(clustersCache[name]){uxAlert('"'+name+'" already exists');return;}
-  const rank=rankEl.value;
-  const{error}=await sb.from('clusters').insert({name,stack_rank:rank===''?null:parseInt(rank,10)});
-  if(error){uxAlert('Failed to add: '+error.message);return;}
-  nameEl.value='';rankEl.value='';
-  await loadClustersConfig();
-}
-
-async function deleteCluster(name){
-  if(!await uxConfirm('Remove cluster "'+name+'"? Any community currently assigned to it falls back to "Unnamed", not deleted.'))return;
-  const{error}=await sb.from('clusters').delete().eq('name',name);
-  if(error){uxAlert('Failed to delete: '+error.message);return;}
-  await loadClustersConfig();
-  await loadCommunitiesConfig();
-}
-
 // Session-cached like customerLookupCache — refreshed whenever the Config
 // tab is opened or a row is saved. Keyed by community name (matches
 // deriveSociety()'s output, since both sides derive from the same
@@ -2292,7 +2173,6 @@ function renderCommunityTable(rows){
       '<td><input type="text" id="comm-group-'+c.id+'" value="'+escH(c.combinable_group||'')+'" placeholder="e.g. north-cluster"></td>'+
       '<td><input type="number" id="comm-rank-'+c.id+'" value="'+(c.stack_rank??'')+'"></td>'+
       '<td><input type="time" id="comm-nlt-'+c.id+'" value="'+(c.no_later_than?c.no_later_than.slice(0,5):'')+'"></td>'+
-      '<td><select id="comm-cluster-'+c.id+'">'+clusterOptionsHtml(c.cluster)+'</select></td>'+
       '<td style="white-space:nowrap">'+
         '<button class="del-btn" style="color:#2d6b2d" onclick="saveCommunity('+escH(JSON.stringify(c.id))+')" title="Save">💾</button>'+
         '<button class="del-btn" onclick="deleteCommunity('+escH(JSON.stringify(c.id))+','+escH(JSON.stringify(c.name))+')" title="Delete">✕</button>'+
@@ -2318,7 +2198,6 @@ async function saveCommunity(id){
   const group=document.getElementById('comm-group-'+id).value.trim();
   const rank=document.getElementById('comm-rank-'+id).value;
   const nlt=document.getElementById('comm-nlt-'+id).value;
-  const cluster=document.getElementById('comm-cluster-'+id).value;
   const update={
     name,
     lat:              lat===''?null:parseFloat(lat),
@@ -2326,7 +2205,6 @@ async function saveCommunity(id){
     combinable_group: group||null,
     stack_rank:       rank===''?null:parseInt(rank,10),
     no_later_than:    nlt||null,
-    cluster:          cluster||null,
   };
   const{error}=await sb.from('communities').update(update).eq('id',id);
   if(error){uxAlert('Failed to save: '+error.message);return;}
@@ -2361,7 +2239,7 @@ async function deleteCommunity(id,name){
 }
 
 // ── Community Priority (Time Sensitive sort) ──────────────────────────────
-// Separate, hand-curated model from communities/clusters above — powers
+// Separate, hand-curated model from communities above — powers
 // Order Overview's Time Sensitive sort and Grid's grouping/ordering
 // (orderItemsByQueuePriority / matchCommunityPriority). No longer drives the
 // Packer tab's My Sequence — that's auto-sequenced server-side now (see
@@ -2459,7 +2337,7 @@ async function addCommunityPriority(){
 }
 
 async function deleteCommunityPriority(uniqueId){
-  if(!await uxConfirm('Remove community priority "'+uniqueId+'"? This only affects Order Overview\'s Time Sensitive sort, not the Communities/Clusters tables above.'))return;
+  if(!await uxConfirm('Remove community priority "'+uniqueId+'"? This only affects Order Overview\'s Time Sensitive sort, not the Communities table above.'))return;
   const{error}=await sb.from('community_priority').delete().eq('unique_id',uniqueId);
   if(error){uxAlert('Failed to delete: '+error.message);return;}
   await loadCommunityPriorityConfig();
@@ -4313,15 +4191,14 @@ function renderOrdersList(){
   renderOverviewSummaryPills(tripInfo);
   renderOverviewSortToggle();
 
-  // Group orders by society (default), by trip (viewGrouping==='trip'), or
-  // by sequence (overviewSortMode==='sequence' — the auto-sequencer's own
-  // batches, same numbering the Team tab's Sequences board shows, so
-  // Overview can be read in the exact order packers are actually working
-  // through today). Sequence grouping takes over the grouping KEY itself,
-  // not just the sort, and overrides By Trip when both are somehow active
-  // — grouping by trip and by sequence at once isn't a coherent view.
-  // Search matches society/trip/sequence label, customer name, or any
-  // item's fruit name — an order survives the filter if any one matches.
+  // Group orders by society (default), or by sequence
+  // (overviewSortMode==='sequence' — the auto-sequencer's own batches,
+  // same numbering the Team tab's Sequences board shows, so Overview can
+  // be read in the exact order packers are actually working through
+  // today). Sequence grouping takes over the grouping KEY itself, not
+  // just the sort.
+  // Search matches society/sequence label, customer name, or any item's
+  // fruit name — an order survives the filter if any one matches.
   const search=document.getElementById('to-search').value.trim().toLowerCase();
   const sequenceViewActive=overviewSortMode==='sequence';
   const bySociety={};
@@ -4340,19 +4217,11 @@ function renderOrdersList(){
     bySociety[soc].push({soid,...order});
   });
 
-  // By Trip view — still-pending orders (not yet packed/invoiced, or not
-  // yet delivered) sort above ones with nothing left to do, so what
-  // actually needs attention under a group header isn't buried beneath
-  // orders that are already done. Stable sort keeps each tier's original
-  // relative order. Sequence view and Flat view both stay alphabetical by
-  // customer within each group — a sequence's own internal order isn't
-  // meaningful here the way it is on the Team tab's board (no drag, no
-  // packer breakdown), so alphabetical is just the easiest to scan.
-  if(viewGrouping==='trip'&&!sequenceViewActive){
-    Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>overviewOrderPendingRank(a)-overviewOrderPendingRank(b)));
-  }else{
-    Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>a.customer.localeCompare(b.customer)));
-  }
+  // Sequence view and Flat view both stay alphabetical by customer within
+  // each group — a sequence's own internal order isn't meaningful here
+  // the way it is on the Team tab's board (no drag, no packer breakdown),
+  // so alphabetical is just the easiest to scan.
+  Object.values(bySociety).forEach(orders=>orders.sort((a,b)=>a.customer.localeCompare(b.customer)));
 
   const socNames=sequenceViewActive
     // Ascending by sequence position, "Not yet sequenced" always last —
@@ -4366,8 +4235,6 @@ function renderOrdersList(){
       };
       return posOf(a)-posOf(b);
     })
-    :viewGrouping==='trip'
-    ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
     // Flat — case-insensitive since group names can come from either a
     // Community Priority display_name (whatever case it was typed in) or
     // deriveSociety's own casing, and a plain case-sensitive sort ranks
@@ -4387,8 +4254,7 @@ function renderOrdersList(){
     const collapsed=collapsedOverviewGroups.has(soc);
     return '<div class="society-header">'+
       (selectableSoids.length?'<input type="checkbox" class="inv-select" '+(allSelected?'checked ':'')+'onchange="toggleSocietySelectAll('+escH(JSON.stringify(selectableSoids))+',this.checked)" title="Select all orders in this society"> ':'')+
-      '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+'</span>'+
-      tripPendingBadgeHtml(tripInfo,orders[0])+
+      '<span style="cursor:pointer" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+escH(tripHeaderLabel(soc))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+deliveryWindowBadgesHtml(orders)+'</span>'+
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+(collapsed?'▸':'▾')+'</span>'+
       '</div>'+
       (collapsed?'':
@@ -4527,7 +4393,6 @@ function renderOrdersList(){
               (cancelled?'':(order.isPickup
                 ?'<a class="or-link" onclick="setOrderPickup(\''+order.soid+'\',false)" title="Treat this order as a normal delivery instead">↩️ remove pickup tag</a>'
                 :'<a class="or-link" onclick="setOrderPickup(\''+order.soid+'\',true)" title="Whole order — still order-level, not per-item">📦 mark as pickup</a>'))+
-              (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
               // "→ tomorrow" only makes sense relative to today/yesterday —
               // openMoveDateModal's direction is a plain day-offset, not
               // just ±1, so yesterday's case (moves 2 days forward,
@@ -5307,33 +5172,26 @@ function stopLocationPing(){
   if(locationPingTimer){clearInterval(locationPingTimer);locationPingTimer=null;}
 }
 
-// ── Trip view — a filter/grouping alternative to the plain society view,
-// shared across Overview/Packer/Delivery (one toggle, not per-tab). A
-// "trip" is, in priority order:
+// ── Trip key — only feeds the rider/trip summaries now (OFD By Rider &
+// Trip, Past Trips); there's no more selectable "By Trip" grouping view.
+// A "trip" is, in priority order:
 //   1. this order's trip_override, if it has one (per-order manual pin)
-//   2. its community's combinable_group, if set (manual override that
-//      still wins over cluster — lets ops split a cluster into separate
-//      trips, or combine communities across different clusters, by hand)
-//   3. its community's cluster (Config -> Clusters) — same-cluster
-//      communities merge into one trip automatically by default
-//   4. the community's own name (uncustered communities stay their own
-//      single-community trip, same as before clusters existed)
-let viewGrouping='society'; // 'society' | 'trip'
-
+//   2. its community's combinable_group, if set (Config -> Communities)
+//   3. the community's own name
 function deriveTrip(order){
   if(order.tripOverride)return order.tripOverride;
   const soc=deriveSociety(order.customer);
   const community=communitiesCache[soc];
   if(!community)return soc;
-  return community.combinable_group||community.cluster||soc;
+  return community.combinable_group||soc;
 }
 
 // Populated whenever Overview, Packer, or Delivery loads/re-renders fresh
 // data — used only by isLeftoverOrder below, which needs to know about
 // every OTHER order sharing a trip (not just the one being checked) to
 // detect a partially-picked-up trip. Same "ambient global refreshed on
-// load" pattern as communitiesCache/clustersCache, not dataset threading
-// through every render function.
+// load" pattern as communitiesCache, not dataset threading through every
+// render function.
 let todaysOrdersForLeftoverCheck=[];
 
 // A not_dispatched order whose trip already has at least one delivery
@@ -5364,10 +5222,10 @@ function departedTripKeys(orders){
   return keys;
 }
 
-// The grouping/numbering identity actually used for display (order-list
-// headers, trip badges, Trip N numbers) — deriveTrip() itself stays the
-// pure "which trip does this order belong to" identity (combinable_group/
-// cluster/society); this layers "has that trip already left" on top of it.
+// The grouping/numbering identity actually used by the rider/trip
+// summaries (Trip N numbers) — deriveTrip() itself stays the pure "which
+// trip does this order belong to" identity (combinable_group/society);
+// this layers "has that trip already left" on top of it.
 // A still-not_dispatched order whose trip has already departed gets
 // bumped into that trip's NEXT instance instead of quietly joining a batch
 // that's already on the road — once it actually gets dispatched, it's real
@@ -5384,48 +5242,33 @@ function effectiveTripKey(order,departedKeys){
 // order needs {customer, tripOverride} at minimum — every per-order object
 // in Overview/Delivery already carries both.
 //
-// Flat/society grouping (not Trip view — that keeps its own independent
-// deriveTrip/cluster-rank logic, untouched by this) first checks whether
-// the order's society (falling back to customer name) matches a Community
-// Priority keyword — if so, every variant spelling that matches the same
+// Flat/society grouping (deriveTrip/sortTripGroupNames, which only feed
+// the rider/trip summaries now, are untouched by this) first checks
+// whether the order's society (falling back to customer name) matches a
+// Community Priority keyword — if so, every variant spelling that matches the same
 // keyword set collapses into ONE header under that community's clean
 // display name, same merge idea as the P&L dashboard's SKU_ALIAS grouping.
 // Falls back to the plain derived-society text when nothing matches, so
 // this is purely additive — no match, no behavior change from before.
 function deriveGroupKey(order){
-  if(viewGrouping==='trip')return effectiveTripKey(order,departedTripKeys(todaysOrdersForLeftoverCheck));
   const matched=matchCommunityPriority(order.society||order.customer);
   return matched?matched.display_name:deriveSociety(order.customer);
 }
 
-// ── Trip-view priority ordering ──────────────────────────────────────────
-// "By Trip" groups sort by delivery priority instead of alphabetically
-// (Flat/society view keeps the plain alphabetical sort it always had) —
-// higher-priority (lower stack_rank) clusters' trips come first regardless
-// of how many orders are in each; a 3-order trip in a rank-1 cluster still
-// outranks a 30-order trip in rank-3. Every order needs {customer,
+// ── Trip-number priority ordering ─────────────────────────────────────────
+// Feeds computeTripNumbers below, which only labels the rider/trip
+// summaries (OFD By Rider & Trip, Past Trips) now — there's no more
+// selectable "By Trip" grouping view. Every order needs {customer,
 // deliverBy} at minimum.
 //
 // Packing-to-delivery buffer: an order needing to be delivered by 4pm has
 // to be packed and ready by 2:30pm (90 min for dispatch + drive time) —
 // and by 2pm (30 min before THAT), it needs to already be at the very top
 // of the queue so there's still room to actually get it packed in time.
-// Both numbers below are that rule, so a close deadline overrides cluster
-// rank entirely once its escalation point is reached.
+// Both numbers below are that rule, so a close deadline overrides trip
+// order entirely once its escalation point is reached.
 const PACK_TO_DELIVERY_BUFFER_MIN=90;
 const ESCALATE_LEAD_MIN=30;
-
-function groupClusterRank(orders){
-  let best=9999;
-  orders.forEach(o=>{
-    const soc=deriveSociety(o.customer);
-    const cluster=communitiesCache[soc]&&communitiesCache[soc].cluster;
-    const rank=(cluster&&clustersCache[cluster]&&clustersCache[cluster].stack_rank!=null)
-      ?clustersCache[cluster].stack_rank:9999;
-    if(rank<best)best=rank;
-  });
-  return best;
-}
 
 // Minutes from now until an order's deliver_by (today) — negative once
 // that deadline's already passed. Null if there's no deadline at all.
@@ -5438,7 +5281,7 @@ function minutesToDeadline(deliverBy){
 }
 
 // Soonest escalated deadline among a group's orders, or null if nothing in
-// it has reached its escalation point yet (still fine to rank by cluster).
+// it has reached its escalation point yet (still fine to rank alphabetically).
 function groupUrgency(orders){
   let soonest=null;
   orders.forEach(o=>{
@@ -5452,8 +5295,8 @@ function groupUrgency(orders){
 
 // A group with nothing left pending (every non-cancelled order actually
 // delivered) has nothing left for a dispatcher to act on — sorted below
-// every group that still has something outstanding, regardless of cluster
-// rank/urgency, so the trip list reads as "what's still live" first.
+// every group that still has something outstanding, regardless of
+// urgency, so the trip list reads as "what's still live" first.
 function groupFullyDelivered(orders){
   return orders.length>0&&orders.every(o=>o.orderStatus==='cancelled'||o.deliveryStatus==='delivered');
 }
@@ -5492,7 +5335,6 @@ function sortTripGroupNames(groupNames,ordersByName){
     const orders=ordersByName(name);
     return[name,{
       urgency:groupUrgency(orders),
-      clusterRank:groupClusterRank(orders),
       fullyDelivered:groupFullyDelivered(orders),
       pendingTier:groupPendingTier(orders),
     }];
@@ -5504,7 +5346,6 @@ function sortTripGroupNames(groupNames,ordersByName){
     if(ma.urgency!=null&&mb.urgency!=null)return ma.urgency-mb.urgency;
     if(ma.urgency!=null)return -1;
     if(mb.urgency!=null)return 1;
-    if(ma.clusterRank!==mb.clusterRank)return ma.clusterRank-mb.clusterRank;
     return a.localeCompare(b);
   });
 }
@@ -5554,21 +5395,17 @@ function sortGroupsByPriority(groupNames,ordersByName){
   });
 }
 
-const TRIP_ORDER_CAP=10;
-
-// Trip N — a group's 1-based position in today's cluster-priority order
-// (see sortTripGroupNames above), computed fresh from whichever order set
-// the caller already has loaded, grouped by the real trip key (deriveTrip)
-// — independent of viewGrouping, so a society shows its trip number even
-// in Flat view where the visible groups are societies, not trips. Not a
-// stored value: it's just "where does this trip rank right now," so it
-// shifts as today's order mix changes. Two societies sharing a
-// combinable_group get the same number.
+// Trip N — a group's 1-based position in today's priority order (see
+// sortTripGroupNames above), computed fresh from whichever order set the
+// caller already has loaded, grouped by the real trip key (deriveTrip).
+// Not a stored value: it's just "where does this trip rank right now," so
+// it shifts as today's order mix changes. Two societies sharing a
+// combinable_group get the same number. Only consumed by the rider/trip
+// summaries (OFD By Rider & Trip, Past Trips) — there's no more
+// selectable "By Trip" grouping view to show this number in a header.
 // opts.splitDeparted (default true) controls whether a departed trip's
 // still-pending orders get bumped to a separate "next" entry (see
-// effectiveTripKey) — the move-to-trip picker turns this off, since it
-// writes whichever key gets chosen straight into orders.trip_override, and
-// a "::next" key has no business being persisted as a literal trip identity.
+// effectiveTripKey).
 function computeTripNumbers(orders,opts){
   const splitDeparted=!(opts&&opts.splitDeparted===false);
   const departed=splitDeparted?departedTripKeys(orders):new Set();
@@ -5583,89 +5420,13 @@ function computeTripNumbers(orders,opts){
   return{numberByTripKey,ordersByTripKey:byTrip,sortedTripKeys:sorted,departedKeys:departed};
 }
 
-// "Trip 1 · 8/10" — shown on every group header, but only in By Trip view.
-// Flat view groups by SOCIETY, not trip — a society without any
-// combinable_group/cluster configured is its own singleton trip identity,
-// so showing this badge in Flat view meant every such society got its own
-// distinct "Trip N" (numbers in the teens/twenties on a day with lots of
-// unclustered societies) even though there's no actual trip concept in
-// Flat view to begin with. tripInfo comes from one computeTripNumbers(active)
-// call per render pass; order is any single representative order from the
-// group being labeled.
-function tripBadgeHtml(tripInfo,order){
-  if(viewGrouping!=='trip')return '';
-  const key=effectiveTripKey(order,tripInfo.departedKeys);
-  const num=tripInfo.numberByTripKey[key];
-  if(num==null)return '';
-  const count=(tripInfo.ordersByTripKey[key]||[]).length;
-  const over=count>TRIP_ORDER_CAP;
-  return ' <span class="trip-number-badge'+(over?' trip-over-cap':'')+'" title="'+count+' of '+TRIP_ORDER_CAP+' orders in this trip">Trip '+num+' · '+count+'/'+TRIP_ORDER_CAP+'</span>';
+// Flat view groups by SOCIETY, not trip — groupKey here already IS the
+// society name, so there's no separate trip label to compute any more.
+function tripHeaderLabel(groupKey){
+  return groupKey;
 }
 
-// Separate from tripBadgeHtml above (rather than one combined string) so
-// callers can place it at the right end of the header — .society-header is
-// a flex row, and margin-left:auto here pushes this (and the expand caret
-// right after it, in whichever tabs have one) to the far right regardless
-// of how much other header content sits in between, instead of it getting
-// buried inline next to the trip number right after the title.
-function tripPendingBadgeHtml(tripInfo,order){
-  if(viewGrouping!=='trip')return '';
-  const key=effectiveTripKey(order,tripInfo.departedKeys);
-  if(tripInfo.numberByTripKey[key]==null)return '';
-  const tripOrders=tripInfo.ordersByTripKey[key]||[];
-  // "Pending" here means not yet delivered — could be stuck at packing,
-  // sitting not-dispatched, or already out but not dropped off yet; all of
-  // that is one number so a dispatcher can tell at a glance whether this
-  // trip still needs anything from them.
-  const pending=tripOrders.filter(o=>o.orderStatus!=='cancelled'&&o.deliveryStatus!=='delivered').length;
-  if(!pending)return '';
-  return ' <span class="trip-pending-badge" style="margin-left:auto" title="'+pending+' order'+(pending!==1?'s':'')+' still not delivered">'+pending+' pending</span>';
-}
-
-// In By Trip view specifically, a group's header text should read as
-// "which societies does this trip actually cover" (e.g. "77degree +
-// Pristine"), not the raw underlying trip key — a cluster name or a
-// custom trip id looks like nonsense on its own, and even a real
-// society-derived key would otherwise silently swallow every OTHER
-// society merged into the same trip, making a multi-society trip look
-// like it belongs to just one (see: moving Pristine into 77degree's trip
-// used to make the header read only "77degree", with no trace of
-// Pristine). Flat view is untouched — groupKey there already IS the
-// society name.
-function tripHeaderLabel(groupKey,orders){
-  if(viewGrouping!=='trip')return groupKey;
-  const societies=[...new Set(orders.map(o=>deriveSociety(o.customer)))].sort();
-  const label=societies.join(' + ');
-  // Same society name would otherwise show twice with no way to tell them
-  // apart — this is the batch still waiting because the earlier one for
-  // this same trip has already left (see effectiveTripKey).
-  return groupKey.endsWith(TRIP_NEXT_SUFFIX)?label+' (next trip)':label;
-}
-
-// One shared toggle rendered identically on all three tabs — switching on
-// any of them applies everywhere, since it's the same global state.
-function renderGroupingToggle(){
-  return '<span class="filter-pill'+(viewGrouping==='society'?' active':'')+'" onclick="setViewGrouping(\'society\')">Flat</span>'+
-         '<span class="filter-pill'+(viewGrouping==='trip'?' active':'')+'" onclick="setViewGrouping(\'trip\')">By Trip</span>';
-}
-
-function setViewGrouping(mode){
-  viewGrouping=mode;
-  if(document.getElementById('panel-today').classList.contains('active'))renderOrdersList();
-  // renderPackerGrid() alone never touches the grouping-toggle pills' DOM —
-  // only renderPackerFilterPills() does (same as every other Packer filter
-  // action calling both together) — without this the pill's active state
-  // never actually updated on Packer.
-  if(document.getElementById('panel-packer').classList.contains('active')){
-    renderPackerFilterPills();
-    renderPackerGrid();
-  }
-  if(document.getElementById('panel-delivery').classList.contains('active'))renderDeliveryList();
-}
-
-// Order Overview's own Flat/Sequence toggle — separate from viewGrouping
-// above (that one's shared with Packer/Delivery and is about Flat vs the
-// old Trip view, now unreachable). "Sequence" groups orders by the
+// Order Overview's own Flat/Sequence toggle. "Sequence" groups orders by the
 // auto-sequencer's own batch numbers (same ones the Team tab's Sequences
 // board shows) instead of by society — see renderOrdersList's grouping
 // block. Replaces the old "Time Sensitive" mode (sortGroupsByPriority,
@@ -5685,75 +5446,6 @@ function setOverviewSortMode(mode){
   renderOverviewSortToggle();
   renderOrdersList();
 }
-
-// Moves just this one order into a different trip, independent of its
-// community — doesn't touch the community's own combinable_group, doesn't
-// affect any other order in the same community. Offers every trip
-// currently in use today (same numbering/ranking By Trip view shows) plus
-// a reset-to-default option and a way to spin up a brand new trip, rather
-// than typing a raw label blind.
-let moveTripTargetSoid=null;
-const moveTripModal=document.getElementById('move-trip-modal'),moveTripSelect=document.getElementById('move-trip-select');
-
-function moveOrderToTrip(soid){
-  const order=currentOrdersById[soid]||deliveryOrders[soid];
-  if(!order)return;
-  moveTripTargetSoid=soid;
-
-  // Combine whichever tabs' data is currently loaded so the trip list is
-  // as complete as possible regardless of which screen this was opened from.
-  // splitDeparted:false — this list's values get written straight into
-  // trip_override, so it must only ever offer plain, storable trip
-  // identities, never the auto-computed "::next" split.
-  const pool=[...Object.values(currentOrdersById),...Object.values(deliveryOrders)]
-    .filter(o=>o.orderStatus!=='cancelled');
-  const tripInfo=computeTripNumbers(pool.length?pool:[order],{splitDeparted:false});
-
-  const currentKey=deriveTrip(order);
-  const options=['<option value="">— Reset to community default —</option>'];
-  tripInfo.sortedTripKeys.forEach(key=>{
-    const num=tripInfo.numberByTripKey[key];
-    const tripOrders=tripInfo.ordersByTripKey[key];
-    // Named by which societies it actually covers ("77degree + Pristine"),
-    // not the raw underlying key — a cluster name or custom trip id reads
-    // as nonsense on its own here.
-    const label=[...new Set(tripOrders.map(o=>deriveSociety(o.customer)))].sort().join(' + ');
-    options.push('<option value="'+escH(key)+'"'+(key===currentKey?' selected':'')+'>Trip '+num+' — '+escH(label)+' · '+tripOrders.length+'/'+TRIP_ORDER_CAP+'</option>');
-  });
-  options.push('<option value="__new__">+ Create new trip</option>');
-  moveTripSelect.innerHTML=options.join('');
-  moveTripModal.classList.remove('hidden');
-}
-
-document.getElementById('move-trip-cancel').addEventListener('click',()=>{moveTripModal.classList.add('hidden');});
-
-document.getElementById('move-trip-confirm').addEventListener('click',async()=>{
-  const soid=moveTripTargetSoid;
-  if(!soid)return;
-  const selected=moveTripSelect.value;
-  // A brand new trip just needs a fresh, unique underlying key — the
-  // "Trip N" number shown for it is computed fresh from cluster rank
-  // wherever it lands, never stored literally, so this doesn't need to be
-  // a pretty label.
-  const tripOverride=selected===''?null:(selected==='__new__'?('custom-trip-'+Date.now().toString(36)):selected);
-  moveTripModal.classList.add('hidden');
-  try{
-    const res=await fetch(SUPABASE_URL+'/functions/v1/update-order-notes',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+await authToken()},
-      body:JSON.stringify({sales_order_id:soid,trip_override:tripOverride}),
-    });
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Could not move order');
-    evictCustomerLookupCache(soid);
-    if(currentOrdersById[soid])currentOrdersById[soid].tripOverride=tripOverride;
-    if(deliveryOrders[soid])deliveryOrders[soid].tripOverride=tripOverride;
-    renderOrdersList();
-    if(document.getElementById('panel-delivery').classList.contains('active'))renderDeliveryList();
-  }catch(e){
-    uxAlert('Failed to move order: '+e.message);
-  }
-});
 
 // is_pickup is order-level, set once at creation (WhatsApp parse review or
 // Quick Order Entry's pickup checkbox) with no way to fix it afterward
@@ -6619,15 +6311,6 @@ function isFullyInvoiced(order){
   return !!(active.length&&active.every(i=>i.status==='invoiced'));
 }
 
-// Sort tier for By Trip view's within-group ordering — 0 for anything
-// still pending packing/invoicing OR still pending delivery, 1 once both
-// are done, 2 for cancelled (nothing further to do, ever).
-function overviewOrderPendingRank(order){
-  if(order.orderStatus==='cancelled')return 2;
-  if(isFullyInvoiced(order)&&order.deliveryStatus==='delivered')return 1;
-  return 0;
-}
-
 // Order-level status badge = the least-advanced status among its non-
 // cancelled items (open < held < packed < final < invoiced) — an order is
 // only as far along as its slowest item, so that's what the card should
@@ -6857,18 +6540,17 @@ function renderOverviewSummaryPills(tripInfo){
     '<span class="filter-pill'+(overviewPaymentFilter===p.key?' active':'')+'" onclick="setOverviewPaymentFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('');
 
-  renderNotDispatchedClusterSummary(active);
   renderOfdRiderSummary(active,tripInfo);
   renderPastTripsSummary(active,tripInfo);
 }
 
-// ── Collapsible summary box shell — shared by all three summaries below,
-// so each can be expanded/collapsed independently without losing the
-// others' state. id must be stable across renders (not regenerated data).
-// Starts with all three ids pre-collapsed — Order Overview opens straight
-// to the actual order list, not a wall of summary boxes; tapping a title
+// ── Collapsible summary box shell — shared by both summaries below, so
+// each can be expanded/collapsed independently without losing the
+// other's state. id must be stable across renders (not regenerated data).
+// Starts with both ids pre-collapsed — Order Overview opens straight to
+// the actual order list, not a wall of summary boxes; tapping a title
 // still expands it same as before.
-let collapsedSummaryBoxes=new Set(['notdispatched','ofd','past']);
+let collapsedSummaryBoxes=new Set(['ofd','past']);
 function toggleSummaryBox(id){
   if(collapsedSummaryBoxes.has(id))collapsedSummaryBoxes.delete(id);
   else collapsedSummaryBoxes.add(id);
@@ -6882,45 +6564,6 @@ function summaryBoxHtml(id,title,rowsHtml){
     '</div>'+
     (collapsed?'':rowsHtml)+
   '</div>';
-}
-
-// ── Not Dispatched by Cluster — a delivery-priority-ordered count of
-// not_dispatched orders grouped by each society's cluster (Config ->
-// Clusters), so ops can see at a glance which region still has the most
-// left to dispatch without expanding every society individually. Cluster 1
-// + Cluster 2 collapse into one row when their combined count is small
-// (<=6) — a specific rule for those two adjacent, often jointly-run
-// regions, not a general nearby-cluster-merging system.
-function renderNotDispatchedClusterSummary(active){
-  const el=document.getElementById('to-notdispatched-summary');
-  if(!el)return;
-  const orders=active.filter(o=>isFullyInvoiced(o)&&(o.deliveryStatus||'not_dispatched')==='not_dispatched');
-  if(!orders.length){el.innerHTML='';return;}
-
-  const houses={};
-  orders.forEach(o=>{
-    const soc=deriveSociety(o.customer);
-    const cluster=communitiesCache[soc]?.cluster||'Unnamed';
-    (houses[cluster]=houses[cluster]||[]).push(o.customer);
-  });
-
-  const rankOf=name=>(clustersCache[name]&&clustersCache[name].stack_rank!=null)?clustersCache[name].stack_rank:9999;
-  let entries=Object.entries(houses).map(([name,list])=>({name,list}));
-
-  const c1=entries.find(e=>e.name==='Cluster 1'),c2=entries.find(e=>e.name==='Cluster 2');
-  if(c1&&c2&&(c1.list.length+c2.list.length)<=6){
-    entries=entries.filter(e=>e!==c1&&e!==c2);
-    entries.push({name:'Cluster 1 + Cluster 2',list:[...c1.list,...c2.list]});
-  }
-  entries.sort((a,b)=>rankOf(a.name.split(' + ')[0])-rankOf(b.name.split(' + ')[0]));
-
-  const rowsHtml=entries.map(e=>
-    '<div class="cluster-summary-row">'+
-      '<span class="cs-name">'+escH(e.name)+'</span><span>'+e.list.length+'</span>'+
-      '<span class="cs-detail">'+e.list.map(escH).join(', ')+'</span>'+
-    '</div>'
-  ).join('');
-  el.innerHTML=summaryBoxHtml('notdispatched','📍 Not Dispatched by Cluster ('+orders.length+')',rowsHtml);
 }
 
 // Formal trips (grouped by the real trip key, deriveTrip — same identity/
@@ -7133,8 +6776,7 @@ function renderOfdRiderSummary(active,tripInfo){
 // different times, and this should reflect that per rider. Overlapping
 // runs across different trips merge, same as the OFD summary above.
 // Never-dispatched leftovers (see isLeftoverOrder) belong to no rider, so
-// they're not shown here — they're already highlighted on every order
-// card and listed in the Not Dispatched by Cluster box above.
+// they're not shown here — they're already highlighted on every order card.
 // Formats a millisecond duration as "1h 20m" / "42m" — used only by the
 // timeline's idle readout below.
 function formatDurationShort(ms){
@@ -7740,9 +7382,8 @@ function setPackerScope(scope){
 }
 
 // ── My Sequence ────────────────────────────────────────────────────────
-// A third Packer view, independent of the shared Flat/Trip viewGrouping
-// toggle above (that one also drives Overview/Delivery; this one is
-// Packer-only). Grid/Trip group everything by society — My Sequence
+// A second Packer view, independent of the Grid view above (which groups
+// everything by society) — My Sequence
 // instead shows one packer her own slice of exactly ONE "sequence" at a
 // time (see computeMyCurrentSequence() below), genuinely per-packer again
 // (riderName decides what she sees, not just who gets credit for it).
@@ -9192,13 +8833,7 @@ function renderPackerGrid(){
     const key=deriveGroupKey(packerOrderLike(item));
     (byGroup[key]=byGroup[key]||[]).push(item);
   });
-  // Packer only has raw item rows per group, not order objects — adapt via
-  // packerCustomerMap (raw deliver_by column, not the camelCase deliverBy
-  // Overview/Delivery's own order objects carry) before handing off to the
-  // same trip-priority sort/numbering those two use.
-  const groupNames=viewGrouping==='trip'
-    ?sortTripGroupNames(Object.keys(byGroup),name=>byGroup[name].map(packerOrderLike))
-    :packerViewMode==='priority'
+  const groupNames=packerViewMode==='priority'
     // Time Sensitive — hidden from the Packer tab's pill row for now (see
     // renderPackerModeToggle/setPackerViewMode), so this branch is currently
     // unreachable; left in place rather than deleted in case it's un-hidden
@@ -9232,10 +8867,9 @@ function renderPackerGrid(){
       if(l)groupWindows.add(l);
     });
     return '<div class="society-header" style="grid-column:1/-1;cursor:pointer" onclick="togglePackerGroupExpanded('+escH(JSON.stringify(name))+')">'+
-      escH(tripHeaderLabel(name,groupItems.map(packerOrderLike)))+' <span class="sh-count">('+groupItems.length+' item'+(groupItems.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,packerOrderLike(groupItems[0]))+deliveryWindowBadgesFromSet(groupWindows)+
+      escH(tripHeaderLabel(name))+' <span class="sh-count">('+groupItems.length+' item'+(groupItems.length!==1?'s':'')+')</span>'+deliveryWindowBadgesFromSet(groupWindows)+
       ' '+packProgressPie(packedInGroup,activeGroupItems.length)+
       ' <span class="packed-count" style="color:#ffffff">'+packedInGroup+'/'+activeGroupItems.length+' items packed</span>'+
-      tripPendingBadgeHtml(tripInfo,packerOrderLike(groupItems[0]))+
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff">'+(groupExpanded?'▾':'▸')+'</span>'+
     '</div>'+
     (groupExpanded?groupItems.map(cardHtml).join(''):'');
@@ -9329,8 +8963,8 @@ let dvSeqFilter=null; // array of sequence_numbers (one colour group), or null f
 
 // Groups the list by sequence (same numbering as the Team tab's Sequences
 // board) by default, instead of by society — riders/dispatch load by
-// sequence, so that's the more useful default read here. Flat (society/
-// trip, shared viewGrouping) stays one tap away.
+// sequence, so that's the more useful default read here. Flat (society)
+// stays one tap away.
 let deliveryGroupMode='sequence'; // 'alpha' | 'sequence'
 function setDeliveryGroupMode(mode){
   deliveryGroupMode=mode;
@@ -10011,8 +9645,6 @@ function renderDeliveryList(){
       };
       return posOf(a)-posOf(b);
     })
-    :viewGrouping==='trip'
-    ?sortTripGroupNames(Object.keys(bySociety),name=>bySociety[name])
     // Case-insensitive — group names can come from either a Community
     // Priority display_name (whatever case it was typed in) or deriveSociety's
     // own casing, and a plain case-sensitive sort ranks every uppercase
@@ -10047,7 +9679,7 @@ function renderDeliveryList(){
     const selectAllCb=(selectionMode&&assignableSoids.length)
       ?'<input type="checkbox" class="inv-select" '+(assignableSoids.every(soid=>selectedDeliveryOrders.has(soid))?'checked ':'')+'onchange="toggleDeliverySocietySelectAll('+escH(JSON.stringify(assignableSoids))+',this.checked)" title="Select all assignable orders in this society"> '
       :'';
-    return '<div class="society-header">'+selectAllCb+escH(tripHeaderLabel(soc,orders))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+tripBadgeHtml(tripInfo,orders[0])+deliveryWindowBadgesHtml(orders)+tripPendingBadgeHtml(tripInfo,orders[0])+'</div>'+
+    return '<div class="society-header">'+selectAllCb+escH(tripHeaderLabel(soc))+' <span class="sh-count">('+orders.length+' order'+(orders.length!==1?'s':'')+')</span>'+deliveryWindowBadgesHtml(orders)+'</div>'+
       orders.map(order=>renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions,groupMissingBySeq)).join('');
   }).join('');
 
@@ -10392,7 +10024,6 @@ function renderDeliveryCard(order,selectionMode,seqColorMap,deliveryPositions,gr
       '<span class="or-links">'+
         '<a class="or-link" onclick="openAddRemark(\''+order.soid+'\')">+ delivery comment</a>'+
         '<a class="or-link" onclick="openAddPhoto(\''+order.soid+'\')">+ photo</a>'+
-        (viewGrouping==='trip'?'<a class="or-link" onclick="moveOrderToTrip(\''+order.soid+'\')">↔ move trip</a>':'')+
         (!delivered&&!order.assignedRider?'<a class="or-link" onclick="assignOrderToMe(\''+order.soid+'\')">🛵 assign to me</a>':'')+
         (!delivered&&order.assignedRider?'<a class="or-link" onclick="unassignOrder(\''+order.soid+'\')">unassign</a>':'')+
         (delivered
