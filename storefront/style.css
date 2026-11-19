@@ -63,6 +63,11 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .form-field input:focus,.form-field select:focus,.form-field textarea:focus{outline:none;border-color:#2d6b2d}
 .form-field.invalid label{color:#b3261e}
 .form-field.invalid input,.form-field.invalid select,.form-field.invalid textarea{border-color:#b3261e;background:#fdeaea}
+.society-suggestions{position:absolute;left:0;right:0;top:100%;z-index:5;background:#fff;border:1px solid #eee0d0;border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 14px rgba(0,0,0,0.1)}
+.society-suggestions.hidden{display:none}
+.society-suggestion{padding:10px 14px;font-size:14px;cursor:pointer;border-bottom:1px solid #f5efe4}
+.society-suggestion:last-child{border-bottom:none}
+.society-suggestion:hover,.society-suggestion:active{background:#f5efe4}
 
 .pay-toggle{display:flex;gap:8px;margin-bottom:16px}
 .pay-opt{flex:1;padding:14px;border:2px solid #eee0d0;border-radius:12px;text-align:center;cursor:pointer}
