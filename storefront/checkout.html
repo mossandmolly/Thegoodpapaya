@@ -14,6 +14,7 @@
 
 <main>
   <div id="err" class="err-box"></div>
+  <a href="index.html" class="edit-cart-link">← Make changes to cart</a>
   <div id="cart-list"></div>
 
   <div class="summary-row"><span>Items (<span id="item-count">0</span>)</span><span id="subtotal">₹0</span></div>
@@ -135,7 +136,6 @@ function renderCart() {
           '<div class="price">'+i.quantity+' '+pieceUnitLabel(p)+approxWeight+' · '+priceLabel+'</div>' +
           (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
         '</div>' +
-        '<a class="remove" onclick="removeItem('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
       '</div>';
     }
     const price = p ? p.unit_price : null;
@@ -147,7 +147,6 @@ function renderCart() {
         '<div class="price">'+i.quantity+' '+(p ? escH(p.unit||'kg') : '')+(lineTotal!=null?' · ₹'+lineTotal.toFixed(0):'')+'</div>' +
         (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
       '</div>' +
-      '<a class="remove" onclick="removeItem('+escH(JSON.stringify(i.item_name))+')">Remove</a>' +
     '</div>';
   }).join('');
   document.getElementById('item-count').textContent = cart.length;
@@ -167,11 +166,6 @@ function renderCart() {
       : 'Secure online payment';
   }
   if (hasPieceItem && method === 'online') setMethod('cod');
-}
-
-function removeItem(item_name) {
-  setCartQty(item_name, 0);
-  renderCart();
 }
 
 async function placeOrder() {
