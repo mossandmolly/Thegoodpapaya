@@ -19,7 +19,7 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .search-bar:focus{outline:none;border-color:#2d6b2d}
 
 .cat-tabs{display:flex;gap:8px;margin-bottom:16px}
-.cat-tab{flex:1;padding:10px;border-radius:10px;border:1px solid #eee0d0;background:#fff;text-align:center;font-weight:700;font-size:13px;cursor:pointer;color:#8a7a6a}
+.cat-tab{flex:1;display:flex;align-items:center;justify-content:center;padding:10px;border-radius:10px;border:1px solid #eee0d0;background:#fff;text-align:center;font-weight:700;font-size:13px;line-height:1;cursor:pointer;color:#8a7a6a}
 .cat-tab.active{background:#2d6b2d;color:#fff;border-color:#2d6b2d}
 
 .section-heading{font-size:14px;font-weight:800;color:#2d6b2d;margin:18px 0 10px}

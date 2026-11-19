@@ -19,6 +19,11 @@
 .shop-grid-scroll{flex:1;overflow-y:auto;padding:4px 8px 8px}
 .shop-grid-scroll .section-heading{font-size:10px;margin:8px 0 5px}
 .shop-grid-scroll .item-grid{grid-template-columns:repeat(3,1fr);gap:4px}
+/* Shorter photo (was a full square) frees up room for the name+rate pair
+   below it without growing the card's total footprint or losing the
+   3-per-row density. */
+.shop-grid-scroll .item-card img,.shop-grid-scroll .item-card .ph{aspect-ratio:1/0.78}
+.shop-grid-scroll .item-card .ph{font-size:34px}
 
 .shop-right{width:33%;box-sizing:border-box;display:flex;flex-direction:column;min-height:0;background:#fff}
 
