@@ -70,4 +70,31 @@ function setCartNote(item_name, note) {
 
 function clearCart() { saveCart([]); }
 
+// ── "Today's order" flag (this device only) ───────────────────────────────
+// Same-day repeat orders merge onto the same sales_order_id server-side
+// (see place-order) — this just lets the catalog page know, locally, that
+// today's checkout already happened, so it can greet a return visit as
+// "add more to today's order" instead of a fresh empty cart. Deliberately
+// date-only, not a real fulfillment-status check against the server (which
+// would mean a public, phone-adjacent lookup — the same category of risk
+// flagged for the address auto-fill). Worst case it keeps saying "today's
+// order" for a few extra hours after actual delivery, same day.
+const TODAYS_ORDER_KEY = 'gp_todays_order_v1';
+
+function todayIST() {
+  return new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function markTodaysOrderPlaced(sales_order_id) {
+  try { localStorage.setItem(TODAYS_ORDER_KEY, JSON.stringify({ date: todayIST(), sales_order_id })); }
+  catch {}
+}
+
+function hasTodaysOrder() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TODAYS_ORDER_KEY) || 'null');
+    return !!(saved && saved.date === todayIST());
+  } catch { return false; }
+}
+
 document.addEventListener('DOMContentLoaded', updateCartBadge);
