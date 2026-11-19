@@ -17,8 +17,11 @@
   <a href="index.html" class="edit-cart-link">← Make changes to cart</a>
   <div id="cart-list"></div>
 
-  <div class="summary-row"><span>Items (<span id="item-count">0</span>)</span><span id="subtotal">₹0</span></div>
-  <div class="summary-row total"><span>Total</span><span id="total">₹0</span></div>
+  <div class="cart-totals">
+    <div class="summary-row"><span>Items (<span id="item-count">0</span>)</span><span id="subtotal">₹0</span></div>
+    <div class="summary-row total"><span>Approx amount</span><span id="total">₹0</span></div>
+    <div class="total-finePrint">Actual amount will vary slightly based on weight</div>
+  </div>
 
   <div style="height:20px"></div>
 
@@ -37,18 +40,18 @@
     <input type="text" id="door" placeholder="e.g. A1203" autocomplete="off">
   </div>
   <div class="form-field">
-    <label>Notes (optional)</label>
+    <label>Delivery notes (optional)</label>
     <textarea id="notes" rows="2" placeholder="Delivery instructions, ripeness preference, etc."></textarea>
   </div>
 
   <div class="form-field">
     <label>Payment</label>
     <div class="pay-toggle">
-      <div class="pay-opt active" data-method="cod" onclick="setMethod('cod')">
+      <div class="pay-opt" data-method="cod" onclick="setMethod('cod')">
         <div class="t">💵 Pay on Delivery</div>
         <div class="s">Cash or UPI at the door</div>
       </div>
-      <div class="pay-opt" data-method="online" onclick="setMethod('online')">
+      <div class="pay-opt active" data-method="online" onclick="setMethod('online')">
         <div class="t">💳 Pay Now</div>
         <div class="s">Secure online payment</div>
       </div>
@@ -62,7 +65,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
 <script>
-let method = 'cod';
+let method = 'online';
 let catalogPrices = {};
 
 function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}

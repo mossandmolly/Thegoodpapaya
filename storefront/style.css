@@ -54,8 +54,10 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .cart-row .name{font-weight:700;font-size:14px}
 .cart-row .price{font-size:12px;color:#8a7a6a}
 
+.cart-totals{background:#f5efe4;border-radius:10px;padding:14px 16px;margin-top:6px}
 .summary-row{display:flex;justify-content:space-between;padding:8px 0;font-size:14px}
-.summary-row.total{font-weight:800;font-size:17px;border-top:1px solid #eee0d0;margin-top:8px;padding-top:12px}
+.summary-row.total{font-weight:800;font-size:17px;color:#2d6b2d;border-top:1px solid #e3d8c4;margin-top:4px;padding-top:12px}
+.total-finePrint{font-size:10.5px;color:#9b8f7e;margin-top:2px}
 
 .form-field{margin-bottom:14px}
 .form-field label{display:block;font-size:12px;font-weight:700;color:#8a7a6a;margin-bottom:5px;text-transform:uppercase;letter-spacing:.3px}
