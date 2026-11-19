@@ -424,6 +424,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .catalog-img-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin-top:10px}
 .catalog-img-card{border:1px solid #eee0d0;border-radius:8px;padding:8px;text-align:center;background:#fff}
 .catalog-img-card img,.catalog-img-card .img-ph{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:6px;background:#f5efe4;display:block}
+.catalog-img-card .img-click-target{position:relative}
+.catalog-img-card .img-click-target:hover::after{content:'📷 tap to upload';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;font-weight:700;color:#fff;background:rgba(43,35,32,0.6);border-radius:6px}
 .catalog-img-card .img-name{font-size:11px;font-weight:600;margin-top:6px;color:#2b2320;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .catalog-img-card .img-cat{font-size:9px;color:#8a7a6a;text-transform:uppercase;letter-spacing:0.4px}
 .img-unmatched-card{display:flex;align-items:center;gap:10px;border:1px solid #eee0d0;border-radius:8px;padding:8px;margin-bottom:8px;background:#fffdf9}
@@ -1492,20 +1494,28 @@ Banana, 15, 450"></textarea>
   <div class="section-label date-header-row">
     <span>🖼 Catalog Images <span id="img-rc"></span></span>
   </div>
-  <p class="note">Thumbnails shown on the storefront (thegoodpapaya.com). "Generate placeholders" fills in a simple colored icon for any item that doesn't have a real photo yet — drag real photos onto the drop zone below any time to replace them (matched to items by filename, e.g. "tomato.jpg" → Tomato).</p>
+  <p class="note">Thumbnails shown on the storefront (thegoodpapaya.com). "Generate placeholders" fills in a simple colored icon for any item that doesn't have a real photo yet. Click any item's thumbnail below to upload a photo straight to that item — no need to name the file. The drop zone further down is for uploading several at once, matched by filename (e.g. "tomato.jpg" → Tomato); anything that doesn't match exactly lands in a tray for you to assign by hand.</p>
   <div class="push-row" style="margin-bottom:10px">
     <button class="btn-push" id="img-gen-placeholders">🪄 Generate placeholders for items missing one</button>
   </div>
   <div class="push-status" id="img-gen-status"></div>
+  <input type="text" class="pk-search" id="img-search" placeholder="🔍 Search item…" oninput="renderCatalogImagesGrid()" style="margin-top:14px">
+  <div id="img-type-pills" class="filter-pills status-pills"></div>
+  <!-- Per-item upload — one shared hidden input, retargeted to whichever
+       item's thumbnail was clicked (see pickImageForItem). -->
+  <input type="file" id="single-img-picker" accept="image/*" style="display:none">
+  <div class="push-status" id="img-single-upload-status"></div>
+  <div id="img-grid" class="catalog-img-grid"></div>
+
+  <div class="section-label date-header-row" style="margin-top:22px">
+    <span>📤 Bulk upload (by filename)</span>
+  </div>
   <div class="upload-zone" id="img-drop-zone">
-    <div>📤 Drag photos here, or click to choose files — filenames are matched to catalog items automatically</div>
+    <div>📤 Drag several photos here, or click to choose files — filenames are matched to catalog items automatically</div>
     <input type="file" id="img-drop-input" accept="image/*" multiple>
   </div>
   <div class="push-status" id="img-upload-status"></div>
   <div id="img-unmatched-list"></div>
-  <input type="text" class="pk-search" id="img-search" placeholder="🔍 Search item…" oninput="renderCatalogImagesGrid()" style="margin-top:14px">
-  <div id="img-type-pills" class="filter-pills status-pills"></div>
-  <div id="img-grid" class="catalog-img-grid"></div>
 </div>
 
 <div class="panel" id="panel-phonelookup">
@@ -12561,15 +12571,45 @@ function renderCatalogImagesGrid(){
   document.getElementById('img-rc').textContent=rows.length?'— '+rows.length+' item'+(rows.length!==1?'s':''):'';
   document.getElementById('img-grid').innerHTML=rows.map(c=>
     '<div class="catalog-img-card">'+
-      (c.image_url
-        ?'<img src="'+escH(c.image_url)+'" loading="lazy">'
-        :'<div class="img-ph" style="display:flex;align-items:center;justify-content:center;font-size:36px">'+iconForItem(c.item_name,c.category||'fruit')+'</div>')+
+      '<div class="img-click-target" title="Click to upload a photo for '+escH(c.item_name)+'" style="cursor:pointer" onclick="pickImageForItem('+escH(JSON.stringify(c.item_name))+')">'+
+        (c.image_url
+          ?'<img src="'+escH(c.image_url)+'" loading="lazy">'
+          :'<div class="img-ph" style="display:flex;align-items:center;justify-content:center;font-size:36px">'+iconForItem(c.item_name,c.category||'fruit')+'</div>')+
+      '</div>'+
       '<div class="img-name">'+escH(c.item_name)+'</div>'+
       '<div class="img-cat">'+escH(c.category||'')+'</div>'+
       (c.image_url?'<a class="or-link" style="color:#b3261e" onclick="removeCatalogImage('+escH(JSON.stringify(c.item_name))+')">remove</a>':'')+
     '</div>'
   ).join('');
 }
+
+// Per-item thumbnail click → shared hidden file input, retargeted to
+// whichever item was clicked. Bypasses filename matching entirely — the
+// item is already known from which thumbnail was tapped, so whatever
+// file comes back just links straight to it via uploadOneCatalogImage.
+let singleUploadItem=null;
+function pickImageForItem(itemName){
+  const item=catalogImagesList.find(c=>c.item_name===itemName);
+  if(!item)return;
+  singleUploadItem=item;
+  document.getElementById('single-img-picker').click();
+}
+document.getElementById('single-img-picker').addEventListener('change',async e=>{
+  const file=e.target.files[0];
+  e.target.value=''; // reset so picking the same file again still fires 'change'
+  if(!file||!singleUploadItem)return;
+  const item=singleUploadItem;
+  const status=document.getElementById('img-single-upload-status');
+  status.textContent='Uploading… ('+item.item_name+')';
+  try{
+    await uploadOneCatalogImage(file,item);
+    status.textContent='✅ Updated '+item.item_name;
+    renderCatalogImagesGrid();
+  }catch(err){
+    status.textContent='';
+    uxAlert('Upload failed: '+err.message);
+  }
+});
 
 async function removeCatalogImage(itemName){
   if(!await uxConfirm('Remove the image for "'+itemName+'"? It\'ll fall back to a generic icon on the storefront until a new one is added.'))return;
