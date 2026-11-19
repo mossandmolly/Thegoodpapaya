@@ -23,16 +23,18 @@
   <div style="height:20px"></div>
 
   <div class="form-field">
+    <label>Phone number</label>
+    <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
+  </div>
+  <div class="form-field" style="position:relative">
     <label>Society / Community</label>
-    <input type="text" id="society" placeholder="e.g. Prestige Ferns" autocomplete="off">
+    <input type="text" id="society" placeholder="Start typing your society name…" autocomplete="off"
+      oninput="onSocietyInput()" onfocus="onSocietyInput()" onblur="hideSocietySuggestionsSoon()">
+    <div id="society-suggestions" class="society-suggestions hidden"></div>
   </div>
   <div class="form-field">
     <label>Door / Flat number</label>
     <input type="text" id="door" placeholder="e.g. A1203" autocomplete="off">
-  </div>
-  <div class="form-field">
-    <label>Phone number</label>
-    <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
   </div>
   <div class="form-field">
     <label>Notes (optional)</label>
@@ -86,6 +88,79 @@ function markInvalid(id,bad){
 function setMethod(m) {
   method = m;
   document.querySelectorAll('.pay-opt').forEach(o => o.classList.toggle('active', o.dataset.method === m));
+}
+
+// ── Society search (string-contains, verified names only) ────────────────
+// communities.name gets junk auto-added from every typo'd order address —
+// verified=true (set by hand in ops-dashboard Config) is the only filter,
+// so customers never see garbage in the dropdown. Loaded once, lazily, not
+// on page load — most visits to checkout never touch this field at all.
+let verifiedSocieties = null;
+let societySuggestTimer = null;
+
+async function loadVerifiedSocieties() {
+  if (verifiedSocieties) return verifiedSocieties;
+  const { data } = await sb.from('communities').select('name').eq('verified', true).order('name');
+  verifiedSocieties = (data || []).map(r => r.name);
+  return verifiedSocieties;
+}
+
+function onSocietyInput() {
+  clearTimeout(societySuggestTimer);
+  societySuggestTimer = setTimeout(renderSocietySuggestions, 120);
+}
+
+async function renderSocietySuggestions() {
+  const box = document.getElementById('society-suggestions');
+  const q = document.getElementById('society').value.trim().toLowerCase();
+  if (!q) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const list = await loadVerifiedSocieties();
+  const matches = list.filter(n => n.toLowerCase().includes(q)).slice(0, 8);
+  if (!matches.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.innerHTML = matches.map(n =>
+    '<div class="society-suggestion" onclick="selectSociety('+escH(JSON.stringify(n))+')">'+escH(n)+'</div>'
+  ).join('');
+  box.classList.remove('hidden');
+}
+
+function selectSociety(name) {
+  document.getElementById('society').value = name;
+  markInvalid('society', false);
+  hideSocietySuggestions();
+}
+
+function hideSocietySuggestions() {
+  const box = document.getElementById('society-suggestions');
+  box.classList.add('hidden');
+  box.innerHTML = '';
+}
+
+// blur fires before a suggestion's click finishes registering — a short
+// delay lets the click go through first, instead of the dropdown
+// vanishing out from under the tap.
+function hideSocietySuggestionsSoon() {
+  setTimeout(hideSocietySuggestions, 150);
+}
+
+// ── Remember last order (this device only) ────────────────────────────────
+// Deliberately NOT a server lookup keyed by phone number — anyone who
+// knows (or guesses) a phone number could otherwise pull up a stranger's
+// address. This only ever recalls what THIS browser itself last
+// submitted, so it can never expose someone else's details.
+const LAST_ORDER_KEY = 'gp_last_order_v1';
+
+function prefillFromLastOrder() {
+  try {
+    const last = JSON.parse(localStorage.getItem(LAST_ORDER_KEY) || 'null');
+    if (!last) return;
+    if (last.phone) document.getElementById('phone').value = last.phone;
+    if (last.society) document.getElementById('society').value = last.society;
+    if (last.door) document.getElementById('door').value = last.door;
+  } catch {}
+}
+
+function saveLastOrder(society, door, phone) {
+  try { localStorage.setItem(LAST_ORDER_KEY, JSON.stringify({ society, door, phone })); } catch {}
 }
 
 async function loadPrices() {
@@ -210,6 +285,7 @@ async function placeOrder() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not place order');
 
+    saveLastOrder(society, door, phone);
     clearCart();
     if (data.payment_url) {
       window.location.href = data.payment_url;
@@ -223,6 +299,7 @@ async function placeOrder() {
   }
 }
 
+prefillFromLastOrder();
 renderCart();
 loadPrices();
 </script>
