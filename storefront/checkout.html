@@ -289,6 +289,7 @@ async function placeOrder() {
     if (!res.ok) throw new Error(data.error || 'Could not place order');
 
     saveLastOrder(society, door, phone);
+    markTodaysOrderPlaced(data.sales_order_id);
     clearCart();
     if (data.payment_url) {
       window.location.href = data.payment_url;
