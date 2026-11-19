@@ -62,7 +62,8 @@
 
 .item-card{position:relative;transition:transform .15s ease}
 .item-card.pop{transform:scale(.92)}
-.item-card .name{font-size:9px;font-weight:700;line-height:1.1;padding:3px 4px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-card .name{font-size:9px;font-weight:700;line-height:1.1;padding:3px 4px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-card .rate{font-size:8px;font-weight:600;color:#8a7a6a;padding:1px 4px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item-card .qty-badge{position:absolute;top:2px;right:2px;background:#2d6b2d;color:#fff;font-size:8px;font-weight:800;width:15px;height:15px;border-radius:50%;display:flex;align-items:center;justify-content:center}
 .item-card.oos img,.item-card.oos .ph{filter:grayscale(1);opacity:.5}
 .item-card.oos .name{opacity:.5}
@@ -185,10 +186,11 @@ function render() {
   ).join('');
 }
 
-// Dense, tap-only card — photo and name only (no price, no steppers on the
-// card itself). Tap adds it (qty 1); tap the same card again removes it.
+// Dense, tap-only card — photo, name, and rate (no steppers on the card
+// itself). Tap adds it (qty 1); tap the same card again removes it.
 // Adjusting quantity beyond 1, pc/kg, and notes all happen in the live
-// cart list on the right, not here.
+// cart list on the right, not here. Rate is always unit_price per kg
+// (even for piece-mode items — see pieceUnitLabel/approx pricing).
 function cardHtml(c, qtyMap) {
   const qty = qtyMap[c.item_name] || 0;
   const selected = qty > 0;
@@ -196,6 +198,7 @@ function cardHtml(c, qtyMap) {
     (c.out_of_stock ? '<div class="oos-badge">Out of stock</div>' : '') +
     (c.image_url ? '<img src="'+escH(c.image_url)+'" loading="lazy">' : '<div class="ph">'+iconFor(c.item_name, c.category)+'</div>') +
     '<div class="name">'+escH(c.item_name)+'</div>' +
+    (c.unit_price != null ? '<div class="rate">₹'+c.unit_price.toFixed(0)+'/'+escH(c.unit || 'kg')+'</div>' : '') +
     (selected ? '<div class="qty-badge">'+qty+'</div>' : '') +
   '</div>';
 }
