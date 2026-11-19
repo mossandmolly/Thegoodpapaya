@@ -433,6 +433,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .catalog-img-card .img-click-target:hover::after{content:'📷 tap to upload';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;font-weight:700;color:#fff;background:rgba(43,35,32,0.6);border-radius:6px}
 .catalog-img-card .img-name{font-size:11px;font-weight:600;margin-top:6px;color:#2b2320;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .catalog-img-card .img-cat{font-size:9px;color:#8a7a6a;text-transform:uppercase;letter-spacing:0.4px}
+.catalog-img-card.catalog-img-inactive{opacity:0.45}
+.catalog-img-card.catalog-img-inactive .img-name{color:#b3261e}
+.catalog-img-card .img-active-toggle{display:flex;align-items:center;justify-content:center;gap:4px;font-size:9px;color:#8a7a6a;margin-top:4px;cursor:pointer}
 .img-unmatched-card{display:flex;align-items:center;gap:10px;border:1px solid #eee0d0;border-radius:8px;padding:8px;margin-bottom:8px;background:#fffdf9}
 .img-unmatched-card img{width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0}
 .img-unmatched-card .fname{font-size:11px;color:#8a7a6a;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
@@ -1500,7 +1503,7 @@ Banana, 15, 450"></textarea>
   <div class="section-label date-header-row">
     <span>🖼 Catalog Images <span id="img-rc"></span></span>
   </div>
-  <p class="note">Thumbnails shown on the storefront (thegoodpapaya.com). "Generate placeholders" fills in a simple colored icon for any item that doesn't have a real photo yet. Click any item's thumbnail below to upload a photo straight to that item — no need to name the file. The drop zone further down is for uploading several at once, matched by filename (e.g. "tomato.jpg" → Tomato); anything that doesn't match exactly lands in a tray for you to assign by hand.</p>
+  <p class="note">Thumbnails shown on the storefront (thegoodpapaya.com). "Generate placeholders" fills in a simple colored icon for any item that doesn't have a real photo yet. Click any item's thumbnail below to upload a photo straight to that item — no need to name the file. The drop zone further down is for uploading several at once, matched by filename (e.g. "tomato.jpg" → Tomato); anything that doesn't match exactly lands in a tray for you to assign by hand. "Show on site" controls whether the item appears in the customer catalog at all — unchecking it hides the item here (dimmed) and on the storefront, without deleting anything.</p>
   <div class="push-row" style="margin-bottom:10px">
     <button class="btn-push" id="img-gen-placeholders">🪄 Generate placeholders for items missing one</button>
   </div>
@@ -12501,7 +12504,7 @@ async function loadCatalogImagesView(){
   const grid=document.getElementById('img-grid');
   grid.innerHTML='<div class="to-empty">Loading…</div>';
   const{data,error}=await sb.from('catalog')
-    .select('item_name,category,image_url,active').eq('active',true)
+    .select('item_name,category,image_url,active')
     .order('category').order('item_name');
   if(error){grid.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
   catalogImagesList=data||[];
@@ -12610,9 +12613,10 @@ function renderCatalogImagesGrid(){
     if(search&&!c.item_name.toLowerCase().includes(search))return false;
     return true;
   });
-  document.getElementById('img-rc').textContent=rows.length?'— '+rows.length+' item'+(rows.length!==1?'s':''):'';
+  const inactiveCount=rows.filter(c=>!c.active).length;
+  document.getElementById('img-rc').textContent=rows.length?'— '+rows.length+' item'+(rows.length!==1?'s':'')+(inactiveCount?' ('+inactiveCount+' hidden)':''):'';
   document.getElementById('img-grid').innerHTML=rows.map(c=>
-    '<div class="catalog-img-card">'+
+    '<div class="catalog-img-card'+(c.active?'':' catalog-img-inactive')+'">'+
       '<div class="img-click-target" title="Click to upload a photo for '+escH(c.item_name)+'" style="cursor:pointer" onclick="pickImageForItem('+escH(JSON.stringify(c.item_name))+')">'+
         (c.image_url
           ?'<img src="'+escH(c.image_url)+'" loading="lazy">'
@@ -12620,9 +12624,18 @@ function renderCatalogImagesGrid(){
       '</div>'+
       '<div class="img-name">'+escH(c.item_name)+'</div>'+
       '<div class="img-cat">'+escH(c.category||'')+'</div>'+
+      '<label class="img-active-toggle"><input type="checkbox" '+(c.active?'checked':'')+' onchange="toggleCatalogActive('+escH(JSON.stringify(c.item_name))+',this.checked)"> Show on site</label>'+
       (c.image_url?'<a class="or-link" style="color:#b3261e" onclick="removeCatalogImage('+escH(JSON.stringify(c.item_name))+')">remove</a>':'')+
     '</div>'
   ).join('');
+}
+
+async function toggleCatalogActive(itemName,active){
+  const{error}=await sb.from('catalog').update({active}).eq('item_name',itemName);
+  if(error){uxAlert('Failed to save: '+error.message);renderCatalogImagesGrid();return;}
+  const row=catalogImagesList.find(c=>c.item_name===itemName);
+  if(row)row.active=active;
+  renderCatalogImagesGrid();
 }
 
 // Per-item thumbnail click → shared hidden file input, retargeted to
