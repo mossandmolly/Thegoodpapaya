@@ -64,6 +64,9 @@
 .item-card.pop{transform:scale(.92)}
 .item-card .name{font-size:9px;font-weight:700;line-height:1.1;padding:3px 4px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item-card .qty-badge{position:absolute;top:2px;right:2px;background:#2d6b2d;color:#fff;font-size:8px;font-weight:800;width:15px;height:15px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.item-card.oos img,.item-card.oos .ph{filter:grayscale(1);opacity:.5}
+.item-card.oos .name{opacity:.5}
+.item-card.oos .oos-badge{position:absolute;top:0;left:0;right:0;background:rgba(43,35,32,.75);color:#fff;font-size:7px;font-weight:800;text-transform:uppercase;letter-spacing:.3px;text-align:center;padding:2px 0}
 
 </style>
 </head>
@@ -130,7 +133,7 @@ function setCat(c) {
 
 async function load() {
   const { data, error } = await sb.from('catalog')
-    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,subsection')
+    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,subsection,out_of_stock')
     .eq('active', true)
     .order('item_name');
   if (error) {
@@ -189,7 +192,8 @@ function render() {
 function cardHtml(c, qtyMap) {
   const qty = qtyMap[c.item_name] || 0;
   const selected = qty > 0;
-  return '<div class="item-card" data-item="'+escH(c.item_name)+'" onclick="bumpItem('+escH(JSON.stringify(c.item_name))+')">' +
+  return '<div class="item-card'+(c.out_of_stock ? ' oos' : '')+'" data-item="'+escH(c.item_name)+'" onclick="bumpItem('+escH(JSON.stringify(c.item_name))+')">' +
+    (c.out_of_stock ? '<div class="oos-badge">Out of stock</div>' : '') +
     (c.image_url ? '<img src="'+escH(c.image_url)+'" loading="lazy">' : '<div class="ph">'+iconFor(c.item_name, c.category)+'</div>') +
     '<div class="name">'+escH(c.item_name)+'</div>' +
     (selected ? '<div class="qty-badge">'+qty+'</div>' : '') +
@@ -198,8 +202,11 @@ function cardHtml(c, qtyMap) {
 
 // Tap to add (qty 1), tap the same card again to remove it entirely — a
 // toggle, not a counter. Adjusting quantity beyond 1 is the live cart's
-// +/- stepper's job, not repeated taps here.
+// +/- stepper's job, not repeated taps here. Out-of-stock items ignore
+// the tap entirely — the card already shows why (greyed out + badge).
 function bumpItem(item_name) {
+  const c = catalog.find(x => x.item_name === item_name);
+  if (c && c.out_of_stock) return;
   const cart = getCart();
   const existing = cart.find(i => i.item_name === item_name);
   const inCart = !!(existing && existing.quantity > 0);
