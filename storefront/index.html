@@ -6,10 +6,18 @@
 <title>The Good Papaya — Fresh Fruits & Vegetables</title>
 <link rel="stylesheet" href="style.css">
 <style>
+/* Full-height flex column (header + shop-main filling whatever's left)
+   instead of a hardcoded "100vh minus header height" — the header's
+   actual height varies with its content (e.g. a longer tagline wrapping
+   to more than one line), so hardcoding a pixel offset here would silently
+   break the moment that text changes again. */
+html,body{height:100%}
+body{display:flex;flex-direction:column;padding-bottom:0}
+header.gp-header{flex-shrink:0}
 /* Split layout: catalog left (~67%), specials + live cart right (~33%) —
    both panes visible together on one screen, no drawer to open. Ratio and
    density tuned from a round of mobile-width mockups. */
-.shop-main{display:flex;height:calc(100vh - 53px);box-sizing:border-box}
+.shop-main{display:flex;flex:1;min-height:0;box-sizing:border-box}
 .shop-left{width:67%;box-sizing:border-box;border-right:2px solid #eee0d0;display:flex;flex-direction:column;min-height:0}
 .shop-left-head{padding:8px 8px 4px;flex-shrink:0}
 .shop-left-head .search-bar{padding:7px 10px;font-size:12px;margin-bottom:6px}
@@ -80,7 +88,7 @@
 <body>
 
 <header class="gp-header">
-  <div class="brand">🥭 The Good Papaya<span>Fresh, delivered</span></div>
+  <div class="brand">🥭 theGoodPapaya<span>delivering fresh straight from mandi to your doorstep, every single day!</span></div>
   <nav>
     <a href="invoices.html">My Invoices</a>
   </nav>
