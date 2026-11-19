@@ -12622,16 +12622,15 @@ async function removeCatalogImage(itemName){
   renderCatalogImagesGrid();
 }
 
-// Bulk photo upload — filename (minus extension) fuzzy-matched against
-// catalog item_name (both normalized the same way as slugifyItemName), so
-// "tomato.jpg" or "Tomato-fresh.jpg" both match "Tomato".
+// Bulk photo upload — filename (minus extension) exact-matched against
+// catalog item_name, both normalized the same way as slugifyItemName, so
+// "tomato.jpg" or "Tomato.JPG" match "Tomato" but "tomato-fresh.jpg"
+// does not — anything not an exact match falls to the unmatched tray for
+// manual assignment instead of risking a wrong auto-link.
 function matchFileToItem(filename){
   const base=filename.replace(/\.[^.]+$/,'');
   const norm=slugifyItemName(base);
-  let hit=catalogImagesList.find(c=>slugifyItemName(c.item_name)===norm);
-  if(hit)return hit;
-  hit=catalogImagesList.find(c=>norm.includes(slugifyItemName(c.item_name))||slugifyItemName(c.item_name).includes(norm));
-  return hit||null;
+  return catalogImagesList.find(c=>slugifyItemName(c.item_name)===norm)||null;
 }
 
 // Shared by both the auto-matched path and the manual-assign path below —
