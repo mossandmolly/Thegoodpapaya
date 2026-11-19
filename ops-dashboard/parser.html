@@ -1389,7 +1389,7 @@ Banana, 15, 450"></textarea>
 
   <div class="config-section">
     <h3>🏘️ Communities <span style="font-size:11px;color:#8a7a6a;font-weight:400">(lat/lng + trip grouping — feeds the trip labels on Overview's rider summaries)</span></h3>
-    <p class="note">Communities are also added automatically as new orders come in — this list is for filling in each one's coordinates and trip grouping, plus adding/renaming/removing entries by hand. Combinable group is a plain label you choose — any communities sharing the same label become one trip together; leave it blank to let a community be its own single-community trip. Renaming one only fixes this record — if new orders keep deriving the old name from a customer's address, that name will just get auto-recreated alongside it, so renaming is best used for one-off typo fixes, not an ongoing display name.</p>
+    <p class="note">Communities are also added automatically as new orders come in — this list is for filling in each one's coordinates and trip grouping, plus adding/renaming/removing entries by hand. Combinable group is a plain label you choose — any communities sharing the same label become one trip together; leave it blank to let a community be its own single-community trip. Renaming one only fixes this record — if new orders keep deriving the old name from a customer's address, that name will just get auto-recreated alongside it, so renaming is best used for one-off typo fixes, not an ongoing display name. <b>Verified</b> is separate from all of that — it marks a name as a real, confirmed society (vs. a typo/junk entry that got auto-created from an order) and is what gates the storefront's society search, so only check it for names you recognize.</p>
     <div class="add-row">
       <input type="text" id="new-community-name" placeholder="New community name">
       <button onclick="addCommunity()">Add</button>
@@ -1397,7 +1397,7 @@ Banana, 15, 450"></textarea>
     <div id="community-duplicates"></div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Community</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th></th>
+        <th>Community</th><th>Verified</th><th>Lat</th><th>Lng</th><th>Combinable group</th><th>Stack rank</th><th>No later than</th><th></th>
       </tr></thead><tbody id="community-tbody"></tbody></table>
     </div>
   </div>
@@ -2183,6 +2183,7 @@ function renderCommunityTable(rows){
   tbody.innerHTML=rows.map(c=>
     '<tr>'+
       '<td><input type="text" id="comm-name-'+c.id+'" value="'+escH(c.name)+'"></td>'+
+      '<td style="text-align:center"><input type="checkbox" '+(c.verified?'checked':'')+' onchange="toggleCommunityVerified('+escH(JSON.stringify(c.id))+',this.checked)"></td>'+
       '<td><input type="number" step="0.000001" id="comm-lat-'+c.id+'" value="'+(c.lat??'')+'"></td>'+
       '<td><input type="number" step="0.000001" id="comm-lng-'+c.id+'" value="'+(c.lng??'')+'"></td>'+
       '<td><input type="text" id="comm-group-'+c.id+'" value="'+escH(c.combinable_group||'')+'" placeholder="e.g. north-cluster"></td>'+
@@ -2224,6 +2225,17 @@ async function saveCommunity(id){
   const{error}=await sb.from('communities').update(update).eq('id',id);
   if(error){uxAlert('Failed to save: '+error.message);return;}
   await loadCommunitiesConfig();
+}
+
+// Separate from saveCommunity's 💾 button — saves immediately on click,
+// same convention as the catalog active/out-of-stock toggles, since
+// ticking through a long list one row at a time is the main workflow
+// here (not something to bundle with the other, rarely-edited fields).
+async function toggleCommunityVerified(id,verified){
+  const{error}=await sb.from('communities').update({verified}).eq('id',id);
+  if(error){uxAlert('Failed to save: '+error.message);await loadCommunitiesConfig();return;}
+  const row=Object.values(communitiesCache).find(c=>c.id===id);
+  if(row)row.verified=verified;
 }
 
 async function addCommunity(){
