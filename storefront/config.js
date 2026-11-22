@@ -46,11 +46,14 @@ function addToCart(item_name, quantity, unit) {
 // by staff at packing time, never at checkout (see place-order).
 function setCartQty(item_name, quantity, mode) {
   let cart = getCart();
-  if (quantity <= 0) cart = cart.filter(i => i.item_name !== item_name);
-  else {
+  if (quantity <= 0) {
+    cart = cart.filter(i => i.item_name !== item_name);
+    trackEvent('item_removed', { item_name });
+  } else {
     const existing = cart.find(i => i.item_name === item_name);
     if (existing) { existing.quantity = quantity; if (mode) existing.mode = mode; }
     else cart.push({ item_name, quantity, mode: mode || 'kg' });
+    trackEvent('item_added', { item_name, quantity });
   }
   saveCart(cart);
 }
@@ -111,6 +114,33 @@ function getKnownPhone() {
 
 function setKnownPhone(phone) {
   try { localStorage.setItem(KNOWN_PHONE_KEY, phone); } catch {}
+}
+
+// ── Funnel tracking (storefront_events, migration 165) ─────────────────────
+// device_id is just a random id kept in localStorage — no account/login
+// exists to key this on instead. It's never tied to anything until the
+// visitor actually types a phone/society in (see the event list in the
+// migration), same as every other "remember this device" key in this file.
+const DEVICE_ID_KEY = 'gp_device_id_v1';
+
+function getDeviceId() {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch { return 'no-storage'; }
+}
+
+// Fire-and-forget on purpose — tracking must never slow down or break the
+// actual shopping/checkout flow, so a failed insert is swallowed silently
+// rather than shown to the visitor or retried.
+function trackEvent(event_type, fields) {
+  try {
+    sb.from('storefront_events').insert({ device_id: getDeviceId(), event_type, ...fields }).then(() => {}, () => {});
+  } catch {}
 }
 
 document.addEventListener('DOMContentLoaded', updateCartBadge);
