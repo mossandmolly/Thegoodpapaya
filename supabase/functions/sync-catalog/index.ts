@@ -144,7 +144,6 @@ Deno.serve(async (req) => {
     if (!items.length) throw new Error('Zoho returned 0 active items — refusing to sync, catalog left unchanged');
 
     let synced = 0;
-    const syncedRowIds = new Set<string>();
     for (const item of items) {
       // Zoho's own exact casing, verbatim — no re-casing. Zoho item
       // matching/pricing is case-sensitive, so if the catalog (and, via
@@ -154,11 +153,17 @@ Deno.serve(async (req) => {
       // item and price incorrectly.
       const itemName = item.name as string;
       const zohoItemId = item.item_id as string;
+      // active is deliberately NOT set here — it's the storefront's "Show
+      // on site" toggle's field alone (Catalog Images page), never Zoho's.
+      // A brand new row still defaults to active via the column's own
+      // DEFAULT true, so a newly-synced item is visible until someone
+      // chooses to hide it, but an UPDATE never touches whatever's
+      // already there, so a manual hide can't get silently reverted by
+      // the next sync.
       const row = {
         item_name:    itemName,
         unit_price:   item.rate ?? 0,
         unit:         item.unit || 'kg',
-        active:       true,
         zoho_item_id: zohoItemId,
         synced_at:    new Date().toISOString(),
       };
@@ -187,32 +192,16 @@ Deno.serve(async (req) => {
         : await supabase.from('catalog').insert(row).select('id').single();
 
       if (error) throw new Error(`Catalog upsert failed for "${itemName}": ${error.message}`);
-      syncedRowIds.add(saved.id as string);
       synced++;
     }
 
-    // Exact mirror: the set of ACTIVE catalog rows must be exactly the rows
-    // just written from Zoho — nothing more. Any other active row is
-    // deactivated, whether it was linked to an item that has since gone
-    // inactive/deleted in Zoho, or never linked to Zoho at all (a manual
-    // entry, a duplicate row, an old spelling). Rows are deactivated rather
-    // than deleted so local-only data (category, images, pcs_per_kg) and
-    // historical reports that look up old item names keep working; every
-    // live reader (generate-invoice, storefront, order autocomplete) filters
-    // on active=true, so an inactive row is invisible to invoicing.
-    const { data: activeRows, error: staleErr } = await supabase
-      .from('catalog').select('id').eq('active', true);
-    if (staleErr) throw new Error(`Stale-item lookup failed: ${staleErr.message}`);
-    const toDeactivate = (activeRows ?? [])
-      .map(r => r.id as string)
-      .filter(id => !syncedRowIds.has(id));
-    if (toDeactivate.length) {
-      const { error: deactErr } = await supabase.from('catalog').update({ active: false }).in('id', toDeactivate);
-      if (deactErr) throw new Error(`Deactivation failed: ${deactErr.message}`);
-    }
+    // Deliberately no reconciliation of the other direction (an item gone
+    // inactive/deleted in Zoho used to force catalog.active:false too) —
+    // active is the storefront's "Show on site" toggle's field alone now;
+    // Zoho sync only ever touches name/price/unit, never visibility.
 
     return new Response(
-      JSON.stringify({ synced, deactivated: toDeactivate.length, org_id: orgId }),
+      JSON.stringify({ synced, org_id: orgId }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     );
   } catch (err: any) {
