@@ -322,23 +322,23 @@ function renderLiveCart() {
     const c = catalogByName[i.item_name];
     const pieceEligible = !!(c && c.sold_by_piece);
     const mode = i.mode || 'kg';
+    // Item rows show the plain rate only — no computed/estimated value and
+    // no "approx"/"exact at packing" wording at this level; that framing
+    // belongs on the Checkout button's aggregate bill only (see billLine
+    // below). unit_price is always per-kg, even for piece-mode items.
     let rateLabel = '';
+    if (c && c.unit_price != null) rateLabel = '₹'+c.unit_price.toFixed(0)+'/'+(c.unit||'kg');
     if (mode === 'piece') {
-      // unit_price is always per-kg — approx piece price = rate × est.
-      // kg/piece × qty. Exact amount is only known once actually weighed
-      // at packing, hence "approx," not a firm number.
+      // Approx piece price = rate × est. kg/piece × qty — feeds only the
+      // aggregate bill total, never shown per-row.
       if (c && c.piece_approx_kg && c.unit_price != null) {
-        const lineValue = c.unit_price * c.piece_approx_kg * i.quantity;
-        subtotal += lineValue;
+        subtotal += c.unit_price * c.piece_approx_kg * i.quantity;
         subtotalIsApprox = true;
-        rateLabel = '~₹'+lineValue.toFixed(0)+' (exact at packing)';
       } else {
         hasUnestimable = true;
-        rateLabel = '🧾 priced at packing';
       }
     } else if (c) {
       subtotal += c.unit_price * i.quantity;
-      rateLabel = '₹'+c.unit_price.toFixed(0)+'/'+(c.unit||'kg')+' · ₹'+(c.unit_price*i.quantity).toFixed(0);
     }
     const stepSize = mode === 'piece' ? 1 : 0.25;
 
