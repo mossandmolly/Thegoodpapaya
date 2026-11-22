@@ -324,7 +324,7 @@ async function lookup(phoneArg) {
               : '') +
           '</div>' +
         '</div>' +
-        '<div class="meta">'+escH(inv.invoice_date || '')+'</div>' +
+        '<div class="meta">'+escH(inv.customer_name || '')+' · '+inv.items.length+' item'+(inv.items.length!==1?'s':'')+' · '+escH(inv.invoice_date || '')+'</div>' +
         '<table class="inv-items">' +
           '<thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Value</th></tr></thead>' +
           '<tbody>'+rows+'</tbody>' +
