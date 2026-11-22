@@ -12680,11 +12680,26 @@ function matchFileToItem(filename){
 
 // Shared by both the auto-matched path and the manual-assign path below —
 // uploads one file to the item's storage path and links it on `catalog`.
+//
+// Phone camera photos run several MB each at thousands of pixels wide —
+// way more than a ~100px-wide catalog grid card ever needs — and that raw
+// file gets served to every single storefront visitor on every page load,
+// which is exactly why some item photos were noticeably slower to load
+// than others (whichever ones happened to be uploaded straight from a
+// phone instead of already-small source images). Re-encoded to a capped
+// JPEG client-side first, same compressImage() helper the delivery-photo
+// upload already uses — cuts a typical multi-MB shot down to well under
+// 200KB with no visible quality loss at the size it's actually shown.
+// Always re-encodes to .jpg regardless of the original extension, so a
+// re-upload of the same item lands on the same path (upsert works) going
+// forward — the very first switch from an old non-.jpg path does leave
+// that one old file behind in storage, harmless and not worth the extra
+// complexity of tracking it down to delete.
 async function uploadOneCatalogImage(file,item){
-  const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
-  const path=(item.category||'fruit')+'/'+slugifyItemName(item.item_name)+'.'+ext;
+  const blob=await compressImage(file,800,0.82);
+  const path=(item.category||'fruit')+'/'+slugifyItemName(item.item_name)+'.jpg';
   const{error:upErr}=await sb.storage.from('catalog-images')
-    .upload(path,file,{upsert:true,contentType:file.type||'image/jpeg'});
+    .upload(path,blob,{upsert:true,contentType:'image/jpeg'});
   if(upErr)throw new Error(upErr.message);
   const{data:pub}=sb.storage.from('catalog-images').getPublicUrl(path);
   // Cache-bust — same path can be re-uploaded with a new photo, and the
