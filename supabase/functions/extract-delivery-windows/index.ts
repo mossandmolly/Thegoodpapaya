@@ -12,6 +12,13 @@
 // nothing tied to any individual request's lifetime (no
 // EdgeRuntime.waitUntil) — it just sweeps for anything not yet looked at.
 //
+// Most notes never mention a time at all ("no onions", "ring the bell
+// twice") — see hasTimeSignal below, which skips the Claude call entirely
+// for any note with no digit and no "noon"/"midnight" in it, since those
+// are the only ways a clock time can appear in English. That's most
+// notes, most of the time, so it's most of the Claude calls this
+// function would otherwise make.
+//
 // orders.delivery_window_checked_at (migration 162) marks an order as
 // already looked at — set the moment a Claude call for it succeeds,
 // whether or not it actually found a time, so a note with no deadline in
@@ -120,20 +127,24 @@ Deno.serve(async (req) => {
       if (text && !notesByOrder.has(id)) notesByOrder.set(id, text);
     }
 
-    // Orders with no delivery_instructions at all (nothing typed at
-    // checkout) have nothing to extract — mark them checked right away
-    // without spending a Claude call on them.
-    const noNotes = candidateIds.filter(id => !notesByOrder.has(id));
-    if (noNotes.length) {
+    // A note can only carry a clock-time deadline if it has a digit in it
+    // somewhere, or spells out "noon"/"midnight" (the only clock times
+    // that don't). Everything else — empty notes, "no onions please",
+    // "ring the bell twice" — gets marked checked without ever reaching
+    // Claude, which is most notes most of the time.
+    const hasTimeSignal = (text: string) => /\d/.test(text) || /\b(noon|midnight)\b/i.test(text);
+    const toProcess = [...notesByOrder].filter(([, text]) => hasTimeSignal(text));
+    const skip = candidateIds.filter(id => !notesByOrder.has(id) || !hasTimeSignal(notesByOrder.get(id)!));
+    if (skip.length) {
       await supabase.from('orders')
         .update({ delivery_window_checked_at: new Date().toISOString() })
-        .in('sales_order_id', noNotes);
+        .in('sales_order_id', skip);
     }
 
     const updated: string[] = [];
     const errors: Array<{ sales_order_id: string; error: string }> = [];
 
-    for (const [salesOrderId, notes] of notesByOrder) {
+    for (const [salesOrderId, notes] of toProcess) {
       try {
         const { deliver_by, deliver_after } = await extractDeliveryWindow(notes);
         const { error } = await supabase.from('orders')
@@ -149,7 +160,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ checked: noNotes.length + notesByOrder.size, updated, errors }),
+      JSON.stringify({ checked: skip.length + toProcess.length, updated, errors }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
