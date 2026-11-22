@@ -43,8 +43,15 @@ const CORS = {
 const BUCKET          = 'catalog-images';
 const MAX_DIM          = 800;
 const JPEG_QUALITY     = 82;
-const SKIP_IF_UNDER_BYTES = 250_000; // already small enough — leave it alone
-const BATCH_SIZE       = 15;         // per invocation, to stay well inside the time limit
+const SKIP_IF_UNDER_BYTES = 250_000;  // already small enough — leave it alone
+// Decoding a compressed photo into raw pixels can balloon memory far past
+// its file size (a 4-5MB JPEG can decode to 50-100MB+ of raw RGBA) — a
+// single photo above this is more than the edge function's memory budget
+// can safely decode at all, so it's reported as an error instead of
+// risking a hard worker crash (which skips every other image in the same
+// batch too, not just the oversized one).
+const MAX_SOURCE_BYTES = 8_000_000;
+const BATCH_SIZE       = 5; // items touched per invocation (success OR error), to stay well inside memory/time limits
 
 function storagePathFromPublicUrl(url: string): string | null {
   const marker = `/storage/v1/object/public/${BUCKET}/`;
@@ -76,7 +83,7 @@ Deno.serve(async (req) => {
     let scanned = 0;
 
     for (const row of candidates) {
-      if (compressed.length >= BATCH_SIZE) break; // leave the rest for the next call
+      if (scanned >= BATCH_SIZE) break; // leave the rest for the next call
       scanned++;
       const itemName = row.item_name as string;
       const url = row.image_url as string;
@@ -91,6 +98,9 @@ Deno.serve(async (req) => {
         if (head.ok && len > 0 && len <= SKIP_IF_UNDER_BYTES) {
           alreadySmall.push(itemName);
           continue;
+        }
+        if (head.ok && len > MAX_SOURCE_BYTES) {
+          throw new Error(`source photo is ${(len / 1_000_000).toFixed(1)}MB — too large to safely resize here; re-upload a smaller photo for this item instead`);
         }
 
         const res = await fetch(url);
