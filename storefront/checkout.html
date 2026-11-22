@@ -25,6 +25,7 @@
 
   <div class="cart-totals">
     <div class="summary-row"><span>Items (<span id="item-count">0</span>)</span><span id="subtotal">₹0</span></div>
+    <div class="total-finePrint" id="total-fine-print"></div>
   </div>
 
   <div style="height:20px"></div>
@@ -178,6 +179,7 @@ function renderCart() {
     document.getElementById('place-btn').disabled = true;
     document.getElementById('item-count').textContent = '0';
     document.getElementById('subtotal').textContent = '₹0';
+    document.getElementById('total-fine-print').textContent = '';
     return;
   }
   let subtotal = 0;
@@ -197,7 +199,10 @@ function renderCart() {
       const approxPrice = (hasApprox && p.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null;
       if (approxPrice != null) { subtotal += approxPrice; subtotalIsApprox = true; }
       else hasUnestimable = true;
-      const priceLabel = approxPrice != null ? '~₹'+approxPrice.toFixed(0)+' (exact at packing)' : '🧾 priced at packing';
+      // No "(exact at packing)" wording at item level any more — the
+      // approx caveat is now one fine-print line under the total instead
+      // (see totalFinePrint below), not repeated on every row.
+      const priceLabel = approxPrice != null ? '~₹'+approxPrice.toFixed(0) : '🧾 priced at packing';
       return '<div class="cart-row">' +
         '<div class="info">' +
           '<div class="name">'+escH(i.item_name)+'</div>' +
@@ -220,6 +225,8 @@ function renderCart() {
   document.getElementById('item-count').textContent = cart.length;
   const totalText = (subtotalIsApprox?'~':'')+'₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
   document.getElementById('subtotal').textContent = totalText;
+  document.getElementById('total-fine-print').textContent =
+    (subtotalIsApprox || hasUnestimable) ? '(approx total, actual to be calculated post packaging)' : '';
   document.getElementById('place-btn').disabled = false;
 }
 
