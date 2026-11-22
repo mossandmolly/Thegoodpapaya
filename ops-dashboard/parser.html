@@ -1846,6 +1846,11 @@ function applyRoleRestrictions(){
     const el=document.getElementById('tab-feedback');
     if(el)el.style.display='none';
   }
+  // Catalog Images — same Somya+Rohith gate.
+  if(!isMarkPaidAllowed){
+    const el=document.getElementById('tab-images');
+    if(el)el.style.display='none';
+  }
   if(isBuyerRole){
     ['tab-parser','tab-live','tab-today','tab-packer','tab-delivery','tab-stock','tab-quickadd','tab-adhoc-pay'].forEach(id=>{
       const el=document.getElementById(id);
@@ -1974,6 +1979,7 @@ function switchTab(name){
   else if(name==='pnl'&&!isVegPerfAllowed)name='today';
   else if(name==='phonelookup'&&!isMarkPaidAllowed)name='today';
   else if(name==='feedback'&&!isMarkPaidAllowed)name='today';
+  else if(name==='images'&&!isMarkPaidAllowed)name='today';
   // Matched by id, not position — Parser/Config are header-btn links now,
   // not part of the main .tabs row, so the old fixed-index array no longer
   // lines up with what's actually in there.
