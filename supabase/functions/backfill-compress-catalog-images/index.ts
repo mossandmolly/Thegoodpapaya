@@ -19,8 +19,17 @@
 // function doesn't, hence ImageScript (pure WASM, no native deps, the
 // standard way to do this in Supabase Edge Functions).
 //
+// catalog.image_backfill_checked_at (migration 164) is the only thing
+// that makes repeat calls actually advance through the list — every
+// invocation is a fresh, stateless function call with no memory of
+// earlier ones, so without a persistent marker on each row, every call
+// would just re-query the same unordered-by-progress list and re-hit the
+// same first few items forever. It's set the moment an item is looked at
+// (compressed, found already small, or a permanent "too large" error),
+// so the query backing each call naturally only ever sees what's left.
+//
 // Bounded to BATCH_SIZE items per call so one run can't exceed the edge
-// function's execution time limit — call it again to keep going.
+// function's execution time/memory limit — call it again to keep going.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
@@ -72,22 +81,33 @@ Deno.serve(async (req) => {
     const { data: rows, error: selErr } = await supabase
       .from('catalog').select('item_name, image_url')
       .not('image_url', 'is', null)
-      .order('item_name');
+      .is('image_backfill_checked_at', null)
+      .order('item_name')
+      .limit(BATCH_SIZE);
     if (selErr) throw new Error(selErr.message);
-
-    const candidates = (rows ?? []).filter(r => storagePathFromPublicUrl(r.image_url as string));
 
     const compressed: string[] = [];
     const alreadySmall: string[] = [];
     const errors: Array<{ item_name: string; error: string }> = [];
-    let scanned = 0;
+    const notInThisBucket: string[] = [];
 
-    for (const row of candidates) {
-      if (scanned >= BATCH_SIZE) break; // leave the rest for the next call
-      scanned++;
+    for (const row of rows ?? []) {
       const itemName = row.item_name as string;
       const url = row.image_url as string;
-      const path = storagePathFromPublicUrl(url)!;
+      const path = storagePathFromPublicUrl(url);
+
+      // Doesn't look like a catalog-images storage URL at all (e.g. a
+      // manually-set external link) — nothing here to compress, but it
+      // still has to be marked checked or it'll block this same batch
+      // slot on every future call too, exactly like the bug this whole
+      // marker column exists to fix.
+      if (!path) {
+        notInThisBucket.push(itemName);
+        await supabase.from('catalog')
+          .update({ image_backfill_checked_at: new Date().toISOString() })
+          .eq('item_name', itemName);
+        continue;
+      }
 
       try {
         // HEAD first — skip the download+decode entirely for anything
@@ -95,45 +115,55 @@ Deno.serve(async (req) => {
         // handled by an earlier run of this same function).
         const head = await fetch(url, { method: 'HEAD' });
         const len = parseInt(head.headers.get('content-length') || '0', 10);
+
         if (head.ok && len > 0 && len <= SKIP_IF_UNDER_BYTES) {
           alreadySmall.push(itemName);
-          continue;
-        }
-        if (head.ok && len > MAX_SOURCE_BYTES) {
+        } else if (head.ok && len > MAX_SOURCE_BYTES) {
           throw new Error(`source photo is ${(len / 1_000_000).toFixed(1)}MB — too large to safely resize here; re-upload a smaller photo for this item instead`);
+        } else {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`fetch ${res.status}`);
+          const bytes = new Uint8Array(await res.arrayBuffer());
+
+          const img = await Image.decode(bytes);
+          if (img.width > MAX_DIM || img.height > MAX_DIM) {
+            if (img.width >= img.height) img.resize(MAX_DIM, Image.RESIZE_AUTO);
+            else img.resize(Image.RESIZE_AUTO, MAX_DIM);
+          }
+          const jpeg = await img.encodeJPEG(JPEG_QUALITY);
+
+          const { error: upErr } = await supabase.storage.from(BUCKET)
+            .upload(path, jpeg, { upsert: true, contentType: 'image/jpeg' });
+          if (upErr) throw new Error(upErr.message);
+
+          const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+          const bustedUrl = pub.publicUrl + '?v=' + Date.now();
+          const { error: updErr } = await supabase.from('catalog')
+            .update({ image_url: bustedUrl }).eq('item_name', itemName);
+          if (updErr) throw new Error(updErr.message);
+
+          compressed.push(itemName);
         }
-
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`fetch ${res.status}`);
-        const bytes = new Uint8Array(await res.arrayBuffer());
-
-        const img = await Image.decode(bytes);
-        if (img.width > MAX_DIM || img.height > MAX_DIM) {
-          if (img.width >= img.height) img.resize(MAX_DIM, Image.RESIZE_AUTO);
-          else img.resize(Image.RESIZE_AUTO, MAX_DIM);
-        }
-        const jpeg = await img.encodeJPEG(JPEG_QUALITY);
-
-        const { error: upErr } = await supabase.storage.from(BUCKET)
-          .upload(path, jpeg, { upsert: true, contentType: 'image/jpeg' });
-        if (upErr) throw new Error(upErr.message);
-
-        const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
-        const bustedUrl = pub.publicUrl + '?v=' + Date.now();
-        const { error: updErr } = await supabase.from('catalog')
-          .update({ image_url: bustedUrl }).eq('item_name', itemName);
-        if (updErr) throw new Error(updErr.message);
-
-        compressed.push(itemName);
       } catch (e: any) {
         errors.push({ item_name: itemName, error: e.message });
       }
+
+      // Checked, one way or another — including a permanent "too large"
+      // error, so a bad photo gets reported once and then skipped instead
+      // of being retried forever. Outside the try/catch so EVERY outcome
+      // (compressed, already small, or errored) reaches it exactly once.
+      await supabase.from('catalog')
+        .update({ image_backfill_checked_at: new Date().toISOString() })
+        .eq('item_name', itemName);
     }
 
-    const remaining = candidates.length - scanned;
+    const { count: remaining } = await supabase
+      .from('catalog').select('item_name', { count: 'exact', head: true })
+      .not('image_url', 'is', null)
+      .is('image_backfill_checked_at', null);
 
     return new Response(
-      JSON.stringify({ compressed, alreadySmall, errors, remaining }),
+      JSON.stringify({ compressed, alreadySmall, notInThisBucket, errors, remaining }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
