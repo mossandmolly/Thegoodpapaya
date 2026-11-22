@@ -7,7 +7,7 @@ header.gp-header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:
 header.gp-header .brand{flex:1;font-size:17px;font-weight:800;color:#2d6b2d}
 header.gp-header .brand span{color:#8a7a6a;font-weight:500;font-size:11px;line-height:1.3;display:block;margin-top:2px}
 header.gp-header nav{flex-shrink:0;display:flex;align-items:center;gap:14px}
-header.gp-header nav a{font-size:13px;color:#8a7a6a;font-weight:600}
+header.gp-header nav a{font-size:13px;color:#2d6b2d;font-weight:700}
 /* Phone-entry popup — shown only when this device has no remembered
    phone number yet (see config.js's getKnownPhone/setKnownPhone). A
    lightweight overlay, not a full page section, since it's meant to be a
