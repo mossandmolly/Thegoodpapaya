@@ -214,14 +214,20 @@ Deno.serve(async (req) => {
     // lookup only ever shows that phone's own items) — see
     // resolveSalesOrderId above for the exact suffix scheme.
     const baseId = `${today}-${canonicalCustomerKey(customerName)}`;
-    const sales_order_id = await resolveSalesOrderId(supabase, baseId, normalPhone);
+    const itemNames = [...new Set((cart as CartItem[]).map(i => i.item_name))];
+
+    // resolveSalesOrderId and the catalog price lookup don't depend on
+    // each other at all (one only needs baseId+phone, the other only
+    // needs itemNames) — running them together instead of one after the
+    // other saves a full round trip off checkout latency.
+    const [sales_order_id, { data: catalogRows }] = await Promise.all([
+      resolveSalesOrderId(supabase, baseId, normalPhone),
+      supabase.from('catalog').select('item_name, unit_price, active').in('item_name', itemNames),
+    ]);
 
     // Catalog price lookup — authoritative price is always what's in
     // `catalog`, never whatever the browser sent (defense against a
     // tampered/stale client price).
-    const itemNames = [...new Set((cart as CartItem[]).map(i => i.item_name))];
-    const { data: catalogRows } = await supabase
-      .from('catalog').select('item_name, unit_price, active').in('item_name', itemNames);
     const priceMap: Record<string, number> = {};
     const activeSet = new Set<string>();
     (catalogRows ?? []).forEach((r: any) => {
@@ -243,27 +249,33 @@ Deno.serve(async (req) => {
     // Header — via create-order (server-to-server, CRON_SECRET never
     // reaches the browser), same as whatsapp-create-order. Handles the
     // create-or-reopen-if-cancelled logic and communities upsert.
-    const createOrderRes = await fetch(`${env('SUPABASE_URL')}/functions/v1/create-order`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-cron-secret': env('CRON_SECRET') },
-      body: JSON.stringify({
-        headers: [{
-          sales_order_id,
-          customer_name:  customerName,
-          source:         'website',
-          payment_method: method,
-          invoice_status: 'pending',
-          phone:          normalPhone,
-          society:        String(society).trim(),
-        }],
+    //
+    // Run alongside the order_items existing-rows read below rather than
+    // waiting for it to finish first — that read only needs sales_order_id
+    // (already known), and for a genuinely new ID it'll just come back
+    // empty either way, so there's no real ordering dependency on
+    // create-order's write landing first.
+    const [createOrderRes, { data: existing }] = await Promise.all([
+      fetch(`${env('SUPABASE_URL')}/functions/v1/create-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-cron-secret': env('CRON_SECRET') },
+        body: JSON.stringify({
+          headers: [{
+            sales_order_id,
+            customer_name:  customerName,
+            source:         'website',
+            payment_method: method,
+            invoice_status: 'pending',
+            phone:          normalPhone,
+            society:        String(society).trim(),
+          }],
+        }),
       }),
-    });
+      // Line items — held if this exact (sales_order_id, item_name, qty)
+      // already exists, same dedup rule pushRows/whatsapp-create-order use.
+      supabase.from('order_items').select('item_name, requested_quantity').eq('sales_order_id', sales_order_id),
+    ]);
     if (!createOrderRes.ok) throw new Error('orders: ' + (await createOrderRes.text()));
-
-    // Line items — held if this exact (sales_order_id, item_name, qty)
-    // already exists, same dedup rule pushRows/whatsapp-create-order use.
-    const { data: existing } = await supabase
-      .from('order_items').select('item_name, requested_quantity').eq('sales_order_id', sales_order_id);
     const existingKeys = new Set((existing ?? []).map((o: any) => `${o.item_name}|${o.requested_quantity}`));
 
     const toInsert = (cart as CartItem[]).map(item => {

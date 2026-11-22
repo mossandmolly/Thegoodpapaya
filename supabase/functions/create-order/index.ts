@@ -204,11 +204,27 @@ Deno.serve(async (req) => {
       society:              h.society ?? null,
     }));
 
-    const res = await fetch(`${env('SUPABASE_URL')}/rest/v1/orders?on_conflict=sales_order_id`, {
-      method:  'POST',
-      headers: { ...sbHeaders(), Prefer: 'resolution=ignore-duplicates,return=minimal' },
-      body:    JSON.stringify(rows),
-    });
+    const ids = rows.map(r => r.sales_order_id);
+
+    // These three don't depend on each other's results at all — the
+    // orders upsert is a write, and the cancelled-check/communities-list
+    // below are pure reads that only need `ids`/nothing. Running them
+    // concurrently instead of one after another removes most of this
+    // function's own latency: it used to pay for 3+ sequential round
+    // trips on every single call, even when nothing ended up needing
+    // reopening or a new community inserted.
+    const [res, cancelledRes, communitiesRes] = await Promise.all([
+      fetch(`${env('SUPABASE_URL')}/rest/v1/orders?on_conflict=sales_order_id`, {
+        method:  'POST',
+        headers: { ...sbHeaders(), Prefer: 'resolution=ignore-duplicates,return=minimal' },
+        body:    JSON.stringify(rows),
+      }),
+      fetch(
+        `${env('SUPABASE_URL')}/rest/v1/orders?sales_order_id=in.(${ids.map(id => `"${id}"`).join(',')})&status=eq.cancelled&select=sales_order_id`,
+        { headers: sbHeaders() },
+      ),
+      fetch(`${env('SUPABASE_URL')}/rest/v1/communities?select=name`, { headers: sbHeaders() }),
+    ]);
     if (!res.ok) throw new Error(await res.text());
 
     // ignore-duplicates leaves an already-existing order row completely
@@ -218,68 +234,66 @@ Deno.serve(async (req) => {
     // need reopening first (same effect as reopen-order, the single-item
     // "Add Item" modal's equivalent path) — otherwise the new items land
     // under a parent order that still reads cancelled.
-    try {
-      const ids = rows.map(r => r.sales_order_id);
-      const cancelledRes = await fetch(
-        `${env('SUPABASE_URL')}/rest/v1/orders?sales_order_id=in.(${ids.map(id => `"${id}"`).join(',')})&status=eq.cancelled&select=sales_order_id`,
-        { headers: sbHeaders() },
-      );
-      const cancelled: { sales_order_id: string }[] = cancelledRes.ok ? await cancelledRes.json() : [];
-      if (cancelled.length) {
-        await fetch(
-          `${env('SUPABASE_URL')}/rest/v1/orders?sales_order_id=in.(${cancelled.map(c => `"${c.sales_order_id}"`).join(',')})`,
-          {
-            method: 'PATCH',
-            headers: { ...sbHeaders(), Prefer: 'return=minimal' },
-            body: JSON.stringify({ status: 'active', invoice_status: 'pending' }),
-          },
-        );
+    const reopenPromise = (async () => {
+      try {
+        const cancelled: { sales_order_id: string }[] = cancelledRes.ok ? await cancelledRes.json() : [];
+        if (cancelled.length) {
+          await fetch(
+            `${env('SUPABASE_URL')}/rest/v1/orders?sales_order_id=in.(${cancelled.map(c => `"${c.sales_order_id}"`).join(',')})`,
+            {
+              method: 'PATCH',
+              headers: { ...sbHeaders(), Prefer: 'return=minimal' },
+              body: JSON.stringify({ status: 'active', invoice_status: 'pending' }),
+            },
+          );
+        }
+      } catch (_e) {
+        // swallow — best-effort; a failure here shouldn't block the order push,
+        // worst case the order just stays cancelled and needs a manual reopen
       }
-    } catch (_e) {
-      // swallow — best-effort; a failure here shouldn't block the order push,
-      // worst case the order just stays cancelled and needs a manual reopen
-    }
+    })();
 
     // Best-effort: grow the communities table from these customer names.
     // Never fails the request — a name-check pattern miss shouldn't block order creation.
-    try {
-      // Fetched once, before deriving anything — used both to build the
-      // society-matching lookup (so a community discovered from a
-      // PREVIOUS order gets the same exact-prefix/typo-correction
-      // treatment) and to dedupe the insert below by canonical key rather
-      // than on_conflict's exact-string match — a society not yet in
-      // `communities` falls through to formatCommunityName(raw), whose
-      // output casing/spacing tracks whatever the AI parser happened to
-      // extract that particular time (e.g. "Bren Edgewater" vs
-      // "Brenedgewater" if a space gets dropped), so exact-string matching
-      // alone lets near-duplicates pile up.
-      const existingRes = await fetch(`${env('SUPABASE_URL')}/rest/v1/communities?select=name`, {
-        headers: sbHeaders(),
-      });
-      const existing: { name: string }[] = existingRes.ok ? await existingRes.json() : [];
-      const lookup = buildSocietyLookup(existing.map(c => c.name));
+    const communitiesPromise = (async () => {
+      try {
+        // Fetched once, before deriving anything — used both to build the
+        // society-matching lookup (so a community discovered from a
+        // PREVIOUS order gets the same exact-prefix/typo-correction
+        // treatment) and to dedupe the insert below by canonical key rather
+        // than on_conflict's exact-string match — a society not yet in
+        // `communities` falls through to formatCommunityName(raw), whose
+        // output casing/spacing tracks whatever the AI parser happened to
+        // extract that particular time (e.g. "Bren Edgewater" vs
+        // "Brenedgewater" if a space gets dropped), so exact-string matching
+        // alone lets near-duplicates pile up.
+        const existing: { name: string }[] = communitiesRes.ok ? await communitiesRes.json() : [];
+        const lookup = buildSocietyLookup(existing.map(c => c.name));
 
-      const societies = [...new Set(
-        rows.map(r => deriveSociety(r.customer_name, lookup)).filter(Boolean),
-      )];
+        const societies = [...new Set(
+          rows.map(r => deriveSociety(r.customer_name, lookup)).filter(Boolean),
+        )];
 
-      if (societies.length) {
-        const existingKeys = new Set(existing.map(c => communityCanonicalKey(c.name)));
-        const toInsert = societies
-          .filter(name => !existingKeys.has(communityCanonicalKey(name)))
-          .map(name => ({ name }));
+        if (societies.length) {
+          const existingKeys = new Set(existing.map(c => communityCanonicalKey(c.name)));
+          const toInsert = societies
+            .filter(name => !existingKeys.has(communityCanonicalKey(name)))
+            .map(name => ({ name }));
 
-        if (toInsert.length) {
-          await fetch(`${env('SUPABASE_URL')}/rest/v1/communities?on_conflict=name`, {
-            method:  'POST',
-            headers: { ...sbHeaders(), Prefer: 'resolution=ignore-duplicates,return=minimal' },
-            body:    JSON.stringify(toInsert),
-          });
+          if (toInsert.length) {
+            await fetch(`${env('SUPABASE_URL')}/rest/v1/communities?on_conflict=name`, {
+              method:  'POST',
+              headers: { ...sbHeaders(), Prefer: 'resolution=ignore-duplicates,return=minimal' },
+              body:    JSON.stringify(toInsert),
+            });
+          }
         }
+      } catch (_e) {
+        // swallow — communities is a nice-to-have, not load-bearing for this request
       }
-    } catch (_e) {
-      // swallow — communities is a nice-to-have, not load-bearing for this request
-    }
+    })();
+
+    await Promise.all([reopenPromise, communitiesPromise]);
 
     return new Response(
       JSON.stringify({ created: rows.length }),
