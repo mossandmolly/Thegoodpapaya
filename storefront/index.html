@@ -414,6 +414,15 @@ document.getElementById('search').addEventListener('input', () => {
   searchRenderTimer = setTimeout(render, 150);
 });
 load();
+
+// Mobile browsers (notably in-app browsers like WhatsApp's) often restore
+// a page from back/forward cache instead of reloading it when you
+// navigate back to it — if this page was still showing "Loading…" the
+// moment you left (e.g. tapped away before the catalog fetch finished),
+// that frozen state comes back exactly as it was, and none of this
+// script re-runs to retry it. event.persisted means exactly that kind of
+// restore, not a fresh load — re-run load() so it can't get stuck.
+window.addEventListener('pageshow', e => { if (e.persisted) load(); });
 </script>
 </body>
 </html>
