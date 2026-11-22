@@ -85,6 +85,24 @@ function markInvalid(id,bad){
   document.getElementById(id).addEventListener('input',()=>markInvalid(id,false));
 });
 
+// ── Funnel tracking (storefront_events) ───────────────────────────────────
+// Logged on blur, not on every keystroke — "did they get this far" is
+// what matters for a funnel, not how many times they edited the field.
+// Some duplicate rows across an edit session are fine; reports group by
+// device_id/event_type anyway (see migration 165's own comment).
+document.getElementById('phone').addEventListener('blur', () => {
+  const v = document.getElementById('phone').value.trim();
+  if (/^\d{10}$/.test(v)) trackEvent('phone_entered', { phone: v });
+});
+document.getElementById('door').addEventListener('blur', () => {
+  const society = document.getElementById('society').value.trim();
+  const door = document.getElementById('door').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  if (society && door && /^\d{10}$/.test(phone)) {
+    trackEvent('society_entered', { society, door_number: door, phone });
+  }
+});
+
 // ── Society search (string-contains, verified names only) ────────────────
 // communities.name gets junk auto-added from every typo'd order address —
 // verified=true (set by hand in ops-dashboard Config) is the only filter,
@@ -268,6 +286,7 @@ async function placeOrder() {
         cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity, mode: i.mode || 'kg', notes: i.note || undefined })),
         society, door_number: door, phone, notes,
         payment_method: method,
+        device_id: getDeviceId(),
       }),
     });
     const data = await res.json();
@@ -292,6 +311,10 @@ async function placeOrder() {
 prefillFromLastOrder();
 renderCart();
 loadPrices();
+// Fired once here, not inside renderCart() — that also re-runs on a
+// bfcache restore (see the pageshow listener below), which isn't a new
+// page visit and shouldn't be double-counted as one.
+if (getCart().length) trackEvent('checkout_viewed', {});
 
 // Mobile browsers (notably in-app browsers like WhatsApp's) often restore
 // a page from back/forward cache instead of reloading it when you
