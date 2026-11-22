@@ -403,7 +403,15 @@ function setItemMode(item_name, mode) {
   updateCardBadge(item_name);
 }
 
-document.getElementById('search').addEventListener('input', render);
+// Debounced — render() rebuilds the whole grid (unavoidable here, since
+// the actual set of visible cards changes), but doing that on every
+// single keystroke while someone's still typing is what made it feel
+// like constant flashing. This waits for a brief pause instead.
+let searchRenderTimer = null;
+document.getElementById('search').addEventListener('input', () => {
+  clearTimeout(searchRenderTimer);
+  searchRenderTimer = setTimeout(render, 150);
+});
 load();
 </script>
 </body>
