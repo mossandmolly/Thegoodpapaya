@@ -25,8 +25,6 @@
 
   <div class="cart-totals">
     <div class="summary-row"><span>Items (<span id="item-count">0</span>)</span><span id="subtotal">₹0</span></div>
-    <div class="summary-row total"><span>Approx amount</span><span id="total">₹0</span></div>
-    <div class="total-finePrint">Actual amount will vary slightly based on weight</div>
   </div>
 
   <div style="height:20px"></div>
@@ -146,10 +144,17 @@ const LAST_ORDER_KEY = 'gp_last_order_v1';
 function prefillFromLastOrder() {
   try {
     const last = JSON.parse(localStorage.getItem(LAST_ORDER_KEY) || 'null');
-    if (!last) return;
-    if (last.phone) document.getElementById('phone').value = last.phone;
-    if (last.society) document.getElementById('society').value = last.society;
-    if (last.door) document.getElementById('door').value = last.door;
+    if (last) {
+      if (last.phone) document.getElementById('phone').value = last.phone;
+      if (last.society) document.getElementById('society').value = last.society;
+      if (last.door) document.getElementById('door').value = last.door;
+      return;
+    }
+    // No completed order on this device yet, but the phone might still be
+    // known from a My Orders/My Invoices lookup — at least save re-typing
+    // that, even with no address to go with it yet.
+    const known = getKnownPhone();
+    if (known) document.getElementById('phone').value = known;
   } catch {}
 }
 
@@ -173,7 +178,6 @@ function renderCart() {
     document.getElementById('place-btn').disabled = true;
     document.getElementById('item-count').textContent = '0';
     document.getElementById('subtotal').textContent = '₹0';
-    document.getElementById('total').textContent = '₹0';
     return;
   }
   let subtotal = 0;
@@ -216,7 +220,6 @@ function renderCart() {
   document.getElementById('item-count').textContent = cart.length;
   const totalText = (subtotalIsApprox?'~':'')+'₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
   document.getElementById('subtotal').textContent = totalText;
-  document.getElementById('total').textContent = totalText;
   document.getElementById('place-btn').disabled = false;
 }
 
