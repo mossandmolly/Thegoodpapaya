@@ -220,6 +220,26 @@ function cardHtml(c, qtyMap) {
   '</div>';
 }
 
+// Patches just one catalog card's qty badge in place, instead of calling
+// render() (which rebuilds the WHOLE grid's innerHTML, destroying and
+// recreating every <img> on screen — visible as a full-page flash on
+// every single tap/stepper click). No-op if the card isn't currently
+// visible (filtered out by search/category) — nothing to patch.
+function updateCardBadge(item_name) {
+  const el = document.querySelector('.item-card[data-item="'+CSS.escape(item_name)+'"]');
+  if (!el) return;
+  const cart = getCart();
+  const existing = cart.find(i => i.item_name === item_name);
+  const qty = existing ? existing.quantity : 0;
+  let badge = el.querySelector('.qty-badge');
+  if (qty > 0) {
+    if (!badge) { badge = document.createElement('div'); badge.className = 'qty-badge'; el.appendChild(badge); }
+    badge.textContent = qty;
+  } else if (badge) {
+    badge.remove();
+  }
+}
+
 // Tap to add (qty 1), tap the same card again to remove it entirely — a
 // toggle, not a counter. Adjusting quantity beyond 1 is the live cart's
 // +/- stepper's job, not repeated taps here. Out-of-stock items ignore
@@ -231,7 +251,7 @@ function bumpItem(item_name) {
   const existing = cart.find(i => i.item_name === item_name);
   const inCart = !!(existing && existing.quantity > 0);
   setCartQty(item_name, inCart ? 0 : 1, existing ? existing.mode : 'kg');
-  render();
+  updateCardBadge(item_name);
   const el = document.querySelector('.item-card[data-item="'+CSS.escape(item_name)+'"]');
   if (el) {
     el.classList.add('pop');
@@ -354,7 +374,7 @@ function stepLiveQty(item_name, delta) {
   const existing = cart.find(i => i.item_name === item_name);
   const current = existing ? existing.quantity : 0;
   setCartQty(item_name, +(current + delta).toFixed(2), existing ? existing.mode : undefined);
-  render();
+  updateCardBadge(item_name);
 }
 
 // Keying in an exact quantity (incl. decimals, e.g. 1.5) — the qty box
@@ -364,12 +384,12 @@ function setLiveQty(item_name, value) {
   const existing = cart.find(i => i.item_name === item_name);
   const next = Math.max(0, +parseFloat(value || '0').toFixed(2)) || 0;
   setCartQty(item_name, next, existing ? existing.mode : undefined);
-  render();
+  updateCardBadge(item_name);
 }
 
 function removeLiveItem(item_name) {
   setCartQty(item_name, 0);
-  render();
+  updateCardBadge(item_name);
 }
 
 function setItemMode(item_name, mode) {
@@ -380,7 +400,7 @@ function setItemMode(item_name, mode) {
   // fractional kg quantity (e.g. 1.25) that can't mean anything "per piece".
   if (mode === 'piece') qty = Math.max(1, Math.round(qty));
   setCartQty(item_name, qty, mode);
-  render();
+  updateCardBadge(item_name);
 }
 
 document.getElementById('search').addEventListener('input', render);
