@@ -20,12 +20,14 @@
 // Output: { sales_order_id }                    (cod)
 //         { sales_order_id, payment_url }        (online)
 //
-// notes carrying a real deadline ("by 4pm", "after 6", "between 2 and
-// 4pm") gets parsed into orders.deliver_by/deliver_after — see
-// parseDeliveryTime below.
+// notes is saved verbatim onto order_items.delivery_instructions
+// synchronously (no parsing, no latency) — a background Claude call (see
+// extractDeliveryWindow/backgroundSetDeliveryWindow below, kicked off via
+// EdgeRuntime.waitUntil AFTER the response is already sent) reads it back
+// and fills orders.deliver_by/deliver_after a few seconds later.
 //
 // Required env vars:
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET, ANTHROPIC_API_KEY
 //   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET  (online orders only)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -65,61 +67,63 @@ function canonicalCustomerKey(name: string): string {
   return (name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// Converts a matched hour/minute/am-pm into a 24-hour "HH:MM" string.
-// No am/pm stated and the hour's 1-7 → assumed PM (a same-day grocery
-// delivery note saying "by 4" means 4pm, never 4am); 8-12 is left as-is
-// (already unambiguous or already explicit about being morning).
-function to24h(hourStr: string, minStr: string | undefined, ampm: string | undefined): string {
-  let hour = parseInt(hourStr, 10);
-  const min = minStr ? parseInt(minStr.replace(':', ''), 10) : 0;
-  if (ampm) {
-    const isPm = /pm/i.test(ampm);
-    if (isPm && hour < 12) hour += 12;
-    if (!isPm && hour === 12) hour = 0;
-  } else if (hour >= 1 && hour <= 7) {
-    hour += 12;
-  }
-  return String(hour).padStart(2, '0') + ':' + String(min).padStart(2, '0');
+const DELIVERY_WINDOW_SYSTEM_PROMPT = `You read a customer's free-text delivery note for a grocery order and extract any delivery deadline they stated.
+
+Return ONLY this JSON, no prose:
+{"deliver_by":"HH:MM"|null,"deliver_after":"HH:MM"|null}
+
+Rules:
+- deliver_by is the LATEST time the order should arrive ("by 4pm", "before 6", "no later than 5:30").
+- deliver_after is the EARLIEST time the order should arrive ("after 6pm", "not before 11am", "only after 2").
+- "between X and Y" sets deliver_after to X and deliver_by to Y.
+- Use 24-hour "HH:MM". If no am/pm is stated and the hour is 1-7, assume PM (a same-day grocery delivery note saying "by 4" means 4pm, never 4am). Hours 8-12 are already unambiguous.
+- If the text states no delivery-time deadline at all (e.g. "no onions please", "ring the bell twice", "leave at the gate"), return {"deliver_by":null,"deliver_after":null}.
+- Never invent a time that isn't actually stated or clearly implied.`;
+
+function asHHMM(v: any): string | null {
+  return typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : null;
 }
 
-// Deliberately a plain regex, not an AI call — place-order is on the
-// critical path of placing a real order, so adding network latency/cost/
-// a new failure mode there for every single checkout isn't worth it the
-// way it is for the WhatsApp parser's batch, staff-reviewed flow. A
-// delivery-notes field is also far more constrained in phrasing than a
-// messy chat screenshot, so a handful of patterns covers the real cases:
-// "by/before X", "after X", and "between X and Y" (filling both bounds
-// from one phrase, same as the WhatsApp parser's own rule).
-function parseDeliveryTime(text: string): { deliver_by: string | null; deliver_after: string | null } {
-  if (!text) return { deliver_by: null, deliver_after: null };
-  const t = text.toLowerCase();
+async function extractDeliveryWindow(notes: string): Promise<{ deliver_by: string | null; deliver_after: string | null }> {
+  const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
+      system: DELIVERY_WINDOW_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: `Delivery note:\n"${notes.trim()}"` }],
+    }),
+  });
+  const aiData = await anthropicRes.json();
+  if (!anthropicRes.ok) throw new Error(aiData?.error?.message ?? `Anthropic error ${anthropicRes.status}`);
 
-  const between = t.match(/\bbetween\s+(\d{1,2})(:\d{2})?\s*(am|pm)?\s+(?:and|to|-)\s+(\d{1,2})(:\d{2})?\s*(am|pm)?/i);
-  if (between) {
-    const [, h1, m1, ap1raw, h2, m2, ap2raw] = between;
-    const ap2 = ap2raw || ap1raw;
-    const ap1 = ap1raw || ap2raw;
-    return { deliver_after: to24h(h1, m1, ap1), deliver_by: to24h(h2, m2, ap2) };
+  const raw = aiData.content?.[0]?.text ?? '{}';
+  let parsed: any;
+  try { parsed = JSON.parse(raw); }
+  catch (_) {
+    const m = raw.match(/\{[\s\S]*\}/);
+    parsed = m ? JSON.parse(m[0]) : {};
   }
+  return { deliver_by: asHHMM(parsed.deliver_by), deliver_after: asHHMM(parsed.deliver_after) };
+}
 
-  // "not before X" matches both "before" (by) and "after" naively — check
-  // after/not-before first and strip its matched span out before scanning
-  // for "by", so "before" embedded inside "not before" doesn't also get
-  // read as its own, contradictory deadline.
-  let deliverAfter: string | null = null;
-  let remaining = t;
-  const after = t.match(/\b(?:not\s+before|after)\s+(\d{1,2})(:\d{2})?\s*(am|pm)?/i);
-  if (after) {
-    deliverAfter = to24h(after[1], after[2], after[3]);
-    remaining = t.slice(0, after.index!) + t.slice(after.index! + after[0].length);
+// Fired via EdgeRuntime.waitUntil AFTER the response has already gone back
+// to the customer — see the call site below. Checkout itself never waits
+// on this, so a slow/failed Claude call can only leave deliver_by/
+// deliver_after unset, never delay or break placing the order.
+async function backgroundSetDeliveryWindow(
+  supabase: ReturnType<typeof createClient>, salesOrderId: string, notes: string,
+): Promise<void> {
+  try {
+    const { deliver_by, deliver_after } = await extractDeliveryWindow(notes);
+    if (!deliver_by && !deliver_after) return;
+    const { error } = await supabase.from('orders')
+      .update({ deliver_by, deliver_after }).eq('sales_order_id', salesOrderId);
+    if (error) console.error(`[place-order] failed to save deliver_by/after for ${salesOrderId}:`, error.message);
+  } catch (e: any) {
+    console.error(`[place-order] delivery-window extraction failed for ${salesOrderId}:`, e.message);
   }
-
-  const by = remaining.match(/\b(?:by|before)\s+(\d{1,2})(:\d{2})?\s*(am|pm)?/i);
-
-  return {
-    deliver_by:    by ? to24h(by[1], by[2], by[3]) : null,
-    deliver_after: deliverAfter,
-  };
 }
 
 async function nextSplitSuffix(supabase: ReturnType<typeof createClient>, baseId: string): Promise<number> {
@@ -228,13 +232,6 @@ Deno.serve(async (req) => {
       .filter(i => !isPieceMode(i))
       .reduce((s, i) => s + (priceMap[i.item_name] ?? 0) * getQty(i), 0);
 
-    // Delivery notes carrying a real deadline ("by 4pm", "after 6", etc.)
-    // feed the same deliver_by/deliver_after fields a WhatsApp order's
-    // timeline would — this is what Order Overview's Time Sensitive sort
-    // and escalation actually key off, not just free text nobody reads
-    // until packing.
-    const { deliver_by, deliver_after } = parseDeliveryTime(notes || '');
-
     // Header — via create-order (server-to-server, CRON_SECRET never
     // reaches the browser), same as whatsapp-create-order. Handles the
     // create-or-reopen-if-cancelled logic and communities upsert.
@@ -250,8 +247,6 @@ Deno.serve(async (req) => {
           invoice_status: 'pending',
           phone:          normalPhone,
           society:        String(society).trim(),
-          deliver_by,
-          deliver_after,
         }],
       }),
     });
@@ -279,6 +274,10 @@ Deno.serve(async (req) => {
         sales_order_id,
         item_name:   item.item_name,
         description,
+        // Checkout-level delivery notes, saved verbatim — same column the
+        // Delivery tab already shows for WhatsApp orders, just written
+        // straight through here instead of staff-edited after the fact.
+        delivery_instructions: notes?.trim() || null,
         requested_quantity: qty,
         status,
       };
@@ -286,6 +285,15 @@ Deno.serve(async (req) => {
 
     const { error: insertErr } = await supabase.from('order_items').insert(toInsert);
     if (insertErr) throw new Error(insertErr.message);
+
+    // Reading a deadline back out of those notes happens off to the side,
+    // after the response below is already on its way to the customer — see
+    // backgroundSetDeliveryWindow. Skipped when there's no digit in the
+    // text at all, since there's then nothing time-shaped to extract.
+    if (notes && /\d/.test(notes)) {
+      // @ts-ignore — EdgeRuntime is a Supabase Edge Functions / Deno Deploy global, not in the TS lib.
+      EdgeRuntime.waitUntil(backgroundSetDeliveryWindow(supabase, sales_order_id, notes));
+    }
 
     if (method === 'online') {
       const rzp = await createRazorpayLink(orderTotal, customerName, normalPhone, notes || '', sales_order_id);
