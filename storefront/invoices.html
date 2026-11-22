@@ -42,22 +42,24 @@
   </nav>
 </header>
 
-<div class="page-wrap">
-<main>
-  <div id="phone-screen">
-    <h2 style="margin-top:0">View your invoices</h2>
+<div class="phone-modal-overlay hidden" id="phone-modal">
+  <div class="phone-modal-box">
+    <h2>View your invoices</h2>
     <div class="form-field">
       <label>Your phone number</label>
       <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
     </div>
     <button class="btn-primary" id="lookup-btn" onclick="lookup()">View My Invoices</button>
   </div>
+</div>
 
+<div class="page-wrap">
+<main>
   <div id="results-screen" class="hidden">
     <h2 id="welcome-heading"></h2>
     <div id="results"></div>
     <div style="height:16px"></div>
-    <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
+    <a href="#" id="change-number-link" onclick="showPhoneModal();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
   </div>
 </main>
 <aside class="feedback-aside" id="feedback-aside">
@@ -164,16 +166,19 @@ function formatPaidAt(iso) {
 let hasLookedUp = false; // guards the auto-refresh below — never fires before a real lookup has happened
 let lastSearchedPhone = null; // the number that found these invoices — reused for pay-now-without-a-link, see payNowWithoutLink
 
-// Two distinct screens, never both visible at once — "enter your phone
-// number" and "here are your invoices" are never the same view, so there's
-// no ambiguity about whether a number was actually submitted or just sitting
-// in the box.
-function showPhoneScreen() {
-  document.getElementById('phone-screen').classList.remove('hidden');
+// Phone entry is a popup now, not a full page section — only shown when
+// this device has no remembered number yet (see config.js). Reopened by
+// "Not you? Use a different number" too, which is why it still clears
+// and refocuses the input each time rather than just toggling visibility.
+function showPhoneModal() {
+  document.getElementById('phone-modal').classList.remove('hidden');
   document.getElementById('results-screen').classList.add('hidden');
   document.getElementById('feedback-card').classList.add('hidden');
   document.getElementById('phone').value = '';
   document.getElementById('phone').focus();
+}
+function hidePhoneModal() {
+  document.getElementById('phone-modal').classList.add('hidden');
 }
 
 // On a phone-width screen, the feedback card normally sits in the aside
@@ -201,16 +206,17 @@ function placeFeedbackCard() {
 }
 window.addEventListener('resize', () => { if (!document.getElementById('feedback-card').classList.contains('hidden')) placeFeedbackCard(); });
 
-async function lookup() {
-  const phoneInput = document.getElementById('phone').value.trim();
+async function lookup(phoneArg) {
+  const phoneInput = phoneArg || document.getElementById('phone').value.trim();
   lastSearchedPhone = phoneInput;
   if (!/^\d{10}$/.test(phoneInput)) {
     document.getElementById('results').innerHTML = '<div class="err-box show">Please enter a valid 10-digit phone number.</div>';
-    document.getElementById('phone-screen').classList.add('hidden');
+    hidePhoneModal();
     document.getElementById('results-screen').classList.remove('hidden');
     return;
   }
-  document.getElementById('phone-screen').classList.add('hidden');
+  setKnownPhone(phoneInput);
+  hidePhoneModal();
   document.getElementById('results-screen').classList.remove('hidden');
   // Feedback card is only ever shown once a real, valid phone has been
   // looked up — so phone_number on every submission is reliably auto-
@@ -452,6 +458,17 @@ async function submitFeedback() {
 }
 
 document.getElementById('phone').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+
+// Straight to results if this device already has a known number (entered
+// once before, here or at checkout) — the popup only ever shows up when
+// there's genuinely nothing to go on yet.
+const rememberedPhone = getKnownPhone();
+if (rememberedPhone) {
+  document.getElementById('phone').value = rememberedPhone;
+  lookup(rememberedPhone);
+} else {
+  showPhoneModal();
+}
 
 // Pay Now opens Razorpay in a new tab — coming back here after paying
 // shouldn't require manually clicking "View My Invoices" again to see the
