@@ -68,17 +68,86 @@ function canonicalCustomerKey(name: string): string {
   return (name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-async function nextSplitSuffix(supabase: ReturnType<typeof createClient>, baseId: string): Promise<number> {
-  const { data, error } = await supabase
-    .from('order_items').select('sales_order_id').like('sales_order_id', `${baseId}-%`);
+// sales_order_id suffix scheme for one household (baseId) on one day —
+// place-order-specific, NOT shared with whatsapp-create-order/pushRows
+// (those don't have a "second household member, different phone" case the
+// same way, since each WhatsApp order already comes in under one sender).
+//
+//   baseId              — the first phone to order today for this house
+//   baseId-N            — that SAME phone ordering again after its
+//                          previous order already dispatched (N = 1,2,3…)
+//                          — this is the pre-existing scheme, unchanged,
+//                          so it stays compatible with every order ID
+//                          already sitting in the live table.
+//   baseId-{slot}-{N}    — a DIFFERENT phone ordering for this house today.
+//                          slot = 1,2,3… in the order each new phone first
+//                          shows up; N is THAT phone's own 1,2,3…
+//                          dispatch-retry count, same rule as above. Two
+//                          dashes, not digits jammed together — "-1-1" vs
+//                          "-10" must never be confused once a count
+//                          reaches double digits.
+//
+// So "-1-1"/"-1-2" is the second phone's 1st/2nd order today, "-2-1" the
+// third phone's 1st order, etc. Two phones for one house therefore get two
+// distinct sales_order_ids (by design — see place-order's header comment),
+// while the same phone ordering again still merges exactly as before.
+function parseSuffix(salesOrderId: string, baseId: string): { slot: number; orderIndex: number } {
+  const rest = salesOrderId.slice(baseId.length);
+  if (!rest) return { slot: 0, orderIndex: 0 };
+  const parts = rest.slice(1).split('-'); // drop the leading '-', then split the rest
+  if (parts.length === 1) return { slot: 0, orderIndex: parseInt(parts[0], 10) || 0 };
+  return { slot: parseInt(parts[0], 10) || 0, orderIndex: parseInt(parts[1], 10) || 0 };
+}
+
+function buildSalesOrderId(baseId: string, slot: number, orderIndex: number): string {
+  if (slot === 0) return orderIndex === 0 ? baseId : `${baseId}-${orderIndex}`;
+  return `${baseId}-${slot}-${orderIndex}`;
+}
+
+async function resolveSalesOrderId(
+  supabase: ReturnType<typeof createClient>, baseId: string, phone: string,
+): Promise<string> {
+  const { data: rows, error } = await supabase
+    .from('order_customer_lookup').select('sales_order_id, phone, delivery_status')
+    .like('sales_order_id', `${baseId}%`);
   if (error) throw new Error(error.message);
-  const re = new RegExp(`^${baseId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`);
-  let max = 0;
-  for (const row of data ?? []) {
-    const m = re.exec(row.sales_order_id as string);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
+
+  // The LIKE above is just a cheap, index-assisted first pass — a longer
+  // household key can still start with this one's (e.g. "...flat3" is a
+  // prefix of "...flat30"), so only an exact match or a real "-" boundary
+  // right after baseId counts as actually today's order for THIS house.
+  const todays = (rows ?? []).filter(r => {
+    const id = r.sales_order_id as string;
+    return id === baseId || id.startsWith(`${baseId}-`);
+  });
+  if (!todays.length) return baseId; // first order today for this house, first phone — unsuffixed, as always
+
+  // For each slot seen today, keep only its most recent order (highest
+  // orderIndex) — that's the one still open to merge into, or the one
+  // whose dispatched status decides whether this phone needs to split.
+  const latestBySlot = new Map<number, { phone: string | null; orderIndex: number; dispatched: boolean }>();
+  for (const r of todays) {
+    const { slot, orderIndex } = parseSuffix(r.sales_order_id as string, baseId);
+    const current = latestBySlot.get(slot);
+    if (!current || orderIndex > current.orderIndex) {
+      const dispatched = (r.delivery_status ?? 'not_dispatched') !== 'not_dispatched';
+      latestBySlot.set(slot, { phone: r.phone as string | null, orderIndex, dispatched });
+    }
   }
-  return max + 1;
+
+  for (const [slot, entry] of latestBySlot) {
+    if (entry.phone === phone) {
+      return entry.dispatched
+        ? buildSalesOrderId(baseId, slot, entry.orderIndex + 1) // same phone, already out — split, as before
+        : buildSalesOrderId(baseId, slot, entry.orderIndex);    // same phone, still open — merge in, as before
+    }
+  }
+
+  // A genuinely new phone for this house today — starts its own slot and
+  // its own -N1/-N2/… series.
+  let nextSlot = 1;
+  while (latestBySlot.has(nextSlot)) nextSlot++;
+  return buildSalesOrderId(baseId, nextSlot, 1);
 }
 
 async function createRazorpayLink(
@@ -136,19 +205,16 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
-    // Same-day repeat orders from the same customer combine onto the same
+    // Same-day repeat orders from the same PHONE combine onto the same
     // sales_order_id (deterministic date+customer key) — UNLESS that
     // order's already out for delivery, in which case split into a fresh
-    // "-N" id instead of silently joining one that's already left. Same
-    // rule pushRows/whatsapp-create-order apply.
+    // "-N" id instead of silently joining one that's already left. A
+    // DIFFERENT phone ordering for the same house gets its own separate
+    // sales_order_id entirely (so each phone's My Orders/My Invoices
+    // lookup only ever shows that phone's own items) — see
+    // resolveSalesOrderId above for the exact suffix scheme.
     const baseId = `${today}-${canonicalCustomerKey(customerName)}`;
-    let sales_order_id = baseId;
-    const { data: dispatched } = await supabase
-      .from('order_customer_lookup').select('delivery_status').eq('sales_order_id', baseId).maybeSingle();
-    if (dispatched && (dispatched.delivery_status ?? 'not_dispatched') !== 'not_dispatched') {
-      const n = await nextSplitSuffix(supabase, baseId);
-      sales_order_id = `${baseId}-${n}`;
-    }
+    const sales_order_id = await resolveSalesOrderId(supabase, baseId, normalPhone);
 
     // Catalog price lookup — authoritative price is always what's in
     // `catalog`, never whatever the browser sent (defense against a
