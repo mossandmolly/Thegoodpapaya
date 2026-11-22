@@ -158,6 +158,7 @@ async function lookup(phoneArg) {
           '<span class="inv-num">Order placed '+escH(formatOrderDate(order.created_at))+'</span>' +
           '<span class="status open">Open</span>' +
         '</div>' +
+        '<div class="meta">'+escH(order.customer_name || '')+' · '+order.items.length+' item'+(order.items.length!==1?'s':'')+'</div>' +
         '<table class="inv-items">' +
           '<thead><tr><th>Item</th><th>Qty</th><th>Approx value</th></tr></thead>' +
           '<tbody>'+rows+'</tbody>' +
