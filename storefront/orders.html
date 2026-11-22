@@ -171,13 +171,24 @@ document.getElementById('phone').addEventListener('keydown', e => { if (e.key ==
 // Straight to results if this device already has a known number (entered
 // once before, here or at checkout) — the popup only ever shows up when
 // there's genuinely nothing to go on yet.
-const rememberedPhone = getKnownPhone();
-if (rememberedPhone) {
-  document.getElementById('phone').value = rememberedPhone;
-  lookup(rememberedPhone);
-} else {
-  showPhoneModal();
+function initLookup() {
+  const rememberedPhone = getKnownPhone();
+  if (rememberedPhone) {
+    document.getElementById('phone').value = rememberedPhone;
+    lookup(rememberedPhone);
+  } else {
+    showPhoneModal();
+  }
 }
+initLookup();
+
+// Mobile browsers (notably in-app browsers like WhatsApp's) often restore
+// a page from back/forward cache instead of reloading it when you
+// navigate back to it — if this page was still mid-lookup (button still
+// disabled) the moment you left, that frozen state comes back exactly as
+// it was, and none of this script re-runs to retry it. event.persisted
+// means exactly that kind of restore, not a fresh load.
+window.addEventListener('pageshow', e => { if (e.persisted) initLookup(); });
 </script>
 </body>
 </html>
