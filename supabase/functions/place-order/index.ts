@@ -20,14 +20,15 @@
 // Output: { sales_order_id }                    (cod)
 //         { sales_order_id, payment_url }        (online)
 //
-// notes is saved verbatim onto order_items.delivery_instructions
-// synchronously (no parsing, no latency) — a background Claude call (see
-// extractDeliveryWindow/backgroundSetDeliveryWindow below, kicked off via
-// EdgeRuntime.waitUntil AFTER the response is already sent) reads it back
-// and fills orders.deliver_by/deliver_after a few seconds later.
+// notes is saved verbatim onto order_items.delivery_instructions,
+// synchronously, with zero added parsing/latency. Turning that free text
+// into a structured orders.deliver_by/deliver_after deadline is done
+// entirely off this request's lifetime, by the extract-delivery-windows
+// edge function on its own pg_cron schedule (every 20 min) — see that
+// function's header for why a cron beats a per-request background task.
 //
 // Required env vars:
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET, ANTHROPIC_API_KEY
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
 //   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET  (online orders only)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -65,65 +66,6 @@ function getQty(item: CartItem): number {
 // sales_order_id generation everywhere else in this app — keep in sync.
 function canonicalCustomerKey(name: string): string {
   return (name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-const DELIVERY_WINDOW_SYSTEM_PROMPT = `You read a customer's free-text delivery note for a grocery order and extract any delivery deadline they stated.
-
-Return ONLY this JSON, no prose:
-{"deliver_by":"HH:MM"|null,"deliver_after":"HH:MM"|null}
-
-Rules:
-- deliver_by is the LATEST time the order should arrive ("by 4pm", "before 6", "no later than 5:30").
-- deliver_after is the EARLIEST time the order should arrive ("after 6pm", "not before 11am", "only after 2").
-- "between X and Y" sets deliver_after to X and deliver_by to Y.
-- Use 24-hour "HH:MM". If no am/pm is stated and the hour is 1-7, assume PM (a same-day grocery delivery note saying "by 4" means 4pm, never 4am). Hours 8-12 are already unambiguous.
-- If the text states no delivery-time deadline at all (e.g. "no onions please", "ring the bell twice", "leave at the gate"), return {"deliver_by":null,"deliver_after":null}.
-- Never invent a time that isn't actually stated or clearly implied.`;
-
-function asHHMM(v: any): string | null {
-  return typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : null;
-}
-
-async function extractDeliveryWindow(notes: string): Promise<{ deliver_by: string | null; deliver_after: string | null }> {
-  const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 100,
-      system: DELIVERY_WINDOW_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: `Delivery note:\n"${notes.trim()}"` }],
-    }),
-  });
-  const aiData = await anthropicRes.json();
-  if (!anthropicRes.ok) throw new Error(aiData?.error?.message ?? `Anthropic error ${anthropicRes.status}`);
-
-  const raw = aiData.content?.[0]?.text ?? '{}';
-  let parsed: any;
-  try { parsed = JSON.parse(raw); }
-  catch (_) {
-    const m = raw.match(/\{[\s\S]*\}/);
-    parsed = m ? JSON.parse(m[0]) : {};
-  }
-  return { deliver_by: asHHMM(parsed.deliver_by), deliver_after: asHHMM(parsed.deliver_after) };
-}
-
-// Fired via EdgeRuntime.waitUntil AFTER the response has already gone back
-// to the customer — see the call site below. Checkout itself never waits
-// on this, so a slow/failed Claude call can only leave deliver_by/
-// deliver_after unset, never delay or break placing the order.
-async function backgroundSetDeliveryWindow(
-  supabase: ReturnType<typeof createClient>, salesOrderId: string, notes: string,
-): Promise<void> {
-  try {
-    const { deliver_by, deliver_after } = await extractDeliveryWindow(notes);
-    if (!deliver_by && !deliver_after) return;
-    const { error } = await supabase.from('orders')
-      .update({ deliver_by, deliver_after }).eq('sales_order_id', salesOrderId);
-    if (error) console.error(`[place-order] failed to save deliver_by/after for ${salesOrderId}:`, error.message);
-  } catch (e: any) {
-    console.error(`[place-order] delivery-window extraction failed for ${salesOrderId}:`, e.message);
-  }
 }
 
 async function nextSplitSuffix(supabase: ReturnType<typeof createClient>, baseId: string): Promise<number> {
@@ -285,15 +227,6 @@ Deno.serve(async (req) => {
 
     const { error: insertErr } = await supabase.from('order_items').insert(toInsert);
     if (insertErr) throw new Error(insertErr.message);
-
-    // Reading a deadline back out of those notes happens off to the side,
-    // after the response below is already on its way to the customer — see
-    // backgroundSetDeliveryWindow. Skipped when there's no digit in the
-    // text at all, since there's then nothing time-shaped to extract.
-    if (notes && /\d/.test(notes)) {
-      // @ts-ignore — EdgeRuntime is a Supabase Edge Functions / Deno Deploy global, not in the TS lib.
-      EdgeRuntime.waitUntil(backgroundSetDeliveryWindow(supabase, sales_order_id, notes));
-    }
 
     if (method === 'online') {
       const rzp = await createRazorpayLink(orderTotal, customerName, normalPhone, notes || '', sales_order_id);
