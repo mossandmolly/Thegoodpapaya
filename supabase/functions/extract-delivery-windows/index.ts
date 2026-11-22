@@ -54,7 +54,7 @@ Rules:
 - deliver_by is the LATEST time the order should arrive ("by 4pm", "before 6", "no later than 5:30").
 - deliver_after is the EARLIEST time the order should arrive ("after 6pm", "not before 11am", "only after 2").
 - "between X and Y" sets deliver_after to X and deliver_by to Y.
-- Use 24-hour "HH:MM". If no am/pm is stated and the hour is 1-7, assume PM (a same-day grocery delivery note saying "by 4" means 4pm, never 4am). Hours 8-12 are already unambiguous. "noon" is 12:00, "midnight" is 00:00.
+- Use 24-hour "HH:MM". Deliveries only happen between 8:00 and 19:00 (8am-7pm) — so when no am/pm is stated, there is no real ambiguity: resolve the hour to whichever of its two possible readings actually falls within 8:00-19:00. ("by 4" can only mean 16:00, since 4:00 is before delivery hours even start. "by 9" can only mean 09:00, since 21:00 is after delivery hours end.) "noon" is 12:00, "midnight" is 00:00.
 - Vague time-of-day words with no actual clock time ("evening", "tonight", "morning", "ASAP", "soon") are NOT a deadline — only extract when a specific time is actually given.
 - If the text states no delivery-time deadline at all (e.g. "no onions please", "ring the bell twice", "leave at the gate"), return {"deliver_by":null,"deliver_after":null}.
 - Never invent a time that isn't actually stated or clearly implied.`;
