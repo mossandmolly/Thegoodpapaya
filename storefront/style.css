@@ -95,6 +95,8 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .status-col{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
 .invoice-card .status{font-size:10px;font-weight:700;padding:3px 9px;border-radius:10px;text-transform:uppercase}
 .status.pending,.status.overdue{background:#fdeaea;color:#b3261e}
+.status.open{background:#fdf0da;color:#b5762a}
+.approx-note{font-size:11px;color:#a89b8a;margin-top:2px}
 /* Paid is the one status worth celebrating a little — bigger, bolder,
    its own pill shape rather than sharing the small uppercase badge style
    every other status uses. */

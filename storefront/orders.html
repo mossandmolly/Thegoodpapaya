@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>My Orders — The Good Papaya</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="gp-header">
+  <a href="index.html" class="brand">🥭 theGoodPapaya</a>
+  <nav>
+    <a href="invoices.html">My Invoices</a>
+  </nav>
+</header>
+
+<main>
+  <div id="phone-screen">
+    <h2 style="margin-top:0">View your open orders</h2>
+    <div class="form-field">
+      <label>Your phone number</label>
+      <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
+    </div>
+    <button class="btn-primary" id="lookup-btn" onclick="lookup()">View Open Orders</button>
+  </div>
+
+  <div id="results-screen" class="hidden">
+    <h2 style="margin-bottom:4px">Open orders</h2>
+    <div style="font-size:12px;color:#8a7a6a;margin-bottom:16px">Not yet invoiced — once an order is invoiced it moves to <a href="invoices.html" style="color:#2d6b2d;font-weight:700">My Invoices</a> instead.</div>
+    <div id="results"></div>
+    <div style="height:16px"></div>
+    <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// Leafy items (subsection already set via catalog settings) are counted
+// in bunches, not pieces — same convention as the storefront cart/checkout.
+function pieceUnitLabel(row) { return row.subsection === 'Leafy Greens' ? 'bunch' : 'pc'; }
+
+// Piece-mode isn't its own column on order_items — place-order writes it
+// as a "N pieces" prefix on the description (same convention the WhatsApp
+// parser uses), so that's the one signal available to tell a piece-mode
+// line apart from a plain kg one here.
+function isPieceModeRow(row) { return /^\d+(\.\d+)?\s*pieces/i.test(row.description || ''); }
+
+function groupByOrder(rows) {
+  const byOrder = {};
+  rows.forEach(r => {
+    const key = r.sales_order_id;
+    if (!byOrder[key]) byOrder[key] = { ...r, items: [] };
+    byOrder[key].items.push(r);
+  });
+  return Object.values(byOrder).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+}
+
+function formatOrderDate(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const datePart = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+  const timePart = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+  return datePart + ', ' + timePart;
+}
+
+let hasLookedUp = false;
+
+function showPhoneScreen() {
+  document.getElementById('phone-screen').classList.remove('hidden');
+  document.getElementById('results-screen').classList.add('hidden');
+  document.getElementById('phone').value = '';
+  document.getElementById('phone').focus();
+}
+
+async function lookup() {
+  const phoneInput = document.getElementById('phone').value.trim();
+  if (!/^\d{10}$/.test(phoneInput)) {
+    document.getElementById('results').innerHTML = '<div class="err-box show">Please enter a valid 10-digit phone number.</div>';
+    document.getElementById('phone-screen').classList.add('hidden');
+    document.getElementById('results-screen').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('phone-screen').classList.add('hidden');
+  document.getElementById('results-screen').classList.remove('hidden');
+  hasLookedUp = true;
+  const btn = document.getElementById('lookup-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Looking up…';
+  const results = document.getElementById('results');
+  results.innerHTML = '';
+
+  try {
+    let { data, error } = await sb.rpc('get_open_orders_by_phone', { p_phone: phoneInput });
+    if (!error && (!data || !data.length)) {
+      ({ data, error } = await sb.rpc('get_open_orders_by_phone', { p_phone: '+91' + phoneInput }));
+    }
+    if (error) throw new Error(error.message);
+
+    if (!data || !data.length) {
+      results.innerHTML = '<div class="empty-state">No open orders right now. <a href="index.html" style="color:#2d6b2d;font-weight:700">Place an order →</a></div>';
+      return;
+    }
+
+    const orders = groupByOrder(data);
+
+    results.innerHTML = orders.map(order => {
+      let approxTotal = 0;
+      let totalIsApprox = false;
+      let hasUnestimable = false;
+      const rows = order.items.map(i => {
+        const qty = +i.requested_quantity || 0;
+        const piece = isPieceModeRow(i);
+        const unitPrice = i.unit_price != null ? +i.unit_price : null;
+        let approxValue = null;
+        let unitLabel;
+        if (piece) {
+          unitLabel = pieceUnitLabel(i);
+          if (unitPrice != null && i.piece_approx_kg != null) {
+            approxValue = unitPrice * (+i.piece_approx_kg) * qty;
+          }
+        } else {
+          unitLabel = i.unit || 'kg';
+          if (unitPrice != null) approxValue = unitPrice * qty;
+        }
+        if (approxValue != null) { approxTotal += approxValue; totalIsApprox = true; }
+        else hasUnestimable = true;
+        return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+' '+escH(unitLabel)+'</td>' +
+          '<td>'+(approxValue != null ? '~₹'+approxValue.toFixed(0) : '🧾 at packing')+'</td></tr>';
+      }).join('');
+
+      const totalLabel = totalIsApprox
+        ? '~₹'+approxTotal.toFixed(0)+(hasUnestimable ? ' + packing items' : '')
+        : 'Priced at packing';
+
+      return '<div class="invoice-card">' +
+        '<div class="row1">' +
+          '<span class="inv-num">Order placed '+escH(formatOrderDate(order.created_at))+'</span>' +
+          '<span class="status open">Open</span>' +
+        '</div>' +
+        '<table class="inv-items">' +
+          '<thead><tr><th>Item</th><th>Qty</th><th>Approx value</th></tr></thead>' +
+          '<tbody>'+rows+'</tbody>' +
+          '<tfoot><tr class="total-row"><td colspan="2">Approx total</td><td>'+totalLabel+'</td></tr></tfoot>' +
+        '</table>' +
+        '<div class="approx-note">Prices shown are estimates — the final amount will be based on actual weight at packing.</div>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    results.innerHTML = '<div class="err-box show">Could not load open orders: '+escH(e.message)+'</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'View Open Orders';
+  }
+}
+
+document.getElementById('phone').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+</script>
+</body>
+</html>
