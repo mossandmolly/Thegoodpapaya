@@ -110,7 +110,7 @@ async function renderSocietySuggestions() {
   const q = document.getElementById('society').value.trim().toLowerCase();
   if (!q) { box.classList.add('hidden'); box.innerHTML = ''; return; }
   const list = await loadVerifiedSocieties();
-  const matches = list.filter(n => n.toLowerCase().includes(q)).slice(0, 8);
+  const matches = list.filter(n => n.toLowerCase().includes(q)).slice(0, 20);
   if (!matches.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
   box.innerHTML = matches.map(n =>
     '<div class="society-suggestion" onclick="selectSociety('+escH(JSON.stringify(n))+')">'+escH(n)+'</div>'
