@@ -15,22 +15,24 @@
   </nav>
 </header>
 
-<main>
-  <div id="phone-screen">
-    <h2 style="margin-top:0">View your open orders</h2>
+<div class="phone-modal-overlay hidden" id="phone-modal">
+  <div class="phone-modal-box">
+    <h2>View your open orders</h2>
     <div class="form-field">
       <label>Your phone number</label>
       <input type="tel" id="phone" placeholder="10-digit mobile number" maxlength="10" autocomplete="off">
     </div>
     <button class="btn-primary" id="lookup-btn" onclick="lookup()">View Open Orders</button>
   </div>
+</div>
 
+<main>
   <div id="results-screen" class="hidden">
     <h2 style="margin-bottom:4px">Open orders</h2>
     <div style="font-size:12px;color:#8a7a6a;margin-bottom:16px">Not yet invoiced — once an order is invoiced it moves to <a href="invoices.html" style="color:#2d6b2d;font-weight:700">My Invoices</a> instead.</div>
     <div id="results"></div>
     <div style="height:16px"></div>
-    <a href="#" id="change-number-link" onclick="showPhoneScreen();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
+    <a href="#" id="change-number-link" onclick="showPhoneModal();return false;" style="font-size:13px;color:#8a7a6a">Not you? Use a different number</a>
   </div>
 </main>
 
@@ -69,22 +71,28 @@ function formatOrderDate(iso) {
 
 let hasLookedUp = false;
 
-function showPhoneScreen() {
-  document.getElementById('phone-screen').classList.remove('hidden');
+// Phone entry is a popup, not a full page section — only shown when this
+// device has no remembered number yet (see config.js).
+function showPhoneModal() {
+  document.getElementById('phone-modal').classList.remove('hidden');
   document.getElementById('results-screen').classList.add('hidden');
   document.getElementById('phone').value = '';
   document.getElementById('phone').focus();
 }
+function hidePhoneModal() {
+  document.getElementById('phone-modal').classList.add('hidden');
+}
 
-async function lookup() {
-  const phoneInput = document.getElementById('phone').value.trim();
+async function lookup(phoneArg) {
+  const phoneInput = phoneArg || document.getElementById('phone').value.trim();
   if (!/^\d{10}$/.test(phoneInput)) {
     document.getElementById('results').innerHTML = '<div class="err-box show">Please enter a valid 10-digit phone number.</div>';
-    document.getElementById('phone-screen').classList.add('hidden');
+    hidePhoneModal();
     document.getElementById('results-screen').classList.remove('hidden');
     return;
   }
-  document.getElementById('phone-screen').classList.add('hidden');
+  setKnownPhone(phoneInput);
+  hidePhoneModal();
   document.getElementById('results-screen').classList.remove('hidden');
   hasLookedUp = true;
   const btn = document.getElementById('lookup-btn');
@@ -158,6 +166,17 @@ async function lookup() {
 }
 
 document.getElementById('phone').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+
+// Straight to results if this device already has a known number (entered
+// once before, here or at checkout) — the popup only ever shows up when
+// there's genuinely nothing to go on yet.
+const rememberedPhone = getKnownPhone();
+if (rememberedPhone) {
+  document.getElementById('phone').value = rememberedPhone;
+  lookup(rememberedPhone);
+} else {
+  showPhoneModal();
+}
 </script>
 </body>
 </html>

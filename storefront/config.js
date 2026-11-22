@@ -97,4 +97,20 @@ function hasTodaysOrder() {
   } catch { return false; }
 }
 
+// ── Known phone number (this device only) ─────────────────────────────────
+// "History" here means: has this browser ever entered a phone number on
+// our site before — checkout, or a My Orders/My Invoices lookup — not
+// actual browser navigation history. Shared across every page that asks
+// for a phone number, so entering it once anywhere means never being
+// asked again on this device, until they explicitly use a different number.
+const KNOWN_PHONE_KEY = 'gp_known_phone_v1';
+
+function getKnownPhone() {
+  try { return localStorage.getItem(KNOWN_PHONE_KEY) || null; } catch { return null; }
+}
+
+function setKnownPhone(phone) {
+  try { localStorage.setItem(KNOWN_PHONE_KEY, phone); } catch {}
+}
+
 document.addEventListener('DOMContentLoaded', updateCartBadge);
