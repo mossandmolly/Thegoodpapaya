@@ -44,28 +44,18 @@
     <textarea id="notes" rows="2" placeholder="Delivery instructions, ripeness preference, etc."></textarea>
   </div>
 
-  <div class="form-field">
-    <label>Payment</label>
-    <div class="pay-toggle">
-      <div class="pay-opt" data-method="cod" onclick="setMethod('cod')">
-        <div class="t">💵 Pay on Delivery</div>
-        <div class="s">Cash or UPI at the door</div>
-      </div>
-      <div class="pay-opt active" data-method="online" onclick="setMethod('online')">
-        <div class="t">💳 Pay Now</div>
-        <div class="s">Secure online payment</div>
-      </div>
-    </div>
-  </div>
-
-  <button class="btn-primary" id="place-btn" onclick="placeOrder()">Place Order</button>
+  <!-- Pay Now parked for later (full history in git) — single COD-style
+       flow for now, no payment choice to make at checkout. -->
+  <button class="btn-primary" id="place-btn" onclick="placeOrder()">Confirm order</button>
+  <div style="text-align:center;font-size:12px;color:#8a7a6a;margin-top:10px">You can view and pay invoices on the <a href="invoices.html" style="color:#2d6b2d;font-weight:700">My Invoices</a> page once your order is ready.</div>
   <div style="height:80px"></div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
 <script>
-let method = 'online';
+// Pay Now is parked for now — always COD until it's back.
+const method = 'cod';
 let catalogPrices = {};
 
 function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -87,11 +77,6 @@ function markInvalid(id,bad){
 ['society','door','phone'].forEach(id=>{
   document.getElementById(id).addEventListener('input',()=>markInvalid(id,false));
 });
-
-function setMethod(m) {
-  method = m;
-  document.querySelectorAll('.pay-opt').forEach(o => o.classList.toggle('active', o.dataset.method === m));
-}
 
 // ── Society search (string-contains, verified names only) ────────────────
 // communities.name gets junk auto-added from every typo'd order address —
@@ -191,11 +176,6 @@ function renderCart() {
   // piece_approx_kg on file for it) — kept as its own caveat rather than
   // silently treating it as ₹0.
   let hasUnestimable = false;
-  // Separate from hasUnestimable: the online-payment restriction below
-  // is a COD-until-weighed policy call, not a pricing-data gap, so it
-  // still keys off "any piece item" regardless of whether we can show
-  // an estimate for it.
-  const hasPieceItem = cart.some(i => i.mode === 'piece');
   list.innerHTML = cart.map(i => {
     const p = catalogPrices[i.item_name];
     if (i.mode === 'piece') {
@@ -232,18 +212,6 @@ function renderCart() {
   document.getElementById('subtotal').textContent = totalText;
   document.getElementById('total').textContent = totalText;
   document.getElementById('place-btn').disabled = false;
-
-  // Piece-mode items have no confirmed price yet, so there's nothing to
-  // charge upfront — prepay is COD-only whenever any are in the basket.
-  const onlineOpt = document.querySelector('.pay-opt[data-method="online"]');
-  if (onlineOpt) {
-    onlineOpt.classList.toggle('disabled', hasPieceItem);
-    onlineOpt.onclick = hasPieceItem ? null : function(){ setMethod('online'); };
-    onlineOpt.querySelector('.s').textContent = hasPieceItem
-      ? 'Unavailable — basket has items priced at packing'
-      : 'Secure online payment';
-  }
-  if (hasPieceItem && method === 'online') setMethod('cod');
 }
 
 async function placeOrder() {
