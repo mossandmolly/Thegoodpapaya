@@ -60,6 +60,7 @@ const SKIP_IF_UNDER_BYTES = 250_000;  // already small enough — leave it alone
 // risking a hard worker crash (which skips every other image in the same
 // batch too, not just the oversized one).
 const MAX_SOURCE_BYTES = 8_000_000;
+const MAX_PIXELS       = 6_000_000; // ~6MP — generous for anything that only needs resizing down to 800px anyway
 const BATCH_SIZE       = 5; // items touched per invocation (success OR error), to stay well inside memory/time limits
 
 function storagePathFromPublicUrl(url: string): string | null {
@@ -67,6 +68,56 @@ function storagePathFromPublicUrl(url: string): string | null {
   const idx = url.indexOf(marker);
   if (idx === -1) return null;
   return decodeURIComponent(url.slice(idx + marker.length).split('?')[0]);
+}
+
+// Decoded memory use is driven by width×height, NOT file size — a simple,
+// highly-compressible image (e.g. a screenshot with big flat colour
+// areas) can be a couple MB on disk yet decode to 100MB+ of raw pixels,
+// which is almost certainly what actually crashed the first real
+// backfill run even though every file was under MAX_SOURCE_BYTES. Reads
+// just the first chunk of the file via a Range request and parses
+// width/height straight out of the PNG/JPEG header, without ever calling
+// the expensive full decode. Returns null (not every format is handled —
+// callers fall back to the file-size gate) if the format isn't
+// recognized or the header couldn't be parsed from that chunk.
+async function sniffDimensions(url: string): Promise<{ width: number; height: number } | null> {
+  const res = await fetch(url, { headers: { Range: 'bytes=0-131071' } });
+  if (!res.ok && res.status !== 206) return null;
+  const buf = new Uint8Array(await res.arrayBuffer());
+
+  // PNG: 8-byte signature, then the IHDR chunk — width/height sit at a
+  // fixed offset right after its 4-byte length + 4-byte "IHDR" type.
+  if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    const width  = (buf[16] << 24) | (buf[17] << 16) | (buf[18] << 8) | buf[19];
+    const height = (buf[20] << 24) | (buf[21] << 16) | (buf[22] << 8) | buf[23];
+    return { width, height };
+  }
+
+  // JPEG: walk the marker segments looking for a Start Of Frame (SOF),
+  // which carries height/width 3 bytes into its payload. Standalone
+  // markers (RST0-7, SOI, TEM) have no length field and no payload to
+  // skip over; every other marker's segment length tells us where the
+  // next one starts.
+  if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i++; continue; }
+      const marker = buf[i + 1];
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+      if (i + 4 > buf.length) break;
+      const segLen = (buf[i + 2] << 8) | buf[i + 3];
+      const isSOF = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+      if (isSOF) {
+        const height = (buf[i + 5] << 8) | buf[i + 6];
+        const width  = (buf[i + 7] << 8) | buf[i + 8];
+        return { width, height };
+      }
+      i += 2 + segLen;
+    }
+    return null; // SOF segment wasn't within the fetched range
+  }
+
+  return null;
 }
 
 Deno.serve(async (req) => {
@@ -121,6 +172,23 @@ Deno.serve(async (req) => {
         } else if (head.ok && len > MAX_SOURCE_BYTES) {
           throw new Error(`source photo is ${(len / 1_000_000).toFixed(1)}MB — too large to safely resize here; re-upload a smaller photo for this item instead`);
         } else {
+          // Pixel-count gate, not just file size — see sniffDimensions.
+          const dims = await sniffDimensions(url);
+          if (dims && dims.width * dims.height > MAX_PIXELS) {
+            throw new Error(`source photo is ${dims.width}x${dims.height} (~${(dims.width * dims.height / 1_000_000).toFixed(1)}MP) — too large to safely resize here; re-upload a smaller photo for this item instead`);
+          }
+
+          // Last-resort safety net: mark this item checked BEFORE the
+          // decode, not after — a crash here (an unanticipated format or
+          // dimensions neither gate above caught) would otherwise leave
+          // this exact item stuck being retried, and therefore crashing,
+          // on every single future call forever. Worst case it's silently
+          // skipped (no entry in compressed/alreadySmall/errors below)
+          // rather than reported, but the batch can never get wedged on it.
+          await supabase.from('catalog')
+            .update({ image_backfill_checked_at: new Date().toISOString() })
+            .eq('item_name', itemName);
+
           const res = await fetch(url);
           if (!res.ok) throw new Error(`fetch ${res.status}`);
           const bytes = new Uint8Array(await res.arrayBuffer());
