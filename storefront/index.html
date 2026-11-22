@@ -312,34 +312,17 @@ function renderLiveCart() {
 
   const catalogByName = {};
   catalog.forEach(c => catalogByName[c.item_name] = c);
-  let subtotal = 0;
-  let subtotalIsApprox = false;
-  // Only true for a piece-mode item with no piece_approx_kg on file —
-  // can't even estimate it, so it stays out of the bill as its own caveat.
-  let hasUnestimable = false;
 
   listEl.innerHTML = [...cart].reverse().map(i => {
     const c = catalogByName[i.item_name];
     const pieceEligible = !!(c && c.sold_by_piece);
     const mode = i.mode || 'kg';
     // Item rows show the plain rate only — no computed/estimated value and
-    // no "approx"/"exact at packing" wording at this level; that framing
-    // belongs on the Checkout button's aggregate bill only (see billLine
-    // below). unit_price is always per-kg, even for piece-mode items.
+    // no "approx"/"exact at packing" wording at this level; the Checkout
+    // button itself just shows the item count now, no amount at all.
+    // unit_price is always per-kg, even for piece-mode items.
     let rateLabel = '';
     if (c && c.unit_price != null) rateLabel = '₹'+c.unit_price.toFixed(0)+'/'+(c.unit||'kg');
-    if (mode === 'piece') {
-      // Approx piece price = rate × est. kg/piece × qty — feeds only the
-      // aggregate bill total, never shown per-row.
-      if (c && c.piece_approx_kg && c.unit_price != null) {
-        subtotal += c.unit_price * c.piece_approx_kg * i.quantity;
-        subtotalIsApprox = true;
-      } else {
-        hasUnestimable = true;
-      }
-    } else if (c) {
-      subtotal += c.unit_price * i.quantity;
-    }
     const stepSize = mode === 'piece' ? 1 : 0.25;
 
     const unitToggle = pieceEligible
@@ -373,11 +356,8 @@ function renderLiveCart() {
     '</div>';
   }).join('');
 
-  let billLine = '';
-  if (subtotal > 0) billLine = 'Your '+(subtotalIsApprox?'approx ':'')+'bill ₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
-  else if (hasUnestimable) billLine = 'Priced at packing';
   footerEl.innerHTML =
-    '<a href="checkout.html" class="btn-primary checkout-cta">Checkout'+(billLine?'<span class="bill">'+billLine+'</span>':'')+'</a>';
+    '<a href="checkout.html" class="btn-primary checkout-cta">Checkout ('+cart.length+' item'+(cart.length!==1?'s':'')+')</a>';
 
   if (quicklistEl) {
     quicklistEl.innerHTML = '<div class="label">Cart summary</div>' +

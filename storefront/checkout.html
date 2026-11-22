@@ -225,8 +225,7 @@ function renderCart() {
   document.getElementById('item-count').textContent = cart.length;
   const totalText = (subtotalIsApprox?'~':'')+'₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
   document.getElementById('subtotal').textContent = totalText;
-  document.getElementById('total-fine-print').textContent =
-    (subtotalIsApprox || hasUnestimable) ? '(approx total, actual to be calculated post packaging)' : '';
+  document.getElementById('total-fine-print').textContent = '(approx total, actual to be calculated post packaging)';
   document.getElementById('place-btn').disabled = false;
 }
 
