@@ -418,6 +418,10 @@ document.getElementById('search').addEventListener('input', () => {
   searchRenderTimer = setTimeout(render, 150);
 });
 load();
+// Fired once here, not inside load() itself — load() also re-runs on a
+// bfcache restore (see the pageshow listener below), which isn't a new
+// page visit and shouldn't be double-counted as one.
+trackEvent('catalog_viewed', {});
 
 // Mobile browsers (notably in-app browsers like WhatsApp's) often restore
 // a page from back/forward cache instead of reloading it when you

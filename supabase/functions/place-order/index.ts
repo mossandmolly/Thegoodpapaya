@@ -181,7 +181,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { cart, society, door_number, phone, notes, payment_method } = await req.json();
+    const { cart, society, door_number, phone, notes, payment_method, device_id } = await req.json();
 
     if (!cart?.length)  throw new Error('No items in cart');
     if (!society)       throw new Error('Missing society name');
@@ -305,6 +305,22 @@ Deno.serve(async (req) => {
 
     const { error: insertErr } = await supabase.from('order_items').insert(toInsert);
     if (insertErr) throw new Error(insertErr.message);
+
+    // Funnel tracking (storefront_events, migration 165) — written here,
+    // server-side, rather than relying on the browser to log it after the
+    // fact on order-confirmed.html: that page is one more redirect/hop
+    // away (and skipped entirely on the online-payment path, which goes
+    // to Razorpay first), so logging it only there would under-count real
+    // completed orders. Never allowed to affect the actual order response.
+    if (device_id) {
+      try {
+        await supabase.from('storefront_events').insert({
+          device_id, event_type: 'order_placed',
+          phone: normalPhone, society: String(society).trim(), door_number: String(door_number).trim(),
+          sales_order_id,
+        });
+      } catch (_e) { /* best-effort only */ }
+    }
 
     if (method === 'online') {
       const rzp = await createRazorpayLink(orderTotal, customerName, normalPhone, notes || '', sales_order_id);
