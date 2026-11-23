@@ -687,12 +687,19 @@ Deno.serve(async (req) => {
         .from('orders').select('razorpay_link_id, razorpay_url')
         .eq('sales_order_id', sales_order_id).maybeSingle();
       const paymentStatus = balanceDue <= 0 ? 'paid' : (amountPaid > 0 ? 'partially_paid' : 'pending');
-      const iliRows = lineItems.map(li => ({
+      // line_number = position within THIS invoice's own line items, not
+      // the item name — invoice_line_items' uniqueness is keyed on
+      // (zoho_invoice_id, line_number) (migration 166), specifically so
+      // two lines that happen to share an item name (a real, legitimate
+      // case — see the DUPLICATE/held flow) don't collide and silently
+      // fail the whole insert the way keying on item_name used to.
+      const iliRows = lineItems.map((li, line_number) => ({
         customer_name:      order.customer_name,
         phone_number:       order.phone || null,
         invoice_date:       invoiceDate,
         invoice_number,
         zoho_invoice_id:    invoice_id,
+        line_number,
         item_name:          li.name,
         requested_quantity: li.requested_qty,
         final_quantity:     li.qty,
@@ -720,8 +727,11 @@ Deno.serve(async (req) => {
       if (iliError) console.error(`invoice_line_items write failed for ${invoice_id}:`, iliError.message);
     } catch (e: any) {
       // Best-effort — the Zoho invoice and orders update above already
-      // succeeded; sync-invoices will still pick this up on its own next
-      // run either way, just not instantly.
+      // succeeded. This app doesn't run sync-invoices, so this write is
+      // the ONLY path that ever populates invoice_line_items — a failure
+      // here means the customer-facing invoices page won't show this
+      // invoice until generate-invoice runs again for this order
+      // (regenerating), not until some other job picks it up.
       console.error(`invoice_line_items write failed for ${invoice_id}:`, e.message);
     }
 
