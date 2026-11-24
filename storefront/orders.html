@@ -129,17 +129,24 @@ async function lookup(phoneArg) {
       let approxTotal = 0;
       let totalIsApprox = false;
       let hasUnestimable = false;
-      // kg, piece, and box all price the same way now — unit_price is a
-      // flat rate for whatever unit this item is actually sold in, with
-      // no bearing on weight, so the value is always just rate × qty.
-      // piece_approx_kg/box_approx_kg play no part in this at all.
+      // kg, box, and a true discrete piece are flat-rate — Zoho's own
+      // rate for whatever unit it's sold in, no bearing on weight, so the
+      // value is just rate × qty. Leafy bunches are the one exception
+      // within piece mode: those still convert via piece_approx_kg,
+      // because unit_price for them really is a per-kg rate.
       const rows = order.items.map(i => {
         const qty = +i.requested_quantity || 0;
         const piece = isPieceModeRow(i);
         const box = isBoxModeRow(i);
+        const isBunch = piece && i.subsection === 'Leafy Greens';
         const unitPrice = i.unit_price != null ? +i.unit_price : null;
         const unitLabel = piece ? pieceUnitLabel(i) : box ? 'box' : (i.unit || 'kg');
-        const value = unitPrice != null ? unitPrice * qty : null;
+        let value;
+        if (isBunch) {
+          value = (unitPrice != null && i.piece_approx_kg != null) ? unitPrice * (+i.piece_approx_kg) * qty : null;
+        } else {
+          value = unitPrice != null ? unitPrice * qty : null;
+        }
         if (value != null) { approxTotal += value; totalIsApprox = true; }
         else hasUnestimable = true;
         return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+' '+escH(unitLabel)+'</td>' +
