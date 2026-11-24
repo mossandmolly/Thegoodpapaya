@@ -194,6 +194,11 @@ function unitModeLabel(mode, c) {
   if (mode === 'box') return 'box';
   return 'kg';
 }
+// Box items are box-ONLY — kg/piece aren't offered as alternatives at
+// all (unlike piece-eligible items, which still default to kg until the
+// customer taps to switch) — so a box item has to start life in 'box'
+// mode, not 'kg', or its quantity would be added as if it were kg.
+function defaultModeFor(c) { return c && c.sold_by_box ? 'box' : 'kg'; }
 
 function render() {
   const search = document.getElementById('search').value.trim().toLowerCase();
@@ -274,7 +279,7 @@ function bumpItem(item_name) {
   const cart = getCart();
   const existing = cart.find(i => i.item_name === item_name);
   const inCart = !!(existing && existing.quantity > 0);
-  setCartQty(item_name, inCart ? 0 : 1, existing ? existing.mode : 'kg');
+  setCartQty(item_name, inCart ? 0 : 1, existing ? existing.mode : defaultModeFor(c));
   updateCardBadge(item_name);
   const el = document.querySelector('.item-card[data-item="'+CSS.escape(item_name)+'"]');
   if (el) {
@@ -338,21 +343,20 @@ function renderLiveCart() {
     if (c && c.unit_price != null) rateLabel = '₹'+c.unit_price.toFixed(0)+'/'+(c.unit||'kg');
     const stepSize = (mode === 'piece' || mode === 'box') ? 1 : 0.25;
 
-    // Offers whichever of piece/box this item is actually eligible for
-    // (normally just one or the other, never both) alongside kg — not a
-    // choice to make at all if it's only ever sold by weight, in which
-    // case this just shows "kg" with nothing to tap.
-    const modeOptions = [];
-    if (c && c.sold_by_piece) modeOptions.push('piece');
-    if (c && c.sold_by_box) modeOptions.push('box');
-    modeOptions.push('kg');
+    // Box is exclusive — kg/piece aren't offered as alternatives at all
+    // for a box item, unlike piece (which still offers kg as a fallback).
+    // Not a choice to make at all if it's only ever sold by weight either,
+    // in which case this just shows "kg" with nothing to tap.
+    const modeOptions = (c && c.sold_by_box) ? ['box']
+      : (c && c.sold_by_piece) ? ['piece', 'kg']
+      : ['kg'];
     const unitToggle = modeOptions.length > 1
       ? '<div class="unit-toggle">'+
           modeOptions.map(opt =>
             '<span class="'+(mode===opt?'active':'')+'" onclick="setItemMode('+escH(JSON.stringify(i.item_name))+','+escH(JSON.stringify(opt))+')">'+unitModeLabel(opt,c)+'</span>'
           ).join('')+
         '</div>'
-      : '<div class="unit-toggle"><span class="active" style="cursor:default">kg</span></div>';
+      : '<div class="unit-toggle"><span class="active" style="cursor:default">'+unitModeLabel(modeOptions[0],c)+'</span></div>';
 
     return '<div class="cart-live-row">' +
       '<div class="row-top">' +
