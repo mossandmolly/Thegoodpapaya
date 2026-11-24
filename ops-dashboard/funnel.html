@@ -40,6 +40,10 @@ body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-he
 
 .dash-layout{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;}
 @media(max-width:900px){.dash-layout{grid-template-columns:1fr;}}
+.dash-layout3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;}
+@media(max-width:900px){.dash-layout3{grid-template-columns:1fr;}}
+.stage-list-title{font-size:12px;font-weight:700;margin-bottom:8px;}
+.stage-list-title span{font-size:10px;font-weight:500;color:var(--muted2);font-family:'DM Mono',monospace;margin-left:6px;}
 
 .funnel-row{display:grid;grid-template-columns:140px 1fr 150px;gap:10px;align-items:center;padding:8px 0;}
 .funnel-label{font-size:12px;font-weight:700;}
@@ -96,6 +100,40 @@ tr:hover td{background:var(--s2);}
         <div class="section-title">Where non-converters get stuck</div>
         <div class="section-sub">Furthest step reached by devices that never placed an order, in this window.</div>
         <div id="dropoffBars"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Who abandoned, and where</div>
+      <div class="section-sub">Same non-converting devices as above, split into the three stages that matter day to day. Phone/society only show up once a visitor actually typed them in — a device stuck at "Viewed catalog only" is always anonymous.</div>
+      <div class="dash-layout3">
+        <div>
+          <div class="stage-list-title">👀 Viewed catalog only<span id="catalogOnlyCount"></span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Last seen</th><th>Phone</th><th>Society / Door</th></tr></thead>
+              <tbody id="catalogOnlyTbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div class="stage-list-title">🛒 Added to cart, no checkout<span id="cartAbandonedCount"></span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Last seen</th><th>Phone</th><th>Society / Door</th><th>Items</th></tr></thead>
+              <tbody id="cartAbandonedTbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div class="stage-list-title">💳 Reached checkout, no order<span id="checkoutAbandonedCount"></span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Last seen</th><th>Phone</th><th>Society / Door</th><th>Items</th></tr></thead>
+              <tbody id="checkoutAbandonedTbody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -267,6 +305,40 @@ function render() {
     '</div>';
   }).join('') || '<div class="empty">No non-converting devices in this window.</div>';
 
+  // ── Who abandoned, and where — same furthestByDevice buckets as above,
+  // collapsed to the 3 stages that matter day to day (phone_entered and
+  // society_entered both count as "stuck at checkout" here, since by
+  // then they're already in the checkout flow). Phone/society come from
+  // whatever that device actually typed in across any of its events —
+  // null for most of the catalog/cart buckets, since those visitors never
+  // got that far.
+  const deviceLastSeen = {}, devicePhone = {}, deviceSociety = {}, deviceDoor = {};
+  rows.forEach(r => {
+    if (orderedDeviceSet.has(r.device_id)) return;
+    if (!deviceLastSeen[r.device_id] || r.created_at > deviceLastSeen[r.device_id]) deviceLastSeen[r.device_id] = r.created_at;
+    if (r.phone) devicePhone[r.device_id] = r.phone;
+    if (r.society) deviceSociety[r.device_id] = r.society;
+    if (r.door_number) deviceDoor[r.device_id] = r.door_number;
+  });
+
+  const bucketDevices = { catalog: [], cart: [], checkout: [] };
+  Object.entries(furthestByDevice).forEach(([deviceId, idx]) => {
+    bucketDevices[idx === 0 ? 'catalog' : idx === 1 ? 'cart' : 'checkout'].push(deviceId);
+  });
+
+  function renderStageList(elId, countElId, deviceIds, showItems, itemsByDevice) {
+    const sorted = deviceIds.slice().sort((a, b) => (deviceLastSeen[b] || '').localeCompare(deviceLastSeen[a] || ''));
+    const cols = showItems ? 4 : 3;
+    document.getElementById(elId).innerHTML = sorted.length ? sorted.map(d =>
+      '<tr><td>' + escH(formatDt(deviceLastSeen[d])) + '</td>' +
+      '<td>' + escH(devicePhone[d] || '—') + '</td>' +
+      '<td>' + escH([deviceSociety[d], deviceDoor[d]].filter(Boolean).join(' / ') || '—') + '</td>' +
+      (showItems ? '<td>' + escH((itemsByDevice[d] || []).join(', ') || '—') + '</td>' : '') +
+      '</tr>'
+    ).join('') : '<tr><td colspan="' + cols + '" class="empty">None in this window.</td></tr>';
+    document.getElementById(countElId).textContent = sorted.length ? '(' + sorted.length + ')' : '';
+  }
+
   // ── Abandoned basket contents — last action per (device,item), kept
   // only where that last action was "added" and the device never ordered.
   const lastActionPerItem = {}; // device_id|item_name -> {event_type, created_at}
@@ -286,6 +358,15 @@ function render() {
   document.getElementById('abandonedTbody').innerHTML = abandonedRows.length
     ? abandonedRows.map(([name, n]) => '<tr><td>'+escH(name)+'</td><td>'+n+'</td></tr>').join('')
     : '<tr><td colspan="2" class="empty">Nothing abandoned in this window.</td></tr>';
+
+  const basketItemsByDevice = {};
+  Object.values(lastActionPerItem).forEach(e => {
+    if (e.event_type !== 'item_added') return;
+    (basketItemsByDevice[e.device_id] = basketItemsByDevice[e.device_id] || []).push(e.item_name);
+  });
+  renderStageList('catalogOnlyTbody', 'catalogOnlyCount', bucketDevices.catalog, false, null);
+  renderStageList('cartAbandonedTbody', 'cartAbandonedCount', bucketDevices.cart, true, basketItemsByDevice);
+  renderStageList('checkoutAbandonedTbody', 'checkoutAbandonedCount', bucketDevices.checkout, true, basketItemsByDevice);
 
   // ── Most added to cart (all devices, converted or not) ──────────────────
   const addedCounts = {}; // item_name -> {events, devices:Set}
