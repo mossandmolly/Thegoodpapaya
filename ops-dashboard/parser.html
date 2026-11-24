@@ -1472,7 +1472,7 @@ Banana, 15, 450"></textarea>
     </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx kg/piece</th><th>Sold by box</th><th>Approx kg/box</th>
+        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx pieces/kg</th><th>Sold by box</th><th>Approx kg/box</th>
       </tr></thead><tbody id="catalog-settings-tbody"></tbody></table>
     </div>
     <datalist id="subsection-options"></datalist>
@@ -2057,6 +2057,18 @@ async function renderConfig(){
 // are read live by storefront/index.html on every page load.
 let catalogSettingsCache=[];
 
+// catalog.piece_approx_kg stores kg-per-piece (what the pricing formula
+// actually uses) — this just lets it be entered as pieces-per-kg instead
+// (easier to estimate) and converts. The DB column itself is unchanged.
+function approxKgToPerKg(approxKg){
+  const n=parseFloat(approxKg);
+  return (!n||n<=0)?'':+(1/n).toFixed(2);
+}
+function perKgToApproxKg(perKg){
+  const n=parseFloat(perKg);
+  return (!n||n<=0)?null:+(1/n).toFixed(4);
+}
+
 async function loadCatalogSettingsConfig(){
   const{data,error}=await sb.from('catalog')
     .select('item_name,category,subsection,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg')
@@ -2108,9 +2120,9 @@ function renderCatalogSettingsTable(){
       '<td style="text-align:center"><input type="checkbox" '+(soldByPiece?'checked':'')+' '+
         'onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'sold_by_piece\',this.checked,this);'+
         'this.closest(\'tr\').querySelector(\'.piece-kg-input\').disabled=!this.checked;"></td>'+
-      '<td><input type="number" class="piece-kg-input" step="0.01" min="0" style="max-width:100px" '+
-        'value="'+(c.piece_approx_kg??'')+'" '+(soldByPiece?'':'disabled')+' '+
-        'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'piece_approx_kg\',this.value===\'\'?null:parseFloat(this.value),this)"></td>'+
+      '<td><input type="number" class="piece-kg-input" step="0.1" min="0" style="max-width:100px" '+
+        'value="'+approxKgToPerKg(c.piece_approx_kg)+'" '+(soldByPiece?'':'disabled')+' '+
+        'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'piece_approx_kg\',perKgToApproxKg(this.value),this)"></td>'+
       '<td style="text-align:center"><input type="checkbox" '+(soldByBox?'checked':'')+' '+
         'onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'sold_by_box\',this.checked,this);'+
         'this.closest(\'tr\').querySelector(\'.box-kg-input\').disabled=!this.checked;"></td>'+
