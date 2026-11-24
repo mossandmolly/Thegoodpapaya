@@ -3,23 +3,3 @@
 # straight to Supabase from the browser, so no Netlify Functions needed here.
 [build]
   publish = "."
-
-# Catalog temporarily hidden — storefront is invoices-only for now.
-# Revert by deleting this block (index.html/checkout.html are untouched).
-[[redirects]]
-  from = "/"
-  to = "/invoices.html"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/index.html"
-  to = "/invoices.html"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/checkout.html"
-  to = "/invoices.html"
-  status = 200
-  force = true
