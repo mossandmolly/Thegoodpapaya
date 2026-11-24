@@ -231,56 +231,46 @@ function renderCart() {
   // approx-kg on file for it) — kept as its own caveat rather than
   // silently treating it as ₹0.
   let hasUnestimable = false;
-  list.innerHTML = cart.map(i => {
+  const rows = cart.map(i => {
     const p = catalogPrices[i.item_name];
+    let qtyLabel, rateLabel, amount;
+    let amountIsApprox = false;
+
     if (i.mode === 'piece') {
-      // unit_price is per-kg here — approx price = rate × est. kg/piece ×
+      // unit_price is per-kg here — approx amount = rate × est. kg/piece ×
       // qty. Exact amount is only known once actually weighed at packing,
-      // hence "~" and the note, not a firm number.
-      const hasApprox = !!p?.piece_approx_kg;
-      const approxWeight = hasApprox ? ' (~'+(i.quantity * p.piece_approx_kg).toFixed(2)+'kg)' : '';
-      const approxPrice = (hasApprox && p?.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null;
-      if (approxPrice != null) { subtotal += approxPrice; subtotalIsApprox = true; }
-      else hasUnestimable = true;
-      const priceLabel = approxPrice != null ? '~₹'+approxPrice.toFixed(0) : '🧾 priced at packing';
-      return '<div class="cart-row">' +
-        '<div class="info">' +
-          '<div class="name">'+escH(i.item_name)+'</div>' +
-          '<div class="price">'+i.quantity+' '+pieceUnitLabel(p)+approxWeight+' · '+priceLabel+'</div>' +
-          (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
-        '</div>' +
-      '</div>';
-    }
-    if (i.mode === 'box') {
+      // hence "~", not a firm number.
+      qtyLabel = i.quantity + ' ' + pieceUnitLabel(p) + (p?.piece_approx_kg ? ' (~'+(i.quantity * p.piece_approx_kg).toFixed(2)+'kg)' : '');
+      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/kg' : '—';
+      amount = (p?.piece_approx_kg && p?.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null;
+      amountIsApprox = true;
+    } else if (i.mode === 'box') {
       // Unlike piece mode, unit_price here is already a direct per-box
       // rate straight from Zoho, not a per-kg rate to convert — so the
-      // price is box count × rate, no weight estimate involved at all.
-      // box_approx_kg is purely informational here (the weight guide
-      // shown alongside), never part of the price math.
-      const boxTotal = p?.unit_price != null ? p.unit_price * i.quantity : null;
-      if (boxTotal != null) subtotal += boxTotal;
-      else hasUnestimable = true;
-      const approxWeight = p?.box_approx_kg ? ' (~'+(i.quantity * p.box_approx_kg).toFixed(2)+'kg)' : '';
-      const priceLabel = boxTotal != null ? '₹'+boxTotal.toFixed(0) : '🧾 priced at packing';
-      return '<div class="cart-row">' +
-        '<div class="info">' +
-          '<div class="name">'+escH(i.item_name)+'</div>' +
-          '<div class="price">'+i.quantity+' box'+approxWeight+' · '+priceLabel+'</div>' +
-          (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
-        '</div>' +
-      '</div>';
+      // amount is box count × rate, firm, no weight estimate involved.
+      // box_approx_kg is purely informational here, never part of the math.
+      qtyLabel = i.quantity + ' box' + (p?.box_approx_kg ? ' (~'+(i.quantity * p.box_approx_kg).toFixed(2)+'kg)' : '');
+      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/box' : '—';
+      amount = p?.unit_price != null ? p.unit_price * i.quantity : null;
+    } else {
+      const unit = p ? (p.unit || 'kg') : 'kg';
+      qtyLabel = i.quantity + ' ' + escH(unit);
+      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/'+escH(unit) : '—';
+      amount = p?.unit_price != null ? p.unit_price * i.quantity : null;
     }
-    const price = p ? p.unit_price : null;
-    const lineTotal = price != null ? price * i.quantity : null;
-    if (lineTotal != null) subtotal += lineTotal;
-    return '<div class="cart-row">' +
-      '<div class="info">' +
-        '<div class="name">'+escH(i.item_name)+'</div>' +
-        '<div class="price">'+i.quantity+' '+(p ? escH(p.unit||'kg') : '')+(lineTotal!=null?' · ₹'+lineTotal.toFixed(0):'')+'</div>' +
-        (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
-      '</div>' +
-    '</div>';
+
+    if (amount != null) { subtotal += amount; if (amountIsApprox) subtotalIsApprox = true; }
+    else hasUnestimable = true;
+    const amountLabel = amount != null ? (amountIsApprox?'~':'')+'₹'+amount.toFixed(0) : '🧾 at packing';
+
+    return '<tr>' +
+      '<td>'+escH(i.item_name)+(i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '')+'</td>' +
+      '<td>'+rateLabel+'</td>' +
+      '<td>'+qtyLabel+'</td>' +
+      '<td>'+amountLabel+'</td>' +
+    '</tr>';
   }).join('');
+  list.innerHTML = '<table class="inv-items"><thead><tr><th>Item</th><th>Rate</th><th>Qty</th><th>Amount</th></tr></thead><tbody>'+rows+'</tbody></table>';
   document.getElementById('item-count').textContent = cart.length;
   const totalText = (subtotalIsApprox?'~':'')+'₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
   document.getElementById('subtotal').textContent = totalText;
