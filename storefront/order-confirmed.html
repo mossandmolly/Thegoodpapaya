@@ -22,9 +22,44 @@
   <div style="text-align:center;padding:50px 20px">
     <div style="font-size:60px;margin-bottom:16px">✅</div>
     <div style="font-size:20px;font-weight:800;margin-bottom:8px">Order placed!</div>
-    <div style="color:#8a7a6a;font-size:14px;margin-bottom:30px">Review your open orders under <a href="orders.html" style="color:#2d6b2d;font-weight:700">My Orders</a>.<br>Once ready, you can view and pay on <a href="invoices.html" style="color:#2d6b2d;font-weight:700">My Invoices</a>.</div>
+    <div style="color:#8a7a6a;font-size:14px;margin-bottom:16px">Review your open orders under <a href="orders.html" style="color:#2d6b2d;font-weight:700">My Orders</a>.<br>Once ready, you can view and pay on <a href="invoices.html" style="color:#2d6b2d;font-weight:700">My Invoices</a>.</div>
+    <div id="delivery-window-note" style="background:#f5efe4;border-radius:10px;padding:12px 16px;font-size:12.5px;color:#6b5f52;margin-bottom:30px;text-align:left"></div>
     <a href="index.html" class="btn-primary" style="display:inline-block;text-decoration:none">Continue Shopping</a>
   </div>
 </main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+function escH(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// Preferred delivery time (if the customer set one at checkout) comes
+// straight from orders.deliver_by via the same anon-readable lookup view
+// the rest of the storefront already uses — no new endpoint needed. Falls
+// back to the general delivery window for everyone else, so this box
+// always shows something useful either way.
+async function showDeliveryWindow() {
+  const box = document.getElementById('delivery-window-note');
+  const salesOrderId = new URLSearchParams(location.search).get('id');
+  let deliverBy = null;
+  if (salesOrderId) {
+    try {
+      const { data } = await sb.from('order_customer_lookup').select('deliver_by').eq('sales_order_id', salesOrderId).maybeSingle();
+      deliverBy = data?.deliver_by || null;
+    } catch {}
+  }
+  box.innerHTML = deliverBy
+    ? '⏰ <b>Preferred delivery time: before ' + escH(formatTime(deliverBy)) + '</b><br>We\'ll try our best to deliver as close as possible to your preferred time.'
+    : '⏰ Orders are typically delivered sometime between <b>8 AM and 7 PM</b> on your chosen delivery date.';
+}
+
+function formatTime(hhmmss) {
+  const [h, m] = String(hhmmss).split(':').map(Number);
+  const d = new Date(); d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+showDeliveryWindow();
+</script>
 </body>
 </html>

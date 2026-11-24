@@ -10,7 +10,7 @@
 // and upserts it into `communities` — grows that reference table from real
 // order data instead of maintaining a static list.
 //
-// Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status?, deliver_by?, deliver_after?, phone?, whatsapp_raw_text?, whatsapp_group_name?, society? }] }
+// Input:  { headers: [{ sales_order_id, customer_name, source?, payment_method?, invoice_status?, deliver_by?, deliver_after?, delivery_window_checked_at?, phone?, whatsapp_raw_text?, whatsapp_group_name?, society? }] }
 // Output: { created: <count submitted> }
 //
 // Existing rows are left untouched (ignore-duplicates on sales_order_id) —
@@ -195,6 +195,12 @@ Deno.serve(async (req) => {
       invoice_status: h.invoice_status ?? 'pending',
       deliver_by:     h.deliver_by ?? null,
       deliver_after:  h.deliver_after ?? null,
+      // Set alongside deliver_by whenever the caller already has a firm,
+      // explicit time (e.g. the storefront's own preferred-delivery-time
+      // field) — stops extract-delivery-windows' cron from later
+      // guessing a window from free-text notes and overwriting it. Only
+      // ever applies on first insert anyway (ignore-duplicates below).
+      delivery_window_checked_at: h.delivery_window_checked_at ?? null,
       is_pickup:      !!h.is_pickup,
       // Only set on first insert — ignore-duplicates below means this never
       // overwrites a phone/blurb an existing order already has on file.

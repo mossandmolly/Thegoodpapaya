@@ -51,6 +51,11 @@
     <input type="date" id="delivery-date">
   </div>
   <div class="form-field">
+    <label>Preferred delivery time (optional)</label>
+    <input type="time" id="preferred-time">
+    <div class="total-finePrint" style="margin-top:5px">We'll try our best to deliver as close as possible to your preferred time. Orders are typically delivered between 8 AM and 7 PM.</div>
+  </div>
+  <div class="form-field">
     <label>Delivery notes (optional)</label>
     <textarea id="notes" rows="2" placeholder="Delivery instructions, ripeness preference, etc."></textarea>
   </div>
@@ -183,6 +188,15 @@ function hideSocietySuggestionsSoon() {
 // knows (or guesses) a phone number could otherwise pull up a stranger's
 // address. This only ever recalls what THIS browser itself last
 // submitted, so it can never expose someone else's details.
+//
+// Also doubles as a live in-progress draft, not just "last completed
+// order" — saved on blur of every field below, not only after Confirm
+// Order succeeds. Without this, tapping "← Make changes to cart" to add
+// one more thing and coming back wiped out everything already typed in
+// (nothing had been saved yet, since the only save point used to be a
+// successful order). Preferred delivery time is deliberately NOT part of
+// this draft — it's a per-order choice, not a fixed address, so each new
+// checkout should start blank rather than reusing last time's time.
 const LAST_ORDER_KEY = 'gp_last_order_v1';
 
 function prefillFromLastOrder() {
@@ -192,19 +206,40 @@ function prefillFromLastOrder() {
       if (last.phone) document.getElementById('phone').value = last.phone;
       if (last.society) document.getElementById('society').value = last.society;
       if (last.door) document.getElementById('door').value = last.door;
+      if (last.notes) document.getElementById('notes').value = last.notes;
+      // Only reuse a saved delivery date if it's still a valid choice —
+      // a draft from a few days ago shouldn't silently pick a date in
+      // the past once initDeliveryDate() sets today's min/max below.
+      if (last.deliveryDate && last.deliveryDate >= todayIST()) document.getElementById('delivery-date').value = last.deliveryDate;
       return;
     }
-    // No completed order on this device yet, but the phone might still be
-    // known from a My Orders/My Invoices lookup — at least save re-typing
-    // that, even with no address to go with it yet.
+    // No completed order/draft on this device yet, but the phone might
+    // still be known from a My Orders/My Invoices lookup — at least save
+    // re-typing that, even with no address to go with it yet.
     const known = getKnownPhone();
     if (known) document.getElementById('phone').value = known;
   } catch {}
 }
 
-function saveLastOrder(society, door, phone) {
-  try { localStorage.setItem(LAST_ORDER_KEY, JSON.stringify({ society, door, phone })); } catch {}
+function saveLastOrder(society, door, phone, notes, deliveryDate) {
+  try { localStorage.setItem(LAST_ORDER_KEY, JSON.stringify({ society, door, phone, notes, deliveryDate })); } catch {}
 }
+
+// Fired on blur of every field that should survive a trip back to the
+// cart and back — see the comment on LAST_ORDER_KEY above.
+function saveDraft() {
+  saveLastOrder(
+    document.getElementById('society').value.trim(),
+    document.getElementById('door').value.trim(),
+    document.getElementById('phone').value.trim(),
+    document.getElementById('notes').value.trim(),
+    document.getElementById('delivery-date').value,
+  );
+}
+['society', 'door', 'phone', 'notes'].forEach(id => {
+  document.getElementById(id).addEventListener('blur', saveDraft);
+});
+document.getElementById('delivery-date').addEventListener('change', saveDraft);
 
 async function loadPrices() {
   const cart = getCart();
@@ -309,6 +344,7 @@ async function placeOrder() {
         cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity, mode: i.mode || 'kg', notes: i.note || undefined })),
         society, door_number: door, phone, notes,
         delivery_date: document.getElementById('delivery-date').value,
+        preferred_time: document.getElementById('preferred-time').value || undefined,
         payment_method: method,
         device_id: getDeviceId(),
       }),
@@ -316,7 +352,7 @@ async function placeOrder() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not place order');
 
-    saveLastOrder(society, door, phone);
+    saveLastOrder(society, door, phone, notes, document.getElementById('delivery-date').value);
     setKnownPhone(phone);
     markTodaysOrderPlaced(data.sales_order_id);
     clearCart();

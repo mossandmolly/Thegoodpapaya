@@ -16,7 +16,8 @@
 // whatsapp-create-order/index.ts, both actively used today.
 //
 // Input:  { cart: [{ item_name, quantity, unit? }], society, door_number,
-//            phone, notes?, payment_method, delivery_date?, device_id? }
+//            phone, notes?, payment_method, delivery_date?, preferred_time?,
+//            device_id? }
 // Output: { sales_order_id }                    (cod)
 //         { sales_order_id, payment_url }        (online)
 //
@@ -31,6 +32,13 @@
 // entirely off this request's lifetime, by the extract-delivery-windows
 // edge function on its own pg_cron schedule (every 20 min) — see that
 // function's header for why a cron beats a per-request background task.
+//
+// preferred_time (HH:MM, optional) is the customer's own stated delivery
+// deadline from checkout's "Preferred delivery time" field — an explicit,
+// firm answer, unlike notes' free text, so it's written straight to
+// orders.deliver_by (no Claude parsing needed) and marks
+// delivery_window_checked_at immediately so the cron above never
+// second-guesses it later from notes.
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
@@ -197,7 +205,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { cart, society, door_number, phone, notes, payment_method, device_id, delivery_date } = await req.json();
+    const { cart, society, door_number, phone, notes, payment_method, device_id, delivery_date, preferred_time } = await req.json();
+
+    const preferredTimeOk = typeof preferred_time === 'string' && /^\d{2}:\d{2}$/.test(preferred_time);
 
     if (!cart?.length)  throw new Error('No items in cart');
     if (!society)       throw new Error('Missing society name');
@@ -300,6 +310,8 @@ Deno.serve(async (req) => {
             invoice_status: 'pending',
             phone:          normalPhone,
             society:        String(society).trim(),
+            deliver_by:                  preferredTimeOk ? preferred_time : undefined,
+            delivery_window_checked_at:  preferredTimeOk ? new Date().toISOString() : undefined,
           }],
         }),
       }),
