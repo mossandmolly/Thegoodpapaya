@@ -129,24 +129,24 @@ async function lookup(phoneArg) {
       let approxTotal = 0;
       let totalIsApprox = false;
       let hasUnestimable = false;
-      // kg, box, and a true discrete piece are flat-rate — Zoho's own
-      // rate for whatever unit it's sold in, no bearing on weight, so the
-      // value is just rate × qty. Leafy bunches are the one exception
-      // within piece mode: those still convert via piece_approx_kg,
-      // because unit_price for them really is a per-kg rate.
+      // The real test is whether the customer's selected mode matches the
+      // unit Zoho actually prices this item in (unit_price's own unit),
+      // not the item's category. kg/box always match by construction.
+      // Piece mode can go either way: Zoho priced per piece (unit='pc',
+      // e.g. White Dragon) applies flat; Zoho priced per kg (unit='kg',
+      // e.g. Apple, or a leafy bunch) needs converting through
+      // piece_approx_kg instead of applying the rate directly.
       const rows = order.items.map(i => {
         const qty = +i.requested_quantity || 0;
         const piece = isPieceModeRow(i);
         const box = isBoxModeRow(i);
-        const isBunch = piece && i.subsection === 'Leafy Greens';
+        const unit = i.unit || 'kg';
+        const needsConversion = piece && unit.toLowerCase() === 'kg';
         const unitPrice = i.unit_price != null ? +i.unit_price : null;
-        const unitLabel = piece ? pieceUnitLabel(i) : box ? 'box' : (i.unit || 'kg');
-        let value;
-        if (isBunch) {
-          value = (unitPrice != null && i.piece_approx_kg != null) ? unitPrice * (+i.piece_approx_kg) * qty : null;
-        } else {
-          value = unitPrice != null ? unitPrice * qty : null;
-        }
+        const unitLabel = piece ? pieceUnitLabel(i) : box ? 'box' : unit;
+        const value = needsConversion
+          ? ((unitPrice != null && i.piece_approx_kg != null) ? unitPrice * (+i.piece_approx_kg) * qty : null)
+          : (unitPrice != null ? unitPrice * qty : null);
         if (value != null) { approxTotal += value; totalIsApprox = true; }
         else hasUnestimable = true;
         return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+' '+escH(unitLabel)+'</td>' +
