@@ -120,6 +120,7 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .inv-items .balance-row td{color:#b3261e}
 .inv-items .subtotal-row td{color:#8a7a6a;font-weight:400}
 .inv-items .discount-row td{color:#2d6b2d}
+.item-cancel-btn{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:#fdeaea;color:#b3261e;font-size:12px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;border:none;font-family:inherit}
 .invoice-card .actions{display:flex;gap:8px}
 .invoice-card .actions a,.invoice-card .actions button{flex:1;text-align:center;padding:9px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:inherit}
 .invoice-card .actions button:disabled{opacity:.7;cursor:default}
