@@ -168,7 +168,7 @@ function setCat(c) {
 
 async function load() {
   const { data, error } = await sb.from('catalog')
-    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,subsection,out_of_stock')
+    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,subsection,out_of_stock')
     .eq('active', true)
     .order('item_name');
   if (error) {
@@ -187,6 +187,13 @@ const SUBSECTION_ORDER = ['Seasonal Fruits','Everyday Fruits','Exotic & Berries'
 // Leafy items (subsection already set via catalog settings) are counted
 // in bunches, not pieces — same underlying piece-mode plumbing either way.
 function pieceUnitLabel(c) { return c && c.subsection === 'Leafy Greens' ? 'bunch' : 'pc'; }
+// mode: 'kg' (default), 'piece', or 'box' — the label shown next to the
+// quantity for whichever one is currently selected.
+function unitModeLabel(mode, c) {
+  if (mode === 'piece') return pieceUnitLabel(c);
+  if (mode === 'box') return 'box';
+  return 'kg';
+}
 
 function render() {
   const search = document.getElementById('search').value.trim().toLowerCase();
@@ -322,23 +329,29 @@ function renderLiveCart() {
 
   listEl.innerHTML = [...cart].reverse().map(i => {
     const c = catalogByName[i.item_name];
-    const pieceEligible = !!(c && c.sold_by_piece);
     const mode = i.mode || 'kg';
     // Item rows show the plain rate only — no computed/estimated value and
     // no "approx"/"exact at packing" wording at this level; the Checkout
     // button itself just shows the item count now, no amount at all.
-    // unit_price is always per-kg, even for piece-mode items.
+    // unit_price is always per-kg, even for piece/box-mode items.
     let rateLabel = '';
     if (c && c.unit_price != null) rateLabel = '₹'+c.unit_price.toFixed(0)+'/'+(c.unit||'kg');
-    const stepSize = mode === 'piece' ? 1 : 0.25;
+    const stepSize = (mode === 'piece' || mode === 'box') ? 1 : 0.25;
 
-    const unitToggle = pieceEligible
+    // Offers whichever of piece/box this item is actually eligible for
+    // (normally just one or the other, never both) alongside kg — not a
+    // choice to make at all if it's only ever sold by weight, in which
+    // case this just shows "kg" with nothing to tap.
+    const modeOptions = [];
+    if (c && c.sold_by_piece) modeOptions.push('piece');
+    if (c && c.sold_by_box) modeOptions.push('box');
+    modeOptions.push('kg');
+    const unitToggle = modeOptions.length > 1
       ? '<div class="unit-toggle">'+
-          '<span class="'+(mode==='piece'?'active':'')+'" onclick="setItemMode('+escH(JSON.stringify(i.item_name))+',\'piece\')">'+pieceUnitLabel(c)+'</span>'+
-          '<span class="'+(mode==='kg'?'active':'')+'" onclick="setItemMode('+escH(JSON.stringify(i.item_name))+',\'kg\')">kg</span>'+
+          modeOptions.map(opt =>
+            '<span class="'+(mode===opt?'active':'')+'" onclick="setItemMode('+escH(JSON.stringify(i.item_name))+','+escH(JSON.stringify(opt))+')">'+unitModeLabel(opt,c)+'</span>'
+          ).join('')+
         '</div>'
-      // Not piece-eligible — no choice to make, but still show the unit
-      // so it doesn't look blank next to the quantity box.
       : '<div class="unit-toggle"><span class="active" style="cursor:default">kg</span></div>';
 
     return '<div class="cart-live-row">' +
@@ -369,7 +382,7 @@ function renderLiveCart() {
   if (quicklistEl) {
     quicklistEl.innerHTML = '<div class="label">Cart summary</div>' +
       [...cart].reverse().map(i =>
-        '<div class="line">'+i.quantity+(i.mode==='piece'?' '+pieceUnitLabel(catalogByName[i.item_name]):' kg')+' · '+escH(i.item_name)+'</div>'
+        '<div class="line">'+i.quantity+' '+unitModeLabel(i.mode||'kg',catalogByName[i.item_name])+' · '+escH(i.item_name)+'</div>'
       ).join('');
   }
 }
@@ -401,9 +414,9 @@ function setItemMode(item_name, mode) {
   const cart = getCart();
   const existing = cart.find(i => i.item_name === item_name);
   let qty = existing ? existing.quantity : 1;
-  // Piece mode is always whole units — round rather than carry over a
-  // fractional kg quantity (e.g. 1.25) that can't mean anything "per piece".
-  if (mode === 'piece') qty = Math.max(1, Math.round(qty));
+  // Piece/box mode are always whole units — round rather than carry over a
+  // fractional kg quantity (e.g. 1.25) that can't mean anything "per piece"/"per box".
+  if (mode === 'piece' || mode === 'box') qty = Math.max(1, Math.round(qty));
   setCartQty(item_name, qty, mode);
   updateCardBadge(item_name);
 }

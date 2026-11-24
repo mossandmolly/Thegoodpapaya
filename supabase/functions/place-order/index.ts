@@ -50,11 +50,22 @@ type CartItem = {
   quantity:  string | number;
   unit?:     string;
   notes?:    string;
-  mode?:     string; // 'kg' (default) or 'piece' — see isPieceMode()
+  mode?:     string; // 'kg' (default), 'piece', or 'box' — see isPieceMode/isBoxMode
 };
 
 function isPieceMode(item: CartItem): boolean {
   return item.mode === 'piece';
+}
+
+function isBoxMode(item: CartItem): boolean {
+  return item.mode === 'box';
+}
+
+// Neither has a confirmed price until staff weigh/count it at packing —
+// shared by every place this app needs "does this item have no firm
+// price yet" rather than specifically "is it piece mode".
+function hasNoConfirmedPrice(item: CartItem): boolean {
+  return isPieceMode(item) || isBoxMode(item);
 }
 
 function getQty(item: CartItem): number {
@@ -192,12 +203,12 @@ Deno.serve(async (req) => {
     if (!/^\d{10}$/.test(normalPhone)) throw new Error('Invalid phone number — enter a 10-digit number');
 
     const method = payment_method === 'online' ? 'online' : 'cod';
-    // Piece-mode items have no confirmed price until staff weigh/count them
-    // at packing — nothing to charge upfront, so prepay isn't available
-    // for a basket that contains any. The checkout page already disables
-    // this client-side; enforced again here since the browser isn't
-    // trusted for anything that affects a real payment amount.
-    if (method === 'online' && (cart as CartItem[]).some(isPieceMode)) {
+    // Piece/box-mode items have no confirmed price until staff weigh/count
+    // them at packing — nothing to charge upfront, so prepay isn't
+    // available for a basket that contains any. The checkout page already
+    // disables this client-side; enforced again here since the browser
+    // isn't trusted for anything that affects a real payment amount.
+    if (method === 'online' && (cart as CartItem[]).some(hasNoConfirmedPrice)) {
       throw new Error('This basket has items priced at packing — choose Pay on Delivery instead.');
     }
     const customerName = `${String(society).trim()} ${String(door_number).trim()}`;
@@ -237,13 +248,13 @@ Deno.serve(async (req) => {
     const unavailable = itemNames.filter(n => !activeSet.has(n));
     if (unavailable.length) throw new Error(`No longer available: ${unavailable.join(', ')}`);
 
-    // Piece-mode items are excluded from the total entirely — there's no
-    // confirmed price for them yet (see isPieceMode above), and method
-    // is already guaranteed 'cod' whenever any are present, so this only
-    // ever feeds the Razorpay amount for a cart of purely weight-priced
-    // items anyway.
+    // Piece/box-mode items are excluded from the total entirely — there's
+    // no confirmed price for them yet (see hasNoConfirmedPrice above), and
+    // method is already guaranteed 'cod' whenever any are present, so this
+    // only ever feeds the Razorpay amount for a cart of purely
+    // weight-priced items anyway.
     const orderTotal = (cart as CartItem[])
-      .filter(i => !isPieceMode(i))
+      .filter(i => !hasNoConfirmedPrice(i))
       .reduce((s, i) => s + (priceMap[i.item_name] ?? 0) * getQty(i), 0);
 
     // Header — via create-order (server-to-server, CRON_SECRET never
@@ -285,10 +296,13 @@ Deno.serve(async (req) => {
       existingKeys.add(key);
       // "N pieces" flag matches the same convention the WhatsApp parser
       // already uses for piece-count orders (see whatsapp-listener's
-      // system prompt) — staff read it the same way either path it came in.
+      // system prompt) — staff read it the same way either path it came
+      // in. "N box" is this app's own equivalent for box mode — there's no
+      // WhatsApp-side convention to match since box mode is storefront-only.
       const notesPart = item.notes?.trim() || '';
-      const description = isPieceMode(item)
-        ? [`${qty} pieces`, notesPart].filter(Boolean).join(' · ')
+      const modePrefix = isPieceMode(item) ? `${qty} pieces` : isBoxMode(item) ? `${qty} box` : null;
+      const description = modePrefix
+        ? [modePrefix, notesPart].filter(Boolean).join(' · ')
         : (notesPart || null);
       return {
         sales_order_id,

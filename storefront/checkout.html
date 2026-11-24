@@ -186,7 +186,7 @@ function saveLastOrder(society, door, phone) {
 async function loadPrices() {
   const cart = getCart();
   if (!cart.length) return;
-  const { data } = await sb.from('catalog').select('item_name,unit_price,unit,piece_approx_kg,subsection').in('item_name', cart.map(i => i.item_name));
+  const { data } = await sb.from('catalog').select('item_name,unit_price,unit,piece_approx_kg,box_approx_kg,subsection').in('item_name', cart.map(i => i.item_name));
   (data || []).forEach(r => catalogPrices[r.item_name] = r);
   renderCart();
 }
@@ -204,19 +204,21 @@ function renderCart() {
   }
   let subtotal = 0;
   let subtotalIsApprox = false;
-  // An item can still be genuinely unestimable (sold by piece, but no
-  // piece_approx_kg on file for it) — kept as its own caveat rather than
+  // An item can still be genuinely unestimable (sold by piece/box, but no
+  // approx-kg on file for it) — kept as its own caveat rather than
   // silently treating it as ₹0.
   let hasUnestimable = false;
   list.innerHTML = cart.map(i => {
     const p = catalogPrices[i.item_name];
-    if (i.mode === 'piece') {
-      const hasApprox = p && p.piece_approx_kg;
-      const approxWeight = hasApprox ? ' (~'+(i.quantity * p.piece_approx_kg).toFixed(2)+'kg)' : '';
-      // unit_price is always per-kg — approx piece price = rate × est.
-      // kg/piece × qty. Exact amount is only known once actually weighed
+    if (i.mode === 'piece' || i.mode === 'box') {
+      const approxKg = i.mode === 'piece' ? p?.piece_approx_kg : p?.box_approx_kg;
+      const unitLabel = i.mode === 'piece' ? pieceUnitLabel(p) : 'box';
+      const hasApprox = !!approxKg;
+      const approxWeight = hasApprox ? ' (~'+(i.quantity * approxKg).toFixed(2)+'kg)' : '';
+      // unit_price is always per-kg — approx piece/box price = rate × est.
+      // kg per unit × qty. Exact amount is only known once actually weighed
       // at packing, hence "~" and the note, not a firm number.
-      const approxPrice = (hasApprox && p.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null;
+      const approxPrice = (hasApprox && p?.unit_price != null) ? p.unit_price * approxKg * i.quantity : null;
       if (approxPrice != null) { subtotal += approxPrice; subtotalIsApprox = true; }
       else hasUnestimable = true;
       // No "(exact at packing)" wording at item level any more — the
@@ -226,7 +228,7 @@ function renderCart() {
       return '<div class="cart-row">' +
         '<div class="info">' +
           '<div class="name">'+escH(i.item_name)+'</div>' +
-          '<div class="price">'+i.quantity+' '+pieceUnitLabel(p)+approxWeight+' · '+priceLabel+'</div>' +
+          '<div class="price">'+i.quantity+' '+unitLabel+approxWeight+' · '+priceLabel+'</div>' +
           (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
         '</div>' +
       '</div>';
