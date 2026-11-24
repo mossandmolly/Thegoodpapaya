@@ -168,7 +168,7 @@ function setCat(c) {
 
 async function load() {
   const { data, error } = await sb.from('catalog')
-    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,subsection,out_of_stock')
+    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,default_unit,subsection,out_of_stock')
     .eq('active', true)
     .order('item_name');
   if (error) {
@@ -198,7 +198,11 @@ function unitModeLabel(mode, c) {
 // all (unlike piece-eligible items, which still default to kg until the
 // customer taps to switch) — so a box item has to start life in 'box'
 // mode, not 'kg', or its quantity would be added as if it were kg.
-function defaultModeFor(c) { return c && c.sold_by_box ? 'box' : 'kg'; }
+function defaultModeFor(c) {
+  if (c && c.sold_by_box) return 'box'; // exclusive — nothing else to default to
+  if (c && c.sold_by_piece && c.default_unit === 'piece') return 'piece';
+  return 'kg';
+}
 
 function render() {
   const search = document.getElementById('search').value.trim().toLowerCase();

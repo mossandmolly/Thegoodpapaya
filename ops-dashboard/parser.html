@@ -1456,7 +1456,7 @@ Banana, 15, 450"></textarea>
 
   <div class="config-section">
     <h3>🧺 Storefront Catalog Settings <span style="font-size:11px;color:#8a7a6a;font-weight:400">(saved — drives website subsections + piece pricing)</span></h3>
-    <p class="note">Subsection groups an item within the storefront's Fruits/Vegetables tabs (e.g. "Daily Vegetables", "Seasonal Fruits") — pick an existing one from the list or type a new one. "Sold by piece"/"Sold by box" let a customer add that item by piece or box count instead of weight on the website (an item is normally only one or the other); when either is on, the matching "Approx kg" is shown to the customer as a rough weight guide only — it is never used for pricing, that's still decided by staff at packing time. All fields save to the database as soon as you change them.</p>
+    <p class="note">Subsection groups an item within the storefront's Fruits/Vegetables tabs (e.g. "Daily Vegetables", "Seasonal Fruits") — pick an existing one from the list or type a new one. "Sold by piece"/"Sold by box" let a customer add that item by piece or box count instead of weight on the website (an item is normally only one or the other); when either is on, the matching "Approx kg" is shown to the customer as a rough weight guide only — it is never used for pricing, that's still decided by staff at packing time. "Default to piece" (only for piece-eligible items — box is always the default when "Sold by box" is on) controls which unit a tap on the storefront adds the item in — check it for something customers almost always buy by count (e.g. a leafy bunch) rather than kg. All fields save to the database as soon as you change them.</p>
     <div class="add-row" style="margin-bottom:10px">
       <input type="text" class="search-bar" id="catalog-settings-search" placeholder="🔍 Filter items…" style="margin-bottom:0" oninput="renderCatalogSettingsTable()">
       <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px;color:#8a7a6a">
@@ -1466,7 +1466,7 @@ Banana, 15, 450"></textarea>
     </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx pieces/kg</th><th>Sold by box</th><th>Approx kg/box</th>
+        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx pieces/kg</th><th>Default to piece</th><th>Sold by box</th><th>Approx kg/box</th>
       </tr></thead><tbody id="catalog-settings-tbody"></tbody></table>
     </div>
     <datalist id="subsection-options"></datalist>
@@ -2065,7 +2065,7 @@ function perKgToApproxKg(perKg){
 
 async function loadCatalogSettingsConfig(){
   const{data,error}=await sb.from('catalog')
-    .select('item_name,category,subsection,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg')
+    .select('item_name,category,subsection,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,default_unit')
     .order('category',{ascending:true}).order('item_name',{ascending:true});
   if(error){
     console.error(error);
@@ -2075,7 +2075,7 @@ async function loadCatalogSettingsConfig(){
     // now depends on hasn't been run yet, e.g. catalog.sold_by_box/
     // box_approx_kg not existing), so this needs to say so loudly rather
     // than just logging to a console nobody but a developer opens.
-    if(tbody)tbody.innerHTML='<tr><td colspan="7" style="color:#b3261e;padding:12px">Could not load catalog settings: '+escH(error.message)+'</td></tr>';
+    if(tbody)tbody.innerHTML='<tr><td colspan="8" style="color:#b3261e;padding:12px">Could not load catalog settings: '+escH(error.message)+'</td></tr>';
     return;
   }
   catalogSettingsCache=data||[];
@@ -2113,10 +2113,14 @@ function renderCatalogSettingsTable(){
         'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'subsection\',this.value.trim()||null,this)"></td>'+
       '<td style="text-align:center"><input type="checkbox" '+(soldByPiece?'checked':'')+' '+
         'onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'sold_by_piece\',this.checked,this);'+
-        'this.closest(\'tr\').querySelector(\'.piece-kg-input\').disabled=!this.checked;"></td>'+
+        'this.closest(\'tr\').querySelector(\'.piece-kg-input\').disabled=!this.checked;'+
+        'this.closest(\'tr\').querySelector(\'.piece-default-input\').disabled=!this.checked;"></td>'+
       '<td><input type="number" class="piece-kg-input" step="0.1" min="0" style="max-width:100px" '+
         'value="'+approxKgToPerKg(c.piece_approx_kg)+'" '+(soldByPiece?'':'disabled')+' '+
         'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'piece_approx_kg\',perKgToApproxKg(this.value),this)"></td>'+
+      '<td style="text-align:center"><input type="checkbox" class="piece-default-input" '+(c.default_unit==='piece'?'checked':'')+' '+(soldByPiece?'':'disabled')+' '+
+        'onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'default_unit\',this.checked?\'piece\':null,this)" '+
+        'title="When checked, tapping this item on the storefront adds it by piece/bunch count by default instead of kg."></td>'+
       '<td style="text-align:center"><input type="checkbox" '+(soldByBox?'checked':'')+' '+
         'onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'sold_by_box\',this.checked,this);'+
         'this.closest(\'tr\').querySelector(\'.box-kg-input\').disabled=!this.checked;"></td>'+
