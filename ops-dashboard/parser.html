@@ -2055,7 +2055,17 @@ async function loadCatalogSettingsConfig(){
   const{data,error}=await sb.from('catalog')
     .select('item_name,category,subsection,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg')
     .order('category',{ascending:true}).order('item_name',{ascending:true});
-  if(error){console.error(error);return;}
+  if(error){
+    console.error(error);
+    const tbody=document.getElementById('catalog-settings-tbody');
+    // A blank table with no visible error looks exactly like data having
+    // vanished (it isn't — this almost always means a migration this page
+    // now depends on hasn't been run yet, e.g. catalog.sold_by_box/
+    // box_approx_kg not existing), so this needs to say so loudly rather
+    // than just logging to a console nobody but a developer opens.
+    if(tbody)tbody.innerHTML='<tr><td colspan="7" style="color:#b3261e;padding:12px">Could not load catalog settings: '+escH(error.message)+'</td></tr>';
+    return;
+  }
   catalogSettingsCache=data||[];
   const subsections=[...new Set(catalogSettingsCache.map(c=>c.subsection).filter(Boolean))].sort();
   document.getElementById('subsection-options').innerHTML=
