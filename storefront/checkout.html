@@ -229,40 +229,33 @@ function renderCart() {
   // An item can still be genuinely unestimable (no unit_price on file at
   // all) — kept as its own caveat rather than silently treating it as ₹0.
   let hasUnestimable = false;
-  // kg, box, and a true discrete piece are flat-rate — Zoho's own rate
-  // for whatever unit it's sold in, no bearing on weight, so amount is
-  // just unit_price × qty. Leafy bunches are the one exception within
-  // piece mode: those still convert via piece_approx_kg, because
-  // unit_price for them really is a per-kg rate, not a per-bunch one.
+  // The real test isn't the item's category — it's whether the customer's
+  // selected mode matches the unit Zoho actually prices this item in
+  // (catalog.unit). kg and box always match by construction (kg mode only
+  // exists for kg-priced items; box is only ever offered when Zoho's unit
+  // really is box). Piece mode is the one that can go either way: Zoho
+  // priced per piece (unit='pc', e.g. White Dragon) applies flat; Zoho
+  // priced per kg (unit='kg', e.g. Apple, or a leafy bunch) needs
+  // converting through piece_approx_kg instead of applying the rate directly.
   let subtotalIsApprox = false;
   const rows = cart.map(i => {
     const p = catalogPrices[i.item_name];
-    const isBunch = i.mode === 'piece' && p && p.subsection === 'Leafy Greens';
-    let qtyLabel, rateLabel, amount;
+    const unit = p ? (p.unit || 'kg') : 'kg';
+    const needsConversion = i.mode === 'piece' && unit.toLowerCase() === 'kg';
 
-    if (isBunch) {
-      qtyLabel = i.quantity + ' ' + pieceUnitLabel(p);
-      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/kg' : '—';
-      amount = (p?.piece_approx_kg && p?.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null;
-      if (amount != null) subtotalIsApprox = true;
-    } else if (i.mode === 'piece') {
-      qtyLabel = i.quantity + ' ' + pieceUnitLabel(p);
-      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/'+escH(p.unit||'pc') : '—';
-      amount = p?.unit_price != null ? p.unit_price * i.quantity : null;
-    } else if (i.mode === 'box') {
-      qtyLabel = i.quantity + ' box';
-      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/box' : '—';
-      amount = p?.unit_price != null ? p.unit_price * i.quantity : null;
-    } else {
-      const unit = p ? (p.unit || 'kg') : 'kg';
-      qtyLabel = i.quantity + ' ' + escH(unit);
-      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/'+escH(unit) : '—';
-      amount = p?.unit_price != null ? p.unit_price * i.quantity : null;
-    }
+    let qtyLabel;
+    if (i.mode === 'piece') qtyLabel = i.quantity + ' ' + pieceUnitLabel(p);
+    else if (i.mode === 'box') qtyLabel = i.quantity + ' box';
+    else qtyLabel = i.quantity + ' ' + escH(unit);
 
-    if (amount != null) subtotal += amount;
+    const rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/'+escH(unit) : '—';
+    const amount = needsConversion
+      ? ((p?.piece_approx_kg && p?.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null)
+      : (p?.unit_price != null ? p.unit_price * i.quantity : null);
+
+    if (amount != null) { subtotal += amount; if (needsConversion) subtotalIsApprox = true; }
     else hasUnestimable = true;
-    const amountLabel = amount != null ? (isBunch?'~':'')+'₹'+amount.toFixed(0) : '🧾 at packing';
+    const amountLabel = amount != null ? (needsConversion?'~':'')+'₹'+amount.toFixed(0) : '🧾 at packing';
 
     return '<tr>' +
       '<td>'+escH(i.item_name)+(i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '')+'</td>' +
