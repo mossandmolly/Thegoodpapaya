@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Good Papaya — Storefront Funnel</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap');
+:root{
+  --bg:#0a0a0a;--s1:#131313;--s2:#1a1a1a;--border:#222;--border2:#2e2e2e;
+  --accent:#b8f050;--orange:#ff6b35;--blue:#5b9cf6;--purple:#a855f7;
+  --yellow:#f59e0b;--red:#ff4545;--text:#ede9e0;--muted:#555;--muted2:#888;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;}
+
+.nav{display:flex;align-items:center;gap:12px;padding:10px 24px;border-bottom:1px solid var(--border);background:var(--s1);position:sticky;top:0;z-index:100;flex-wrap:wrap;}
+.nav-brand{font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-family:'DM Mono',monospace;}
+.nav-brand em{color:var(--accent);font-style:normal;}
+.range-tabs{display:flex;gap:2px;margin-left:8px;}
+.range-tab{padding:6px 14px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;color:var(--muted2);font-family:'DM Mono',monospace;border:1px solid transparent;background:transparent;transition:all .15s;}
+.range-tab.active{color:var(--accent);background:rgba(184,240,80,.08);border-color:rgba(184,240,80,.2);}
+.range-tab:hover:not(.active){color:var(--text);background:var(--s2);}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.refresh-btn{font-size:10px;font-family:'DM Mono',monospace;letter-spacing:.08em;text-transform:uppercase;padding:6px 12px;border-radius:5px;border:1px solid rgba(184,240,80,.2);background:rgba(184,240,80,.08);color:var(--accent);cursor:pointer;}
+.refresh-btn:disabled{opacity:.5;cursor:default;}
+.as-of{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;}
+
+.wrap{padding:24px;max-width:1300px;margin:0 auto;}
+.card{background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:16px;}
+.section-title{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted2);font-family:'DM Mono',monospace;margin-bottom:14px;}
+.section-sub{font-size:11px;color:var(--muted2);margin:-8px 0 14px;line-height:1.5;}
+
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:16px;}
+.kpi{background:var(--s1);border:1px solid var(--border);border-radius:7px;padding:12px 14px;position:relative;overflow:hidden;}
+.kpi::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--kc,#2e2e2e);}
+.kpi-l{font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted2);font-family:'DM Mono',monospace;margin-bottom:4px;}
+.kpi-v{font-size:19px;font-weight:800;letter-spacing:-.03em;color:var(--kc,var(--text));}
+.kpi-s{font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;}
+
+.dash-layout{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;}
+@media(max-width:900px){.dash-layout{grid-template-columns:1fr;}}
+
+.funnel-row{display:grid;grid-template-columns:140px 1fr 150px;gap:10px;align-items:center;padding:8px 0;}
+.funnel-label{font-size:12px;font-weight:700;}
+.funnel-bar-track{background:var(--s2);border-radius:5px;height:22px;overflow:hidden;}
+.funnel-bar-fill{height:100%;background:var(--accent);border-radius:5px;transition:width .3s;}
+.funnel-nums{font-size:10px;font-family:'DM Mono',monospace;color:var(--muted2);text-align:right;}
+.funnel-nums b{color:var(--text);font-size:12px;}
+.funnel-drop{font-size:9px;color:var(--red);font-family:'DM Mono',monospace;margin-top:2px;}
+
+.table-wrap{overflow-x:auto;overflow-y:auto;max-height:50vh;}
+table{width:100%;border-collapse:collapse;min-width:420px;}
+thead th{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace;padding:5px 7px;border-bottom:1px solid var(--border);text-align:right;font-weight:500;white-space:nowrap;position:sticky;top:0;background:var(--s1);z-index:10;}
+thead th:first-child{text-align:left;}
+td{font-size:11px;padding:7px 7px;border-bottom:1px solid #181818;text-align:right;font-family:'DM Mono',monospace;white-space:nowrap;}
+td:first-child{text-align:left;font-family:'Syne',sans-serif;font-weight:600;font-size:12px;white-space:normal;}
+tr:hover td{background:var(--s2);}
+
+.empty{font-size:12px;color:var(--muted2);padding:20px 0;text-align:center;}
+.loading{font-size:11px;color:var(--muted2);font-family:'DM Mono',monospace;padding:20px 0;text-align:center;}
+.err{font-size:11px;color:var(--red);font-family:'DM Mono',monospace;padding:12px;background:rgba(255,69,69,.08);border-radius:6px;}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-brand"><em>Good Papaya</em> — Storefront Funnel</div>
+  <div class="range-tabs" id="rangeTabs">
+    <button class="range-tab" data-days="7">7D</button>
+    <button class="range-tab active" data-days="30">30D</button>
+    <button class="range-tab" data-days="90">90D</button>
+  </div>
+  <div class="nav-right">
+    <span class="as-of" id="asOf"></span>
+    <button class="refresh-btn" id="refreshBtn">🔄 Refresh</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div id="loadState" class="loading">Loading…</div>
+
+  <div id="content" style="display:none">
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="dash-layout">
+      <div class="card">
+        <div class="section-title">Funnel — distinct devices reaching each step</div>
+        <div class="section-sub">Each step counts a device only once, however many times it repeated that action. % under the bar is the drop from the step right above it.</div>
+        <div id="funnelBars"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Where non-converters get stuck</div>
+        <div class="section-sub">Furthest step reached by devices that never placed an order, in this window.</div>
+        <div id="dropoffBars"></div>
+      </div>
+    </div>
+
+    <div class="dash-layout">
+      <div class="card">
+        <div class="section-title">Abandoned baskets — items left behind</div>
+        <div class="section-sub">Added to cart (and not removed again) by a device that never placed an order in this window.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Item</th><th>Devices</th></tr></thead>
+            <tbody id="abandonedTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Most added to cart</div>
+        <div class="section-sub">All item_added events in this window, converted or not.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Item</th><th>Added</th><th>Devices</th></tr></thead>
+            <tbody id="topAddedTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Completed orders in this window</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Placed</th><th>Phone</th><th>Society</th><th>Door</th><th>Sales order</th></tr></thead>
+          <tbody id="ordersTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="errBox" class="err" style="display:none"></div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL  = 'https://fykqprogzqcfzrgwlrem.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5a3Fwcm9nenFjZnpyZ3dscmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NDkzMzEsImV4cCI6MjA5MTIyNTMzMX0.FseaaYNbN-QLhzdQF5rcImLvvoWRHOiGcZcbiFaIplQ';
+// Same anon key the rest of this app uses — RLS on storefront_events only
+// allows SELECT to an authenticated session (migration 165), which this
+// page gets for free: it's loaded in an iframe from parser.html on the
+// same origin, and supabase-js persists the signed-in session to
+// localStorage keyed by project ref, so this fresh client picks up
+// whatever session parser.html's own sign-in already created.
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+function escH(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// Order matters — this is the sequence a real visitor walks through, used
+// both for the funnel bars and for "furthest stage reached" below.
+const STAGES = ['catalog_viewed','item_added','checkout_viewed','phone_entered','society_entered','order_placed'];
+const STAGE_LABEL = {
+  catalog_viewed: 'Viewed catalog',
+  item_added: 'Added to cart',
+  checkout_viewed: 'Reached checkout',
+  phone_entered: 'Entered phone',
+  society_entered: 'Entered address',
+  order_placed: 'Placed order',
+};
+
+let rangeDays = 30;
+let rows = [];
+
+async function loadFunnel() {
+  document.getElementById('loadState').style.display = 'block';
+  document.getElementById('loadState').textContent = 'Loading…';
+  document.getElementById('content').style.display = 'none';
+  document.getElementById('errBox').style.display = 'none';
+  document.getElementById('refreshBtn').disabled = true;
+
+  try {
+    const since = new Date(Date.now() - rangeDays * 86400000).toISOString();
+    const { data, error } = await sb
+      .from('storefront_events')
+      .select('device_id,event_type,item_name,phone,society,door_number,sales_order_id,created_at')
+      .gte('created_at', since)
+      .order('created_at', { ascending: true })
+      .limit(50000);
+    if (error) throw new Error(error.message);
+    rows = data || [];
+    render();
+    document.getElementById('asOf').textContent = 'Last ' + rangeDays + ' days · as of ' + new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+    document.getElementById('loadState').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+  } catch (e) {
+    document.getElementById('loadState').style.display = 'none';
+    const box = document.getElementById('errBox');
+    box.style.display = 'block';
+    box.textContent = 'Could not load funnel data: ' + e.message + (/row-level security|JWT/i.test(e.message) ? ' — you may need to be signed in to view this.' : '');
+  } finally {
+    document.getElementById('refreshBtn').disabled = false;
+  }
+}
+
+function render() {
+  const devicesByStage = {};
+  STAGES.forEach(s => devicesByStage[s] = new Set());
+  rows.forEach(r => { if (devicesByStage[r.event_type]) devicesByStage[r.event_type].add(r.device_id); });
+
+  const visitors = devicesByStage.catalog_viewed.size;
+  const addedToCart = devicesByStage.item_added.size;
+  const reachedCheckout = devicesByStage.checkout_viewed.size;
+  const completedOrders = devicesByStage.order_placed.size;
+  const pageViews = rows.filter(r => r.event_type === 'catalog_viewed').length;
+
+  const orderedDeviceSet = devicesByStage.order_placed;
+  const addedDeviceSet = devicesByStage.item_added;
+  const abandonedDeviceIds = [...addedDeviceSet].filter(d => !orderedDeviceSet.has(d));
+
+  const overallConv = visitors > 0 ? (completedOrders / visitors * 100) : 0;
+
+  // ── KPI tiles ──────────────────────────────────────────────────────────
+  const kpis = [
+    { l: 'Page views', v: pageViews, c: 'var(--text)', s: 'catalog_viewed events' },
+    { l: 'Unique visitors', v: visitors, c: 'var(--blue)', s: 'distinct devices' },
+    { l: 'Added to cart', v: addedToCart, c: 'var(--yellow)', s: pct(addedToCart, visitors) + ' of visitors' },
+    { l: 'Reached checkout', v: reachedCheckout, c: 'var(--orange)', s: pct(reachedCheckout, visitors) + ' of visitors' },
+    { l: 'Completed orders', v: completedOrders, c: 'var(--accent)', s: overallConv.toFixed(1) + '% of visitors' },
+    { l: 'Abandoned baskets', v: abandonedDeviceIds.length, c: 'var(--red)', s: 'added, never ordered' },
+  ];
+  document.getElementById('kpis').innerHTML = kpis.map(k =>
+    '<div class="kpi" style="--kc:'+k.c+'"><div class="kpi-l">'+escH(k.l)+'</div><div class="kpi-v">'+k.v.toLocaleString('en-IN')+'</div><div class="kpi-s">'+escH(k.s)+'</div></div>'
+  ).join('');
+
+  // ── Funnel bars ──────────────────────────────────────────────────────────
+  const top = devicesByStage[STAGES[0]].size || 1;
+  let prev = null;
+  document.getElementById('funnelBars').innerHTML = STAGES.map(stage => {
+    const n = devicesByStage[stage].size;
+    const widthPct = (n / top * 100).toFixed(1);
+    const ofPrev = prev != null && prev > 0 ? (n / prev * 100) : null;
+    const dropLine = prev != null ? ('<div class="funnel-drop">'+(ofPrev!=null?ofPrev.toFixed(0):'0')+'% of previous step</div>') : '';
+    prev = n;
+    return '<div class="funnel-row">' +
+      '<div class="funnel-label">'+escH(STAGE_LABEL[stage])+'</div>' +
+      '<div><div class="funnel-bar-track"><div class="funnel-bar-fill" style="width:'+widthPct+'%"></div></div>'+dropLine+'</div>' +
+      '<div class="funnel-nums"><b>'+n.toLocaleString('en-IN')+'</b> devices<br>'+(top?((n/top*100).toFixed(0)):'0')+'% of visitors</div>' +
+    '</div>';
+  }).join('');
+
+  // ── Drop-off — furthest non-order stage reached ─────────────────────────
+  const nonOrderStages = STAGES.slice(0, -1); // exclude order_placed itself
+  const furthestByDevice = {};
+  rows.forEach(r => {
+    if (orderedDeviceSet.has(r.device_id)) return; // only non-converters
+    const idx = nonOrderStages.indexOf(r.event_type);
+    if (idx === -1) return;
+    if (furthestByDevice[r.device_id] == null || idx > furthestByDevice[r.device_id]) furthestByDevice[r.device_id] = idx;
+  });
+  const dropoffCounts = nonOrderStages.map(() => 0);
+  Object.values(furthestByDevice).forEach(idx => dropoffCounts[idx]++);
+  const dropoffTotal = dropoffCounts.reduce((a, b) => a + b, 0) || 1;
+  document.getElementById('dropoffBars').innerHTML = nonOrderStages.map((stage, i) => {
+    const n = dropoffCounts[i];
+    const widthPct = (n / dropoffTotal * 100).toFixed(1);
+    return '<div class="funnel-row">' +
+      '<div class="funnel-label">'+escH(STAGE_LABEL[stage])+'</div>' +
+      '<div><div class="funnel-bar-track"><div class="funnel-bar-fill" style="width:'+widthPct+'%;background:var(--orange)"></div></div></div>' +
+      '<div class="funnel-nums"><b>'+n.toLocaleString('en-IN')+'</b> devices<br>'+widthPct+'% of drop-offs</div>' +
+    '</div>';
+  }).join('') || '<div class="empty">No non-converting devices in this window.</div>';
+
+  // ── Abandoned basket contents — last action per (device,item), kept
+  // only where that last action was "added" and the device never ordered.
+  const lastActionPerItem = {}; // device_id|item_name -> {event_type, created_at}
+  rows.forEach(r => {
+    if (r.event_type !== 'item_added' && r.event_type !== 'item_removed') return;
+    if (orderedDeviceSet.has(r.device_id)) return;
+    const key = r.device_id + '|' + r.item_name;
+    const prevEntry = lastActionPerItem[key];
+    if (!prevEntry || r.created_at >= prevEntry.created_at) lastActionPerItem[key] = { event_type: r.event_type, created_at: r.created_at, item_name: r.item_name, device_id: r.device_id };
+  });
+  const abandonedItemCounts = {};
+  Object.values(lastActionPerItem).forEach(e => {
+    if (e.event_type !== 'item_added') return;
+    abandonedItemCounts[e.item_name] = (abandonedItemCounts[e.item_name] || 0) + 1;
+  });
+  const abandonedRows = Object.entries(abandonedItemCounts).sort((a, b) => b[1] - a[1]);
+  document.getElementById('abandonedTbody').innerHTML = abandonedRows.length
+    ? abandonedRows.map(([name, n]) => '<tr><td>'+escH(name)+'</td><td>'+n+'</td></tr>').join('')
+    : '<tr><td colspan="2" class="empty">Nothing abandoned in this window.</td></tr>';
+
+  // ── Most added to cart (all devices, converted or not) ──────────────────
+  const addedCounts = {}; // item_name -> {events, devices:Set}
+  rows.forEach(r => {
+    if (r.event_type !== 'item_added') return;
+    if (!addedCounts[r.item_name]) addedCounts[r.item_name] = { events: 0, devices: new Set() };
+    addedCounts[r.item_name].events++;
+    addedCounts[r.item_name].devices.add(r.device_id);
+  });
+  const topAdded = Object.entries(addedCounts).sort((a, b) => b[1].events - a[1].events).slice(0, 30);
+  document.getElementById('topAddedTbody').innerHTML = topAdded.length
+    ? topAdded.map(([name, v]) => '<tr><td>'+escH(name)+'</td><td>'+v.events+'</td><td>'+v.devices.size+'</td></tr>').join('')
+    : '<tr><td colspan="3" class="empty">No add-to-cart events in this window.</td></tr>';
+
+  // ── Completed orders table ──────────────────────────────────────────────
+  const orderRows = rows.filter(r => r.event_type === 'order_placed').sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 100);
+  document.getElementById('ordersTbody').innerHTML = orderRows.length
+    ? orderRows.map(r => '<tr><td>'+escH(formatDt(r.created_at))+'</td><td>'+escH(r.phone||'')+'</td><td>'+escH(r.society||'')+'</td><td>'+escH(r.door_number||'')+'</td><td>'+escH(r.sales_order_id||'')+'</td></tr>').join('')
+    : '<tr><td colspan="5" class="empty">No completed orders in this window.</td></tr>';
+}
+
+function pct(n, d) { return d > 0 ? (n / d * 100).toFixed(0) + '%' : '—'; }
+
+function formatDt(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }) + ', ' +
+    d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+}
+
+document.querySelectorAll('.range-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.range-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    rangeDays = +tab.dataset.days;
+    loadFunnel();
+  });
+});
+document.getElementById('refreshBtn').addEventListener('click', loadFunnel);
+
+// parser.html pokes this on every revisit to the Funnel tab (same pattern
+// as pnl.html) — this page never refetches on its own after first load.
+window.addEventListener('message', function(e) { if (e.data === 'refresh') loadFunnel(); });
+
+loadFunnel();
+</script>
+</body>
+</html>

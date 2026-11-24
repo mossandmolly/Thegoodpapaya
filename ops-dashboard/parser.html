@@ -711,6 +711,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <button class="tab" onclick="switchTab('stock')" id="tab-stock">📊 Stock</button>
   <button class="tab" onclick="switchTab('vegperf')" id="tab-vegperf">🥦 Veg Performance</button>
   <button class="tab" onclick="switchTab('pnl')" id="tab-pnl">📈 P&amp;L</button>
+  <button class="tab" onclick="switchTab('funnel')" id="tab-funnel">🧭 Funnel</button>
   <button class="tab" onclick="switchTab('phonelookup')" id="tab-phonelookup">📞 Phone Lookup</button>
   <button class="tab" onclick="switchTab('feedback')" id="tab-feedback">💬 Feedback</button>
   <button class="tab" onclick="switchTab('purchases')" id="tab-purchases" style="margin-left:auto">🧺 Purchases</button>
@@ -973,6 +974,16 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
      risk real collisions with this file's own IDs/globals. -->
 <div class="panel" id="panel-pnl">
   <iframe id="pnl-iframe" src="" style="width:100%;height:calc(100vh - 140px);border:none;display:block"></iframe>
+</div>
+
+<!-- Funnel — visible only to VEGPERF_ALLOWED_EMAIL, same gate as P&L
+     above (storefront hits/conversion is the same kind of owner-only
+     business metric). Standalone file (funnel.html, own Supabase client,
+     own queries against storefront_events — migration 165) loaded in an
+     iframe for the same reason pnl.html is: its own generic element IDs
+     that would otherwise risk colliding with this file's. -->
+<div class="panel" id="panel-funnel">
+  <iframe id="funnel-iframe" src="" style="width:100%;height:calc(100vh - 140px);border:none;display:block"></iframe>
 </div>
 
 <!-- PURCHASES (buyer role) — review purchase tranches logged under Stock >
@@ -1971,6 +1982,7 @@ function switchTab(name){
   else if(isDeliveryRole)name='delivery';
   else if(name==='vegperf'&&!isVegPerfAllowed)name='today';
   else if(name==='pnl'&&!isVegPerfAllowed)name='today';
+  else if(name==='funnel'&&!isVegPerfAllowed)name='today';
   else if(name==='phonelookup'&&!isMarkPaidAllowed)name='today';
   else if(name==='feedback'&&!isMarkPaidAllowed)name='today';
   else if(name==='images'&&!isMarkPaidAllowed)name='today';
@@ -2010,6 +2022,14 @@ function switchTab(name){
       // Supabase since that first load would otherwise just silently not
       // show up until a full browser refresh. Poke it to re-run its own
       // loadFromSupabase() instead.
+      f.contentWindow.postMessage('refresh','*');
+    }
+  }
+  if(name==='funnel'){
+    const f=document.getElementById('funnel-iframe');
+    if(f&&!f.dataset.loaded){
+      f.dataset.loaded='1';f.src='funnel.html';
+    }else if(f){
       f.contentWindow.postMessage('refresh','*');
     }
   }
