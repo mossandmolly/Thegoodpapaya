@@ -54,11 +54,12 @@ function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 // in bunches, not pieces — same convention as the storefront cart/checkout.
 function pieceUnitLabel(row) { return row.subsection === 'Leafy Greens' ? 'bunch' : 'pc'; }
 
-// Piece-mode isn't its own column on order_items — place-order writes it
-// as a "N pieces" prefix on the description (same convention the WhatsApp
-// parser uses), so that's the one signal available to tell a piece-mode
-// line apart from a plain kg one here.
+// Piece/box mode aren't their own column on order_items — place-order
+// writes a "N pieces"/"N box" prefix on the description instead (same
+// convention the WhatsApp parser uses for piece-mode), so that's the one
+// signal available to tell these apart from a plain kg line here.
 function isPieceModeRow(row) { return /^\d+(\.\d+)?\s*pieces/i.test(row.description || ''); }
+function isBoxModeRow(row) { return /^\d+(\.\d+)?\s*box\b/i.test(row.description || ''); }
 
 function groupByOrder(rows) {
   const byOrder = {};
@@ -131,13 +132,15 @@ async function lookup(phoneArg) {
       const rows = order.items.map(i => {
         const qty = +i.requested_quantity || 0;
         const piece = isPieceModeRow(i);
+        const box = isBoxModeRow(i);
         const unitPrice = i.unit_price != null ? +i.unit_price : null;
         let approxValue = null;
         let unitLabel;
-        if (piece) {
-          unitLabel = pieceUnitLabel(i);
-          if (unitPrice != null && i.piece_approx_kg != null) {
-            approxValue = unitPrice * (+i.piece_approx_kg) * qty;
+        if (piece || box) {
+          const approxKg = piece ? i.piece_approx_kg : i.box_approx_kg;
+          unitLabel = piece ? pieceUnitLabel(i) : 'box';
+          if (unitPrice != null && approxKg != null) {
+            approxValue = unitPrice * (+approxKg) * qty;
           }
         } else {
           unitLabel = i.unit || 'kg';
