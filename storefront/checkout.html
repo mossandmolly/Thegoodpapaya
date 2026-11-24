@@ -226,45 +226,36 @@ function renderCart() {
     return;
   }
   let subtotal = 0;
-  let subtotalIsApprox = false;
-  // An item can still be genuinely unestimable (sold by piece/box, but no
-  // approx-kg on file for it) — kept as its own caveat rather than
-  // silently treating it as ₹0.
+  // An item can still be genuinely unestimable (no unit_price on file at
+  // all) — kept as its own caveat rather than silently treating it as ₹0.
   let hasUnestimable = false;
+  // Every mode (kg, piece, box) now prices the exact same way: whatever
+  // Zoho has unit_price set to for that item IS the rate for whatever
+  // unit it's sold in (per kg, per piece, per box) — a flat rate with no
+  // bearing on weight. So amount is always just unit_price × qty; the
+  // only thing that differs between modes is the label text. piece_approx_kg/
+  // box_approx_kg are purely decorative elsewhere (a weight guide), never
+  // part of this math.
   const rows = cart.map(i => {
     const p = catalogPrices[i.item_name];
-    let qtyLabel, rateLabel, amount;
-    let amountIsApprox = false;
+    let qtyLabel, rateLabel;
 
     if (i.mode === 'piece') {
-      // Rate label reflects whatever unit Zoho actually has this item
-      // priced in (p.unit) — not assumed to be "/kg" just because this is
-      // piece mode. Qty shows only what the customer picked, no kg
-      // conversion alongside it (piece_approx_kg still feeds the amount
-      // math below, just not shown here).
       qtyLabel = i.quantity + ' ' + pieceUnitLabel(p);
-      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/'+escH(p.unit||'kg') : '—';
-      amount = (p?.piece_approx_kg && p?.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null;
-      amountIsApprox = true;
+      rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/'+escH(p.unit||'pc') : '—';
     } else if (i.mode === 'box') {
-      // Unlike piece mode, unit_price here is already a direct per-box
-      // rate straight from Zoho, not a per-kg rate to convert — so the
-      // amount is box count × rate, firm, no weight estimate involved.
-      // box_approx_kg is purely informational, not part of the math or
-      // shown in the qty column.
       qtyLabel = i.quantity + ' box';
       rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/box' : '—';
-      amount = p?.unit_price != null ? p.unit_price * i.quantity : null;
     } else {
       const unit = p ? (p.unit || 'kg') : 'kg';
       qtyLabel = i.quantity + ' ' + escH(unit);
       rateLabel = p?.unit_price != null ? '₹'+p.unit_price.toFixed(0)+'/'+escH(unit) : '—';
-      amount = p?.unit_price != null ? p.unit_price * i.quantity : null;
     }
+    const amount = p?.unit_price != null ? p.unit_price * i.quantity : null;
 
-    if (amount != null) { subtotal += amount; if (amountIsApprox) subtotalIsApprox = true; }
+    if (amount != null) subtotal += amount;
     else hasUnestimable = true;
-    const amountLabel = amount != null ? (amountIsApprox?'~':'')+'₹'+amount.toFixed(0) : '🧾 at packing';
+    const amountLabel = amount != null ? '₹'+amount.toFixed(0) : '🧾 at packing';
 
     return '<tr>' +
       '<td>'+escH(i.item_name)+(i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '')+'</td>' +
@@ -275,7 +266,7 @@ function renderCart() {
   }).join('');
   list.innerHTML = '<table class="inv-items"><thead><tr><th>Item</th><th>Rate</th><th>Qty</th><th>Amount</th></tr></thead><tbody>'+rows+'</tbody></table>';
   document.getElementById('item-count').textContent = cart.length;
-  const totalText = (subtotalIsApprox?'~':'')+'₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
+  const totalText = '₹'+subtotal.toFixed(0)+(hasUnestimable?' + packing items':'');
   document.getElementById('subtotal').textContent = totalText;
   document.getElementById('total-fine-print').textContent = '(approx total, actual to be calculated post packaging)';
   document.getElementById('place-btn').disabled = false;

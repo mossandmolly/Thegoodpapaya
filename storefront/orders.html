@@ -129,32 +129,21 @@ async function lookup(phoneArg) {
       let approxTotal = 0;
       let totalIsApprox = false;
       let hasUnestimable = false;
+      // kg, piece, and box all price the same way now — unit_price is a
+      // flat rate for whatever unit this item is actually sold in, with
+      // no bearing on weight, so the value is always just rate × qty.
+      // piece_approx_kg/box_approx_kg play no part in this at all.
       const rows = order.items.map(i => {
         const qty = +i.requested_quantity || 0;
         const piece = isPieceModeRow(i);
         const box = isBoxModeRow(i);
         const unitPrice = i.unit_price != null ? +i.unit_price : null;
-        let approxValue = null;
-        let unitLabel;
-        if (piece) {
-          unitLabel = pieceUnitLabel(i);
-          if (unitPrice != null && i.piece_approx_kg != null) {
-            approxValue = unitPrice * (+i.piece_approx_kg) * qty;
-          }
-        } else if (box) {
-          // Unlike piece, unit_price for a box item is already a direct
-          // per-box rate from Zoho, not per-kg — box count × rate, no
-          // weight-based conversion at all.
-          unitLabel = 'box';
-          if (unitPrice != null) approxValue = unitPrice * qty;
-        } else {
-          unitLabel = i.unit || 'kg';
-          if (unitPrice != null) approxValue = unitPrice * qty;
-        }
-        if (approxValue != null) { approxTotal += approxValue; totalIsApprox = true; }
+        const unitLabel = piece ? pieceUnitLabel(i) : box ? 'box' : (i.unit || 'kg');
+        const value = unitPrice != null ? unitPrice * qty : null;
+        if (value != null) { approxTotal += value; totalIsApprox = true; }
         else hasUnestimable = true;
         return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+' '+escH(unitLabel)+'</td>' +
-          '<td>'+(approxValue != null ? '~₹'+approxValue.toFixed(0) : '🧾 at packing')+'</td></tr>';
+          '<td>'+(value != null ? '₹'+value.toFixed(0) : '🧾 at packing')+'</td></tr>';
       }).join('');
 
       const totalLabel = totalIsApprox
