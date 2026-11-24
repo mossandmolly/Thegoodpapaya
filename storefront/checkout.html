@@ -47,6 +47,10 @@
     <input type="text" id="door" placeholder="e.g. A1203" autocomplete="off">
   </div>
   <div class="form-field">
+    <label>Delivery date</label>
+    <input type="date" id="delivery-date">
+  </div>
+  <div class="form-field">
     <label>Delivery notes (optional)</label>
     <textarea id="notes" rows="2" placeholder="Delivery instructions, ripeness preference, etc."></textarea>
   </div>
@@ -71,6 +75,25 @@ function showErr(msg){const e=document.getElementById('err');e.textContent=msg;e
 // in bunches, not pieces — same underlying piece-mode plumbing either way.
 function pieceUnitLabel(p){return p && p.subsection === 'Leafy Greens' ? 'bunch' : 'pc';}
 function hideErr(){document.getElementById('err').classList.remove('show');}
+
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Same field the ops dashboard's own "entry date" picker fills — the
+// date prefix of sales_order_id itself (see place-order), so a customer
+// can ask for delivery on a future day, not just today. Same forward
+// range staff get there (today..+15 days); no past dates though, unlike
+// staff's own picker, which also allows backdating for corrections.
+function initDeliveryDate() {
+  const el = document.getElementById('delivery-date');
+  const today = todayIST();
+  el.min = today;
+  el.max = addDays(today, 15);
+  if (!el.value) el.value = today;
+}
 
 // Highlights exactly the mandatory fields (society, door, phone) that
 // are actually missing/invalid, rather than just a generic text error —
@@ -287,6 +310,7 @@ async function placeOrder() {
       body: JSON.stringify({
         cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity, mode: i.mode || 'kg', notes: i.note || undefined })),
         society, door_number: door, phone, notes,
+        delivery_date: document.getElementById('delivery-date').value,
         payment_method: method,
         device_id: getDeviceId(),
       }),
@@ -311,6 +335,7 @@ async function placeOrder() {
 }
 
 prefillFromLastOrder();
+initDeliveryDate();
 renderCart();
 loadPrices();
 // Fired once here, not inside renderCart() — that also re-runs on a
@@ -324,7 +349,7 @@ if (getCart().length) trackEvent('checkout_viewed', {});
 // left, that frozen state comes back exactly as it was, and none of this
 // script re-runs to retry it. event.persisted means exactly that kind of
 // restore, not a fresh load.
-window.addEventListener('pageshow', e => { if (e.persisted) { renderCart(); loadPrices(); } });
+window.addEventListener('pageshow', e => { if (e.persisted) { initDeliveryDate(); renderCart(); loadPrices(); } });
 </script>
 </body>
 </html>
