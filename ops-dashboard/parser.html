@@ -977,9 +977,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <iframe id="pnl-iframe" src="" style="width:100%;height:calc(100vh - 140px);border:none;display:block"></iframe>
 </div>
 
-<!-- Funnel — visible only to VEGPERF_ALLOWED_EMAIL, same gate as P&L
-     above (storefront hits/conversion is the same kind of owner-only
-     business metric). Standalone file (funnel.html, own Supabase client,
+<!-- Funnel — Somya+Rohith only (isMarkPaidAllowed — same gate as Feedback/
+     Phone Lookup, narrower than P&L's Somya-only gate above). Standalone
+     file (funnel.html, own Supabase client,
      own queries against storefront_events — migration 165) loaded in an
      iframe for the same reason pnl.html is: its own generic element IDs
      that would otherwise risk colliding with this file's. -->
@@ -1852,6 +1852,11 @@ function applyRoleRestrictions(){
     const el=document.getElementById('tab-feedback');
     if(el)el.style.display='none';
   }
+  // Funnel — Somya+Rohith only (narrower than P&L's Somya-only gate above).
+  if(!isMarkPaidAllowed){
+    const el=document.getElementById('tab-funnel');
+    if(el)el.style.display='none';
+  }
   // Catalog Images — same Somya+Rohith gate.
   if(!isMarkPaidAllowed){
     const el=document.getElementById('tab-images');
@@ -1983,7 +1988,7 @@ function switchTab(name){
   else if(isDeliveryRole)name='delivery';
   else if(name==='vegperf'&&!isVegPerfAllowed)name='today';
   else if(name==='pnl'&&!isVegPerfAllowed)name='today';
-  else if(name==='funnel'&&!isVegPerfAllowed)name='today';
+  else if(name==='funnel'&&!isMarkPaidAllowed)name='today';
   else if(name==='phonelookup'&&!isMarkPaidAllowed)name='today';
   else if(name==='feedback'&&!isMarkPaidAllowed)name='today';
   else if(name==='images'&&!isMarkPaidAllowed)name='today';
