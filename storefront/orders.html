@@ -136,12 +136,17 @@ async function lookup(phoneArg) {
         const unitPrice = i.unit_price != null ? +i.unit_price : null;
         let approxValue = null;
         let unitLabel;
-        if (piece || box) {
-          const approxKg = piece ? i.piece_approx_kg : i.box_approx_kg;
-          unitLabel = piece ? pieceUnitLabel(i) : 'box';
-          if (unitPrice != null && approxKg != null) {
-            approxValue = unitPrice * (+approxKg) * qty;
+        if (piece) {
+          unitLabel = pieceUnitLabel(i);
+          if (unitPrice != null && i.piece_approx_kg != null) {
+            approxValue = unitPrice * (+i.piece_approx_kg) * qty;
           }
+        } else if (box) {
+          // Unlike piece, unit_price for a box item is already a direct
+          // per-box rate from Zoho, not per-kg — box count × rate, no
+          // weight-based conversion at all.
+          unitLabel = 'box';
+          if (unitPrice != null) approxValue = unitPrice * qty;
         } else {
           unitLabel = i.unit || 'kg';
           if (unitPrice != null) approxValue = unitPrice * qty;

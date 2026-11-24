@@ -233,25 +233,39 @@ function renderCart() {
   let hasUnestimable = false;
   list.innerHTML = cart.map(i => {
     const p = catalogPrices[i.item_name];
-    if (i.mode === 'piece' || i.mode === 'box') {
-      const approxKg = i.mode === 'piece' ? p?.piece_approx_kg : p?.box_approx_kg;
-      const unitLabel = i.mode === 'piece' ? pieceUnitLabel(p) : 'box';
-      const hasApprox = !!approxKg;
-      const approxWeight = hasApprox ? ' (~'+(i.quantity * approxKg).toFixed(2)+'kg)' : '';
-      // unit_price is always per-kg — approx piece/box price = rate × est.
-      // kg per unit × qty. Exact amount is only known once actually weighed
-      // at packing, hence "~" and the note, not a firm number.
-      const approxPrice = (hasApprox && p?.unit_price != null) ? p.unit_price * approxKg * i.quantity : null;
+    if (i.mode === 'piece') {
+      // unit_price is per-kg here — approx price = rate × est. kg/piece ×
+      // qty. Exact amount is only known once actually weighed at packing,
+      // hence "~" and the note, not a firm number.
+      const hasApprox = !!p?.piece_approx_kg;
+      const approxWeight = hasApprox ? ' (~'+(i.quantity * p.piece_approx_kg).toFixed(2)+'kg)' : '';
+      const approxPrice = (hasApprox && p?.unit_price != null) ? p.unit_price * p.piece_approx_kg * i.quantity : null;
       if (approxPrice != null) { subtotal += approxPrice; subtotalIsApprox = true; }
       else hasUnestimable = true;
-      // No "(exact at packing)" wording at item level any more — the
-      // approx caveat is now one fine-print line under the total instead
-      // (see totalFinePrint below), not repeated on every row.
       const priceLabel = approxPrice != null ? '~₹'+approxPrice.toFixed(0) : '🧾 priced at packing';
       return '<div class="cart-row">' +
         '<div class="info">' +
           '<div class="name">'+escH(i.item_name)+'</div>' +
-          '<div class="price">'+i.quantity+' '+unitLabel+approxWeight+' · '+priceLabel+'</div>' +
+          '<div class="price">'+i.quantity+' '+pieceUnitLabel(p)+approxWeight+' · '+priceLabel+'</div>' +
+          (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
+        '</div>' +
+      '</div>';
+    }
+    if (i.mode === 'box') {
+      // Unlike piece mode, unit_price here is already a direct per-box
+      // rate straight from Zoho, not a per-kg rate to convert — so the
+      // price is box count × rate, no weight estimate involved at all.
+      // box_approx_kg is purely informational here (the weight guide
+      // shown alongside), never part of the price math.
+      const boxTotal = p?.unit_price != null ? p.unit_price * i.quantity : null;
+      if (boxTotal != null) subtotal += boxTotal;
+      else hasUnestimable = true;
+      const approxWeight = p?.box_approx_kg ? ' (~'+(i.quantity * p.box_approx_kg).toFixed(2)+'kg)' : '';
+      const priceLabel = boxTotal != null ? '₹'+boxTotal.toFixed(0) : '🧾 priced at packing';
+      return '<div class="cart-row">' +
+        '<div class="info">' +
+          '<div class="name">'+escH(i.item_name)+'</div>' +
+          '<div class="price">'+i.quantity+' box'+approxWeight+' · '+priceLabel+'</div>' +
           (i.note ? '<div class="price" style="color:#b5762a">📝 '+escH(i.note)+'</div>' : '') +
         '</div>' +
       '</div>';
