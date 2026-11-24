@@ -16,9 +16,14 @@
 // whatsapp-create-order/index.ts, both actively used today.
 //
 // Input:  { cart: [{ item_name, quantity, unit? }], society, door_number,
-//            phone, notes?, payment_method }
+//            phone, notes?, payment_method, delivery_date?, device_id? }
 // Output: { sales_order_id }                    (cod)
 //         { sales_order_id, payment_url }        (online)
+//
+// delivery_date (YYYY-MM-DD, optional) lets the customer ask for a future
+// delivery day instead of today — same field the ops dashboard's own
+// "entry date" picker fills (the date prefix of sales_order_id itself).
+// Falls back to today if missing/out of the allowed forward window.
 //
 // notes is saved verbatim onto order_items.delivery_instructions,
 // synchronously, with zero added parsing/latency. Turning that free text
@@ -192,7 +197,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const { cart, society, door_number, phone, notes, payment_method, device_id } = await req.json();
+    const { cart, society, door_number, phone, notes, payment_method, device_id, delivery_date } = await req.json();
 
     if (!cart?.length)  throw new Error('No items in cart');
     if (!society)       throw new Error('Missing society name');
@@ -212,7 +217,23 @@ Deno.serve(async (req) => {
       throw new Error('This basket has items priced at packing — choose Pay on Delivery instead.');
     }
     const customerName = `${String(society).trim()} ${String(door_number).trim()}`;
-    const today         = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10); // IST
+    const todayIST      = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
+
+    // Customer-chosen delivery date — same field the ops dashboard's own
+    // "entry date" picker fills (the date prefix of sales_order_id
+    // itself, see resolveSalesOrderId below), so a customer can ask for
+    // delivery on a future day, not just today. Same forward range staff
+    // get there (today..+15 days). Falls back to today — rather than
+    // rejecting the order outright — on anything missing/malformed/out of
+    // range: the date picker's own min/max already stop a real customer
+    // from picking outside this window, so landing here at all means a
+    // non-UI caller sent something odd, not a mistake worth failing a
+    // real checkout over.
+    const maxDeliveryDate = new Date(Date.now() + (330 + 15 * 24 * 60) * 60 * 1000).toISOString().slice(0, 10);
+    const today = (typeof delivery_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(delivery_date)
+      && delivery_date >= todayIST && delivery_date <= maxDeliveryDate)
+      ? delivery_date
+      : todayIST;
 
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
