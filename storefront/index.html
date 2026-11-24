@@ -183,7 +183,7 @@ async function load() {
 
 // Subsection display order — anything not listed here (a new/uncategorized
 // subsection) just sorts alphabetically after these.
-const SUBSECTION_ORDER = ['Seasonal Fruits','Everyday Fruits','Exotic & Berries','Daily Vegetables','Leafy Greens','Gourds & Other Vegetables'];
+const SUBSECTION_ORDER = ['Seasonal Fruits','Everyday Fruits','Exotic Fruits & Berries','Daily Vegetables','Leafy Greens','Gourds & Other Vegetables','Exotic Vegetables'];
 // Leafy items (subsection already set via catalog settings) are counted
 // in bunches, not pieces — same underlying piece-mode plumbing either way.
 function pieceUnitLabel(c) { return c && c.subsection === 'Leafy Greens' ? 'bunch' : 'pc'; }
