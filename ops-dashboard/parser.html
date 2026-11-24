@@ -789,6 +789,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
   <div id="to-summary-pills" class="filter-pills status-pills"></div>
   <div id="to-delivery-pills" class="filter-pills delivery-status-pills"></div>
   <div id="to-payment-pills" class="filter-pills delivery-status-pills"></div>
+  <div id="to-source-pills" class="filter-pills delivery-status-pills"></div>
   <div class="filter-group-label">View</div>
   <div id="to-sort-toggle" class="filter-pills status-pills"></div>
   <div id="to-ofd-summary"></div>
@@ -3966,7 +3967,7 @@ async function fetchAllCustomerLookupByDatePrefix(datePrefix){
   let from=0;
   while(true){
     const{data,error}=await sb.from('order_customer_lookup')
-      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at,sequence_number,sequenced_at,discount_type,discount_value,payment_refunded,refunded_at,refund_amount,refund_reason,payment_pending_verification,payment_claimed_method,payment_claimed_at,payment_claimed_by')
+      .select('sales_order_id,customer_name,phone,razorpay_url,invoice_status,status,invoice_total,delivery_status,delivered_at,delivery_notes,delivery_photo_path,payment_collected,payment_collected_method,payment_collected_at,delivery_photo_paths,assigned_rider,deliver_by,admin_notes,trip_override,deliver_after,invoice_downloaded_at,dispatched_at,is_pickup,qr_image_url,admin_action_needed,admin_action_reason,whatsapp_raw_text,whatsapp_group_name,society,created_at,sequence_number,sequenced_at,discount_type,discount_value,payment_refunded,refunded_at,refund_amount,refund_reason,payment_pending_verification,payment_claimed_method,payment_claimed_at,payment_claimed_by,source')
       .like('sales_order_id',datePrefix+'-%')
       .order('sales_order_id')
       .range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
@@ -4188,6 +4189,7 @@ async function loadTodaysOrders(){
         createdAt:         o?.created_at||null,
         sequenceNumber:    o?.sequence_number??null,
         sequencedAt:       o?.sequenced_at||null,
+        source:            o?.source||null, // 'website' | 'csv' | 'manual' — migration 030/171
         items:[],
       };
     }
@@ -6428,6 +6430,14 @@ let overviewDeliveryFilter='all'; // 'all' | 'pending' | 'ofd' | 'partially_deli
 // filter rather than being folded into the delivery-status one.
 let overviewPaymentFilter='all'; // 'all' | 'paid' | 'not_paid'
 
+// Same ANDed-on-top axis again — where the order actually came from
+// (orders.source, migration 030): 'website' is a real storefront
+// checkout; 'csv'/'manual' both mean a staff member logged it some other
+// way (WhatsApp, phone call, bulk import). Grouped into just "Online" vs
+// "Other" here since that's the distinction that actually matters day to
+// day, not the raw three-way source value.
+let overviewSourceFilter='all'; // 'all' | 'online' | 'other'
+
 // Whether any active (non-cancelled) item on this order was created by the
 // WhatsApp listener's direct-to-orders push (whatsapp-create-order) and
 // hasn't been approved yet — see migration 077. Shared by the filter pill,
@@ -6490,6 +6500,8 @@ function orderMatchesOverviewFilter(order){
   }
   if(overviewPaymentFilter==='paid'&&!order.paymentCollected)return false;
   if(overviewPaymentFilter==='not_paid'&&order.paymentCollected)return false;
+  if(overviewSourceFilter==='online'&&order.source!=='website')return false;
+  if(overviewSourceFilter==='other'&&order.source==='website')return false;
   if(toOverviewFilter==='all')return true;
   if(toOverviewFilter==='cancelled')return order.orderStatus==='cancelled';
   if(order.orderStatus==='cancelled')return false;
@@ -6513,6 +6525,11 @@ function setOverviewDeliveryFilter(key){
 
 function setOverviewPaymentFilter(key){
   overviewPaymentFilter=key;
+  renderOrdersList();
+}
+
+function setOverviewSourceFilter(key){
+  overviewSourceFilter=key;
   renderOrdersList();
 }
 
@@ -6624,6 +6641,16 @@ function renderOverviewSummaryPills(tripInfo){
   ];
   document.getElementById('to-payment-pills').innerHTML=paymentPills.map(p=>
     '<span class="filter-pill'+(overviewPaymentFilter===p.key?' active':'')+'" onclick="setOverviewPaymentFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
+  ).join('');
+
+  const online=orders.filter(o=>o.source==='website').length;
+  const sourcePills=[
+    {key:'all',label:'All',count:orders.length},
+    {key:'online',label:'🌐 Online',count:online},
+    {key:'other',label:'Other',count:orders.length-online},
+  ];
+  document.getElementById('to-source-pills').innerHTML=sourcePills.map(p=>
+    '<span class="filter-pill'+(overviewSourceFilter===p.key?' active':'')+'" onclick="setOverviewSourceFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('');
 
   renderOfdRiderSummary(active,tripInfo);
