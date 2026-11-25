@@ -168,7 +168,7 @@ function setCat(c) {
 
 async function load() {
   const { data, error } = await sb.from('catalog')
-    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,default_unit,subsection,out_of_stock')
+    .select('item_name,unit_price,unit,category,image_url,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,default_unit,subsection,out_of_stock,todays_special')
     .eq('active', true)
     .order('item_name');
   if (error) {
@@ -258,7 +258,17 @@ function render() {
     return ia - ib;
   });
 
-  grid.innerHTML = groupNames.map(name =>
+  // Today's Specials is a highlight, not a replacement — a special item
+  // still appears again in its normal subsection below, same as any
+  // other featured-item-up-top pattern. Built from `rows` (already
+  // search/category filtered), so it naturally disappears instead of
+  // showing a now-irrelevant special while someone's mid-search.
+  const specials = rows.filter(c => c.todays_special);
+  const specialsHtml = specials.length
+    ? '<div class="section-heading">⭐ Today\'s Specials</div><div class="item-grid">'+specials.map(c => cardHtml(c, qtyMap)).join('')+'</div>'
+    : '';
+
+  grid.innerHTML = specialsHtml + groupNames.map(name =>
     '<div class="section-heading">'+escH(name)+'</div>'+
     '<div class="item-grid">'+groups[name].map(c => cardHtml(c, qtyMap)).join('')+'</div>'
   ).join('');
