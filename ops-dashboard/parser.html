@@ -3959,7 +3959,7 @@ async function fetchAllOrderItems(applyFilters){
   let from=0;
   while(true){
     let q=sb.from('order_items')
-      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,packed_at,pending_review,no_bill,assigned_packer_id');
+      .select('id,sales_order_id,item_name,description,requested_quantity,final_quantity,status,carried_forward,delivery_instructions,collected,packed_by,packed_at,pending_review,no_bill,assigned_packer_id,self_cancelled,self_cancelled_at');
     q=applyFilters(q).order('sales_order_id').range(from,from+ORDER_ITEMS_PAGE_SIZE-1);
     const{data,error}=await q;
     if(error)return{data:null,error};
@@ -6520,6 +6520,14 @@ function orderHasCancelledItem(order){
   return (order&&order.items||[]).some(i=>i.status==='cancelled');
 }
 
+// Narrower than orderHasCancelledItem — only true for a customer's own
+// cancel from My Orders (migration 172), not a staff cancel from this
+// dashboard, which never sets self_cancelled.
+function orderHasSelfCancelledItem(order){
+  return (order&&order.items||[]).some(i=>i.self_cancelled);
+}
+let overviewSelfCancelledOnly=false;
+
 // Same condition the existing bulk "Payment Links" button already uses to
 // decide which selected orders need one (see paylinkIds below) — invoiced,
 // not already paid, and neither a Razorpay link nor a QR code is currently
@@ -6548,6 +6556,7 @@ function orderMatchesOverviewFilter(order){
   if(overviewNoLinkOnly&&!orderNeedsPaymentLink(order))return false;
   if(overviewNoPhoneOnly&&order.phone)return false;
   if(overviewDeadlineOnly&&!order.deliverBy&&!order.deliverAfter)return false;
+  if(overviewSelfCancelledOnly&&!orderHasSelfCancelledItem(order))return false;
   if(overviewDeliveryFilter!=='all'){
     const ds=order.deliveryStatus||'not_dispatched';
     if(overviewDeliveryFilter==='delivered'&&ds!=='delivered')return false;
@@ -6630,6 +6639,11 @@ function toggleOverviewDeadlineFilter(){
   renderOrdersList();
 }
 
+function toggleOverviewSelfCancelledFilter(){
+  overviewSelfCancelledOnly=!overviewSelfCancelledOnly;
+  renderOrdersList();
+}
+
 function renderOverviewSummaryPills(tripInfo){
   const orders=Object.values(currentOrdersById);
   // Pickup and replacement-only orders don't count toward "real" order
@@ -6655,6 +6669,7 @@ function renderOverviewSummaryPills(tripInfo){
   const refunded=orders.filter(o=>o.paymentRefunded).length;
   const pendingVerification=orders.filter(o=>o.paymentPendingVerification).length;
   const withDeadline=orders.filter(o=>o.deliverBy||o.deliverAfter).length;
+  const withSelfCancelled=orders.filter(orderHasSelfCancelledItem).length;
   const pills=[
     {key:'all',label:'All',count:total},
     {key:'inprogress',label:'Open/Packed',count:inprogress},
@@ -6676,7 +6691,8 @@ function renderOverviewSummaryPills(tripInfo){
   (withHeld?'<span class="filter-pill'+(overviewHeldOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewHeldFilter()">⏸ Held ('+withHeld+')</span>':'')+
   (noLink?'<span class="filter-pill'+(overviewNoLinkOnly?' active':'')+'" style="color:#c2570a;font-weight:700" onclick="toggleOverviewNoLinkFilter()">🔗 No link generated ('+noLink+')</span>':'')+
   (noPhone?'<span class="filter-pill'+(overviewNoPhoneOnly?' active':'')+'" style="color:#c0392b;font-weight:700" onclick="toggleOverviewNoPhoneFilter()">📵 No phone ('+noPhone+')</span>':'')+
-  (withDeadline?'<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>':'');
+  (withDeadline?'<span class="filter-pill'+(overviewDeadlineOnly?' active':'')+'" onclick="toggleOverviewDeadlineFilter()">⏰ Has timeline ('+withDeadline+')</span>':'')+
+  (withSelfCancelled?'<span class="filter-pill'+(overviewSelfCancelledOnly?' active':'')+'" style="color:#b3261e;font-weight:700" onclick="toggleOverviewSelfCancelledFilter()">🙋 Self-cancelled ('+withSelfCancelled+')</span>':'');
 
   const delivered=active.filter(o=>o.deliveryStatus==='delivered').length;
   const partiallyDelivered=active.filter(o=>o.deliveryStatus==='partially_delivered').length;
