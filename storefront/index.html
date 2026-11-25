@@ -264,6 +264,21 @@ function render() {
   ).join('');
 }
 
+// Rate shown per kg normally — but a steep per-kg price (e.g. ₹650/kg)
+// reads as sticker-shock at a glance, where the same item at ₹325/500g
+// doesn't, so anything over ₹300/kg shows the half-kg price instead.
+// Only applies to genuinely kg-priced items (catalog.unit === 'kg') —
+// a piece/box item's unit_price isn't a per-kg rate at all, so halving it
+// would be meaningless.
+function rateLabel(c) {
+  if (c.unit_price == null) return '';
+  const unit = c.unit || 'kg';
+  if (unit.toLowerCase() === 'kg' && c.unit_price > 300) {
+    return '₹' + (c.unit_price / 2).toFixed(0) + '/500g';
+  }
+  return '₹' + c.unit_price.toFixed(0) + '/' + escH(unit);
+}
+
 // Dense, tap-only card — photo, name, and rate (no steppers on the card
 // itself). Tap adds it (qty 1); tap the same card again removes it.
 // Adjusting quantity beyond 1, pc/kg, and notes all happen in the live
@@ -276,7 +291,7 @@ function cardHtml(c, qtyMap) {
     (c.out_of_stock ? '<div class="oos-badge">Out of stock</div>' : '') +
     (c.image_url ? '<img src="'+escH(c.image_url)+'" loading="lazy">' : '<div class="ph">'+iconFor(c.item_name, c.category)+'</div>') +
     '<div class="name">'+escH(c.item_name)+'</div>' +
-    (c.unit_price != null ? '<div class="rate">₹'+c.unit_price.toFixed(0)+'/'+escH(c.unit || 'kg')+'</div>' : '') +
+    (c.unit_price != null ? '<div class="rate">'+rateLabel(c)+'</div>' : '') +
     (selected ? '<div class="qty-badge">'+qty+'</div>' : '') +
   '</div>';
 }
