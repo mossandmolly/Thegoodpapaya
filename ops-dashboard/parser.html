@@ -6510,6 +6510,16 @@ function orderHasHeldItem(order){
 }
 let overviewHeldOnly=false;
 
+// Unlike orderHasHeldItem above, this deliberately looks at ALL items,
+// not just activeItems() — a cancelled item is exactly what activeItems()
+// filters out, so checking the raw list is the only way to see it. Used
+// by the Cancelled pill so a partially-cancelled order (customer cancels
+// one item via My Orders, the rest stay open) shows up there too, not
+// only an order where every item — and so the order itself — is cancelled.
+function orderHasCancelledItem(order){
+  return (order&&order.items||[]).some(i=>i.status==='cancelled');
+}
+
 // Same condition the existing bulk "Payment Links" button already uses to
 // decide which selected orders need one (see paylinkIds below) — invoiced,
 // not already paid, and neither a Razorpay link nor a QR code is currently
@@ -6550,7 +6560,7 @@ function orderMatchesOverviewFilter(order){
   if(overviewSourceFilter==='online'&&order.source!=='website')return false;
   if(overviewSourceFilter==='other'&&order.source==='website')return false;
   if(toOverviewFilter==='all')return true;
-  if(toOverviewFilter==='cancelled')return order.orderStatus==='cancelled';
+  if(toOverviewFilter==='cancelled')return order.orderStatus==='cancelled'||orderHasCancelledItem(order);
   if(order.orderStatus==='cancelled')return false;
   if(toOverviewFilter==='invoiced')return isFullyInvoiced(order);
   // 'final' — every active item is at least final (ready to invoice), but
@@ -6626,7 +6636,10 @@ function renderOverviewSummaryPills(tripInfo){
   // volume in the overall total — same exclusion the to-rc header count
   // above already applies.
   const total=orders.filter(o=>!o.isPickup&&!isReplacementOnlyOrder(o)).length;
-  const cancelled=orders.filter(o=>o.orderStatus==='cancelled').length;
+  // Includes a partially-cancelled order (some items cancelled, order
+  // itself still active) alongside a fully-cancelled one — see
+  // orderHasCancelledItem's own comment.
+  const cancelled=orders.filter(o=>o.orderStatus==='cancelled'||orderHasCancelledItem(o)).length;
   const active=orders.filter(o=>o.orderStatus!=='cancelled');
   const invoiced=active.filter(isFullyInvoiced).length;
   const final=active.filter(o=>!isFullyInvoiced(o)&&isReadyToInvoice(o)).length;
@@ -6690,11 +6703,15 @@ function renderOverviewSummaryPills(tripInfo){
     '<span class="filter-pill'+(overviewPaymentFilter===p.key?' active':'')+'" onclick="setOverviewPaymentFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('');
 
-  const online=orders.filter(o=>o.source==='website').length;
+  // Same "real order volume" exclusion as the to-rc header count and the
+  // All pill above — a fully-cancelled order was never actually fulfilled,
+  // so it shouldn't inflate how many "real" orders came in online.
+  const realSourceOrders=orders.filter(o=>!o.isPickup&&o.orderStatus!=='cancelled'&&!isReplacementOnlyOrder(o));
+  const online=realSourceOrders.filter(o=>o.source==='website').length;
   const sourcePills=[
-    {key:'all',label:'All',count:orders.length},
+    {key:'all',label:'All',count:realSourceOrders.length},
     {key:'online',label:'🌐 Online',count:online},
-    {key:'other',label:'Other',count:orders.length-online},
+    {key:'other',label:'Other',count:realSourceOrders.length-online},
   ];
   document.getElementById('to-source-pills').innerHTML=sourcePills.map(p=>
     '<span class="filter-pill'+(overviewSourceFilter===p.key?' active':'')+'" onclick="setOverviewSourceFilter(\''+p.key+'\')">'+escH(p.label)+' ('+p.count+')</span>'
