@@ -78,7 +78,15 @@ Deno.serve(async (req) => {
     if (item.status === 'cancelled') throw new Error('This item is already cancelled');
 
     const { error: updateErr } = await supabase.from('order_items')
-      .update({ status: 'cancelled', pre_cancel_status: item.status })
+      .update({
+        status: 'cancelled',
+        pre_cancel_status: item.status,
+        // Distinguishes this from the ops dashboard's own staff-initiated
+        // soft-cancel, which never sets these — order_items.status alone
+        // looks identical either way (migration 172).
+        self_cancelled: true,
+        self_cancelled_at: new Date().toISOString(),
+      })
       .eq('id', item_id);
     if (updateErr) throw new Error(updateErr.message);
 

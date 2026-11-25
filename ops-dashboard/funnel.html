@@ -31,7 +31,8 @@ body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-he
 .section-title{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted2);font-family:'DM Mono',monospace;margin-bottom:14px;}
 .section-sub{font-size:11px;color:var(--muted2);margin:-8px 0 14px;line-height:1.5;}
 
-.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:16px;}
+.kpis{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:16px;}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(3,1fr);}}
 .kpi{background:var(--s1);border:1px solid var(--border);border-radius:7px;padding:12px 14px;position:relative;overflow:hidden;}
 .kpi::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--kc,#2e2e2e);}
 .kpi-l{font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted2);font-family:'DM Mono',monospace;margin-bottom:4px;}
@@ -162,6 +163,17 @@ tr:hover td{background:var(--s2);}
     </div>
 
     <div class="card">
+      <div class="section-title">Self-cancelled by customers</div>
+      <div class="section-sub">Items a customer cancelled themselves from My Orders (not a staff cancel in the ops dashboard) — "Time to cancel" is the gap between placing the order and cancelling that item.</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Item</th><th>Customer</th><th>Order placed</th><th>Cancelled</th><th>Time to cancel</th></tr></thead>
+          <tbody id="selfCancelledTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="section-title">Completed orders in this window</div>
       <div class="table-wrap">
         <table>
@@ -205,6 +217,7 @@ const STAGE_LABEL = {
 
 let rangeDays = 30;
 let rows = [];
+let selfCancelledRows = [];
 
 async function loadFunnel() {
   document.getElementById('loadState').style.display = 'block';
@@ -215,14 +228,48 @@ async function loadFunnel() {
 
   try {
     const since = new Date(Date.now() - rangeDays * 86400000).toISOString();
-    const { data, error } = await sb
-      .from('storefront_events')
-      .select('device_id,event_type,item_name,phone,society,door_number,sales_order_id,created_at')
-      .gte('created_at', since)
-      .order('created_at', { ascending: true })
-      .limit(50000);
+    const [{ data, error }, { data: selfCancelledItems, error: selfCancelledErr }] = await Promise.all([
+      sb.from('storefront_events')
+        .select('device_id,event_type,item_name,phone,society,door_number,sales_order_id,created_at')
+        .gte('created_at', since)
+        .order('created_at', { ascending: true })
+        .limit(50000),
+      // migration 172 — order_items.self_cancelled is set only by
+      // cancel-order-item (My Orders), never by the ops dashboard's own
+      // staff-side cancel, so this is customer self-cancellations only.
+      sb.from('order_items')
+        .select('sales_order_id,item_name,self_cancelled_at')
+        .eq('self_cancelled', true)
+        .gte('self_cancelled_at', since)
+        .order('self_cancelled_at', { ascending: false })
+        .limit(1000),
+    ]);
     if (error) throw new Error(error.message);
+    if (selfCancelledErr) throw new Error(selfCancelledErr.message);
     rows = data || [];
+
+    // Second step, not parallel with the above — needs the sales_order_ids
+    // the first query just returned. order_customer_lookup (not orders
+    // directly — see its own comment elsewhere) is what has created_at
+    // (order placed time) and customer/phone/society for context.
+    const items = selfCancelledItems || [];
+    const ids = [...new Set(items.map(i => i.sales_order_id))];
+    let ordersById = {};
+    if (ids.length) {
+      const { data: orderRows, error: orderErr } = await sb
+        .from('order_customer_lookup')
+        .select('sales_order_id,customer_name,phone,society,created_at')
+        .in('sales_order_id', ids);
+      if (orderErr) throw new Error(orderErr.message);
+      (orderRows || []).forEach(o => ordersById[o.sales_order_id] = o);
+    }
+    selfCancelledRows = items.map(i => {
+      const o = ordersById[i.sales_order_id];
+      const placedAt = o?.created_at || null;
+      const deltaMs = placedAt ? (new Date(i.self_cancelled_at) - new Date(placedAt)) : null;
+      return { ...i, customer_name: o?.customer_name, phone: o?.phone, society: o?.society, placed_at: placedAt, delta_ms: deltaMs };
+    });
+
     render();
     document.getElementById('asOf').textContent = 'Last ' + rangeDays + ' days · as of ' + new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
     document.getElementById('loadState').style.display = 'none';
@@ -235,6 +282,16 @@ async function loadFunnel() {
   } finally {
     document.getElementById('refreshBtn').disabled = false;
   }
+}
+
+function formatDuration(ms) {
+  if (ms == null || ms < 0) return '—';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return mins + 'm';
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h ' + (mins % 60) + 'm';
+  const days = Math.floor(hours / 24);
+  return days + 'd ' + (hours % 24) + 'h';
 }
 
 function render() {
@@ -262,6 +319,7 @@ function render() {
     { l: 'Reached checkout', v: reachedCheckout, c: 'var(--orange)', s: pct(reachedCheckout, visitors) + ' of visitors' },
     { l: 'Completed orders', v: completedOrders, c: 'var(--accent)', s: overallConv.toFixed(1) + '% of visitors' },
     { l: 'Abandoned baskets', v: abandonedDeviceIds.length, c: 'var(--red)', s: 'added, never ordered' },
+    { l: 'Self-cancelled', v: selfCancelledRows.length, c: 'var(--purple)', s: 'items cancelled from My Orders' },
   ];
   document.getElementById('kpis').innerHTML = kpis.map(k =>
     '<div class="kpi" style="--kc:'+k.c+'"><div class="kpi-l">'+escH(k.l)+'</div><div class="kpi-v">'+k.v.toLocaleString('en-IN')+'</div><div class="kpi-s">'+escH(k.s)+'</div></div>'
@@ -386,6 +444,18 @@ function render() {
   document.getElementById('ordersTbody').innerHTML = orderRows.length
     ? orderRows.map(r => '<tr><td>'+escH(formatDt(r.created_at))+'</td><td>'+escH(r.phone||'')+'</td><td>'+escH(r.society||'')+'</td><td>'+escH(r.door_number||'')+'</td><td>'+escH(r.sales_order_id||'')+'</td></tr>').join('')
     : '<tr><td colspan="5" class="empty">No completed orders in this window.</td></tr>';
+
+  // ── Self-cancelled items table — already joined to order_customer_lookup
+  // in loadFunnel(), sorted newest-cancelled-first from that query.
+  document.getElementById('selfCancelledTbody').innerHTML = selfCancelledRows.length
+    ? selfCancelledRows.map(r =>
+        '<tr><td>'+escH(r.item_name)+'</td>' +
+        '<td>'+escH(r.customer_name || r.phone || '—')+'</td>' +
+        '<td>'+escH(r.placed_at ? formatDt(r.placed_at) : '—')+'</td>' +
+        '<td>'+escH(formatDt(r.self_cancelled_at))+'</td>' +
+        '<td>'+escH(formatDuration(r.delta_ms))+'</td></tr>'
+      ).join('')
+    : '<tr><td colspan="5" class="empty">No self-cancelled items in this window.</td></tr>';
 }
 
 function pct(n, d) { return d > 0 ? (n / d * 100).toFixed(0) + '%' : '—'; }
