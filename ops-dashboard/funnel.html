@@ -21,6 +21,8 @@ body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-he
 .range-tab{padding:6px 14px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;color:var(--muted2);font-family:'DM Mono',monospace;border:1px solid transparent;background:transparent;transition:all .15s;}
 .range-tab.active{color:var(--accent);background:rgba(184,240,80,.08);border-color:rgba(184,240,80,.2);}
 .range-tab:hover:not(.active){color:var(--text);background:var(--s2);}
+.range-date-picker{background:var(--s2);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:5px 10px;font-size:11px;font-family:'DM Mono',monospace;outline:none;color-scheme:dark;}
+.range-date-picker:focus{border-color:var(--accent);}
 .nav-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
 .refresh-btn{font-size:10px;font-family:'DM Mono',monospace;letter-spacing:.08em;text-transform:uppercase;padding:6px 12px;border-radius:5px;border:1px solid rgba(184,240,80,.2);background:rgba(184,240,80,.08);color:var(--accent);cursor:pointer;}
 .refresh-btn:disabled{opacity:.5;cursor:default;}
@@ -72,10 +74,12 @@ tr:hover td{background:var(--s2);}
 <div class="nav">
   <div class="nav-brand"><em>Good Papaya</em> — Storefront Funnel</div>
   <div class="range-tabs" id="rangeTabs">
+    <button class="range-tab" data-mode="today">Today</button>
     <button class="range-tab" data-days="7">7D</button>
     <button class="range-tab active" data-days="30">30D</button>
     <button class="range-tab" data-days="90">90D</button>
   </div>
+  <input type="date" id="rangeDatePicker" class="range-date-picker" title="Pick a specific day instead">
   <div class="nav-right">
     <span class="as-of" id="asOf"></span>
     <button class="refresh-btn" id="refreshBtn">🔄 Refresh</button>
@@ -215,9 +219,36 @@ const STAGE_LABEL = {
   order_placed: 'Placed order',
 };
 
-let rangeDays = 30;
+// { type: 'rolling', days } — last N days up to now (default)
+// { type: 'today' }         — this IST calendar day so far
+// { type: 'date', date }    — one specific past IST calendar day
+let rangeMode = { type: 'rolling', days: 30 };
 let rows = [];
 let selfCancelledRows = [];
+
+function todayIST() {
+  return new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+}
+function istMidnightIso(dateStr) {
+  return new Date(dateStr + 'T00:00:00+05:30').toISOString();
+}
+// until === null means "no upper bound" (i.e. up to right now) — only a
+// specific-date pick needs one, to stop it bleeding into the next day.
+function computeRangeBounds() {
+  if (rangeMode.type === 'today') {
+    return { since: istMidnightIso(todayIST()), until: null };
+  }
+  if (rangeMode.type === 'date') {
+    const since = istMidnightIso(rangeMode.date);
+    return { since, until: new Date(new Date(since).getTime() + 86400000).toISOString() };
+  }
+  return { since: new Date(Date.now() - rangeMode.days * 86400000).toISOString(), until: null };
+}
+function rangeLabelText() {
+  if (rangeMode.type === 'today') return 'Today';
+  if (rangeMode.type === 'date') return new Date(rangeMode.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+  return 'Last ' + rangeMode.days + ' days';
+}
 
 async function loadFunnel() {
   document.getElementById('loadState').style.display = 'block';
@@ -227,23 +258,26 @@ async function loadFunnel() {
   document.getElementById('refreshBtn').disabled = true;
 
   try {
-    const since = new Date(Date.now() - rangeDays * 86400000).toISOString();
-    const [{ data, error }, { data: selfCancelledItems, error: selfCancelledErr }] = await Promise.all([
-      sb.from('storefront_events')
-        .select('device_id,event_type,item_name,phone,society,door_number,sales_order_id,created_at')
-        .gte('created_at', since)
-        .order('created_at', { ascending: true })
-        .limit(50000),
-      // migration 172 — order_items.self_cancelled is set only by
-      // cancel-order-item (My Orders), never by the ops dashboard's own
-      // staff-side cancel, so this is customer self-cancellations only.
-      sb.from('order_items')
-        .select('sales_order_id,item_name,self_cancelled_at')
-        .eq('self_cancelled', true)
-        .gte('self_cancelled_at', since)
-        .order('self_cancelled_at', { ascending: false })
-        .limit(1000),
-    ]);
+    const { since, until } = computeRangeBounds();
+    let eventsQuery = sb.from('storefront_events')
+      .select('device_id,event_type,item_name,phone,society,door_number,sales_order_id,created_at')
+      .gte('created_at', since)
+      .order('created_at', { ascending: true })
+      .limit(50000);
+    if (until) eventsQuery = eventsQuery.lt('created_at', until);
+
+    // migration 172 — order_items.self_cancelled is set only by
+    // cancel-order-item (My Orders), never by the ops dashboard's own
+    // staff-side cancel, so this is customer self-cancellations only.
+    let selfCancelledQuery = sb.from('order_items')
+      .select('sales_order_id,item_name,self_cancelled_at')
+      .eq('self_cancelled', true)
+      .gte('self_cancelled_at', since)
+      .order('self_cancelled_at', { ascending: false })
+      .limit(1000);
+    if (until) selfCancelledQuery = selfCancelledQuery.lt('self_cancelled_at', until);
+
+    const [{ data, error }, { data: selfCancelledItems, error: selfCancelledErr }] = await Promise.all([eventsQuery, selfCancelledQuery]);
     if (error) throw new Error(error.message);
     if (selfCancelledErr) throw new Error(selfCancelledErr.message);
     rows = data || [];
@@ -271,7 +305,7 @@ async function loadFunnel() {
     });
 
     render();
-    document.getElementById('asOf').textContent = 'Last ' + rangeDays + ' days · as of ' + new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+    document.getElementById('asOf').textContent = rangeLabelText() + ' · as of ' + new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
     document.getElementById('loadState').style.display = 'none';
     document.getElementById('content').style.display = 'block';
   } catch (e) {
@@ -471,9 +505,16 @@ document.querySelectorAll('.range-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.range-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    rangeDays = +tab.dataset.days;
+    document.getElementById('rangeDatePicker').value = ''; // a quick-filter tab overrides any specific date picked
+    rangeMode = tab.dataset.mode === 'today' ? { type: 'today' } : { type: 'rolling', days: +tab.dataset.days };
     loadFunnel();
   });
+});
+document.getElementById('rangeDatePicker').addEventListener('change', function () {
+  if (!this.value) return; // cleared — leave whatever quick-filter was last active alone
+  document.querySelectorAll('.range-tab').forEach(t => t.classList.remove('active'));
+  rangeMode = { type: 'date', date: this.value };
+  loadFunnel();
 });
 document.getElementById('refreshBtn').addEventListener('click', loadFunnel);
 
@@ -481,6 +522,7 @@ document.getElementById('refreshBtn').addEventListener('click', loadFunnel);
 // as pnl.html) — this page never refetches on its own after first load.
 window.addEventListener('message', function(e) { if (e.data === 'refresh') loadFunnel(); });
 
+document.getElementById('rangeDatePicker').max = todayIST();
 loadFunnel();
 </script>
 </body>
