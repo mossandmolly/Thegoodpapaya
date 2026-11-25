@@ -93,8 +93,6 @@ function hidePhoneModal() {
   document.getElementById('phone-modal').classList.add('hidden');
 }
 
-let lastLookupPhone = null; // reused by cancelItem — same number this list was fetched with
-
 async function lookup(phoneArg) {
   const phoneInput = phoneArg || document.getElementById('phone').value.trim();
   if (!/^\d{10}$/.test(phoneInput)) {
@@ -104,7 +102,6 @@ async function lookup(phoneArg) {
     return;
   }
   setKnownPhone(phoneInput);
-  lastLookupPhone = phoneInput;
   hidePhoneModal();
   document.getElementById('results-screen').classList.remove('hidden');
   hasLookedUp = true;
@@ -153,9 +150,7 @@ async function lookup(phoneArg) {
         if (value != null) { approxTotal += value; totalIsApprox = true; }
         else hasUnestimable = true;
         return '<tr><td>'+escH(i.item_name)+'</td><td>'+qty+' '+escH(unitLabel)+'</td>' +
-          '<td>'+(value != null ? '₹'+value.toFixed(0) : '🧾 at packing')+'</td>' +
-          '<td><button class="item-cancel-btn" onclick="cancelItem('+escH(JSON.stringify(i.item_id))+','+escH(JSON.stringify(order.sales_order_id))+')" title="Cancel this item">✕</button></td>' +
-        '</tr>';
+          '<td>'+(value != null ? '₹'+value.toFixed(0) : '🧾 at packing')+'</td></tr>';
       }).join('');
 
       const totalLabel = totalIsApprox
@@ -169,9 +164,9 @@ async function lookup(phoneArg) {
         '</div>' +
         '<div class="meta">'+escH(order.customer_name || '')+' · '+order.items.length+' item'+(order.items.length!==1?'s':'')+'</div>' +
         '<table class="inv-items">' +
-          '<thead><tr><th>Item</th><th>Qty</th><th>Approx value</th><th></th></tr></thead>' +
+          '<thead><tr><th>Item</th><th>Qty</th><th>Approx value</th></tr></thead>' +
           '<tbody>'+rows+'</tbody>' +
-          '<tfoot><tr class="total-row"><td colspan="2">Approx total</td><td>'+totalLabel+'</td><td></td></tr></tfoot>' +
+          '<tfoot><tr class="total-row"><td colspan="2">Approx total</td><td>'+totalLabel+'</td></tr></tfoot>' +
         '</table>' +
         '<div class="approx-note">Prices shown are estimates — the final amount will be based on actual weight at packing.</div>' +
       '</div>';
@@ -181,27 +176,6 @@ async function lookup(phoneArg) {
   } finally {
     btn.disabled = false;
     btn.textContent = 'View Open Orders';
-  }
-}
-
-async function cancelItem(item_id, sales_order_id) {
-  if (!confirm('Cancel this item?')) return;
-  try {
-    const res = await fetch(SUPABASE_URL + '/functions/v1/cancel-order-item', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sales_order_id, item_id, phone: lastLookupPhone }),
-    });
-    // A 404 with no JSON body (the function not being deployed yet, or a
-    // typo'd path) has no .error field to read — falling back to the
-    // response status at least says THAT, instead of a blank/duplicated
-    // generic message that gives no clue what actually went wrong.
-    let data = {};
-    try { data = await res.json(); } catch {}
-    if (!res.ok || data.error) throw new Error(data.error || ('Server error (status ' + res.status + ')'));
-    lookup(lastLookupPhone);
-  } catch (e) {
-    alert('Could not cancel this item: ' + e.message);
   }
 }
 
