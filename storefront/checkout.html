@@ -51,8 +51,11 @@
     <input type="date" id="delivery-date">
   </div>
   <div class="form-field">
-    <label>Deliver before (optional)</label>
-    <input type="time" id="preferred-time">
+    <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:600;color:#4a4237;font-size:13px;cursor:pointer;margin-bottom:8px">
+      <input type="checkbox" id="preferred-time-toggle" onchange="togglePreferredTime()" style="width:16px;height:16px;cursor:pointer;margin:0">
+      Request a preferred delivery time (optional)
+    </label>
+    <input type="time" id="preferred-time" disabled>
     <div class="total-finePrint" style="margin-top:5px">We'll try our best to deliver as close as possible to your preferred time.</div>
   </div>
   <div class="form-field">
@@ -100,19 +103,19 @@ function initDeliveryDate() {
   if (!el.value) el.value = today;
 }
 
-// Defaults "Deliver before" to 5 hours from right now (IST), rather than
-// leaving it blank — most customers ordering for same-day delivery want
-// roughly that much lead time, and it's just a starting point they can
-// still change. Never overwrites a value already there (a draft restore,
-// or the customer's own edit surviving a bfcache restore — see the
-// pageshow listener below).
+// "Deliver before" starts disabled/unset — requesting one is a deliberate
+// opt-in (the checkbox), not a default every order carries. Checking it
+// enables the field and, the first time, fills in 6 hours from right now
+// (IST) as a starting point the customer can still change.
 function defaultPreferredTime() {
-  const d = new Date(Date.now() + (330 + 5 * 60) * 60 * 1000); // IST (+330m), then +5h
+  const d = new Date(Date.now() + (330 + 6 * 60) * 60 * 1000); // IST (+330m), then +6h
   return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
 }
-function initPreferredTime() {
+function togglePreferredTime() {
+  const checked = document.getElementById('preferred-time-toggle').checked;
   const el = document.getElementById('preferred-time');
-  if (!el.value) el.value = defaultPreferredTime();
+  el.disabled = !checked;
+  if (checked && !el.value) el.value = defaultPreferredTime();
 }
 
 // Highlights exactly the mandatory fields (society, door, phone) that
@@ -359,7 +362,7 @@ async function placeOrder() {
         cart: cart.map(i => ({ item_name: i.item_name, quantity: i.quantity, mode: i.mode || 'kg', notes: i.note || undefined })),
         society, door_number: door, phone, notes,
         delivery_date: document.getElementById('delivery-date').value,
-        preferred_time: document.getElementById('preferred-time').value || undefined,
+        preferred_time: document.getElementById('preferred-time-toggle').checked ? (document.getElementById('preferred-time').value || undefined) : undefined,
         payment_method: method,
         device_id: getDeviceId(),
       }),
@@ -385,7 +388,6 @@ async function placeOrder() {
 
 prefillFromLastOrder();
 initDeliveryDate();
-initPreferredTime();
 renderCart();
 loadPrices();
 // Fired once here, not inside renderCart() — that also re-runs on a
@@ -399,7 +401,7 @@ if (getCart().length) trackEvent('checkout_viewed', {});
 // left, that frozen state comes back exactly as it was, and none of this
 // script re-runs to retry it. event.persisted means exactly that kind of
 // restore, not a fresh load.
-window.addEventListener('pageshow', e => { if (e.persisted) { initDeliveryDate(); initPreferredTime(); renderCart(); loadPrices(); } });
+window.addEventListener('pageshow', e => { if (e.persisted) { initDeliveryDate(); renderCart(); loadPrices(); } });
 </script>
 </body>
 </html>
