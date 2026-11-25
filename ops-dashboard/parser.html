@@ -433,6 +433,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .catalog-img-card .img-click-target:hover::after{content:'📷 tap to upload';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;font-weight:700;color:#fff;background:rgba(43,35,32,0.6);border-radius:6px}
 .catalog-img-card .img-name{font-size:11px;font-weight:600;margin-top:6px;color:#2b2320;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .catalog-img-card .img-cat{font-size:9px;color:#8a7a6a;text-transform:uppercase;letter-spacing:0.4px}
+.catalog-img-card .img-price{font-size:10px;font-weight:700;color:#2d6b2d;margin-top:2px}
 .catalog-img-card.catalog-img-inactive{opacity:0.45}
 .catalog-img-card.catalog-img-inactive .img-name{color:#b3261e}
 .catalog-img-card.catalog-img-oos:not(.catalog-img-inactive) .img-name{color:#b45f0e}
@@ -1484,7 +1485,7 @@ Banana, 15, 450"></textarea>
     </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx pieces/kg</th><th>Default to piece</th><th>Sold by box</th><th>Approx kg/box</th>
+        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx pieces/kg</th><th>Default to piece</th><th>Sold by box</th><th>Approx kg/box</th><th>Today's special</th>
       </tr></thead><tbody id="catalog-settings-tbody"></tbody></table>
     </div>
     <datalist id="subsection-options"></datalist>
@@ -2097,7 +2098,7 @@ function perKgToApproxKg(perKg){
 
 async function loadCatalogSettingsConfig(){
   const{data,error}=await sb.from('catalog')
-    .select('item_name,category,subsection,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,default_unit')
+    .select('item_name,category,subsection,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,default_unit,todays_special')
     .order('category',{ascending:true}).order('item_name',{ascending:true});
   if(error){
     console.error(error);
@@ -2107,7 +2108,7 @@ async function loadCatalogSettingsConfig(){
     // now depends on hasn't been run yet, e.g. catalog.sold_by_box/
     // box_approx_kg not existing), so this needs to say so loudly rather
     // than just logging to a console nobody but a developer opens.
-    if(tbody)tbody.innerHTML='<tr><td colspan="8" style="color:#b3261e;padding:12px">Could not load catalog settings: '+escH(error.message)+'</td></tr>';
+    if(tbody)tbody.innerHTML='<tr><td colspan="9" style="color:#b3261e;padding:12px">Could not load catalog settings: '+escH(error.message)+'</td></tr>';
     return;
   }
   catalogSettingsCache=data||[];
@@ -2159,6 +2160,8 @@ function renderCatalogSettingsTable(){
       '<td><input type="number" class="box-kg-input" step="0.01" min="0" style="max-width:100px" '+
         'value="'+(c.box_approx_kg??'')+'" '+(soldByBox?'':'disabled')+' '+
         'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'box_approx_kg\',this.value===\'\'?null:parseFloat(this.value),this)"></td>'+
+      '<td style="text-align:center"><input type="checkbox" '+(c.todays_special?'checked':'')+' '+
+        'onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'todays_special\',this.checked,this)"></td>'+
     '</tr>';
   }).join('');
 }
@@ -12637,12 +12640,16 @@ function renderBuyerCompareResults(){
 // ── CATALOG IMAGES (storefront product thumbnails) ──────────────────────
 let catalogImagesList=[];
 let imgTypeFilter='all'; // 'all' | 'fruit' | 'vegetable'
+// Additive (ANDed) toggles on top of imgTypeFilter above — same pattern
+// as Order Overview's Held/No link toggle pills.
+let imgSoldByBoxOnly=false;
+let imgTodaysSpecialOnly=false;
 
 async function loadCatalogImagesView(){
   const grid=document.getElementById('img-grid');
   grid.innerHTML='<div class="to-empty">Loading…</div>';
   const{data,error}=await sb.from('catalog')
-    .select('item_name,category,image_url,active,out_of_stock')
+    .select('item_name,category,image_url,active,out_of_stock,unit_price,unit,sold_by_box,todays_special')
     .order('category').order('item_name');
   if(error){grid.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
   catalogImagesList=data||[];
@@ -12656,13 +12663,29 @@ function renderImgTypePills(){
     {key:'fruit',label:'🍎 Fruits',count:catalogImagesList.filter(c=>c.category==='fruit').length},
     {key:'vegetable',label:'🥦 Vegetables',count:catalogImagesList.filter(c=>c.category==='vegetable').length},
   ];
+  const soldByBoxCount=catalogImagesList.filter(c=>c.sold_by_box).length;
+  const todaysSpecialCount=catalogImagesList.filter(c=>c.todays_special).length;
   document.getElementById('img-type-pills').innerHTML=pills.map(p=>
     '<span class="filter-pill'+(imgTypeFilter===p.key?' active':'')+'" onclick="setImgTypeFilter('+escH(JSON.stringify(p.key))+')">'+escH(p.label)+' ('+p.count+')</span>'
-  ).join('');
+  ).join('')+
+  (soldByBoxCount?'<span class="filter-pill'+(imgSoldByBoxOnly?' active':'')+'" onclick="toggleImgSoldByBoxFilter()">📦 Sold by box ('+soldByBoxCount+')</span>':'')+
+  (todaysSpecialCount?'<span class="filter-pill'+(imgTodaysSpecialOnly?' active':'')+'" onclick="toggleImgTodaysSpecialFilter()">⭐ Today\'s special ('+todaysSpecialCount+')</span>':'');
 }
 
 function setImgTypeFilter(key){
   imgTypeFilter=key;
+  renderCatalogImagesGrid();
+}
+
+function toggleImgSoldByBoxFilter(){
+  imgSoldByBoxOnly=!imgSoldByBoxOnly;
+  renderImgTypePills();
+  renderCatalogImagesGrid();
+}
+
+function toggleImgTodaysSpecialFilter(){
+  imgTodaysSpecialOnly=!imgTodaysSpecialOnly;
+  renderImgTypePills();
   renderCatalogImagesGrid();
 }
 
@@ -12748,6 +12771,8 @@ function renderCatalogImagesGrid(){
   const search=document.getElementById('img-search').value.trim().toLowerCase();
   const rows=catalogImagesList.filter(c=>{
     if(imgTypeFilter!=='all'&&c.category!==imgTypeFilter)return false;
+    if(imgSoldByBoxOnly&&!c.sold_by_box)return false;
+    if(imgTodaysSpecialOnly&&!c.todays_special)return false;
     if(search&&!c.item_name.toLowerCase().includes(search))return false;
     return true;
   });
@@ -12762,8 +12787,9 @@ function renderCatalogImagesGrid(){
           ?'<img src="'+escH(c.image_url)+'" loading="lazy">'
           :'<div class="img-ph" style="display:flex;align-items:center;justify-content:center;font-size:36px">'+iconForItem(c.item_name,c.category||'fruit')+'</div>')+
       '</div>'+
-      '<div class="img-name">'+escH(c.item_name)+'</div>'+
+      '<div class="img-name">'+(c.todays_special?'⭐ ':'')+escH(c.item_name)+'</div>'+
       '<div class="img-cat">'+escH(c.category||'')+'</div>'+
+      (c.unit_price!=null?'<div class="img-price">₹'+c.unit_price.toFixed(0)+'/'+escH(c.unit||'kg')+'</div>':'')+
       '<label class="img-active-toggle"><input type="checkbox" '+(c.active?'checked':'')+' onchange="toggleCatalogActive('+escH(JSON.stringify(c.item_name))+',this.checked)"> Show on site</label>'+
       // Out-of-stock only makes sense for an item that's actually shown —
       // a hidden item is already off the storefront entirely, so there's
