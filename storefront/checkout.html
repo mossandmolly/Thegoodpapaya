@@ -202,8 +202,14 @@ const LAST_ORDER_KEY = 'gp_last_order_v1';
 function prefillFromLastOrder() {
   try {
     const last = JSON.parse(localStorage.getItem(LAST_ORDER_KEY) || 'null');
+    // The draft's own phone wins when it has one, but a draft can exist
+    // with no phone in it yet (e.g. society was typed and blurred before
+    // phone was) — falling back to getKnownPhone() in that case too,
+    // not just when there's no draft at all, is what actually carries a
+    // phone typed earlier on My Orders/My Invoices through to checkout.
+    const phone = (last && last.phone) || getKnownPhone();
+    if (phone) document.getElementById('phone').value = phone;
     if (last) {
-      if (last.phone) document.getElementById('phone').value = last.phone;
       if (last.society) document.getElementById('society').value = last.society;
       if (last.door) document.getElementById('door').value = last.door;
       if (last.notes) document.getElementById('notes').value = last.notes;
@@ -211,13 +217,7 @@ function prefillFromLastOrder() {
       // a draft from a few days ago shouldn't silently pick a date in
       // the past once initDeliveryDate() sets today's min/max below.
       if (last.deliveryDate && last.deliveryDate >= todayIST()) document.getElementById('delivery-date').value = last.deliveryDate;
-      return;
     }
-    // No completed order/draft on this device yet, but the phone might
-    // still be known from a My Orders/My Invoices lookup — at least save
-    // re-typing that, even with no address to go with it yet.
-    const known = getKnownPhone();
-    if (known) document.getElementById('phone').value = known;
   } catch {}
 }
 
