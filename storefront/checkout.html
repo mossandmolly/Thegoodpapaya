@@ -100,6 +100,21 @@ function initDeliveryDate() {
   if (!el.value) el.value = today;
 }
 
+// Defaults "Deliver before" to 5 hours from right now (IST), rather than
+// leaving it blank — most customers ordering for same-day delivery want
+// roughly that much lead time, and it's just a starting point they can
+// still change. Never overwrites a value already there (a draft restore,
+// or the customer's own edit surviving a bfcache restore — see the
+// pageshow listener below).
+function defaultPreferredTime() {
+  const d = new Date(Date.now() + (330 + 5 * 60) * 60 * 1000); // IST (+330m), then +5h
+  return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+}
+function initPreferredTime() {
+  const el = document.getElementById('preferred-time');
+  if (!el.value) el.value = defaultPreferredTime();
+}
+
 // Highlights exactly the mandatory fields (society, door, phone) that
 // are actually missing/invalid, rather than just a generic text error —
 // clears as soon as the person starts correcting that one field, not all
@@ -370,6 +385,7 @@ async function placeOrder() {
 
 prefillFromLastOrder();
 initDeliveryDate();
+initPreferredTime();
 renderCart();
 loadPrices();
 // Fired once here, not inside renderCart() — that also re-runs on a
@@ -383,7 +399,7 @@ if (getCart().length) trackEvent('checkout_viewed', {});
 // left, that frozen state comes back exactly as it was, and none of this
 // script re-runs to retry it. event.persisted means exactly that kind of
 // restore, not a fresh load.
-window.addEventListener('pageshow', e => { if (e.persisted) { initDeliveryDate(); renderCart(); loadPrices(); } });
+window.addEventListener('pageshow', e => { if (e.persisted) { initDeliveryDate(); initPreferredTime(); renderCart(); loadPrices(); } });
 </script>
 </body>
 </html>
