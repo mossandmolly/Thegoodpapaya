@@ -192,8 +192,13 @@ async function cancelItem(item_id, sales_order_id) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sales_order_id, item_id, phone: lastLookupPhone }),
     });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Could not cancel this item.');
+    // A 404 with no JSON body (the function not being deployed yet, or a
+    // typo'd path) has no .error field to read — falling back to the
+    // response status at least says THAT, instead of a blank/duplicated
+    // generic message that gives no clue what actually went wrong.
+    let data = {};
+    try { data = await res.json(); } catch {}
+    if (!res.ok || data.error) throw new Error(data.error || ('Server error (status ' + res.status + ')'));
     lookup(lastLookupPhone);
   } catch (e) {
     alert('Could not cancel this item: ' + e.message);
