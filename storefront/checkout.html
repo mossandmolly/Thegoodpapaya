@@ -55,7 +55,7 @@
       <input type="checkbox" id="preferred-time-toggle" onchange="togglePreferredTime()" style="width:16px;height:16px;cursor:pointer;margin:0">
       Request a deliver before time (optional)
     </label>
-    <input type="time" id="preferred-time" disabled>
+    <input type="time" id="preferred-time" min="08:30" max="18:30" disabled>
     <div class="total-finePrint" style="margin-top:5px">We'll try our best to deliver as close as possible to your preferred time.</div>
   </div>
   <div class="form-field">
@@ -106,10 +106,18 @@ function initDeliveryDate() {
 // "Deliver before" starts disabled/unset — requesting one is a deliberate
 // opt-in (the checkbox), not a default every order carries. Checking it
 // enables the field and, the first time, fills in 6 hours from right now
-// (IST) as a starting point the customer can still change.
+// (IST) as a starting point the customer can still change. Clamped to
+// 8:30am-6:30pm (the real working delivery window) rather than just
+// relying on the input's own min/max="08:30"/"18:30", since browsers are
+// inconsistent about enforcing those on a time input.
+const MIN_PREFERRED_TIME = '08:30';
+const MAX_PREFERRED_TIME = '18:30';
 function defaultPreferredTime() {
   const d = new Date(Date.now() + (330 + 6 * 60) * 60 * 1000); // IST (+330m), then +6h
-  return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+  const hhmm = String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+  if (hhmm < MIN_PREFERRED_TIME) return MIN_PREFERRED_TIME;
+  if (hhmm > MAX_PREFERRED_TIME) return MAX_PREFERRED_TIME;
+  return hhmm;
 }
 function togglePreferredTime() {
   const checked = document.getElementById('preferred-time-toggle').checked;
@@ -117,6 +125,10 @@ function togglePreferredTime() {
   el.disabled = !checked;
   if (checked && !el.value) el.value = defaultPreferredTime();
 }
+document.getElementById('preferred-time').addEventListener('change', function () {
+  if (this.value && this.value < MIN_PREFERRED_TIME) this.value = MIN_PREFERRED_TIME;
+  else if (this.value && this.value > MAX_PREFERRED_TIME) this.value = MAX_PREFERRED_TIME;
+});
 
 // Highlights exactly the mandatory fields (society, door, phone) that
 // are actually missing/invalid, rather than just a generic text error —

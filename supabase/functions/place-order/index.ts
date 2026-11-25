@@ -207,7 +207,16 @@ Deno.serve(async (req) => {
   try {
     const { cart, society, door_number, phone, notes, payment_method, device_id, delivery_date, preferred_time } = await req.json();
 
+    // Clamped to the real working delivery window (8:30am-6:30pm) — same
+    // bounds the checkout page clamps to client-side, enforced again here
+    // since the browser isn't trusted for anything server-written.
+    const MIN_PREFERRED_TIME = '08:30';
+    const MAX_PREFERRED_TIME = '18:30';
     const preferredTimeOk = typeof preferred_time === 'string' && /^\d{2}:\d{2}$/.test(preferred_time);
+    const clampedPreferredTime = !preferredTimeOk ? preferred_time
+      : preferred_time < MIN_PREFERRED_TIME ? MIN_PREFERRED_TIME
+      : preferred_time > MAX_PREFERRED_TIME ? MAX_PREFERRED_TIME
+      : preferred_time;
 
     if (!cart?.length)  throw new Error('No items in cart');
     if (!society)       throw new Error('Missing society name');
@@ -310,7 +319,7 @@ Deno.serve(async (req) => {
             invoice_status: 'pending',
             phone:          normalPhone,
             society:        String(society).trim(),
-            deliver_by:                  preferredTimeOk ? preferred_time : undefined,
+            deliver_by:                  preferredTimeOk ? clampedPreferredTime : undefined,
             delivery_window_checked_at:  preferredTimeOk ? new Date().toISOString() : undefined,
           }],
         }),
