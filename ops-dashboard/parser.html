@@ -434,6 +434,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .catalog-img-card.catalog-img-oos:not(.catalog-img-inactive) .img-name{color:#b45f0e}
 .catalog-img-card .img-active-toggle{display:flex;align-items:center;justify-content:center;gap:4px;font-size:9px;color:#8a7a6a;margin-top:4px;cursor:pointer}
 .catalog-img-card .img-oos-toggle{color:#b45f0e}
+.catalog-img-card .img-special-toggle{color:#8a5a00}
 .img-unmatched-card{display:flex;align-items:center;gap:10px;border:1px solid #eee0d0;border-radius:8px;padding:8px;margin-bottom:8px;background:#fffdf9}
 .img-unmatched-card img{width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0}
 .img-unmatched-card .fname{font-size:11px;color:#8a7a6a;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
@@ -1479,7 +1480,7 @@ Banana, 15, 450"></textarea>
     </div>
     <div class="table-scroll">
       <table class="community-table"><thead><tr>
-        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx pieces/kg</th><th>Default to piece</th><th>Sold by box</th><th>Approx kg/box</th><th>Today's special</th>
+        <th>Item</th><th>Category</th><th>Subsection</th><th>Sold by piece</th><th>Approx pieces/kg</th><th>Default to piece</th><th>Sold by box</th><th>Approx kg/box</th>
       </tr></thead><tbody id="catalog-settings-tbody"></tbody></table>
     </div>
     <datalist id="subsection-options"></datalist>
@@ -2092,7 +2093,7 @@ function perKgToApproxKg(perKg){
 
 async function loadCatalogSettingsConfig(){
   const{data,error}=await sb.from('catalog')
-    .select('item_name,category,subsection,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,default_unit,todays_special')
+    .select('item_name,category,subsection,sold_by_piece,piece_approx_kg,sold_by_box,box_approx_kg,default_unit')
     .order('category',{ascending:true}).order('item_name',{ascending:true});
   if(error){
     console.error(error);
@@ -2102,7 +2103,7 @@ async function loadCatalogSettingsConfig(){
     // now depends on hasn't been run yet, e.g. catalog.sold_by_box/
     // box_approx_kg not existing), so this needs to say so loudly rather
     // than just logging to a console nobody but a developer opens.
-    if(tbody)tbody.innerHTML='<tr><td colspan="9" style="color:#b3261e;padding:12px">Could not load catalog settings: '+escH(error.message)+'</td></tr>';
+    if(tbody)tbody.innerHTML='<tr><td colspan="8" style="color:#b3261e;padding:12px">Could not load catalog settings: '+escH(error.message)+'</td></tr>';
     return;
   }
   catalogSettingsCache=data||[];
@@ -2154,8 +2155,6 @@ function renderCatalogSettingsTable(){
       '<td><input type="number" class="box-kg-input" step="0.01" min="0" style="max-width:100px" '+
         'value="'+(c.box_approx_kg??'')+'" '+(soldByBox?'':'disabled')+' '+
         'onblur="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'box_approx_kg\',this.value===\'\'?null:parseFloat(this.value),this)"></td>'+
-      '<td style="text-align:center"><input type="checkbox" '+(c.todays_special?'checked':'')+' '+
-        'onchange="saveCatalogSetting('+escH(JSON.stringify(c.item_name))+',\'todays_special\',this.checked,this)"></td>'+
     '</tr>';
   }).join('');
 }
@@ -12753,6 +12752,7 @@ function renderCatalogImagesGrid(){
       // a hidden item is already off the storefront entirely, so there's
       // nothing for this to add until "Show on site" is checked again.
       (c.active?'<label class="img-active-toggle img-oos-toggle"><input type="checkbox" '+(c.out_of_stock?'checked':'')+' onchange="toggleCatalogOutOfStock('+escH(JSON.stringify(c.item_name))+',this.checked)"> Out of stock</label>':'')+
+      '<label class="img-active-toggle img-special-toggle"><input type="checkbox" '+(c.todays_special?'checked':'')+' onchange="toggleCatalogTodaysSpecial('+escH(JSON.stringify(c.item_name))+',this.checked)"> ⭐ Today\'s special</label>'+
       (c.image_url?'<a class="or-link" style="color:#b3261e" onclick="removeCatalogImage('+escH(JSON.stringify(c.item_name))+')">remove</a>':'')+
     '</div>'
   ).join('');
@@ -12771,6 +12771,15 @@ async function toggleCatalogOutOfStock(itemName,outOfStock){
   if(error){uxAlert('Failed to save: '+error.message);renderCatalogImagesGrid();return;}
   const row=catalogImagesList.find(c=>c.item_name===itemName);
   if(row)row.out_of_stock=outOfStock;
+  renderCatalogImagesGrid();
+}
+
+async function toggleCatalogTodaysSpecial(itemName,todaysSpecial){
+  const{error}=await sb.from('catalog').update({todays_special:todaysSpecial}).eq('item_name',itemName);
+  if(error){uxAlert('Failed to save: '+error.message);renderCatalogImagesGrid();return;}
+  const row=catalogImagesList.find(c=>c.item_name===itemName);
+  if(row)row.todays_special=todaysSpecial;
+  renderImgTypePills();
   renderCatalogImagesGrid();
 }
 
