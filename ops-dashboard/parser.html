@@ -1980,11 +1980,11 @@ function signOut(){
 }
 
 // ── Default config ────────────────────────────────────────────────────────
-let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pomegranate small","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango","Cauliflower","Cabbage","Capsicum green","Capsicum yellow","Capsicum red","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus","Fenugreek","Mangalore cucumber","Drumstick","Chilli bhajji","Coccinia","Mint","Lettuce","Beetroot","Zucchini green","Zucchini yellow","Red cabbage","Mushroom","Garlic","Lemon","Pumpkin","Snake gourd","Sweet potato","Radish","Baby corn","Parwal","Spine gourd","Long beans","Brinjal long","Spring onion","Arvi","Cherry tomato","Cluster beans","Green peas","Persimmon"];
+let FRUITS=["Mandarin orange","Rose apple","Avocado","Gala apple","Royal Gala apple","Pear","Pomegranate large","Blueberry","Guava white","Kiwi green","Muskmelon","Papaya","Badami mango","Yelakki banana","Watermelon","Pineapple","Amla","Washington apple","Dragon red","Green apple","Plum","Robusta banana","Red globe grapes","White dragon","Mosambi","Nati guava","Pomegranate medium","Pomegranate small","Pink lady apple","Guava pink","Nagpur orange","Red seedless grapes","Longan","Kiwi gold","Sapota","Kinnow orange","Raspberry","Green grapes","Black seedless grapes","Watermelon striped","Muskmelon striped","Totapuri mango","Passion fruit","Banganapalli mango","Pomegranate organic","Watermelon organic","Yelakki banana organic","Alphonso mango","Muskmelon organic","Sapota organic","Avocado local","Sindhura mango","Imampasand mango","Jackfruit","Valencia orange","Raw mango","Lychee","Mangosteen","Malgova mango","Malika mango","Jamun","Kesar mango","Benishan mango","Langra mango","Cherry Indian","Dasheri mango","Jamun flash","Rockit apple","Peach","Mango","Strawberry","Coconut","Custard apple","Rambutan","Imported grapes","Neelam mango","Cauliflower","Cabbage","Capsicum green","Capsicum yellow","Capsicum red","Carrot","Tomato","Ginger","Beans","Lady's finger","Cucumber","Coriander","Chilli green","Potato","Onion","Ridge gourd","Bitter gourd","Bottle gourd","Brinjal bottle","Broccoli","Banana leaves","Spinach","Amaranthus","Fenugreek","Mangalore cucumber","Drumstick","Chilli bhajji","Coccinia","Mint","Lettuce","Beetroot","Zucchini green","Zucchini yellow","Red cabbage","Mushroom","Garlic","Lemon","Pumpkin","Snake gourd","Sweet potato","Radish","Baby corn","Parwal","Spine gourd","Long beans","Brinjal long","Spring onion","Arvi","Cherry tomato","Cluster beans","Green peas","Persimmon","Water chestnut","Sarson leaves"];
 
 let PKG={"apple":0.20,"gala apple":0.20,"royal gala apple":0.20,"washington apple":0.20,"green apple":0.20,"pink lady apple":0.20,"rockit apple":0.20,"rose apple":0.20,"guava":0.40,"guava white":0.40,"guava pink":0.40,"nati guava":0.40,"yelakki banana":0.10,"yelakki banana organic":0.10,"robusta banana":0.20,"pomegranate":0.35,"pomegranate large":0.35,"pomegranate medium":0.35,"pomegranate organic":0.35,"pear":0.16,"mandarin orange":0.10,"valencia orange":0.25,"plum":0.05,"peach":0.15,"mango":0.50,"kesar mango":0.50,"langra mango":0.50,"banganapalli mango":0.50,"alphonso mango":0.50,"badami mango":0.50,"dasheri mango":0.50,"totapuri mango":0.50,"sindhura mango":0.50,"malika mango":0.50,"malgova mango":0.50,"benishan mango":0.50,"imampasand mango":0.50,"watermelon":2.5};
 
-let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orange","sweet orange":"Mandarin orange","yellaki":"Yelakki banana","yellakki":"Yelakki banana","yalakki":"Yelakki banana","yalaki":"Yelakki banana","elaichi banana":"Yelakki banana","elachi banana":"Yelakki banana","banana":"Yelakki banana","y banana":"Yelakki banana","y bananas":"Yelakki banana","langda":"Langra mango","langdaa":"Langra mango","langra":"Langra mango","langa":"Langra mango","kesar":"Kesar mango","alphonso":"Alphonso mango","dasheri":"Dasheri mango","dussehri":"Dasheri mango","badami":"Badami mango","beganpalli":"Banganapalli mango","baganpalli":"Banganapalli mango","pedanpally":"Banganapalli mango","banganphalli":"Banganapalli mango","baiganphali":"Banganapalli mango","bagganpalli":"Banganapalli mango","cherry sweet":"Cherry Indian","cherry":"Cherry Indian","grapes":"Green grapes","litchi":"Lychee","lichi":"Lychee","sweet lime":"Mosambi","rocket apple":"Rockit apple","rock apple":"Rockit apple","rambuttan":"Rambutan","rambutten":"Rambutan","rambhutan":"Rambutan","rambuthan":"Rambutan","imanpasad":"Imampasand mango","imampasad":"Imampasand mango","thai guava":"Guava white","white guava":"Guava white","dragon fruit red":"Dragon red","dragonfruit red":"Dragon red","methi":"Fenugreek","yellow cucumber":"Mangalore cucumber","chilli bhaji":"Chilli bhajji","big chilli":"Chilli bhajji","kundru":"Coccinia","pudina":"Mint"};
+let ALIASES={"mini orange":"Mandarin orange","mini orange sweet":"Mandarin orange","sweet orange":"Mandarin orange","yellaki":"Yelakki banana","yellakki":"Yelakki banana","yalakki":"Yelakki banana","yalaki":"Yelakki banana","elaichi banana":"Yelakki banana","elachi banana":"Yelakki banana","banana":"Yelakki banana","y banana":"Yelakki banana","y bananas":"Yelakki banana","langda":"Langra mango","langdaa":"Langra mango","langra":"Langra mango","langa":"Langra mango","kesar":"Kesar mango","alphonso":"Alphonso mango","dasheri":"Dasheri mango","dussehri":"Dasheri mango","badami":"Badami mango","beganpalli":"Banganapalli mango","baganpalli":"Banganapalli mango","pedanpally":"Banganapalli mango","banganphalli":"Banganapalli mango","baiganphali":"Banganapalli mango","bagganpalli":"Banganapalli mango","cherry sweet":"Cherry Indian","cherry":"Cherry Indian","grapes":"Green grapes","litchi":"Lychee","lichi":"Lychee","sweet lime":"Mosambi","rocket apple":"Rockit apple","rock apple":"Rockit apple","rambuttan":"Rambutan","rambutten":"Rambutan","rambhutan":"Rambutan","rambuthan":"Rambutan","imanpasad":"Imampasand mango","imampasad":"Imampasand mango","thai guava":"Guava white","white guava":"Guava white","dragon fruit red":"Dragon red","dragonfruit red":"Dragon red","methi":"Fenugreek","yellow cucumber":"Mangalore cucumber","chilli bhaji":"Chilli bhajji","big chilli":"Chilli bhajji","kundru":"Coccinia","pudina":"Mint","sarson":"Sarson leaves","mustard":"Sarson leaves","mustard leaves":"Sarson leaves","singhara":"Water chestnut","water chestnuts":"Water chestnut"};
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 function switchTab(name){
@@ -12643,6 +12643,7 @@ let imgTypeFilter='all'; // 'all' | 'fruit' | 'vegetable'
 // as Order Overview's Held/No link toggle pills.
 let imgSoldByBoxOnly=false;
 let imgTodaysSpecialOnly=false;
+let imgShownOnSiteOnly=false;
 
 async function loadCatalogImagesView(){
   const grid=document.getElementById('img-grid');
@@ -12664,9 +12665,11 @@ function renderImgTypePills(){
   ];
   const soldByBoxCount=catalogImagesList.filter(c=>c.sold_by_box).length;
   const todaysSpecialCount=catalogImagesList.filter(c=>c.todays_special).length;
+  const shownOnSiteCount=catalogImagesList.filter(c=>c.active).length;
   document.getElementById('img-type-pills').innerHTML=pills.map(p=>
     '<span class="filter-pill'+(imgTypeFilter===p.key?' active':'')+'" onclick="setImgTypeFilter('+escH(JSON.stringify(p.key))+')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
+  (shownOnSiteCount?'<span class="filter-pill'+(imgShownOnSiteOnly?' active':'')+'" onclick="toggleImgShownOnSiteFilter()">✅ Shown on site ('+shownOnSiteCount+')</span>':'')+
   (soldByBoxCount?'<span class="filter-pill'+(imgSoldByBoxOnly?' active':'')+'" onclick="toggleImgSoldByBoxFilter()">📦 Sold by box ('+soldByBoxCount+')</span>':'')+
   (todaysSpecialCount?'<span class="filter-pill'+(imgTodaysSpecialOnly?' active':'')+'" onclick="toggleImgTodaysSpecialFilter()">⭐ Today\'s special ('+todaysSpecialCount+')</span>':'');
 }
@@ -12684,6 +12687,12 @@ function toggleImgSoldByBoxFilter(){
 
 function toggleImgTodaysSpecialFilter(){
   imgTodaysSpecialOnly=!imgTodaysSpecialOnly;
+  renderImgTypePills();
+  renderCatalogImagesGrid();
+}
+
+function toggleImgShownOnSiteFilter(){
+  imgShownOnSiteOnly=!imgShownOnSiteOnly;
   renderImgTypePills();
   renderCatalogImagesGrid();
 }
@@ -12772,6 +12781,7 @@ function renderCatalogImagesGrid(){
     if(imgTypeFilter!=='all'&&c.category!==imgTypeFilter)return false;
     if(imgSoldByBoxOnly&&!c.sold_by_box)return false;
     if(imgTodaysSpecialOnly&&!c.todays_special)return false;
+    if(imgShownOnSiteOnly&&!c.active)return false;
     if(search&&!c.item_name.toLowerCase().includes(search))return false;
     return true;
   });
