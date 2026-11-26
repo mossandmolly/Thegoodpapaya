@@ -440,6 +440,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .catalog-img-card .img-active-toggle{display:flex;align-items:center;justify-content:center;gap:4px;font-size:9px;color:#8a7a6a;margin-top:4px;cursor:pointer}
 .catalog-img-card .img-oos-toggle{color:#b45f0e}
 .catalog-img-card .img-special-toggle{color:#8a5a00}
+.catalog-img-card .img-caption-input{width:100%;box-sizing:border-box;margin-top:4px;padding:4px 6px;font-size:10px;border:1px solid #eee0d0;border-radius:5px;font-family:inherit;color:#b3261e}
 .img-unmatched-card{display:flex;align-items:center;gap:10px;border:1px solid #eee0d0;border-radius:8px;padding:8px;margin-bottom:8px;background:#fffdf9}
 .img-unmatched-card img{width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0}
 .img-unmatched-card .fname{font-size:11px;color:#8a7a6a;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
@@ -12649,7 +12650,7 @@ async function loadCatalogImagesView(){
   const grid=document.getElementById('img-grid');
   grid.innerHTML='<div class="to-empty">Loading…</div>';
   const{data,error}=await sb.from('catalog')
-    .select('item_name,category,image_url,active,out_of_stock,unit_price,unit,sold_by_box,todays_special')
+    .select('item_name,category,image_url,active,out_of_stock,unit_price,unit,sold_by_box,todays_special,special_caption')
     .order('category').order('item_name');
   if(error){grid.innerHTML='<div class="to-empty">'+escH(error.message)+'</div>';return;}
   catalogImagesList=data||[];
@@ -12805,6 +12806,8 @@ function renderCatalogImagesGrid(){
       // nothing for this to add until "Show on site" is checked again.
       (c.active?'<label class="img-active-toggle img-oos-toggle"><input type="checkbox" '+(c.out_of_stock?'checked':'')+' onchange="toggleCatalogOutOfStock('+escH(JSON.stringify(c.item_name))+',this.checked)"> Out of stock</label>':'')+
       '<label class="img-active-toggle img-special-toggle"><input type="checkbox" '+(c.todays_special?'checked':'')+' onchange="toggleCatalogTodaysSpecial('+escH(JSON.stringify(c.item_name))+',this.checked)"> ⭐ Today\'s special</label>'+
+      '<input type="text" class="img-caption-input" placeholder="Caption e.g. New!" value="'+escH(c.special_caption||'')+'" '+
+        'onblur="saveCatalogCaption('+escH(JSON.stringify(c.item_name))+',this.value)">'+
       (c.image_url?'<a class="or-link" style="color:#b3261e" onclick="removeCatalogImage('+escH(JSON.stringify(c.item_name))+')">remove</a>':'')+
     '</div>'
   ).join('');
@@ -12833,6 +12836,18 @@ async function toggleCatalogTodaysSpecial(itemName,todaysSpecial){
   if(row)row.todays_special=todaysSpecial;
   renderImgTypePills();
   renderCatalogImagesGrid();
+}
+
+// Free-text caption shown next to the item's name on the storefront
+// catalog card (e.g. "New!", "Price drop!") — empty by default. Trimmed
+// to null on save (not '') so an emptied caption actually clears, rather
+// than leaving a zero-length string on file that still reads as "set".
+async function saveCatalogCaption(itemName,value){
+  const caption=value.trim()||null;
+  const{error}=await sb.from('catalog').update({special_caption:caption}).eq('item_name',itemName);
+  if(error){uxAlert('Failed to save: '+error.message);renderCatalogImagesGrid();return;}
+  const row=catalogImagesList.find(c=>c.item_name===itemName);
+  if(row)row.special_caption=caption;
 }
 
 // Per-item thumbnail click → shared hidden file input, retargeted to
