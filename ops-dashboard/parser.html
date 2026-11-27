@@ -8479,6 +8479,26 @@ function toggleSeqBoardPendingOnly(){
   seqBoardPendingOnly=!seqBoardPendingOnly;
   renderPackerTeamView();
 }
+
+// Display-only re-sort of the board below — never writes anything, never
+// touches orders.sequence_number, packer assignments, or what the real
+// cron (compute-next-sequence) does on its next run. Re-orders the
+// CARDS purely by when each sequence's earliest order was actually
+// placed, ignoring Community Priority rank/group size/alphabetical
+// entirely — the one exception is a sequence the cron itself built/
+// promoted because of a manual deliver_by deadline (reason.label ===
+// 'Timeline'), which stays prioritized rather than sliding back to its
+// chronological slot, since that deadline is the one thing allowed to
+// override pure arrival order even here.
+let seqBoardChronological=false;
+function toggleSeqBoardChronological(){
+  seqBoardChronological=!seqBoardChronological;
+  renderPackerTeamView();
+}
+function earliestSequenceEntry(s){
+  const times=s.orders.map(o=>o.enteredAt).filter(Boolean);
+  return times.length?times.sort()[0]:null;
+}
 function toggleSequenceExpanded(seq){
   if(expandedSequences.has(seq))expandedSequences.delete(seq);
   else expandedSequences.add(seq);
@@ -8713,13 +8733,25 @@ function renderSequenceBoard(){
   // with open/packed work left. Only a genuinely finished (every order
   // dispatched) sequence gets hidden by this filter.
   const sequences=seqBoardPendingOnly?allSequences.filter(s=>!s.allDispatched):allSequences;
+  // Purely a different read ORDER on the same cards below — see
+  // toggleSeqBoardChronological's own comment. Falls back to each
+  // sequence's current (priority-ranked) position when neither side has
+  // a real timestamp to compare, same as any other missing-data tiebreak.
+  const displaySequences=seqBoardChronological
+    ?sequences.slice().sort((a,b)=>{
+      const aTimeline=a.reason.label==='Timeline',bTimeline=b.reason.label==='Timeline';
+      if(aTimeline!==bTimeline)return aTimeline?-1:1;
+      return (earliestSequenceEntry(a)||'').localeCompare(earliestSequenceEntry(b)||'');
+    })
+    :sequences;
   const positions=computeSequencePositions();
   return '<div class="pk-order-stack">'+
     '<div class="pk-order-stack-header">Sequences <span class="pk-order-stack-sub">— drag a sequence onto another to reorder it; drag a single order onto a different sequence to move it. The cron (every 3 min) never touches one you\'ve already got a number here — it only ever appends to a sequence that\'s not yet complete, or ranks a brand-new one into the current lineup by priority.</span></div>'+
     '<label class="pk-seq-filter"><input type="checkbox" '+(seqBoardPendingOnly?'checked':'')+' onchange="toggleSeqBoardPendingOnly()"> Show only sequences with something pending</label>'+
+    '<label class="pk-seq-filter"><input type="checkbox" '+(seqBoardChronological?'checked':'')+' onchange="toggleSeqBoardChronological()" title="Re-orders the cards below purely by when each sequence\'s earliest order was placed — ignores Community Priority rank, group size, and everything else the cron ranks by, except a sequence driven by a manual deliver-by deadline (Timeline), which stays prioritized. Display only — never changes sequence_number, packer assignments, or what the cron does next run."> ⏱ Chronological order</label>'+
     (unsequencedCount?'<div class="pk-order-detail pk-order-detail-sub">'+unsequencedCount+' item'+(unsequencedCount!==1?'s':'')+' not sequenced yet — waiting for the next cron run.</div>':'')+
     (seqBoardPendingOnly&&!sequences.length?'<div class="pk-order-detail pk-order-detail-sub">Nothing pending — every sequence is done.</div>':'')+
-    sequences.map(s=>{
+    displaySequences.map(s=>{
       const expanded=expandedSequences.has(s.seq);
       const pct=s.nonPickupTotal?Math.round((s.nonPickupTotal-s.pendingTotal)/s.nonPickupTotal*100):0;
       const reasonClass=s.reason.label==='Timeline'?'pk-seq-reason-timeline':'pk-seq-reason-priority';
