@@ -12673,7 +12673,10 @@ function renderImgTypePills(){
     '<span class="filter-pill'+(imgTypeFilter===p.key?' active':'')+'" onclick="setImgTypeFilter('+escH(JSON.stringify(p.key))+')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
   (shownOnSiteCount?'<span class="filter-pill'+(imgShownOnSiteOnly?' active':'')+'" onclick="toggleImgShownOnSiteFilter()">✅ Shown on site ('+shownOnSiteCount+')</span>':'')+
-  (outOfStockCount?'<span class="filter-pill'+(imgOutOfStockOnly?' active':'')+'" onclick="toggleImgOutOfStockFilter()">🚫 Out of stock ('+outOfStockCount+')</span>':'')+
+  // Always shown, even at 0 — unlike Sold by box/Today's special (rare,
+  // only worth a pill once something's actually flagged), out-of-stock
+  // needs to be reliably findable regardless of how many are currently set.
+  '<span class="filter-pill'+(imgOutOfStockOnly?' active':'')+'" onclick="toggleImgOutOfStockFilter()">🚫 Out of stock ('+outOfStockCount+')</span>'+
   (soldByBoxCount?'<span class="filter-pill'+(imgSoldByBoxOnly?' active':'')+'" onclick="toggleImgSoldByBoxFilter()">📦 Sold by box ('+soldByBoxCount+')</span>':'')+
   (todaysSpecialCount?'<span class="filter-pill'+(imgTodaysSpecialOnly?' active':'')+'" onclick="toggleImgTodaysSpecialFilter()">⭐ Today\'s special ('+todaysSpecialCount+')</span>':'');
 }
