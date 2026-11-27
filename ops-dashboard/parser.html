@@ -12603,6 +12603,7 @@ let imgTypeFilter='all'; // 'all' | 'fruit' | 'vegetable'
 let imgSoldByBoxOnly=false;
 let imgTodaysSpecialOnly=false;
 let imgShownOnSiteOnly=false;
+let imgOutOfStockOnly=false;
 
 async function loadCatalogImagesView(){
   const grid=document.getElementById('img-grid');
@@ -12625,10 +12626,12 @@ function renderImgTypePills(){
   const soldByBoxCount=catalogImagesList.filter(c=>c.sold_by_box).length;
   const todaysSpecialCount=catalogImagesList.filter(c=>c.todays_special).length;
   const shownOnSiteCount=catalogImagesList.filter(c=>c.active).length;
+  const outOfStockCount=catalogImagesList.filter(c=>c.out_of_stock).length;
   document.getElementById('img-type-pills').innerHTML=pills.map(p=>
     '<span class="filter-pill'+(imgTypeFilter===p.key?' active':'')+'" onclick="setImgTypeFilter('+escH(JSON.stringify(p.key))+')">'+escH(p.label)+' ('+p.count+')</span>'
   ).join('')+
   (shownOnSiteCount?'<span class="filter-pill'+(imgShownOnSiteOnly?' active':'')+'" onclick="toggleImgShownOnSiteFilter()">✅ Shown on site ('+shownOnSiteCount+')</span>':'')+
+  (outOfStockCount?'<span class="filter-pill'+(imgOutOfStockOnly?' active':'')+'" onclick="toggleImgOutOfStockFilter()">🚫 Out of stock ('+outOfStockCount+')</span>':'')+
   (soldByBoxCount?'<span class="filter-pill'+(imgSoldByBoxOnly?' active':'')+'" onclick="toggleImgSoldByBoxFilter()">📦 Sold by box ('+soldByBoxCount+')</span>':'')+
   (todaysSpecialCount?'<span class="filter-pill'+(imgTodaysSpecialOnly?' active':'')+'" onclick="toggleImgTodaysSpecialFilter()">⭐ Today\'s special ('+todaysSpecialCount+')</span>':'');
 }
@@ -12652,6 +12655,12 @@ function toggleImgTodaysSpecialFilter(){
 
 function toggleImgShownOnSiteFilter(){
   imgShownOnSiteOnly=!imgShownOnSiteOnly;
+  renderImgTypePills();
+  renderCatalogImagesGrid();
+}
+
+function toggleImgOutOfStockFilter(){
+  imgOutOfStockOnly=!imgOutOfStockOnly;
   renderImgTypePills();
   renderCatalogImagesGrid();
 }
@@ -12741,6 +12750,7 @@ function renderCatalogImagesGrid(){
     if(imgSoldByBoxOnly&&!c.sold_by_box)return false;
     if(imgTodaysSpecialOnly&&!c.todays_special)return false;
     if(imgShownOnSiteOnly&&!c.active)return false;
+    if(imgOutOfStockOnly&&!c.out_of_stock)return false;
     if(search&&!c.item_name.toLowerCase().includes(search))return false;
     return true;
   });
