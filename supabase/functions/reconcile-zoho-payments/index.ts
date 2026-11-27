@@ -26,36 +26,46 @@
 // settled.
 //
 // Pipeline:
-//   1. List every Zoho customer payment recorded in the last 2 Zoho-side
-//      calendar days (GET /customerpayments, paginated).
+//   1. List every Zoho customer payment recorded in the window (GET
+//      /customerpayments, paginated) — the SAME payments tend to reappear
+//      in this list run after run, since the window is rolling, not
+//      "since last run".
 //   2. Skip anything whose reference_number marks it as ALREADY one of
 //      this app's own two channels — "Razorpay ..." (razorpay-webhook) or
-//      "Manual (..." (mark-order-paid). Not strictly required for
-//      correctness (step 4's own comparison would no-op these anyway,
-//      since both paths already sync orders/invoice_line_items
-//      synchronously) but avoids a wasted invoice re-fetch for the
-//      overwhelming majority of payments, which did come through one of
-//      those two paths.
-//   3. For each remaining payment's distinct invoice_id(s), fetch that
-//      invoice's CURRENT live balance from Zoho (never trust the payment
-//      list's own amount_applied — only the invoice's own running balance
-//      says whether it's now actually fully paid).
-//   4. Balance > 0 (partially paid, or this payment doesn't fully close
-//      it) — skip; nothing to do until it's genuinely fully paid. Balance
-//      === 0 and the local orders row already shows balance_due=0 /
-//      payment_collected=true — also skip (already in sync, most likely
-//      because it WAS one of this app's own two channels after all, or a
-//      previous run of this same job already caught it). Otherwise:
-//      update orders AND every matching invoice_line_items row to fully
-//      paid, and best-effort cancel any still-live Razorpay link/QR on
-//      the order (money came through a different channel, so a live
-//      link/QR left behind is a double-payment risk, not just stale
-//      bookkeeping — same cleanup mark-order-paid itself does).
+//      "Manual (..." (mark-order-paid) — those already sync
+//      orders/invoice_line_items synchronously, so there's never anything
+//      to reconcile for them.
+//   3. Skip anything whose Razorpay-unrelated payment_id is already
+//      logged in zoho_payment_reconcile_log (migration 177) — i.e.
+//      already evaluated by a previous run of this same job. This is the
+//      step that makes the rolling re-scan cheap: at real volume
+//      (thousands of payments/day), re-fetching every distinct invoice's
+//      balance on every run forever would be thousands of wasted Zoho
+//      calls per run and a real risk of the function timing out before
+//      finishing. With this log, each payment only ever costs one
+//      invoice-balance fetch, ever, regardless of how many more times the
+//      rolling window keeps re-showing it.
+//   4. For each remaining, not-yet-logged payment's distinct invoice_id(s),
+//      fetch that invoice's CURRENT live balance from Zoho (never trust
+//      the payment list's own amount_applied — only the invoice's own
+//      running balance says whether it's now actually fully paid).
+//   5. Balance > 0 (partially paid, or this payment doesn't fully close
+//      it) — skip, and deliberately leave its payment_id(s) UNLOGGED, so
+//      a still-partially-paid invoice keeps getting re-checked by future
+//      runs instead of being given up on. Balance === 0 — log the
+//      payment_id(s) either way (nothing left to check for them again),
+//      and additionally: if the local orders row doesn't already show
+//      balance_due=0/payment_collected=true, update orders AND every
+//      matching invoice_line_items row to fully paid, and best-effort
+//      cancel any still-live Razorpay link/QR on the order (money came
+//      through a different channel, so a live link/QR left behind is a
+//      double-payment risk, not just stale bookkeeping — same cleanup
+//      mark-order-paid itself does).
 //
 // Never WRITES anything back to Zoho — this only ever reads Zoho's own
 // payment/invoice state and syncs it into this app's local tables.
 //
-// Output: { processed, updated, alreadyInSync, skippedOwnChannel, errors }
+// Output: { processed, updated, alreadyInSync, skippedOwnChannel, skippedAlreadyLogged, errors }
 //
 // Required env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET
@@ -169,6 +179,17 @@ function isOwnChannelPayment(referenceNumber: string | undefined): boolean {
   return ref.startsWith('razorpay') || ref.startsWith('manual (');
 }
 
+// Marks these payment_ids as evaluated so the rolling-window re-scan
+// never triggers another invoice-balance fetch for them. Best-effort
+// (upsert, ignore conflict) — a failure here just means this payment
+// gets harmlessly re-checked next run, never a correctness issue.
+async function logPaymentIds(supabase: ReturnType<typeof createClient>, paymentIds: Set<string>, invoiceId: string): Promise<void> {
+  if (!paymentIds.size) return;
+  const rows = [...paymentIds].map(payment_id => ({ payment_id, invoice_id: invoiceId }));
+  const { error } = await supabase.from('zoho_payment_reconcile_log').upsert(rows, { onConflict: 'payment_id', ignoreDuplicates: true });
+  if (error) console.error('zoho_payment_reconcile_log upsert failed:', error.message);
+}
+
 async function cancelPaymentLink(linkId: string, auth: string): Promise<void> {
   await fetch(`https://api.razorpay.com/v1/payment_links/${linkId}/cancel`, {
     method: 'POST', headers: { Authorization: `Basic ${auth}` },
@@ -200,11 +221,36 @@ Deno.serve(async (req) => {
 
     const payments = await fetchRecentPayments(token, orgId, dateStart, dateEnd);
 
-    const invoiceIds = new Set<string>();
-    let skippedOwnChannel = 0;
+    // Which of these payment_ids has a previous run already evaluated? —
+    // the rolling window keeps re-showing the same payments run after
+    // run, so without this every one of them would otherwise trigger a
+    // fresh invoice-balance fetch forever. Chunked .in() lookups since a
+    // high-volume window can carry thousands of candidate ids.
+    const candidatePaymentIds = payments
+      .filter(p => !isOwnChannelPayment(p.reference_number))
+      .map(p => p.payment_id)
+      .filter(Boolean);
+    const alreadyLoggedIds = new Set<string>();
+    for (let i = 0; i < candidatePaymentIds.length; i += 300) {
+      const chunk = candidatePaymentIds.slice(i, i + 300);
+      const { data: logged, error: logErr } = await supabase
+        .from('zoho_payment_reconcile_log').select('payment_id').in('payment_id', chunk);
+      if (logErr) throw new Error(logErr.message);
+      (logged ?? []).forEach(r => alreadyLoggedIds.add(r.payment_id));
+    }
+
+    // invoice_id -> every NEW (not already-logged, not own-channel)
+    // payment_id that touched it this run — logged as processed once
+    // that invoice has actually been checked, below.
+    const invoiceToPaymentIds = new Map<string, Set<string>>();
+    let skippedOwnChannel = 0, skippedAlreadyLogged = 0;
     for (const p of payments) {
       if (isOwnChannelPayment(p.reference_number)) { skippedOwnChannel++; continue; }
-      for (const inv of p.invoices ?? []) invoiceIds.add(inv.invoice_id);
+      if (alreadyLoggedIds.has(p.payment_id)) { skippedAlreadyLogged++; continue; }
+      for (const inv of p.invoices ?? []) {
+        if (!invoiceToPaymentIds.has(inv.invoice_id)) invoiceToPaymentIds.set(inv.invoice_id, new Set());
+        invoiceToPaymentIds.get(inv.invoice_id)!.add(p.payment_id);
+      }
     }
 
     let updated = 0, alreadyInSync = 0;
@@ -212,19 +258,23 @@ Deno.serve(async (req) => {
     const keyId = Deno.env.get('RAZORPAY_KEY_ID'), keySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
     const razorpayAuth = (keyId && keySecret) ? btoa(`${keyId}:${keySecret}`) : null;
 
-    for (const invoiceId of invoiceIds) {
+    for (const [invoiceId, paymentIds] of invoiceToPaymentIds) {
       try {
         const zohoInvoice = await fetchZohoInvoice(invoiceId, token, orgId);
         const zohoBalance = parseFloat(zohoInvoice.balance ?? '0');
-        if (zohoBalance > 0) continue; // not fully paid yet — nothing to reconcile
+        if (zohoBalance > 0) continue; // not fully paid yet — leave unlogged, re-check next run
 
         const { data: order, error: orderErr } = await supabase
           .from('orders').select('sales_order_id, balance_due, payment_collected, razorpay_link_id, qr_code_id')
           .eq('zoho_invoice_id', invoiceId).maybeSingle();
         if (orderErr) throw new Error(orderErr.message);
-        if (!order) continue; // Zoho-only invoice with no matching local order — nothing to sync
+        if (!order) { await logPaymentIds(supabase, paymentIds, invoiceId); continue; } // Zoho-only invoice, no local order — nothing to sync, but done checking
 
-        if (order.payment_collected && (order.balance_due ?? 0) === 0) { alreadyInSync++; continue; }
+        if (order.payment_collected && (order.balance_due ?? 0) === 0) {
+          alreadyInSync++;
+          await logPaymentIds(supabase, paymentIds, invoiceId);
+          continue;
+        }
 
         const zohoTotal = parseFloat(zohoInvoice.total ?? '0');
         const { error: updOrderErr } = await supabase.from('orders').update({
@@ -250,6 +300,7 @@ Deno.serve(async (req) => {
           if (order.qr_code_id)       await closeQrCode(order.qr_code_id, razorpayAuth);
         }
 
+        await logPaymentIds(supabase, paymentIds, invoiceId);
         updated++;
       } catch (e: any) {
         errors.push({ invoice_id: invoiceId, message: e.message });
@@ -257,7 +308,11 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ date_start: dateStart, date_end: dateEnd, processed: invoiceIds.size, updated, alreadyInSync, skippedOwnChannel, errors }),
+      JSON.stringify({
+        date_start: dateStart, date_end: dateEnd,
+        processed: invoiceToPaymentIds.size, updated, alreadyInSync,
+        skippedOwnChannel, skippedAlreadyLogged, errors,
+      }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
