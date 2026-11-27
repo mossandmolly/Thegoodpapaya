@@ -9,12 +9,21 @@
 // this is purely for the case where Zoho knows about a payment and our own
 // tables don't yet.
 //
-// Meant to be triggered hourly by pg_cron (see migration 175), same shared
-// x-cron-secret pattern as auto-invoice-final-orders/extract-delivery-
-// windows. Looks back a rolling 24 hours (Zoho's own customerpayments date
-// filter is day-granular, not hour-granular, so this actually scans
-// yesterday+today and relies on the idempotent "already in sync? skip"
-// check below rather than a precise cutoff).
+// Meant to be triggered every 3 hours by pg_cron (see migration 175), same
+// shared x-cron-secret pattern as auto-invoice-final-orders/extract-
+// delivery-windows. Looks back a rolling 24 hours by default (Zoho's own
+// customerpayments date filter is day-granular, not hour-granular, so
+// this actually scans yesterday+today and relies on the idempotent
+// "already in sync? skip" check below rather than a precise cutoff).
+//
+// Optional body { date_start, date_end } (YYYY-MM-DD, both inclusive)
+// overrides that default window entirely — for a manual one-off backfill
+// over an explicit range (e.g. "reconcile everything between Oct 27 and
+// Nov 5") rather than the cron's own rolling-24h call. Safe to run
+// against a wide range: every check is the same idempotent "already in
+// sync? skip" logic, so re-running over a range that overlaps a previous
+// run (cron or manual) just finds nothing new to do for anything already
+// settled.
 //
 // Pipeline:
 //   1. List every Zoho customer payment recorded in the last 2 Zoho-side
@@ -178,13 +187,18 @@ Deno.serve(async (req) => {
     const secret = req.headers.get('x-cron-secret') || '';
     if (secret !== env('CRON_SECRET')) throw new Error('Not authorized');
 
+    const body = await req.json().catch(() => ({}));
+    const today = todayIST();
+    // Explicit range (manual backfill) wins outright if given; otherwise
+    // the cron's own rolling-24h default (yesterday+today).
+    const dateStart: string = body?.date_start || addDaysISO(today, -1);
+    const dateEnd: string   = body?.date_end   || today;
+
     const supabase = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
     const token = await getZohoToken(supabase);
     const orgId = env('ZOHO_ORGANIZATION_ID');
 
-    const today = todayIST();
-    const dateStart = addDaysISO(today, -1); // yesterday+today covers a rolling 24h window at Zoho's day-granularity
-    const payments = await fetchRecentPayments(token, orgId, dateStart, today);
+    const payments = await fetchRecentPayments(token, orgId, dateStart, dateEnd);
 
     const invoiceIds = new Set<string>();
     let skippedOwnChannel = 0;
@@ -243,7 +257,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ processed: invoiceIds.size, updated, alreadyInSync, skippedOwnChannel, errors }),
+      JSON.stringify({ date_start: dateStart, date_end: dateEnd, processed: invoiceIds.size, updated, alreadyInSync, skippedOwnChannel, errors }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );
 
