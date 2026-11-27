@@ -101,8 +101,12 @@ async function getZohoToken(supabase: ReturnType<typeof createClient>): Promise<
 }
 
 async function fetchZohoInvoice(invoiceId: string, token: string, orgId: string): Promise<any> {
+  // Switched from Zoho Books to Zoho Inventory's API (higher rate limit,
+  // same org/contacts/items/invoices data) — override via ZOHO_BASE_URL
+  // if this ever needs to roll back to Books without a redeploy.
+  const base = Deno.env.get('ZOHO_BASE_URL') ?? 'https://www.zohoapis.in/inventory/v1';
   const res = await fetch(
-    `https://www.zohoapis.in/books/v3/invoices/${invoiceId}?organization_id=${orgId}`,
+    `${base}/invoices/${invoiceId}?organization_id=${orgId}`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
   );
   const data = await res.json();

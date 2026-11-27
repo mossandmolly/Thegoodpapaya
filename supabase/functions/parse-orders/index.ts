@@ -177,8 +177,12 @@ async function fetchZohoItems(): Promise<{ name: string; unit: string }[]> {
   const tokenData = await tokenRes.json();
   if (!tokenData.access_token) return [];
   await persistRotatedRefreshToken(tokenData.refresh_token);
+  // Switched from Zoho Books to Zoho Inventory's API (higher rate limit,
+  // same org/contacts/items/invoices data) — override via ZOHO_BASE_URL
+  // if this ever needs to roll back to Books without a redeploy.
+  const zohoBase = Deno.env.get('ZOHO_BASE_URL') ?? 'https://www.zohoapis.in/inventory/v1';
   const itemsRes = await fetch(
-    `https://www.zohoapis.in/books/v3/items?organization_id=${orgId}&status=active&per_page=200`,
+    `${zohoBase}/items?organization_id=${orgId}&status=active&per_page=200`,
     { headers: { Authorization: `Zoho-oauthtoken ${tokenData.access_token}` } }
   );
   const itemsData = await itemsRes.json();

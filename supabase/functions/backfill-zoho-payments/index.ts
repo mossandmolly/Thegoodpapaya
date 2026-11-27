@@ -100,7 +100,11 @@ async function getZohoToken(supabase: ReturnType<typeof createClient>): Promise<
 
 function zohoUrl(path: string, orgId: string): string {
   const sep = path.includes('?') ? '&' : '?';
-  return `https://www.zohoapis.in/books/v3${path}${sep}organization_id=${orgId}`;
+  // Switched from Zoho Books to Zoho Inventory's API (higher rate limit,
+  // same org/contacts/items/invoices data) — override via ZOHO_BASE_URL
+  // if this ever needs to roll back to Books without a redeploy.
+  const base = Deno.env.get('ZOHO_BASE_URL') ?? 'https://www.zohoapis.in/inventory/v1';
+  return `${base}${path}${sep}organization_id=${orgId}`;
 }
 
 async function fetchInvoice(
