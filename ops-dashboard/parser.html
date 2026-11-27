@@ -181,7 +181,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#ffffff;color:#2b2320
 .dv-scope-btn.active{background:#e8720c;border-color:#e8720c;color:#ffffff}
 .dv-assigned-tag{font-size:12px;font-weight:700;color:#b3261e;margin-left:6px}
 .or-society-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#5a4200;background:#fff1c2}
-.or-combinable-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#2f6690;background:#e3f0f9}
+.combinable-run-header{font-size:10px;font-weight:700;color:#2f6690;background:#e3f0f9;padding:4px 10px;border-radius:6px 6px 0 0;margin-top:6px}
+.order-row.combinable-run-member{border-left:3px solid #5b9cf6}
 .or-time-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#3a4a5c;background:#e8f0f7}
 .or-phone-tag{display:inline-block;border-radius:12px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;color:#2d6b2d;background:#e6f4e6}
 
@@ -4366,7 +4367,34 @@ function renderOrdersList(){
       '<span class="dv-expand-caret" style="margin-left:auto;color:#ffffff" onclick="toggleOverviewGroup('+escH(JSON.stringify(soc))+')">'+(collapsed?'▸':'▾')+'</span>'+
       '</div>'+
       (collapsed?'':
-      orders.map(order=>{
+      (()=>{
+      // Clusters only truly CONSECUTIVE same-combinable-group orders —
+      // never reorders anything. Merging a non-adjacent same-group order
+      // backward would mean pulling a later order ahead of whatever
+      // different-group order currently sits between them in time, i.e.
+      // exactly the "later order jumps the queue" outcome this is meant
+      // to avoid — so a run only ever grows by absorbing the NEXT order
+      // in time, and breaks the moment the group key changes.
+      const combinableRunBySoid={};
+      if(timeViewActive&&overviewShowCombinableGroups){
+        let i=0;
+        while(i<orders.length){
+          const key=deriveTrip(orders[i]);
+          let j=i+1;
+          while(j<orders.length&&deriveTrip(orders[j])===key)j++;
+          const runLength=j-i;
+          if(runLength>=2){
+            for(let k=i;k<j;k++)combinableRunBySoid[orders[k].soid]={key,isFirst:k===i,runLength};
+          }
+          i=j;
+        }
+      }
+      return orders.map(order=>{
+        const runInfo=combinableRunBySoid[order.soid];
+        const runHeaderHtml=(runInfo&&runInfo.isFirst)
+          ?'<div class="combinable-run-header">🔗 Combinable group — '+escH(runInfo.key)+' · '+runInfo.runLength+' orders back to back</div>'
+          :'';
+        const runMemberClass=runInfo?' combinable-run-member':'';
         const cancelled=order.orderStatus==='cancelled';
         const readyToInvoice=isReadyToInvoice(order);
         // Payment link only makes sense once nothing is left to (re)invoice —
@@ -4403,19 +4431,6 @@ function renderOrdersList(){
           (replacementOnly?' <span class="replacement-only-badge" title="Every item on this order is a replacement">🔁 Replacement only</span>':'')+
           (!cancelled&&orderHasPendingReview(order)?' <span class="order-status-badge" style="background:#e6c927;color:#3a2e00" title="Created by the WhatsApp listener — needs review">💬 PENDING REVIEW</span>':'');
 
-        // Only shown when the "🔗 Combinable groups" toggle is on, and only
-        // when this order's trip identity actually differs from its own
-        // plain society (deriveTrip falls back to the society itself when
-        // there's no override/combinable_group set) — otherwise it'd just
-        // repeat the society tag right next to it for no reason. Mainly
-        // meant for the flat chronological (By Time) view, where there's no
-        // society header grouping these any more to make that visible.
-        const combinableGroupTag=(!cancelled&&overviewShowCombinableGroups)?(()=>{
-          const trip=deriveTrip(order);
-          const soc=deriveSociety(order.customer);
-          return trip!==soc?' <span class="or-combinable-tag" title="Combinable delivery group">🔗 '+escH(trip)+'</span>':'';
-        })():'';
-
         // "Packed" here means reached at least the packed stage (packed,
         // final, or invoiced all count — packing is a one-way milestone,
         // an already-invoiced item was necessarily packed too) — not "sits
@@ -4429,13 +4444,12 @@ function renderOrdersList(){
         // isn't a wall of expanded cards until you actually need one.
         const expandedOv=expandedOverviewOrders.has(order.soid);
         if(!expandedOv){
-          return '<div class="order-row'+(cancelled?' order-cancelled':'')+(order.isPickup?' pickup-order':'')+(!cancelled&&isLeftoverOrder(order)?' leftover-order':'')+' dv-collapsed-card">'+
+          return runHeaderHtml+'<div class="order-row'+(cancelled?' order-cancelled':'')+(order.isPickup?' pickup-order':'')+(!cancelled&&isLeftoverOrder(order)?' leftover-order':'')+runMemberClass+' dv-collapsed-card">'+
             '<div class="dv-card-header" onclick="toggleOverviewOrderExpanded(\''+order.soid+'\')">'+
               '<span class="or-cust">'+
                 '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
                 escH(order.customer)+
                 (order.society?' <span class="or-society-tag" title="Society captured by WhatsApp parser — customer_name above may just be a fallback name">🏘 '+escH(order.society)+'</span>':'')+
-                combinableGroupTag+
                 (formatOrderTime(order.createdAt)?' <span class="or-time-tag" title="When this order was created in the system — not necessarily the exact WhatsApp message time">🕐 '+escH(formatOrderTime(order.createdAt))+'</span>':'')+
                 statusBadges+
                 (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
@@ -4449,12 +4463,11 @@ function renderOrdersList(){
           '</div>';
         }
 
-        return '<div class="order-row'+(cancelled?' order-cancelled':'')+(order.isPickup?' pickup-order':'')+(!cancelled&&isLeftoverOrder(order)?' leftover-order':'')+'">'+
+        return runHeaderHtml+'<div class="order-row'+(cancelled?' order-cancelled':'')+(order.isPickup?' pickup-order':'')+(!cancelled&&isLeftoverOrder(order)?' leftover-order':'')+runMemberClass+'">'+
           '<div class="dv-card-header" onclick="toggleOverviewOrderExpanded(\''+order.soid+'\')"><span class="or-cust">'+
             '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
             escH(order.customer)+
             (order.society?' <span class="or-society-tag" title="Society captured by WhatsApp parser — customer_name above may just be a fallback name">🏘 '+escH(order.society)+'</span>':'')+
-                combinableGroupTag+
             (formatOrderTime(order.createdAt)?' <span class="or-time-tag" title="When this order was created in the system — not necessarily the exact WhatsApp message time">🕐 '+escH(formatOrderTime(order.createdAt))+'</span>':'')+
             statusBadges+
             (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
@@ -4534,7 +4547,8 @@ function renderOrdersList(){
             '</span>'+
           '</div>'+
         '</div>';
-      }).join(''));
+      }).join('');
+      })());
   }).join('');
   updateBulkButtons();
 }
@@ -5558,10 +5572,11 @@ function tripHeaderLabel(groupKey){
 // is automatic.
 let overviewSortMode='alpha'; // 'alpha' | 'sequence' | 'time'
 
-// Independent of overviewSortMode above (ANDed on, not another radio
-// option) — mainly useful paired with 'time', so a flat chronological
-// list can still show which orders could be combined for delivery, but
-// there's no reason to lock it to just that one mode.
+// Only meaningful in 'time' mode — Flat already groups by society and
+// Sequence already groups by its own batches, so there's nothing for this
+// to add there; the pill itself is hidden outside 'time' below rather
+// than just having no visible effect, to avoid the "why doesn't this do
+// anything" confusion that left as a no-op toggle.
 let overviewShowCombinableGroups=false;
 
 function renderOverviewSortToggle(){
@@ -5569,7 +5584,7 @@ function renderOverviewSortToggle(){
     '<span class="filter-pill'+(overviewSortMode==='alpha'?' active':'')+'" onclick="setOverviewSortMode(\'alpha\')">Flat</span>'+
     '<span class="filter-pill'+(overviewSortMode==='sequence'?' active':'')+'" onclick="setOverviewSortMode(\'sequence\')">Sequence</span>'+
     '<span class="filter-pill'+(overviewSortMode==='time'?' active':'')+'" onclick="setOverviewSortMode(\'time\')">⏱ By Time</span>'+
-    '<span class="filter-pill'+(overviewShowCombinableGroups?' active':'')+'" onclick="toggleOverviewCombinableGroups()" title="Show each order\'s combinable delivery group, if it has one">🔗 Combinable groups</span>';
+    (overviewSortMode==='time'?'<span class="filter-pill'+(overviewShowCombinableGroups?' active':'')+'" onclick="toggleOverviewCombinableGroups()" title="Cluster consecutive orders that share a combinable delivery group — never reorders anything, so a group only forms where no order from a different group sits between them">🔗 Combinable groups</span>':'');
 }
 
 function setOverviewSortMode(mode){
