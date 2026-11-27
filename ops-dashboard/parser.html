@@ -4011,6 +4011,20 @@ function formatOrderTime(iso){
   return new Date(iso).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
 }
 
+// Order Overview's own per-order tag specifically — includes the date,
+// unlike formatOrderTime above (used all over Packer/Delivery/etc. as a
+// time-only stamp, which stays as-is everywhere else). Confirms at a
+// glance that sorting really is by full timestamp, not just time-of-day,
+// and covers the one real edge case where a view can span more than one
+// calendar date (a very-late-night order whose own created_at timestamp
+// lands just the other side of midnight from its sales_order_id's date
+// prefix).
+function formatOrderDateTime(iso){
+  if(!iso)return null;
+  const d=new Date(iso);
+  return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'})+', '+d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+}
+
 function evictCustomerLookupCache(ids){
   (Array.isArray(ids)?ids:[ids]).forEach(id=>{delete customerLookupCache[id];});
 }
@@ -4450,7 +4464,7 @@ function renderOrdersList(){
                 '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
                 escH(order.customer)+
                 (order.society?' <span class="or-society-tag" title="Society captured by WhatsApp parser — customer_name above may just be a fallback name">🏘 '+escH(order.society)+'</span>':'')+
-                (formatOrderTime(order.createdAt)?' <span class="or-time-tag" title="When this order was created in the system — not necessarily the exact WhatsApp message time">🕐 '+escH(formatOrderTime(order.createdAt))+'</span>':'')+
+                (formatOrderDateTime(order.createdAt)?' <span class="or-time-tag" title="When this order was created in the system — not necessarily the exact WhatsApp message time">🕐 '+escH(formatOrderDateTime(order.createdAt))+'</span>':'')+
                 statusBadges+
                 (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
               '</span>'+
@@ -4468,7 +4482,7 @@ function renderOrdersList(){
             '<span onclick="event.stopPropagation()">'+checkboxHtml+'</span>'+
             escH(order.customer)+
             (order.society?' <span class="or-society-tag" title="Society captured by WhatsApp parser — customer_name above may just be a fallback name">🏘 '+escH(order.society)+'</span>':'')+
-            (formatOrderTime(order.createdAt)?' <span class="or-time-tag" title="When this order was created in the system — not necessarily the exact WhatsApp message time">🕐 '+escH(formatOrderTime(order.createdAt))+'</span>':'')+
+            (formatOrderDateTime(order.createdAt)?' <span class="or-time-tag" title="When this order was created in the system — not necessarily the exact WhatsApp message time">🕐 '+escH(formatOrderDateTime(order.createdAt))+'</span>':'')+
             statusBadges+
             (!cancelled?' '+packProgressPie(packedCount,activeCount)+' <span class="packed-count">'+packedCount+'/'+activeCount+' items packed</span>':'')+
             paymentMechanismHtml(order)+
