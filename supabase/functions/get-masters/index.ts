@@ -161,9 +161,16 @@ async function getZohoToken(): Promise<{ access_token: string; orgId: string } |
   return { access_token: cachedToken, orgId };
 }
 
+// Switched from Zoho Books to Zoho Inventory's API (higher rate limit,
+// same org/contacts/items/invoices data) — override via ZOHO_BASE_URL if
+// this ever needs to roll back to Books without a redeploy.
+function zohoBase(): string {
+  return Deno.env.get('ZOHO_BASE_URL') ?? 'https://www.zohoapis.in/inventory/v1';
+}
+
 async function fetchAndCacheItems(accessToken: string, orgId: string): Promise<number> {
   const res  = await fetch(
-    `https://www.zohoapis.in/books/v3/items?organization_id=${orgId}&status=active&per_page=200`,
+    `${zohoBase()}/items?organization_id=${orgId}&status=active&per_page=200`,
     { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
   );
   const data = await res.json();
@@ -185,7 +192,7 @@ async function fetchAndCacheCustomers(accessToken: string, orgId: string): Promi
 
   while (true) {
     const res  = await fetch(
-      `https://www.zohoapis.in/books/v3/contacts?organization_id=${orgId}&contact_type=customer&status=active&per_page=200&page=${page}`,
+      `${zohoBase()}/contacts?organization_id=${orgId}&contact_type=customer&status=active&per_page=200&page=${page}`,
       { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
     );
     const data = await res.json();

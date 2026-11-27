@@ -107,8 +107,12 @@ Deno.serve(async (req) => {
 
     const token = await getZohoToken(supabase);
     const orgId = env('ZOHO_ORGANIZATION_ID');
+    // Switched from Zoho Books to Zoho Inventory's API (higher rate limit,
+    // same org/contacts/items/invoices data) — override via ZOHO_BASE_URL
+    // if this ever needs to roll back to Books without a redeploy.
+    const zohoBase = Deno.env.get('ZOHO_BASE_URL') ?? 'https://www.zohoapis.in/inventory/v1';
     const pdfRes = await fetch(
-      `https://www.zohoapis.in/books/v3/invoices/${order.zoho_invoice_id}?organization_id=${orgId}&accept=pdf`,
+      `${zohoBase}/invoices/${order.zoho_invoice_id}?organization_id=${orgId}&accept=pdf`,
       { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
     );
     if (!pdfRes.ok) throw new Error(`Zoho PDF fetch failed (${pdfRes.status})`);
